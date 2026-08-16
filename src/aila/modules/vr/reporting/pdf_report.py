@@ -71,6 +71,7 @@ from aila.modules.vr.db_models import (
 from aila.modules.vr.reporting.poc_writer import PocWriter
 from aila.modules.vr.reporting.writer_agent import ReportContent, ReportWriter
 from aila.modules.vr.services.mcp_call_logger import record_call
+from aila.platform.config_base import _shared_registry
 from aila.platform.mcp.factory import make_bridge
 from aila.platform.services.runtime import run_blocking_io
 from aila.platform.tasks.runtime_stats import active_task_runtime_seconds
@@ -476,11 +477,23 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
     return facts
 
 
-_AUDIT_MCP_CLONE_DIR = (
-    Path(os.environ.get("AUDIT_MCP_CLONE_DIR"))
-    if os.environ.get("AUDIT_MCP_CLONE_DIR")
-    else Path.home() / ".cache" / "audit-mcp" / "clones"
-)
+def _audit_mcp_clone_dir() -> Path:
+    """Return the audit-mcp source-clone root.
+
+    fix #132 -- was previously read as ``os.environ.get("AUDIT_MCP_CLONE_DIR")``
+    at module import time, which froze the value at process start and
+    bypassed ``PUT /config``. Resolved live through the ``vr`` namespace
+    so operators can point the reporter at a fresh clone root without a
+    worker restart (env spelling ``AILA_VR_AUDIT_MCP_CLONE_DIR``,
+    DB via ``PUT /config/vr/audit_mcp_clone_dir``). Empty value falls
+    back to ``~/.cache/audit-mcp/clones``.
+    """
+    cfg = str(
+        _shared_registry().get_sync("vr", "audit_mcp_clone_dir") or "",
+    ).strip()
+    if cfg:
+        return Path(cfg)
+    return Path.home() / ".cache" / "audit-mcp" / "clones"
 
 
 def _resolve_audit_metadata(
@@ -539,7 +552,7 @@ def _resolve_audit_metadata(
         host = parsed.hostname or "unknown"
         path = (parsed.path or "").lstrip("/").replace("/", "_").replace(".git", "")
         clone_dirname = f"{host}_{path}@{ref}"
-        candidate = _AUDIT_MCP_CLONE_DIR / clone_dirname
+        candidate = _audit_mcp_clone_dir() / clone_dirname
         if candidate.is_dir():
             clone = str(candidate)
             commit_hash = _git(["rev-parse", "HEAD"], clone)

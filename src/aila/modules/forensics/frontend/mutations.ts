@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { authorizedRequestJson, requestBlob } from "@platform/api/http";
+import { ApiHttpError, authorizedRequestJson, requestBlob } from "@platform/api/http";
 import { saveBlobResponse } from "@platform/api/download";
 import { toast } from "@/components/ui/sonner";
 
@@ -19,6 +19,7 @@ import type {
   SolidEvidence,
   TagInvestigationRequest,
 } from "./types";
+import type { Finding } from "./queries";
 
 import type { BlobResponsePayload } from "@platform/api/http";
 
@@ -256,6 +257,47 @@ export function useCancelInvestigation(projectId: string) {
   });
 }
 
+/**
+ * Force-flip a zombie investigation to ``failed`` (§49). Backend returns
+ * 409 when the row is no longer in a reapable state -- treat that as a
+ * benign "your view was stale" and refetch instead of surfacing an error.
+ */
+export function useReapInvestigation(projectId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (investigationId: string) =>
+      authorizedRequestJson<Envelope<InvestigationSummary>>(
+        `/forensics/projects/${encodeURIComponent(projectId)}/investigations/${encodeURIComponent(investigationId)}/reap`,
+        { method: "POST" },
+      ),
+    onSuccess: (_result, investigationId) => {
+      queryClient.invalidateQueries({
+        queryKey: ["forensics", "investigations", projectId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["forensics", "investigation", projectId, investigationId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["forensics", "investigation-poll", projectId, investigationId],
+      });
+      toast.success("Zombie investigation reaped -- status flipped to failed.");
+    },
+    onError: (err: Error, investigationId) => {
+      if (err instanceof ApiHttpError && err.status === 409) {
+        toast.info("Not in a reapable state -- refreshing.");
+        queryClient.invalidateQueries({
+          queryKey: ["forensics", "investigation", projectId, investigationId],
+        });
+        queryClient.invalidateQueries({
+          queryKey: ["forensics", "investigations", projectId],
+        });
+        return;
+      }
+      toast.error(`Failed to reap investigation: ${err.message}`);
+    },
+  });
+}
+
 export function useTagInvestigation(projectId: string) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -306,6 +348,7 @@ export function useTagInvestigation(projectId: string) {
 
 export function useSuppressFinding(projectId: string) {
   const queryClient = useQueryClient();
+  const findingsKey = ["forensics", "findings", projectId] as const;
   return useMutation({
     mutationFn: (body: FindingSuppressionRequest) =>
       authorizedRequestJson<Envelope<FindingSuppression>>(
@@ -315,22 +358,40 @@ export function useSuppressFinding(projectId: string) {
           body: JSON.stringify(body),
         }
       ),
+    // Optimistic hide: drop the row with this fingerprint from the
+    // cached findings list so the operator sees the effect before the
+    // POST round-trips. Rolled back on error. `onSettled` invalidates
+    // so the server-truth list re-hydrates every time.
+    onMutate: async (body) => {
+      await queryClient.cancelQueries({ queryKey: findingsKey });
+      const previous = queryClient.getQueryData<Envelope<Finding[]>>(findingsKey);
+      if (previous && body.fingerprint) {
+        queryClient.setQueryData<Envelope<Finding[]>>(findingsKey, {
+          ...previous,
+          data: previous.data.filter((f) => f.fingerprint !== body.fingerprint),
+        });
+      }
+      return { previous } as const;
+    },
+    onError: (err: Error, _body, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(findingsKey, context.previous);
+      }
+      toast.error(`Failed to mark false positive: ${err.message}`);
+    },
     onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ["forensics", "findings", projectId],
-      });
+      toast.success(
+        "Marked as false positive -- hidden from findings, future runs will treat as benign."
+      );
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: findingsKey });
       queryClient.invalidateQueries({
         queryKey: ["forensics", "finding-suppressions", projectId],
       });
       queryClient.invalidateQueries({
         queryKey: ["forensics", "directives", projectId],
       });
-      toast.success(
-        "Marked as false positive -- hidden from findings, future runs will treat as benign."
-      );
-    },
-    onError: (err: Error) => {
-      toast.error(`Failed to mark false positive: ${err.message}`);
     },
   });
 }

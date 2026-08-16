@@ -398,5 +398,85 @@ class VRConfigSchema(ModuleConfigBase):
         ),
     )
 
+    # --- Fuzz -> source-investigation feedback loop (#173/#148) ----------
+    fuzz_coverage_emit_delta_pct: float = Field(
+        default=5.0,
+        ge=0.1,
+        le=100.0,
+        description=(
+            "Coverage-percentage delta (in percentage points) that "
+            "patch_campaign must observe against the campaign's "
+            "``last_coverage_emitted_pct`` before a fuzz.coverage_delta "
+            "event is posted to the source investigation. Default 5.0 "
+            "keeps the reasoning loop from being spammed on noisy sub- "
+            "percent jitter. Env: AILA_VR_FUZZ_COVERAGE_EMIT_DELTA_PCT."
+        ),
+    )
+    fuzz_reproducer_local_root: str = Field(
+        default="",
+        description=(
+            "Absolute local directory that the fuzz-crash ingest is "
+            "permitted to read reproducer bytes from (issue #183). The "
+            "``POST /vr/fuzz/crashes`` handler stores the first 4 KiB of "
+            "the reproducer as a hex preview; without a configured root "
+            "the file open would follow any local path an authenticated "
+            "caller supplies. When empty the head-preview is disabled "
+            "fail-closed (the crash still records, only the hex preview "
+            "is empty). When set, ``reproducer_path`` is resolved via "
+            "``Path.resolve()`` (following symlinks) and MUST land under "
+            "this root; anything else is refused and logged. "
+            "Env: AILA_VR_FUZZ_REPRODUCER_LOCAL_ROOT."
+        ),
+    )
+    fuzz_crash_spawn_child: bool = Field(
+        default=False,
+        description=(
+            "When True AND a SECURITY_RELEVANT crash lands on a campaign "
+            "linked back to a source investigation, register_crash also "
+            "enqueues a child VR investigation targeting the crash's "
+            "reproducer (parent_investigation_id = the source). The "
+            "primary loop-closer stays the steering message; this knob "
+            "is opt-in because auto-spawn multiplies the fan-out of the "
+            "child investigation graph. Default OFF. Env: "
+            "AILA_VR_FUZZ_CRASH_SPAWN_CHILD."
+        ),
+    )
+
+    # fix #132 -- knobs previously read via bare ``os.environ.get`` at
+    # the ``vr/api_router.py`` and ``vr/reporting/pdf_report.py`` call
+    # sites. Routing them through this schema unlocks ``PUT /config``
+    # and audit logging; the env spellings become ``AILA_VR_*`` per
+    # the standard ConfigRegistry layered lookup.
+    masvs_audit_batch_size: int = Field(
+        default=5,
+        ge=1,
+        le=200,
+        description=(
+            "MASVS audit fan-out ceiling per parent. Enqueues at most "
+            "this many child audits at once for APK targets to protect "
+            "the shared LLM proxy from OOM; the parent reconciler "
+            "enqueues the next slice as slots free. Env: "
+            "AILA_VR_MASVS_AUDIT_BATCH_SIZE."
+        ),
+    )
+    android_mcp_upload_dir: str = Field(
+        default="",
+        description=(
+            "Root directory for android-mcp APK uploads. Empty (default) "
+            "resolves to ``~/.android-mcp/uploads``. Team subdirs are "
+            "created lazily under this root. Env: "
+            "AILA_VR_ANDROID_MCP_UPLOAD_DIR."
+        ),
+    )
+    audit_mcp_clone_dir: str = Field(
+        default="",
+        description=(
+            "Root directory holding audit-mcp source clones consumed by "
+            "the VR PDF reporter. Empty (default) resolves to "
+            "``~/.cache/audit-mcp/clones``. Env: "
+            "AILA_VR_AUDIT_MCP_CLONE_DIR."
+        ),
+    )
+
 
 VR_DEFAULTS = VRConfigSchema()

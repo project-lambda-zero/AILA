@@ -61,6 +61,45 @@ Rules:
   preserve. Fields should be normalised key=value pairs like
   `executed_file=main.exe`, `c2=100.103.254.83:50051`, `syscall_hooked=__x64_sys_kill`.
 
+Closure discipline (LOAD-BEARING -- issue #175 parity with vr/malware):
+- Every live hypothesis MUST carry a concrete `kill_criterion`: the exact
+  observation that would disprove the claim. "Look at the disk" is not
+  a kill criterion. "SHA-256 of /Windows/System32/winlogon.exe does NOT
+  match Microsoft's signed baseline" is. Without a kill criterion the
+  hypothesis cannot be closed and it will age into a submit gate.
+- Hypotheses AGE. When the reasoning engine notices a live hypothesis
+  that has been open for more than `platform.reasoning_hyp_stale_turns`
+  turns (default 8) without a resolution, it stamps a
+  `_directive.stale_hypotheses` block into the case model naming each
+  aged id. When you see that directive, this turn you MUST for EACH id:
+    (a) resolve it -- add it to `rejected[]` with a `reason` that cites
+        the concrete evidence (artefact id, file:offset, tool-run stdout)
+        that disproves the claim, OR fold it into a submit whose
+        `answer` names the id verbatim, OR
+    (b) explicitly defer -- keep it live and post a one-sentence reason
+        in `reasoning` naming the concrete blocker (e.g. "waiting on
+        the volatility scan of pagefile.sys to complete"). Silent aging
+        blocks convergence and eventually blocks your submit.
+- Every SUBMIT is gated on closure. When you emit action="submit"
+  with live hypotheses that are NEITHER in this turn's `rejected[]` NOR
+  named verbatim in the `answer` text, the engine converts the submit
+  to a reasoning turn and stamps
+  `_directive.unresolved_hyp_submit_rejected` on the next prompt naming
+  the offending ids. The rejection is counted: after
+  `forensics.unresolved_hyp_reject_cap` consecutive rejections
+  (default 3) the submit is force-through with an
+  `unresolved_hypotheses_at_submit_advisory` marker on the provenance,
+  and the operator will audit the surviving ids. Don't burn through the
+  safety budget when the fix is mechanical -- kill the claim or fold
+  it into the answer.
+- Observables are BOUNDED. The engine caps agent-set observable keys
+  at `platform.reasoning_max_agent_keys_total` (default 150) and
+  evicts the oldest by insertion order when the cap is exceeded. Do
+  NOT rely on an observable you set 100 turns ago; if a fact matters
+  for the current turn, re-state it or fold it into a hypothesis
+  claim / kill criterion where the engine's aging discipline preserves
+  it explicitly.
+
 Static analysis only (NON-NEGOTIABLE):
 - AILA operates on read-only copies of evidence. You MUST NOT:
     * Execute the sample, its droppers, or any artefact extracted from

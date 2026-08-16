@@ -102,15 +102,19 @@ class TestAdlcStructuralChangeFires:
     def test_persona_roster_subscript_write_fires(
         self, tmp_path: Path,
     ) -> None:
-        """A ``PERSONA_ROLE_MAP[x] = y`` subscript write inside the ADLC
-        control plane fires (shape 4: persona-roster binding write)."""
+        """A ``persona_role_map[x] = y`` subscript write inside the ADLC
+        control plane fires (shape 4: persona-roster binding write).
+
+        Issue #136 renamed the ClassVar; the mutation shape stays
+        flagged under the new identifier.
+        """
         src = _write(
             tmp_path,
             "aila/platform/lifecycle/rogue_roster.py",
-            "PERSONA_ROLE_MAP = {}\n"
+            "persona_role_map = {}\n"
             "\n"
             "def install_persona():\n"
-            "    PERSONA_ROLE_MAP['bundle_reviewer'] = None\n",
+            "    persona_role_map['bundle_reviewer'] = None\n",
         )
         assert _RULE in _audit(src)
 

@@ -43,12 +43,15 @@ from aila.storage.registry import is_secret_config_key
 __all__ = [
     "JOURNAL_KINDS",
     "ChainVerifyResult",
+    "DeadletterReplayEntry",
     "JournalAppendResult",
     "JournalEntry",
     "JournalWriteError",
+    "ReplayResult",
     "append",
     "append_or_deadletter",
     "append_sync",
+    "replay_deadletters",
     "verify_chain",
 ]
 
@@ -539,3 +542,140 @@ async def verify_chain(
         checked += 1
 
     return ChainVerifyResult(chain_id=chain_id, ok=True, checked=checked)
+
+
+class DeadletterReplayEntry(BaseModel):
+    """Per-row outcome of :func:`replay_deadletters`."""
+
+    deadletter_id: str
+    chain_id: str
+    team_id: str | None
+    replayed: bool
+    journal_id: str | None = None
+    seq: int | None = None
+    error: str | None = None
+
+
+class ReplayResult(BaseModel):
+    """Aggregate outcome of one :func:`replay_deadletters` batch."""
+
+    scanned: int
+    replayed: int
+    failed: int
+    entries: list[DeadletterReplayEntry]
+
+
+async def replay_deadletters(
+    session: AsyncSession,
+    *,
+    team_id: str | None = None,
+    limit: int | None = None,
+) -> ReplayResult:
+    """Re-attempt every un-replayed dead-lettered journal entry.
+
+    Selects ``PlatformJournalDeadletterRecord`` rows with ``replayed_at IS NULL``
+    (oldest-first), rebuilds the :class:`JournalEntry` from the stored
+    ``entry_json``, and calls :func:`append` against the current chain head.
+    On success the deadletter row is stamped with ``replayed_at=utc_now()`` and
+    ``replay_seq=<new chain seq>`` so a second call is idempotent -- the same
+    row is not re-appended.
+
+    A row that fails to append again (chain-hash violation, integrity error,
+    invalid payload) is left un-replayed with an error recorded in the
+    returned :class:`ReplayResult`. Only specific journal / DB exception
+    types are caught; unexpected errors propagate.
+
+    The caller owns the transaction. Each per-row append + stamp runs inside
+    a savepoint so a still-broken chain does not poison the outer transaction
+    or already-stamped rows earlier in the batch.
+
+    Args:
+        session: Caller-owned async session. Must be inside a transaction.
+        team_id: Optional filter -- when set, only that team's deadletter
+            rows are considered. ``None`` scans across all chains.
+        limit: Optional cap on how many rows to attempt in one batch.
+    """
+    stmt = select(PlatformJournalDeadletterRecord).where(
+        PlatformJournalDeadletterRecord.replayed_at.is_(None)  # type: ignore[union-attr]
+    )
+    if team_id is not None:
+        stmt = stmt.where(PlatformJournalDeadletterRecord.team_id == team_id)
+    stmt = stmt.order_by(PlatformJournalDeadletterRecord.created_at.asc())
+    if limit is not None:
+        stmt = stmt.limit(limit)
+
+    rows = list((await session.exec(stmt)).all())
+
+    entries: list[DeadletterReplayEntry] = []
+    replayed = 0
+    failed = 0
+    for row in rows:
+        try:
+            entry = JournalEntry.model_validate(row.entry_json)
+        except (TypeError, ValueError) as exc:
+            failed += 1
+            entries.append(
+                DeadletterReplayEntry(
+                    deadletter_id=row.id,
+                    chain_id=row.chain_id,
+                    team_id=row.team_id,
+                    replayed=False,
+                    error=f"invalid entry_json: {type(exc).__name__}",
+                )
+            )
+            _log.warning(
+                "journal replay skipped deadletter=%s chain=%s reason=%s",
+                row.id, row.chain_id, exc,
+            )
+            continue
+
+        try:
+            async with session.begin_nested():
+                result = await append(session, entry=entry, team_id=row.team_id)
+                if result.chain_id != row.chain_id:
+                    # Ambient team_context leaked into the append. The
+                    # savepoint rolls back the misfiled row; the operator
+                    # runs replay again from an admin (team-None) scope.
+                    raise JournalWriteError(
+                        f"replay chain mismatch: expected {row.chain_id!r} "
+                        f"got {result.chain_id!r}"
+                    )
+                row.replayed_at = utc_now()
+                row.replay_seq = result.seq
+                session.add(row)
+                await session.flush()
+        except (JournalWriteError, SQLAlchemyError) as exc:
+            failed += 1
+            entries.append(
+                DeadletterReplayEntry(
+                    deadletter_id=row.id,
+                    chain_id=row.chain_id,
+                    team_id=row.team_id,
+                    replayed=False,
+                    error=type(exc).__name__,
+                )
+            )
+            _log.warning(
+                "journal replay failed deadletter=%s chain=%s failure=%s",
+                row.id, row.chain_id, type(exc).__name__,
+            )
+            continue
+
+        replayed += 1
+        entries.append(
+            DeadletterReplayEntry(
+                deadletter_id=row.id,
+                chain_id=row.chain_id,
+                team_id=row.team_id,
+                replayed=True,
+                journal_id=result.journal_id,
+                seq=result.seq,
+            )
+        )
+
+    return ReplayResult(
+        scanned=len(rows),
+        replayed=replayed,
+        failed=failed,
+        entries=entries,
+    )

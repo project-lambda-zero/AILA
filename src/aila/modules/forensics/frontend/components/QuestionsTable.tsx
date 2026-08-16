@@ -1,13 +1,15 @@
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { DataGrid, MonoBadge } from "@/components/aila/mock";
 
 import { useProjectAnswers } from "../queries";
 import type { AnswerCandidate } from "../types";
 
-const confidenceColor: Record<string, "critical" | "high" | "medium" | "low" | "info"> = {
-  exact: "low",
-  strong: "low",
+// Confidence -> mock semantic tone. Preserves the earlier confidenceColor
+// mapping but speaks the mock tone vocabulary.
+const CONFIDENCE_TONE: Record<string, string> = {
+  exact: "ok",
+  strong: "ok",
   medium: "medium",
   caveated: "high",
 };
@@ -21,46 +23,84 @@ export function QuestionsTable({ projectId }: { projectId: string }) {
 
   if (items.length === 0) {
     return (
-      <AilaCard  techBorder glow>
-        <p className="text-sm text-text-muted text-center py-8">
-          No questions answered yet. Use the free-flow investigator to ask questions.
+      <WindowPanel
+        title="questions & answers"
+        tone="muted"
+        status="forensics ; no answers yet"
+      >
+        <p
+          className="font-mono"
+          style={{
+            fontSize: 11,
+            color: "var(--text-muted)",
+            padding: "24px 0",
+            textAlign: "center",
+          }}
+        >
+          No questions answered yet. Use the free-flow investigator to ask
+          questions.
         </p>
-      </AilaCard>
+      </WindowPanel>
     );
   }
 
   return (
-    <div className="border border-border rounded-md bg-surface text-foreground overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead className="bg-surface-secondary">
-          <tr>
-            <th className="text-left px-3 py-2 text-text-muted font-medium">Question</th>
-            <th className="text-left px-3 py-2 text-text-muted font-medium">Answer</th>
-            <th className="text-left px-3 py-2 text-text-muted font-medium">Confidence</th>
-            <th className="text-left px-3 py-2 text-text-muted font-medium">Format</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((answer: AnswerCandidate) => (
-            <tr key={answer.id} className="border-t border-border hover:bg-surface-secondary">
-              <td className="px-3 py-2 text-foreground max-w-sm">
-                <p className="truncate">{answer.question_text}</p>
-              </td>
-              <td className="px-3 py-2 text-green-300 font-mono text-xs max-w-xs">
-                {answer.answer_text || "--"}
-              </td>
-              <td className="px-3 py-2">
-                <AilaBadge severity={confidenceColor[answer.confidence] ?? "info"} size="sm">
-                  {answer.confidence}
-                </AilaBadge>
-              </td>
-              <td className="px-3 py-2 text-text-muted text-xs font-mono">
-                {answer.format_hint || "--"}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div aria-label="Investigation questions">
+      <DataGrid<AnswerCandidate>
+        columns={[
+          { label: "question", width: "minmax(0, 2fr)" },
+          { label: "answer", width: "minmax(0, 2fr)" },
+          { label: "confidence", width: "120px" },
+          { label: "format", width: "120px" },
+        ]}
+        rows={items}
+        getKey={(a) => a.id}
+        renderCells={(a) => [
+          <span
+            key="q"
+            className="font-mono"
+            style={{
+              fontSize: 11,
+              color: "var(--text-primary)",
+              display: "block",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+            title={a.question_text}
+          >
+            {a.question_text}
+          </span>,
+          <span
+            key="a"
+            className="font-mono"
+            style={{
+              fontSize: 10.5,
+              color: "var(--status-ok)",
+              display: "block",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+            title={a.answer_text ?? undefined}
+          >
+            {a.answer_text || "--"}
+          </span>,
+          <MonoBadge
+            key="c"
+            tone={CONFIDENCE_TONE[a.confidence] ?? "info"}
+          >
+            {a.confidence}
+          </MonoBadge>,
+          <span
+            key="f"
+            className="font-mono"
+            style={{ fontSize: 10, color: "var(--text-faint)" }}
+          >
+            {a.format_hint || "--"}
+          </span>,
+        ]}
+      />
     </div>
   );
 }

@@ -9,6 +9,7 @@ import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass"
 import { Pulse } from "@phosphor-icons/react/dist/csr/Pulse";
 import { Plugs } from "@phosphor-icons/react/dist/csr/Plugs";
 import { Receipt } from "@phosphor-icons/react/dist/csr/Receipt";
+import { Scales } from "@phosphor-icons/react/dist/csr/Scales";
 
 import type { NavContribution } from "@platform/extension-registry/types";
 
@@ -30,6 +31,15 @@ export const nav: NavContribution[] = [
     order: 71,
     description: "Hypothesis-driven investigations across targets",
     icon: MagnifyingGlass,
+  },
+  {
+    id: "vr.investigations-compare",
+    slot: "sidebar.main" as const,
+    label: "Compare",
+    to: "/vr/investigations/compare",
+    order: 71.5,
+    description: "Side-by-side comparison of investigations for variant hunts",
+    icon: Scales,
   },
   {
     id: "vr.workspaces",

@@ -27,7 +27,11 @@ from aila.platform.modules import (
     action_id_for,
 )
 from aila.platform.runtime import ToolRegistry
-from aila.platform.tasks.sweeps import all_periodic_sweeps, register_periodic_sweep
+from aila.platform.tasks.sweeps import (
+    SweepPriority,
+    all_periodic_sweeps,
+    register_periodic_sweep,
+)
 
 from .capabilities import CAPABILITY_DESCRIPTION, CAPABILITY_EXAMPLES
 from .services.stuck_healer import sweep_stuck_investigations
@@ -236,19 +240,23 @@ class ForensicsModule(ModuleProtocol):
             from aila.modules.forensics.config_schema import ForensicsConfigSchema
             await registry.register(self.module_id, ForensicsConfigSchema)
 
-            # Resolve forensics.llm_model via ConfigRegistry so an operator
-            # override persisted before worker startup wins over the schema
-            # default. An empty-string value opts out (schema doc: falls back
-            # to the platform default) so we skip seeding the env in that case.
-            import os
-            llm_model_value = await registry.get(self.module_id, "llm_model")
-            llm_model_str = str(llm_model_value) if llm_model_value is not None else ""
-            if llm_model_str:
-                for task_type in ("forensics_freeflow", "forensics_resolver", "forensics_writeup"):
-                    env_key = f"AILA_PLATFORM_LLM_MODEL_{task_type.upper()}"
-                    if not os.environ.get(env_key):
-                        os.environ[env_key] = llm_model_str
-                        _log.info("Seeded %s=%s for forensics LLM routing", env_key, llm_model_str)
+            # fix #131 -- forensics.llm_model is a module-scoped operator
+            # override, resolved live via ``ConfigRegistry.get("forensics",
+            # "llm_model")`` at each LLM call site. The earlier bootstrap
+            # copied this value into per-task-type ``os.environ`` entries
+            # so it could ride the platform LLM router's env-first
+            # resolution chain, but that write poisoned the chain for the
+            # matching ``platform.llm_model_forensics_*`` keys: a later
+            # ``PUT /config/platform/llm_model_forensics_freeflow`` could
+            # not win against the env variable this bootstrap seeded. The
+            # write is removed. Operators pin a forensics-specific model
+            # via ``PUT /config/platform/llm_model_forensics_freeflow``
+            # (or resolver / writeup) directly, which participates in
+            # the standard env > DB > default chain with cross-process
+            # Redis invalidation. The ``forensics.llm_model`` field
+            # remains registered so it can be listed / set through the
+            # config API for downstream consumers that want a single
+            # module-scoped knob.
 
         for spec in iter_tool_specs():
             tool_registry.register(spec.key(), spec.factory(settings))
@@ -348,8 +356,20 @@ class ForensicsModule(ModuleProtocol):
             _log.debug("system_summary failed for system_id=%s", system_id, exc_info=True)
             return {}
 
-    async def report_count(self, _run_id: str, _session: Any) -> dict[str, int]:
-        """Return empty dict -- forensics does not own workflow run reports."""
+    async def report_count(
+        self,
+        _run_id: str,
+        _session: Any,
+        *,
+        team_id: str | None = None,
+    ) -> dict[str, int]:
+        """Return empty dict -- forensics does not own workflow run reports.
+
+        Accepts ``team_id`` (#192) even though the implementation returns
+        {} unconditionally, so the dashboard aggregator's ``team_id=`` call
+        does not raise ``TypeError`` and log-skip on every load.
+        """
+        del team_id
         return {}
 
     async def seed_prompts(self) -> int:
@@ -474,7 +494,9 @@ def _register_forensics_periodic_sweeps() -> None:
     # ``kind='recovery'`` ledger event per heal so the RFC-07 audit
     # trail carries every automated re-enqueue.
     register_periodic_sweep(
-        "forensics.stuck_healer", sweep_stuck_investigations,
+        "forensics.stuck_healer",
+        sweep_stuck_investigations,
+        order=SweepPriority.STUCK_HEALER,
     )
 
 

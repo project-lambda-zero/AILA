@@ -48,6 +48,10 @@ ERROR_HINTS: dict[str, str] = {
     "INTERNAL_ERROR": (
         "An unexpected error occurred. Contact support with the trace ID shown below."
     ),
+    "PAYLOAD_TOO_LARGE": (
+        "The request body exceeded the server limit. Shrink the payload, or "
+        "raise AILA_MAX_REQUEST_BYTES if operator policy allows a larger cap."
+    ),
     # Fallback for any unmapped code.
     "DEFAULT": (
         "An unexpected error occurred. Contact support with the trace ID shown below."

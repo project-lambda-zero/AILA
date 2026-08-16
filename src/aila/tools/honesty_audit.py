@@ -75,8 +75,8 @@ Detects seventy-four categories of structural dishonesty:
 71. service_env_read -- a module ``modules/*/services/**`` file reads config via ``os.environ`` / ``os.getenv`` (attribute access or ``from os import environ/getenv``) instead of ``ConfigRegistry(module_id, key)``. Sibling of rule 49 (``agent_env_read``) for the services layer: RFC-04's config-drift closure removed every direct env read from module services so the DB override and per-module schema default both participate on one path. AST-based -- docstring or comment mentions of ``os.environ`` are invisible and never trip this.
 72. platform_hardcodes_strategy_family -- a file under ``src/aila/platform/**`` contains a string-literal AST node equal to one of the known module reasoning-strategy family names (``mobile_reverse`` / ``vulnerability_research`` / ``web_pentest`` / ``network_forensics`` / ``memory_forensics`` / ``persistence_hunt`` / ``malware_static`` / ``filesystem_triage``). The platform reasoning surface must not name a family owned by a module; strategy families are declared by each module via ``ModuleProtocol.reasoning_strategies()`` and resolved through the registry. The family literal ``generic`` is allowed because it is the platform's fallback family; ``tests/`` paths are exempt. Sibling of rule 48 for the reasoning-strategy surface (RFC-05 crit 6).
 74. unpinned_investigation_prompt -- agent-runtime code (``platform/agents/**`` or ``modules/*/agents/**``) resolves a prompt / bundle by LIVE ALIAS instead of the per-investigation pin. The canonical path is :func:`aila.platform.prompts.pinning.resolve_pinned_prompt`, which reads or persists the investigation pin before ever looking at the alias; a raw ``.resolve(alias=...)`` on the prompt store or the prompt registry in a turn function bypasses that pin and lets an operator alias flip mid-run bleed the new prompt into an already-running investigation's transcript. RFC-09 criterion 4 / threat T6. Scope is the agent-runtime tree; the platform prompts package owns the raw resolve and is naturally out of scope. ``seed_prompt_versions`` functions are exempt because seed / registration legitimately talks to the store directly. Sibling of rules 58 / 59 / 60 on the pin surface.
-75. adlc_structural_change -- a file under ``platform/lifecycle/**`` (the RFC-10 ADLC control plane) constructs a graph-structure element (``PhaseSpec(...)`` / ``WorkflowDefinition(...)`` / ``make_dispatch_router(...)`` / ``build_dispatch_workflow(...)``), mutates a ``.states`` / ``.nodes`` / ``.edges`` mapping, writes a persona-roster binding (``PERSONA_ROLE_MAP`` / ``persona_task_type`` / ``role_task_type``), calls ``.register_tool(...)`` or ``.register(...)`` on a tool-registry-shaped receiver (``tool_registry`` / ``tool_scope``), or constructs a ``Tool`` subclass (a callee terminal ending in ``Tool``). The ADLC promotes versioned agent bundles behind the eval + quorum gate -- an alias flip + a journaled ``LifecycleTransitionRecord`` + a ``LifecycleCanaryAssignment`` state stamp. It must NOT mint a new phase, node, edge, roster entry, or tool; those go through the CODE lifecycle (PR / review / deploy), not through the ADLC bundle promotion path. RFC-10 criterion 6 / design doc ``.run/designs/DESIGN_reasoning_platform.md`` sec 3.7 -- a bundle body whose diff adds a new tool call, a new node kind, or a new graph edge is a finding. Sibling of rule 73 rescoped from the RFC-08 self-improvement layer to the RFC-10 ADLC control plane.
-73. structural_self_modification -- the RFC-08 self-improvement layer (``platform/eval/**`` and the sanctioned proposer files ``platform/agents/pattern_extractor.py`` / ``platform/agents/persona_router.py`` / ``platform/agents/calibrator.py``) proposes parameters (thresholds / persona-selection / patterns / routing weights) only. A structural graph edit from within that layer -- a ``PhaseSpec(...)`` / ``WorkflowDefinition(...)`` construction, a ``make_dispatch_router(...)`` / ``build_dispatch_workflow(...)`` call, a subscript / delete / mutator-method mutation of a ``.states`` / ``.nodes`` / ``.edges`` mapping, or a subscript / mutator write to a persona-roster binding (``PERSONA_ROLE_MAP`` / ``persona_task_type`` / ``role_task_type``) -- lets a self-improvement writer mint a new node, phase, or roster entry outside the operator-authored workflow definition. Fire is scoped to the self-improvement files only so the workflow / engine layer (which legitimately builds the graph) is not flagged; precision over recall by design.
+75. adlc_structural_change -- a file under ``platform/lifecycle/**`` (the RFC-10 ADLC control plane) constructs a graph-structure element (``PhaseSpec(...)`` / ``WorkflowDefinition(...)`` / ``make_dispatch_router(...)`` / ``build_dispatch_workflow(...)``), mutates a ``.states`` / ``.nodes`` / ``.edges`` mapping, writes a persona-roster binding (``persona_role_map`` / ``persona_task_type`` / ``role_task_type``), calls ``.register_tool(...)`` or ``.register(...)`` on a tool-registry-shaped receiver (``tool_registry`` / ``tool_scope``), or constructs a ``Tool`` subclass (a callee terminal ending in ``Tool``). The ADLC promotes versioned agent bundles behind the eval + quorum gate -- an alias flip + a journaled ``LifecycleTransitionRecord`` + a ``LifecycleCanaryAssignment`` state stamp. It must NOT mint a new phase, node, edge, roster entry, or tool; those go through the CODE lifecycle (PR / review / deploy), not through the ADLC bundle promotion path. RFC-10 criterion 6 / design doc ``.run/designs/DESIGN_reasoning_platform.md`` sec 3.7 -- a bundle body whose diff adds a new tool call, a new node kind, or a new graph edge is a finding. Sibling of rule 73 rescoped from the RFC-08 self-improvement layer to the RFC-10 ADLC control plane.
+73. structural_self_modification -- the RFC-08 self-improvement layer (``platform/eval/**`` and the sanctioned proposer files ``platform/agents/pattern_extractor.py`` / ``platform/agents/persona_router.py`` / ``platform/agents/calibrator.py``) proposes parameters (thresholds / persona-selection / patterns / routing weights) only. A structural graph edit from within that layer -- a ``PhaseSpec(...)`` / ``WorkflowDefinition(...)`` construction, a ``make_dispatch_router(...)`` / ``build_dispatch_workflow(...)`` call, a subscript / delete / mutator-method mutation of a ``.states`` / ``.nodes`` / ``.edges`` mapping, or a subscript / mutator write to a persona-roster binding (``persona_role_map`` / ``persona_task_type`` / ``role_task_type``) -- lets a self-improvement writer mint a new node, phase, or roster entry outside the operator-authored workflow definition. Fire is scoped to the self-improvement files only so the workflow / engine layer (which legitimately builds the graph) is not flagged; precision over recall by design.
 
 76. bespoke_mcp_bridge -- a ``Tool`` subclass under ``platform/mcp/**`` constructs its own ``httpx.AsyncClient``. RFC-11 Tier C collapsed the three bespoke bridge Tool subclasses onto one generic ``McpBridgeTool`` + ``McpClient`` transport; server-specific behaviour lives in ``McpMiddleware`` plugins (not Tool subclasses). A new Tool subclass reimplementing the HTTP transport regresses the per-server-transport design the RFC deleted.
 77. static_server_catalog -- an agent dispatcher under ``**/agents/**`` assigns a static ``self._bridges`` dict-literal mapping server ids to bridge instances. RFC-11 Tier C builds bridges on demand via the catalog-driven ``_bridge_for()``; a frozen name->bridge map means an operator-added catalog server cannot dispatch without a code change. Test / DI injection uses ``_bridge_overrides`` instead.
@@ -1063,15 +1063,17 @@ _STRUCTURAL_MAP_ATTRS: frozenset[str] = frozenset({
     "states", "nodes", "edges",
 })
 # Names whose subscript-assign / del / mutator-method call is a
-# persona-roster rewrite. ``PERSONA_ROLE_MAP`` is the top-level
-# module dict; ``persona_task_type`` / ``role_task_type`` are
-# ClassVar dicts on :class:`PersonaRouter` subclasses. A subclass
-# BODY that binds these to a new literal (``persona_task_type = {...}``
-# as an AnnAssign / Assign with a bare Name target) is a legitimate
-# override and NOT a runtime mutation, so only Subscript / Delete /
-# mutator-method shapes fire.
+# persona-roster rewrite. All three are ClassVar dicts on
+# :class:`PersonaRouter` subclasses: ``persona_role_map`` (voice ->
+# role, module-supplied vocabulary since issue #136),
+# ``persona_task_type`` (voice -> task_type, malware shape),
+# ``role_task_type`` (role -> task_type, vr / template shape). A
+# subclass BODY that binds these to a new literal
+# (``persona_task_type = {...}`` as an AnnAssign / Assign with a bare
+# Name target) is a legitimate override and NOT a runtime mutation,
+# so only Subscript / Delete / mutator-method shapes fire.
 _STRUCTURAL_ROSTER_TOKENS: frozenset[str] = frozenset({
-    "PERSONA_ROLE_MAP",
+    "persona_role_map",
     "persona_task_type",
     "role_task_type",
 })
@@ -4649,7 +4651,7 @@ class _HonestyVisitor(ast.NodeVisitor):
         :func:`make_dispatch_router` / :func:`build_dispatch_workflow`,
         a subscript / del / mutator-method mutation of a ``.states`` /
         ``.nodes`` / ``.edges`` mapping, or a subscript / mutator write
-        to a persona-roster binding (``PERSONA_ROLE_MAP`` /
+        to a persona-roster binding (``persona_role_map`` /
         ``persona_task_type`` / ``role_task_type``) -- lets the
         writer mint a phase, node, or roster entry the operator did
         not sign off on. The workflow / engine layer
@@ -4688,7 +4690,8 @@ class _HonestyVisitor(ast.NodeVisitor):
            ...).
         4. A subscript / del / mutator-method write against one of
            :data:`_STRUCTURAL_ROSTER_TOKENS` (matches
-           ``PERSONA_ROLE_MAP[x] = y``, ``persona_task_type.update({...})``,
+           ``persona_role_map[x] = y``,
+           ``persona_task_type.update({...})``,
            ``roster.append(...)`` when ``roster`` is one of those
            tokens). A subclass BODY that binds
            ``persona_task_type = {...}`` with a bare Name target is a

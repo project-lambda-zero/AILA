@@ -27,6 +27,8 @@ __all__ = [
     "register_maintenance_actions",
     "run_calibration_sweep",
     "run_calibrator_trainer_sweep",
+    "run_semantic_consolidation_sweep",
+    "run_skill_library_sweep",
     "tool_storage_prune",
 ]
 
@@ -43,6 +45,10 @@ from aila.platform.automation.registry import AutomationRegistry
 from aila.platform.eval.calibration_sweep import (
     run_calibration_sweep,
     run_calibrator_trainer_sweep,
+)
+from aila.platform.services.memory import (
+    run_semantic_consolidation_sweep,
+    run_skill_library_sweep,
 )
 from aila.platform.services.redis_pool import get_redis, pool_available
 from aila.platform.tools.pruner import ToolStoragePruneReport, prune_tool_storage
@@ -313,6 +319,48 @@ def register_maintenance_actions(registry: AutomationRegistry) -> None:
         description=(
             "Fit per-task_type confidence calibrator candidates from "
             "accept/reject review history"
+        ),
+        module_id="platform",
+    )
+    # Issue #150 semantic-tier memory consolidation. Reads recent
+    # terminal-status investigations from the shared investigation
+    # ledger, distills each into a few de-contextualized factual
+    # statements via a cheap LLM route, and writes them to the module's
+    # live-read semantic namespace in the pgvector knowledge store.
+    # Inert until an :class:`AutomationScheduleRecord` targets this
+    # action_id -- the seed_schedules module wires a nightly default so
+    # a fresh install still runs the sweep without operator setup.
+    registry.register_action(
+        action_id="platform.semantic_consolidation_sweep",
+        handler_fn=run_semantic_consolidation_sweep,
+        description=(
+            "Distill recent resolved-investigation ledger traces into "
+            "de-contextualized semantic facts and store them in the "
+            "existing pgvector knowledge index under each module's "
+            "workspace-scoped semantic namespace"
+        ),
+        module_id="platform",
+    )
+    # Issue #150 procedural (skill-library) tier. Reads recently-resolved
+    # investigations with a confirmed outcome (approved + dispatched
+    # outcome row at STRONG/EXACT/MEDIUM confidence), extracts one
+    # ``(problem_shape -> approach)`` skill per investigation, and writes
+    # it to the team-scoped ``skill.team.<team_id>`` namespace (or the
+    # ``skill.global`` fallback on single-tenant installs). Idempotent
+    # per investigation via the dedup key ``skill:<inv_id>``, so a
+    # repeat tick with nothing new is a bounded, LLM-free no-op.
+    # Registered as its own action rather than folded into the semantic
+    # sweep so operators can pin the two tiers to different cheap
+    # models, cadences, or per-tick caps without dragging the other
+    # tier along.
+    registry.register_action(
+        action_id="platform.skill_library_sweep",
+        handler_fn=run_skill_library_sweep,
+        description=(
+            "Extract one (problem_shape -> approach) skill per "
+            "recently-resolved confirmed-outcome investigation and store "
+            "it in the existing pgvector knowledge index under the "
+            "team-scoped skill.* namespace"
         ),
         module_id="platform",
     )

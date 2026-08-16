@@ -54,9 +54,8 @@ def test_transition_view_serializes_correctly() -> None:
     assert "output_hash" not in d
 
 
-def test_transition_event_type_field() -> None:
+async def test_transition_event_type_field() -> None:
     """emit_transition_event pushes 'type=transition' so consumers can discriminate."""
-    import asyncio
     from contextlib import asynccontextmanager
     from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -79,7 +78,10 @@ def test_transition_event_type_field() -> None:
 
     from aila.platform.workflows.log import emit_transition_event
 
-    async def _run():
+    with (
+        patch("aila.platform.tasks.progress.ProgressStream", return_value=mock_stream),
+        patch("aila.platform.services.redis_pool.get_redis", _mock_get_redis),
+    ):
         await emit_transition_event(
             run_id="run-123",
             seq=5,
@@ -91,12 +93,6 @@ def test_transition_event_type_field() -> None:
             error_message=None,
             happened_at=_utc(),
         )
-
-    with (
-        patch("aila.platform.tasks.progress.ProgressStream", return_value=mock_stream),
-        patch("aila.platform.services.redis_pool.get_redis", _mock_get_redis),
-    ):
-        asyncio.get_event_loop().run_until_complete(_run())
 
     assert len(captured) == 1
     assert captured[0]["type"] == "transition", (

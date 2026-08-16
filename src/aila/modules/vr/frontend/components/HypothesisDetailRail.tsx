@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
-import { EmptyState } from "@/components/aila/EmptyState";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { MonoBadge } from "@/components/aila/mock";
 
 import { useInvestigationHypotheses } from "../queries";
 import type { HypothesisProjection } from "../queries";
@@ -75,6 +75,23 @@ function saveState(investigationId: string, next: RailState): void {
     // loses persistence for this session.
   }
 }
+
+// ─── Shared mock-language style constants ────────────────────────────────
+const META_TEXT: React.CSSProperties = {
+  fontFamily: "var(--font-mono)",
+  fontSize: 9.5,
+  letterSpacing: "0.06em",
+  color: "var(--text-muted)",
+  textTransform: "uppercase",
+};
+
+const LINK_BTN: React.CSSProperties = {
+  ...META_TEXT,
+  background: "transparent",
+  border: "none",
+  padding: 0,
+  cursor: "pointer",
+};
 
 export function HypothesisDetailRail({
   investigationId,
@@ -158,15 +175,15 @@ export function HypothesisDetailRail({
   }, [setState]);
 
   const counts = useMemo(() => {
-    let live = 0;
+    let liveCount = 0;
     let rejected = 0;
     let mixed = 0;
     for (const h of items) {
-      if (h.state === "live") live++;
+      if (h.state === "live") liveCount++;
       else if (h.state === "rejected") rejected++;
       else mixed++;
     }
-    return { live, rejected, mixed };
+    return { live: liveCount, rejected, mixed };
   }, [items]);
 
   // Are all currently-visible rows expanded? Used to choose between
@@ -178,53 +195,105 @@ export function HypothesisDetailRail({
   }, [items, isRowExpanded]);
 
   return (
-    <AilaCard techBorder glow>
-      <div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-        <button
-          type="button"
-          onClick={toggleRail}
-          className="flex items-center gap-1.5 text-sm font-semibold text-foreground hover:text-text-accent transition-colors"
-          aria-expanded={state.railOpen}
-          aria-controls={`hypotheses-list-${investigationId}`}
-          title={state.railOpen ? "Hide hypotheses list" : "Show hypotheses list"}
-        >
-          <Chevron open={state.railOpen} />
-          <span>Hypotheses</span>
-          <span className="text-3xs text-text-muted font-mono font-normal">
+    <WindowPanel
+      title="hypotheses"
+      tone={counts.live > 0 ? "accent" : "muted"}
+      actions={
+        <div className="flex items-center" style={{ gap: 10 }}>
+          <span style={{ ...META_TEXT, fontVariantNumeric: "tabular-nums" }}>
             ({items.length}
             {items.length > 0 ? (
               <>
-                {counts.live > 0 ? `, ${counts.live} live` : ""}
-                {counts.rejected > 0 ? `, ${counts.rejected} rej` : ""}
-                {counts.mixed > 0 ? `, ${counts.mixed} mixed` : ""}
+                {counts.live > 0 ? (
+                  <>
+                    {", "}
+                    <span style={{ color: "var(--accent)" }}>{counts.live} live</span>
+                  </>
+                ) : ""}
+                {counts.rejected > 0 ? (
+                  <>
+                    {", "}
+                    <span style={{ color: "var(--text-faint)" }}>{counts.rejected} rej</span>
+                  </>
+                ) : ""}
+                {counts.mixed > 0 ? (
+                  <>
+                    {", "}
+                    <span style={{ color: "var(--text-primary)" }}>{counts.mixed} mixed</span>
+                  </>
+                ) : ""}
               </>
             ) : null}
             )
           </span>
-        </button>
-        {state.railOpen && items.length > 1 ? (
+          {state.railOpen && items.length > 1 ? (
+            <button
+              type="button"
+              onClick={allExpanded ? collapseAll : expandAll}
+              style={LINK_BTN}
+              title={allExpanded ? "Collapse every hypothesis row" : "Expand every hypothesis row"}
+            >
+              {allExpanded ? "collapse all" : "expand all"}
+            </button>
+          ) : null}
           <button
             type="button"
-            onClick={allExpanded ? collapseAll : expandAll}
-            className="text-3xs text-text-muted hover:text-text-accent font-mono transition-colors"
-            title={allExpanded ? "Collapse every hypothesis row" : "Expand every hypothesis row"}
+            onClick={toggleRail}
+            className="flex items-center"
+            style={{ ...LINK_BTN, color: "var(--text-muted)" }}
+            aria-expanded={state.railOpen}
+            aria-controls={`hypotheses-list-${investigationId}`}
+            title={state.railOpen ? "Hide hypotheses list" : "Show hypotheses list"}
           >
-            {allExpanded ? "collapse all" : "expand all"}
+            <Chevron open={state.railOpen} />
           </button>
-        ) : null}
-      </div>
+        </div>
+      }
+    >
+      <h2 className="sr-only">Hypotheses</h2>
       {state.railOpen ? (
         isLoading ? (
-          <p className="text-xs text-text-muted">Loading…</p>
+          // Content-shaped skeleton mirrors the hypothesis-row layout so
+          // the rail keeps its height while the fetch resolves.
+          <ul
+            aria-busy="true"
+            aria-label="Loading hypotheses"
+            style={{ display: "flex", flexDirection: "column", gap: 8, listStyle: "none", margin: 0, padding: 0 }}
+          >
+            {[0, 1, 2].map((i) => (
+              <li
+                key={i}
+                style={{
+                  border: "1px solid var(--border-soft)",
+                  borderRadius: 3,
+                  padding: "8px 10px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 6,
+                }}
+              >
+                <LoadingSkeleton size="sm" width="half" />
+                <LoadingSkeleton size="sm" width="full" />
+              </li>
+            ))}
+          </ul>
         ) : items.length === 0 ? (
-          <EmptyState
-            title="No hypotheses yet"
-            description="The reasoning engine populates hypotheses as it observes evidence on each branch."
-          />
+          <div
+            className="font-mono"
+            style={{
+              padding: 34,
+              textAlign: "center",
+              fontSize: 11.5,
+              color: "var(--text-muted)",
+              letterSpacing: "0.04em",
+            }}
+          >
+            no hypotheses yet -- the reasoning engine populates them as branches observe evidence.
+          </div>
         ) : (
           <ul
             id={`hypotheses-list-${investigationId}`}
-            className="space-y-2"
+            style={{ display: "flex", flexDirection: "column", gap: 8, listStyle: "none", margin: 0, padding: 0 }}
           >
             {items.map((h) => (
               <HypothesisRow
@@ -237,7 +306,7 @@ export function HypothesisDetailRail({
           </ul>
         )
       ) : null}
-    </AilaCard>
+    </WindowPanel>
   );
 }
 
@@ -245,8 +314,15 @@ function Chevron({ open }: { open: boolean }) {
   return (
     <span
       aria-hidden="true"
-      className="inline-block w-3 text-text-muted font-mono text-3xs leading-none transition-transform"
-      style={{ transform: open ? "rotate(90deg)" : "rotate(0deg)" }}
+      className="inline-block font-mono"
+      style={{
+        width: 12,
+        fontSize: 9,
+        lineHeight: 1,
+        color: "var(--text-muted)",
+        transform: open ? "rotate(90deg)" : "rotate(0deg)",
+        transition: "transform 120ms ease",
+      }}
     >
       ▶
     </span>
@@ -262,8 +338,21 @@ function HypothesisRow({
   expanded: boolean;
   onToggle: () => void;
 }) {
-  const sev =
+  // Preserve the historic severity mapping so downstream visual weight
+  // stays intact; route it through the mock badge tone (info/low/medium
+  // are all valid MonoBadge tone keys).
+  const sev: "info" | "low" | "medium" =
     h.state === "live" ? "info" : h.state === "rejected" ? "low" : "medium";
+
+  // Presentational state accent for the row's left stripe -- live reads
+  // hot-pink (the "watch this" cue), rejected recedes to the border
+  // tone, everything else settles on primary text.
+  const stateAccent =
+    h.state === "live"
+      ? "var(--accent)"
+      : h.state === "rejected"
+        ? "var(--border)"
+        : "var(--text-primary)";
 
   const hasDetail =
     Boolean(h.why_plausible) ||
@@ -273,48 +362,75 @@ function HypothesisRow({
     h.rejected_in_branches.length > 0;
 
   return (
-    <li className="border border-border-default rounded bg-surface/40 break-words">
+    <li
+      style={{
+        border: "1px solid var(--border-soft)",
+        borderLeft: `3px solid ${stateAccent}`,
+        borderRadius: 3,
+        background: "var(--surface-card)",
+        wordBreak: "break-word",
+      }}
+    >
       <button
         type="button"
         onClick={onToggle}
         disabled={!hasDetail}
-        className={`w-full flex items-start gap-2 p-2 text-left ${
-          hasDetail ? "hover:bg-surface/60 cursor-pointer" : "cursor-default"
-        }`}
+        className="w-full flex items-start text-left"
+        style={{
+          gap: 8,
+          padding: 8,
+          background: "transparent",
+          border: "none",
+          color: "inherit",
+          cursor: hasDetail ? "pointer" : "default",
+        }}
         aria-expanded={expanded}
         title={hasDetail ? (expanded ? "Collapse" : "Expand") : "No additional detail"}
       >
-        <span className="pt-0.5 shrink-0">
+        <span className="shrink-0" style={{ paddingTop: 2 }}>
           {hasDetail ? <Chevron open={expanded} /> : (
-            <span className="inline-block w-3" aria-hidden="true" />
+            <span className="inline-block" style={{ width: 12 }} aria-hidden="true" />
           )}
         </span>
-        <p className="text-sm text-foreground flex-1 min-w-0">
+        <p
+          className="flex-1 min-w-0"
+          style={{
+            fontSize: 12.5,
+            lineHeight: 1.4,
+            margin: 0,
+            color: h.state === "rejected" ? "var(--text-muted)" : "var(--text-primary)",
+          }}
+        >
           {h.claim || h.id}
         </p>
-        <AilaBadge severity={sev} size="sm">
-          {h.state}
-        </AilaBadge>
+        <MonoBadge tone={sev}>{h.state}</MonoBadge>
       </button>
       {expanded && hasDetail ? (
-        <div className="px-2 pb-2 pl-7">
+        <div style={{ padding: "0 8px 8px 28px", display: "flex", flexDirection: "column", gap: 4 }}>
           {h.why_plausible ? (
-            <p className="text-xs text-text-muted mt-1">
-              <span className="font-mono">why_plausible:</span> {h.why_plausible}
+            <p style={{ fontSize: 11, margin: 0, color: "var(--text-muted)" }}>
+              <span style={{ fontFamily: "var(--font-mono)" }}>why_plausible:</span> {h.why_plausible}
             </p>
           ) : null}
           {h.kill_criterion ? (
-            <p className="text-xs text-text-muted mt-1">
-              <span className="font-mono">kill_criterion:</span> {h.kill_criterion}
+            <p style={{ fontSize: 11, margin: 0, color: "var(--text-muted)" }}>
+              <span style={{ fontFamily: "var(--font-mono)" }}>kill_criterion:</span> {h.kill_criterion}
             </p>
           ) : null}
           {h.rejection_reason ? (
-            <p className="text-xs text-text-danger mt-1">
-              <span className="font-mono">rejected:</span> {h.rejection_reason}
+            <p style={{ fontSize: 11, margin: 0, color: "var(--accent)" }}>
+              <span style={{ fontFamily: "var(--font-mono)" }}>rejected:</span> {h.rejection_reason}
             </p>
           ) : null}
           {(h.live_in_branches.length > 0 || h.rejected_in_branches.length > 0) ? (
-            <div className="flex flex-wrap gap-2 mt-1 text-3xs text-text-muted font-mono">
+            <div
+              className="flex flex-wrap"
+              style={{
+                gap: 8,
+                marginTop: 2,
+                ...META_TEXT,
+              }}
+            >
               {h.live_in_branches.length > 0 ? (
                 <span>live on {h.live_in_branches.length} branch(es)</span>
               ) : null}

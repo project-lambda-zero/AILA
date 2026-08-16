@@ -50,6 +50,14 @@ async def stress_client(test_db) -> AsyncClient:
 
     stub_runtime = MagicMock()
     stub_runtime.config_registry = stub_config_registry
+    # POST /analyze resolves the submission track by iterating
+    # module_registry.all_with("scan_submission_track") and taking the first
+    # non-None track. A bare MagicMock iterates empty, which the handler treats
+    # as "no module accepts submissions" and answers 503. Wire one module that
+    # publishes a track so the submit path is exercised.
+    scan_module = MagicMock()
+    scan_module.scan_submission_track.return_value = "vulnerability"
+    stub_runtime.module_registry.all_with.return_value = [scan_module]
 
     stub_platform = MagicMock()
     stub_platform.runtime = stub_runtime

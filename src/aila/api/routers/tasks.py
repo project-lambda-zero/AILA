@@ -97,7 +97,6 @@ def _record_to_response(record: TaskRecord) -> TaskResponse:
         completed_at=record.completed_at,
         heartbeat_at=record.heartbeat_at,
         error=record.error,
-        result_path=record.result_path,
         # Phase 179: cursor column dropped; state lives in
         # workflow_state_cursor. Always False until Phase 180 wires a
         # workflow-cursor lookup for the schema field.

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import time
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -108,11 +108,17 @@ async def test_scan_sse_headers(client_no_redis):
 async def test_scan_sse_event_format_contract(test_db, admin_key_record):
     """Events emitted by ProgressStream contain stage, message, percent keys (ASYNC-04).
 
-    This test verifies the event format contract without live Redis.
-    Uses a mock ProgressStream whose catchup() returns pre-baked events.
+    Verifies the SSE event format contract on the streaming path (pool
+    available). Follows the canonical pattern from
+    ``tests/api/test_96_sse_streaming_verification.py``:
+      * ``pool_available`` is patched True so the router does not short-circuit
+        into the no-Redis informational fallback (the autouse fixture in
+        tests/conftest.py resets ``_pool`` to ``None`` before every test).
+      * ``ProgressStream.catchup`` is awaited by the router, so it must be an
+        ``AsyncMock`` -- a plain ``MagicMock`` returns a non-awaitable.
+      * ``ProgressStream.stream_events`` is consumed with ``async for``, so it
+        must return a real async iterator, not ``iter([...])``.
     """
-    from unittest.mock import patch
-
     from aila.api.app import create_app
 
     stub_platform = MagicMock()
@@ -123,16 +129,24 @@ async def test_scan_sse_event_format_contract(test_db, admin_key_record):
         {"stage": "scoring", "message": "Scoring CVEs", "percent": "75", "timestamp": "2026-04-04T00:00:01+00:00"},
     ]
 
+    async def _empty_async_iter():
+        # Router's live loop is `async for event in stream.stream_events(...)`.
+        # A real async generator with no yields terminates the loop immediately.
+        if False:
+            yield  # pragma: no cover
+
     app = create_app()
     app.state.platform = stub_platform
     app.state.start_time = time.monotonic()
     _seed_task(admin_key_record, run_id="scan-fmt-001")
 
-    with patch("aila.api.routers.scans.ProgressStream") as MockPS:  # noqa: N806
+    with (
+        patch("aila.api.routers.scans.pool_available", return_value=True),
+        patch("aila.api.routers.scans.ProgressStream") as MockPS,  # noqa: N806
+    ):
         instance = MockPS.return_value
-        instance.catchup.return_value = mock_events
-        # Return an empty generator so the live loop exits after catchup events
-        instance.stream_events.return_value = iter([])
+        instance.catchup = AsyncMock(return_value=mock_events)
+        instance.stream_events.return_value = _empty_async_iter()
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as c:
             token, _ = issue_jwt_token(admin_key_record)
@@ -143,13 +157,25 @@ async def test_scan_sse_event_format_contract(test_db, admin_key_record):
 
     assert resp.status_code == 200
     lines = [ln for ln in resp.text.splitlines() if ln.startswith("data:")]
-    assert len(lines) >= 2, f"Expected at least 2 events, got: {resp.text!r}"
-    first = json.loads(lines[0].removeprefix("data:").strip())
-    assert "stage" in first, f"Missing 'stage' key in event: {first}"
-    assert "message" in first, f"Missing 'message' key in event: {first}"
-    assert "percent" in first, f"Missing 'percent' key in event: {first}"
-    assert first["stage"] == "inventory"
-    assert first["percent"] == "25"
+    # Route emits a synthetic "Connected" data event before catchup events,
+    # so we expect 1 Connected + len(mock_events) catchup events.
+    assert len(lines) >= 1 + len(mock_events), (
+        f"Expected at least {1 + len(mock_events)} events (Connected + catchup), "
+        f"got {len(lines)}: {resp.text!r}"
+    )
+    connected = json.loads(lines[0].removeprefix("data:").strip())
+    assert connected == {"stage": "stream", "message": "Connected", "percent": 0}, (
+        f"Expected synthetic Connected event first, got: {connected}"
+    )
+    first_catchup = json.loads(lines[1].removeprefix("data:").strip())
+    assert "stage" in first_catchup, f"Missing 'stage' key in event: {first_catchup}"
+    assert "message" in first_catchup, f"Missing 'message' key in event: {first_catchup}"
+    assert "percent" in first_catchup, f"Missing 'percent' key in event: {first_catchup}"
+    assert first_catchup["stage"] == "inventory"
+    assert first_catchup["percent"] == "25"
+    second_catchup = json.loads(lines[2].removeprefix("data:").strip())
+    assert second_catchup["stage"] == "scoring"
+    assert second_catchup["percent"] == "75"
 
 
 @pytest.mark.asyncio

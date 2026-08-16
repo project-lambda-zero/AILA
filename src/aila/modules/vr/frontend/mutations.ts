@@ -6,15 +6,18 @@ import { toast } from "@/components/ui/sonner";
 
 import type {
   ArtifactTier,
+  CrashTriageVerdict,
   DisclosureSubmissionStatus,
   DisclosureUpdate,
   Envelope,
   InvestigationKind,
   OperatorIntent,
+  OutcomeReviewVote,
   PatternConfidence,
   PatternKind,
   PatternScope,
   PatternStatus,
+  PersonaVoice,
   RenderedSubmission,
   TargetKind,
   VRDisclosureSubmissionSummary,
@@ -23,6 +26,7 @@ import type {
   VRFuzzCrashSummary,
   VRInvestigationSummary,
   VRMessageSummary,
+  VROutcomeReviewSummary,
   VRPatternSummary,
   VRProjectCreate,
   VRProjectSummary,
@@ -333,20 +337,93 @@ export function useCreateInvestigation() {
 
 export function useToggleInvestigationFavorite() {
   const queryClient = useQueryClient();
-  return useMutation({
+  // Optimistic favorite toggle. Flips is_favorite in every cached
+  // ["vr","investigations",...] list (and the ["vr","investigations-for-target",...]
+  // per-target list) plus the single ["vr","investigation", id] detail row
+  // immediately so the star reacts instantly. On mutationFn failure we
+  // restore the exact prior cache from a snapshot captured in onMutate.
+  // Every affected key is invalidated onSettled so the server response
+  // wins the race even if the operator double-toggles.
+  type CachedList = Envelope<VRInvestigationSummary[]> | undefined;
+  type Ctx = {
+    listSnap: [readonly unknown[], CachedList][];
+    targetListSnap: [readonly unknown[], CachedList][];
+    singleSnap: VRInvestigationSummary | undefined;
+  };
+  return useMutation<Envelope<VRInvestigationSummary>, Error, string, Ctx>({
     mutationFn: (investigationId: string) =>
       authorizedRequestJson<Envelope<VRInvestigationSummary>>(
         `/vr/investigations/${encodeURIComponent(investigationId)}/favorite`,
         { method: "PATCH" },
       ),
+    onMutate: async (investigationId) => {
+      await queryClient.cancelQueries({ queryKey: ["vr", "investigations"] });
+      await queryClient.cancelQueries({ queryKey: ["vr", "investigations-for-target"] });
+      await queryClient.cancelQueries({ queryKey: ["vr", "investigation", investigationId] });
+
+      const listSnap = queryClient.getQueriesData<Envelope<VRInvestigationSummary[]>>(
+        { queryKey: ["vr", "investigations"] },
+      );
+      const targetListSnap = queryClient.getQueriesData<Envelope<VRInvestigationSummary[]>>(
+        { queryKey: ["vr", "investigations-for-target"] },
+      );
+      const singleSnap = queryClient.getQueryData<VRInvestigationSummary>(
+        ["vr", "investigation", investigationId],
+      );
+
+      const flipList = (cached: CachedList): CachedList => {
+        if (!cached) return cached;
+        return {
+          ...cached,
+          data: cached.data.map((inv) =>
+            inv.id === investigationId
+              ? { ...inv, is_favorite: !inv.is_favorite }
+              : inv,
+          ),
+        };
+      };
+      queryClient.setQueriesData<CachedList>(
+        { queryKey: ["vr", "investigations"] },
+        flipList,
+      );
+      queryClient.setQueriesData<CachedList>(
+        { queryKey: ["vr", "investigations-for-target"] },
+        flipList,
+      );
+      if (singleSnap) {
+        queryClient.setQueryData<VRInvestigationSummary>(
+          ["vr", "investigation", investigationId],
+          { ...singleSnap, is_favorite: !singleSnap.is_favorite },
+        );
+      }
+      return { listSnap, targetListSnap, singleSnap };
+    },
+    onError: (err, investigationId, ctx) => {
+      if (ctx) {
+        for (const [key, data] of ctx.listSnap) {
+          queryClient.setQueryData(key, data);
+        }
+        for (const [key, data] of ctx.targetListSnap) {
+          queryClient.setQueryData(key, data);
+        }
+        if (ctx.singleSnap !== undefined) {
+          queryClient.setQueryData(
+            ["vr", "investigation", investigationId],
+            ctx.singleSnap,
+          );
+        }
+      }
+      toast.error(`Favorite toggle failed: ${err.message}`);
+    },
     onSuccess: (result) => {
-      queryClient.invalidateQueries({ queryKey: ["vr", "investigations"] });
       toast.success(
         result.data.is_favorite ? "Added to favorites" : "Removed from favorites",
       );
     },
-    onError: (err: Error) => {
-      toast.error(`Favorite toggle failed: ${err.message}`);
+    onSettled: (_data, _err, investigationId) => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigations"] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigations-for-target"] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "investigation", investigationId] });
     },
   });
 }
@@ -1333,3 +1410,320 @@ export function useGenerateVRNarrative(investigationId: string) {
     },
   });
 }
+
+// ─── Crash triage append ────────────────────────────────────────────────
+// POST /vr/fuzz/crashes/{id}/triage — CrashTriageEvent body appends to
+// the JSON-encoded triage_chain on the crash, then flips
+// triage_verdict / triage_reason to the latest event. Handler at
+// vr/api_router.py::append_crash_triage. Contract: contracts/fuzz.py
+// class CrashTriageEvent (at, actor, verdict, reason, notes).
+
+export interface CrashTriageEventBody {
+  /** ISO-8601 timestamp of the event. Frontend fills with `new Date().toISOString()`. */
+  at: string;
+  /** Free-form actor label — the auth user's display name (or "operator"). */
+  actor: string;
+  verdict: CrashTriageVerdict;
+  reason?: string;
+  notes?: string;
+}
+
+export function useAppendCrashTriage(crashId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CrashTriageEventBody) =>
+      authorizedRequestJson<Envelope<VRFuzzCrashSummary>>(
+        `/vr/fuzz/crashes/${encodeURIComponent(crashId)}/triage`,
+        { method: "POST", body: JSON.stringify(body) },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "fuzz-crash", crashId] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "fuzz-crashes"] });
+      toast.success("Triage event appended");
+    },
+    onError: (err: Error) => {
+      toast.error(`Triage failed: ${err.message}`);
+    },
+  });
+}
+
+// ─── Draft PoC (agent) ──────────────────────────────────────────────────
+// POST /vr/findings/{id}/draft-poc — enqueues run_vr_draft_poc against
+// the vr worker queue. The result lands async on the finding's `poc`
+// payload (poc.code / poc.language). Safe to call multiple times; each
+// call overwrites the previous draft.
+//
+// The screen typically pairs this with a temporary `refetchInterval` on
+// the finding query so the new PoC surfaces without a manual refresh.
+
+export interface DraftPocResult {
+  finding_id: string;
+  task_id: string;
+  status: string;
+}
+
+export function useDraftPoc() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ findingId }: { findingId: string }) =>
+      authorizedRequestJson<Envelope<DraftPocResult>>(
+        `/vr/findings/${encodeURIComponent(findingId)}/draft-poc`,
+        { method: "POST" },
+      ),
+    onSuccess: (_res, vars) => {
+      // Encourage both scoped + global finding queries to refetch so the
+      // eventual poc.code surfaces on whichever route rendered the
+      // affordance.
+      queryClient.invalidateQueries({ queryKey: ["vr", "finding"] });
+      queryClient.invalidateQueries({
+        queryKey: ["vr", "finding-by-id", vars.findingId],
+      });
+      toast.success("PoC drafting queued — the PoC card populates when the writer finishes (~30-120s).");
+    },
+    onError: (err: Error) => {
+      toast.error(`Draft PoC failed: ${err.message}`);
+    },
+  });
+}
+
+// ─── Sibling outcome reviews (operator vote) ────────────────────────────
+// POST /vr/investigations/{iid}/outcomes/{oid}/reviews.
+// Operator manually casts a review on a sibling branch's draft outcome.
+// The backend evaluates quorum after every insert; approve quorum flips
+// the outcome state to APPROVED and fires the dispatcher inline.
+// Contract: contracts/outcome.py class VROutcomeReviewCreate.
+
+export interface OutcomeReviewCreateBody {
+  reviewer_branch_id: string;
+  vote: OutcomeReviewVote;
+  comment?: string;
+  suggested_edits?: Record<string, unknown>;
+}
+
+export function useCreateOutcomeReview(investigationId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      outcomeId,
+      body,
+    }: {
+      outcomeId: string;
+      body: OutcomeReviewCreateBody;
+    }) =>
+      authorizedRequestJson<Envelope<VROutcomeReviewSummary>>(
+        `/vr/investigations/${encodeURIComponent(investigationId)}/outcomes/${encodeURIComponent(outcomeId)}/reviews`,
+        { method: "POST", body: JSON.stringify(body) },
+      ),
+    onSuccess: () => {
+      // Vote may have flipped the outcome to APPROVED (dispatcher runs
+      // inline) — force a refresh of the outcomes list + investigation
+      // status so promoted findings and dispatch_status update.
+      queryClient.invalidateQueries({
+        queryKey: ["vr", "investigation-outcomes", investigationId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["vr", "investigation", investigationId],
+      });
+      toast.success("Review recorded");
+    },
+    onError: (err: Error) => {
+      toast.error(`Review failed: ${err.message}`);
+    },
+  });
+}
+
+// ─── Strategy-branch spawn ──────────────────────────────────────────────
+// POST /vr/investigations/{id}/strategy-branches.
+// Operator spawns a new branch tagged with a strategy_family. When
+// parent_branch_id is null the branch starts fresh (parallel strategy);
+// otherwise the new branch inherits parent case_state.
+// Contract: contracts/branch.py class StrategyBranchSpawn.
+
+export interface StrategyBranchSpawnBody {
+  strategy_family: string;
+  persona_voice?: PersonaVoice | null;
+  rationale?: string;
+  parent_branch_id?: string | null;
+}
+
+export interface StrategyBranchSpawnResult {
+  op: string;
+  investigation_id: string;
+  new_branch_id: string;
+  parent_branch_id: string | null;
+  strategy_family: string;
+  reason: string;
+}
+
+export function useSpawnStrategyBranch(investigationId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: StrategyBranchSpawnBody) =>
+      authorizedRequestJson<Envelope<StrategyBranchSpawnResult>>(
+        `/vr/investigations/${encodeURIComponent(investigationId)}/strategy-branches`,
+        { method: "POST", body: JSON.stringify(body) },
+      ),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({
+        queryKey: ["vr", "investigation-branches", investigationId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["vr", "investigation", investigationId],
+      });
+      const r = res.data;
+      toast.success(
+        `Strategy branch spawned: ${r.strategy_family} (${r.new_branch_id.slice(0, 8)}…)`,
+      );
+    },
+    onError: (err: Error) => {
+      toast.error(`Strategy branch spawn failed: ${err.message}`);
+    },
+  });
+}
+
+// ─── Per-branch operations ──────────────────────────────────────────────
+// POST /vr/investigations/{iid}/branches/{bid}/{fork|promote|abandon|pause|resume}
+// Every op takes a shared { reason: string } body; fork additionally
+// accepts persona_voice + at_turn. Merge (which requires a second
+// branch id) intentionally isn't surfaced here — the branch tree is
+// the wrong UX for picking a target branch and it belongs on a
+// dedicated merge dialog when we build one. Bodies match
+// api_router.py::_BranchOpBody / _ForkBody.
+
+export interface BranchOpBody {
+  reason?: string;
+}
+
+export interface BranchForkBody extends BranchOpBody {
+  persona_voice?: PersonaVoice | null;
+  at_turn?: number | null;
+}
+
+export interface BranchOpResult {
+  op: string;
+  investigation_id: string;
+  new_branch_id?: string | null;
+  parent_branch_id?: string | null;
+  affected_branch_ids?: string[];
+  reason?: string;
+  [key: string]: unknown;
+}
+
+function useBranchOp(
+  investigationId: string,
+  op: "promote" | "abandon" | "pause" | "resume",
+  successLabel: string,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      branchId,
+      body,
+    }: {
+      branchId: string;
+      body?: BranchOpBody;
+    }) =>
+      authorizedRequestJson<Envelope<BranchOpResult>>(
+        `/vr/investigations/${encodeURIComponent(investigationId)}/branches/${encodeURIComponent(branchId)}/${op}`,
+        { method: "POST", body: JSON.stringify(body ?? {}) },
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["vr", "investigation-branches", investigationId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["vr", "investigation", investigationId],
+      });
+      toast.success(successLabel);
+    },
+    onError: (err: Error) => {
+      toast.error(`Branch ${op} failed: ${err.message}`);
+    },
+  });
+}
+
+export const usePromoteBranch = (investigationId: string) =>
+  useBranchOp(investigationId, "promote", "Branch promoted (siblings abandoned)");
+export const useAbandonBranch = (investigationId: string) =>
+  useBranchOp(investigationId, "abandon", "Branch abandoned");
+export const usePauseBranch = (investigationId: string) =>
+  useBranchOp(investigationId, "pause", "Branch paused");
+export const useResumeBranch = (investigationId: string) =>
+  useBranchOp(investigationId, "resume", "Branch resumed");
+
+export function useForkBranch(investigationId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      branchId,
+      body,
+    }: {
+      branchId: string;
+      body?: BranchForkBody;
+    }) =>
+      authorizedRequestJson<Envelope<BranchOpResult>>(
+        `/vr/investigations/${encodeURIComponent(investigationId)}/branches/${encodeURIComponent(branchId)}/fork`,
+        { method: "POST", body: JSON.stringify(body ?? {}) },
+      ),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({
+        queryKey: ["vr", "investigation-branches", investigationId],
+      });
+      queryClient.invalidateQueries({
+        queryKey: ["vr", "investigation", investigationId],
+      });
+      const nid = res.data.new_branch_id;
+      toast.success(
+        nid ? `Branch forked → ${nid.slice(0, 8)}…` : "Branch forked",
+      );
+    },
+    onError: (err: Error) => {
+      toast.error(`Branch fork failed: ${err.message}`);
+    },
+  });
+}
+
+// ─── Resume target analysis ─────────────────────────────────────────────
+// POST /vr/targets/{id}/resume-analysis — resets any FAILED stages back
+// to PENDING and re-enqueues the ingest → profile → ranking pipeline.
+// DONE stages stay DONE (StageTracker idempotence). Distinct from the
+// blunt /analyze which resubmits everything unconditionally.
+
+export interface ResumeAnalysisResult {
+  task_id: string | null;
+  target_id: string;
+  stages_reset: number;
+  enqueued: Array<{ stage: string; task_id: string }>;
+  stages: Record<string, unknown>;
+}
+
+export function useResumeTargetAnalysis(targetId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      authorizedRequestJson<Envelope<ResumeAnalysisResult>>(
+        `/vr/targets/${encodeURIComponent(targetId)}/resume-analysis`,
+        { method: "POST" },
+      ),
+    onSuccess: (res) => {
+      queryClient.invalidateQueries({ queryKey: ["vr", "target", targetId] });
+      queryClient.invalidateQueries({ queryKey: ["vr", "targets"] });
+      const n = res.data.stages_reset;
+      toast.success(
+        n > 0
+          ? `Resumed: ${n} failed stage${n === 1 ? "" : "s"} reset + re-enqueued`
+          : `Resumed: pipeline re-enqueued (no failed stages)`,
+      );
+    },
+    onError: (err: Error) => {
+      toast.error(`Resume analysis failed: ${err.message}`);
+    },
+  });
+}
+
+// Note: POST /vr/investigations/{iid}/targets (attach secondary target) +
+// DELETE /vr/investigations/{iid}/targets/{tid} (detach) are intentionally
+// NOT wired here — they need a target-picker on InvestigationDetailPage
+// that doesn't exist yet, and the secondary-targets section itself isn't
+// rendered. Both are legitimately operator-facing writes; wire them when
+// the secondary-targets rail ships.

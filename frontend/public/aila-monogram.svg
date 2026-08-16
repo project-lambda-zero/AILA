@@ -4,41 +4,27 @@
 
   <defs>
     <linearGradient id="ailaWhite" x1="0" y1="1" x2="1" y2="0">
-      <stop offset="0" stop-color="#F5F5F6"/>
-      <stop offset="1" stop-color="#FFFFFF"/>
+      <stop offset="0" stop-color="#F5F5F6"></stop>
+      <stop offset="1" stop-color="#FFFFFF"></stop>
     </linearGradient>
 
     <linearGradient id="ailaPurple" x1="0.15" y1="0" x2="0.85" y2="1">
-      <stop offset="0" stop-color="#9697F2"/>
-      <stop offset="1" stop-color="#7677D9"/>
+      <stop offset="0" stop-color="#9697F2"></stop>
+      <stop offset="1" stop-color="#7677D9"></stop>
     </linearGradient>
 
     <linearGradient id="ailaOrange" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFB85F"/>
-      <stop offset="1" stop-color="#F6A23D"/>
+      <stop offset="0" stop-color="#FFB85F"></stop>
+      <stop offset="1" stop-color="#F6A23D"></stop>
     </linearGradient>
   </defs>
 
-  <!-- Left white stroke -->
-  <path d="M 70 540
-           L 180 540
-           L 318 282
-           L 267 180
-           Z"
-        fill="url(#ailaWhite)"/>
+  
+  <path d="M 70 540&#xA;           L 180 540&#xA;           L 318 282&#xA;           L 267 180&#xA;           Z" fill="url(#ailaWhite)"></path>
 
-  <!-- Center orange triangle -->
-  <path d="M 282 540
-           L 448 540
-           L 365 382
-           Z"
-        fill="url(#ailaOrange)"/>
+  
+  <path d="M 282 540&#xA;           L 448 540&#xA;           L 365 382&#xA;           Z" fill="url(#ailaOrange)"></path>
 
-  <!-- Right purple stroke -->
-  <path d="M 362 0
-           L 307 102
-           L 548 540
-           L 658 540
-           Z"
-        fill="url(#ailaPurple)"/>
+  
+  <path d="M 362 0&#xA;           L 307 102&#xA;           L 548 540&#xA;           L 658 540&#xA;           Z" fill="url(#ailaPurple)"></path>
 </svg>

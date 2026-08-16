@@ -373,6 +373,25 @@ export type OperatorIntent =
   | "dismissal" | "outcome_selection"
   | "branch_command" | "unclassified";
 
+/** Sibling-review vote enum (contracts/outcome.py::VROutcomeReviewCreate.vote).
+ *  `not_ready` records a stated blocker without moving approve/reject
+ *  quorum — a branch declines to ship a sibling's draft without a
+ *  stalling abstain or a premature approve/reject. */
+export type OutcomeReviewVote =
+  | "approve" | "reject" | "request_edit" | "abstain" | "not_ready";
+
+/** Read projection of one outcome review (contracts/outcome.py). */
+export interface VROutcomeReviewSummary {
+  id: string;
+  outcome_id: string;
+  reviewer_branch_id: string;
+  reviewer_persona: string;
+  vote: OutcomeReviewVote;
+  comment?: string;
+  suggested_edits?: Record<string, unknown>;
+  created_at?: string | null;
+}
+
 export type OutcomeKind =
   | "assessment_report" | "strategy_descriptor" | "profile_spec_draft"
   | "config_delta" | "variant_hunt_order" | "patch_assessment_report"

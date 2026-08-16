@@ -14,7 +14,6 @@ import asyncio
 import json
 import json as _json
 import logging
-import os as _os
 from collections.abc import AsyncGenerator
 from typing import Any, Literal
 
@@ -32,10 +31,11 @@ from aila.api.limiter import limiter
 from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.services.outcome_polarity import derive_outcome_polarity
-from aila.platform.config_base import ModuleConfigReader
+from aila.platform.config_base import ModuleConfigReader, _shared_registry
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.auth import AuthContext, require_auth
 from aila.platform.services.factory import ServiceFactory
+from aila.platform.services.http import build_async_http_client
 from aila.platform.services.investigation_cost import (
     compute_live_investigation_cost,
 )
@@ -45,6 +45,7 @@ from aila.platform.services.investigation_summaries import (
     build_message_summary,
     build_outcome_summary,
 )
+from aila.platform.services.ssrf import SSRFBlockedError
 from aila.platform.uow import UnitOfWork
 from aila.storage.db_models import WorkflowStateCursor
 
@@ -2672,12 +2673,27 @@ def create_vr_router() -> APIRouter:
             )
         base_url, _src = await registry_svc._resolved_url(spec)
 
+        # #181: route the refresh through the platform-guarded async client
+        # so the operator-set base_url is re-validated against the SSRF
+        # egress policy before the POST opens a socket.
+        from aila.config import get_settings as _get_settings
+        from aila.platform.config import (
+            build_platform_settings as _build_platform_settings,
+        )
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with build_async_http_client(
+                _build_platform_settings(_get_settings()),
+                timeout=120.0,
+            ) as client:
                 resp = await client.post(
                     f"{base_url}/tools/refresh_index",
                     json={"index_id": index_id, "force": bool(force)},
                 )
+        except SSRFBlockedError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"audit-mcp base_url refused by egress policy: {exc}",
+            ) from exc
         except (httpx.ConnectError, httpx.TimeoutException) as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -2805,8 +2821,19 @@ def create_vr_router() -> APIRouter:
 
         bridge = make_bridge("ida_headless", module_id="vr", recorder=record_call)
         base_url = await bridge._resolve_base_url()
+        # #181: route the upload through the platform-guarded async client
+        # so the operator-set base_url is re-validated against the SSRF
+        # egress policy (link-local / cloud IMDS / RFC1918 blocked)
+        # before the sample bytes are POSTed.
+        from aila.config import get_settings as _get_settings
+        from aila.platform.config import (
+            build_platform_settings as _build_platform_settings,
+        )
         try:
-            async with httpx.AsyncClient(timeout=300.0) as client:
+            async with build_async_http_client(
+                _build_platform_settings(_get_settings()),
+                timeout=300.0,
+            ) as client:
                 resp = await client.post(
                     f"{base_url}/upload",
                     files={
@@ -2817,6 +2844,11 @@ def create_vr_router() -> APIRouter:
                         ),
                     },
                 )
+        except SSRFBlockedError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"IDA MCP base_url refused by egress policy: {exc}",
+            ) from exc
         except (httpx.ConnectError, httpx.TimeoutException) as exc:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -2961,10 +2993,15 @@ def create_vr_router() -> APIRouter:
         # 2) Resolve the upload root + per-team subdir. With admin auth
         #    (TEAM-06 god-tier) team_id is None; those uploads land
         #    under a "shared" subdir to avoid clashing with team data.
-        upload_root_env = os.environ.get("ANDROID_MCP_UPLOAD_DIR")
+        # fix #132 -- ConfigRegistry-backed knob (env
+        # ``AILA_VR_ANDROID_MCP_UPLOAD_DIR``, DB overridable via
+        # ``PUT /config/vr/android_mcp_upload_dir``).
+        upload_root_cfg = str(_shared_registry().get_sync(
+            "vr", "android_mcp_upload_dir",
+        ) or "").strip()
         upload_root = (
-            Path(upload_root_env)
-            if upload_root_env
+            Path(upload_root_cfg)
+            if upload_root_cfg
             else Path.home() / ".android-mcp" / "uploads"
         )
         team_subdir = auth.team_id or "shared"
@@ -3403,12 +3440,14 @@ def create_vr_router() -> APIRouter:
         # Source-repo / cve / patch-diff targets continue to fan-out-all
         # because their per-child LLM cost is small enough to not strain
         # the proxy (no jadx graph traversal, no 64K-token contexts).
-        # Operator-tunable batch size; deferred import per file convention.
+        # fix #132 -- ConfigRegistry-backed knob
+        # (``AILA_VR_MASVS_AUDIT_BATCH_SIZE`` / DB via
+        # ``PUT /config/vr/masvs_audit_batch_size``).
         try:
             _batch_size_raw = int(
-                _os.environ.get("MASVS_AUDIT_BATCH_SIZE", "5"),
+                _shared_registry().get_sync("vr", "masvs_audit_batch_size"),
             )
-        except ValueError:
+        except (TypeError, ValueError):
             _batch_size_raw = 5
         masvs_batch_size = max(1, min(_batch_size_raw, len(child_ids)))
         is_apk = target.kind == TargetKind.ANDROID_APK.value
@@ -3448,7 +3487,7 @@ def create_vr_router() -> APIRouter:
                 _log.info(
                     "MASVS audit %s (APK) batched: enqueued %d/%d children, "
                     "%d deferred (parent reconciler will enqueue as slots free). "
-                    "batch_size=%d via MASVS_AUDIT_BATCH_SIZE env.",
+                    "batch_size=%d via vr.masvs_audit_batch_size config knob.",
                     parent.id, len(initial_batch), len(child_ids),
                     len(deferred), masvs_batch_size,
                 )
@@ -3731,13 +3770,14 @@ def create_vr_router() -> APIRouter:
 
         # Throttled enqueue -- identical rationale to the MASVS batch: a
         # full fan-out of ~80 children streaming through the shared LLM
-        # proxy at once OOMs it. Only MASVS_AUDIT_BATCH_SIZE children go
-        # in now; the parent reconciler enqueues the rest as slots free.
+        # proxy at once OOMs it. Only ``vr.masvs_audit_batch_size``
+        # children go in now; the parent reconciler enqueues the rest
+        # as slots free. fix #132 -- ConfigRegistry-backed.
         try:
             _batch_size_raw = int(
-                _os.environ.get("MASVS_AUDIT_BATCH_SIZE", "5"),
+                _shared_registry().get_sync("vr", "masvs_audit_batch_size"),
             )
-        except ValueError:
+        except (TypeError, ValueError):
             _batch_size_raw = 5
         apk_batch_size = max(1, min(_batch_size_raw, len(child_ids)))
         initial_batch = child_ids[:apk_batch_size]
@@ -3776,7 +3816,7 @@ def create_vr_router() -> APIRouter:
                 _log.info(
                     "APK static audit %s batched: enqueued %d/%d children, "
                     "%d deferred (parent reconciler enqueues as slots free). "
-                    "batch_size=%d via MASVS_AUDIT_BATCH_SIZE env.",
+                    "batch_size=%d via vr.masvs_audit_batch_size config knob.",
                     parent.id, len(initial_batch), len(child_ids),
                     len(deferred), apk_batch_size,
                 )
@@ -4938,6 +4978,31 @@ def create_vr_router() -> APIRouter:
                 for r in rows:
                     await uow.session.delete(r)
 
+            # Audit the deletion so an operator can later answer "where did my
+            # investigation go" from the audit trail. The row and all children
+            # are hard-deleted, so this is the only durable record that the
+            # deletion happened, who did it, and what was removed. Written in
+            # the same transaction as the deletes (record_audit_event only
+            # calls session.add; the commit below persists both atomically).
+            from aila.platform.services.audit import record_audit_event
+
+            record_audit_event(
+                uow.session,
+                run_id=investigation_id,
+                stage="vr",
+                action="investigation_deleted",
+                target=(getattr(inv, "title", "") or "")[:200],
+                user_id=getattr(auth, "user_id", "system"),
+                team_id=getattr(auth, "team_id", None),
+                details={
+                    "investigation_id": investigation_id,
+                    "title": getattr(inv, "title", None),
+                    "kind": getattr(inv, "kind", None),
+                    "status": getattr(inv, "status", None),
+                    "branches_deleted": len(branch_rows),
+                },
+            )
+
             await uow.session.delete(inv)
             await uow.session.commit()
 
@@ -5970,6 +6035,209 @@ def create_vr_router() -> APIRouter:
             )
             for r in rows
         ])
+
+    @router.get(
+        "/investigations/{investigation_id}/dispatch",
+        response_model=DataEnvelope[dict],
+        summary=(
+            "Dispatch-hub state for the X-Ray page: ordered phase catalog "
+            "plus visited/current/last aggregated across the "
+            "investigation's live branches."
+        ),
+    )
+    @limiter.limit("120/minute")
+    async def get_investigation_dispatch(
+        request: Request,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict]:
+        del request
+        # Deferred import: workflow.definitions_hub pulls the VR loop /
+        # setup state graph which in turn imports back into the module's
+        # task registry. Top-level import here would tighten the module
+        # startup cycle; the neighbouring investigation routes take the
+        # same deferred posture for the same reason.
+        from .workflow.definitions_hub import VR_HUB_PHASES
+
+        phase_names = {p.name for p in VR_HUB_PHASES}
+        phases_payload = [
+            {"id": p.name, "capability": p.capability, "trust": p.trust}
+            for p in VR_HUB_PHASES
+        ]
+
+        inv = await _load_investigation(investigation_id, auth)
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
+
+        # WorkflowStateCursor.run_id is the ARQ task uuid, NOT branch.id
+        # (RFC-02 cursor keying fix noted on the model). The denormalised
+        # ``investigation_id`` column is the correct join key here; it
+        # covers every cursor belonging to this investigation, including
+        # the pre-branch setup cursor that has no branch_id yet.
+        async with UnitOfWork() as uow:
+            cursor_rows = list((await uow.session.exec(
+                select(WorkflowStateCursor).where(
+                    WorkflowStateCursor.investigation_id == investigation_id,
+                )
+            )).all())
+
+        visited_set: set[str] = set()
+        current_set: set[str] = set()
+        last: str | None = None
+        reason: str | None = None
+        phase_trust: str | None = None
+        replan_relax = False
+        budget_exhausted = False
+        newest_ts = None
+
+        for cur in cursor_rows:
+            state_input = cur.state_input if isinstance(cur.state_input, dict) else {}
+            visited_val = state_input.get("_dispatch_visited")
+            if isinstance(visited_val, list):
+                for v in visited_val:
+                    if isinstance(v, str):
+                        visited_set.add(v)
+            if isinstance(cur.current_state, str) and cur.current_state in phase_names:
+                current_set.add(cur.current_state)
+            ts = cur.updated_at
+            if ts is not None and (newest_ts is None or ts > newest_ts):
+                newest_ts = ts
+                last_val = state_input.get("_dispatch_last")
+                last = last_val if isinstance(last_val, str) else None
+                reason_val = state_input.get("_dispatch_reason")
+                reason = reason_val if isinstance(reason_val, str) else None
+                trust_val = state_input.get("_dispatch_phase_trust")
+                phase_trust = trust_val if isinstance(trust_val, str) else None
+                replan_relax = bool(state_input.get("_dispatch_replan_relax", False))
+                budget_exhausted = bool(state_input.get("_budget_exhausted", False))
+
+        return DataEnvelope(data={
+            "phases": phases_payload,
+            "visited": sorted(visited_set),
+            "current": sorted(current_set),
+            "last": last,
+            "reason": reason,
+            "phase_trust": phase_trust,
+            "replan_relax": replan_relax,
+            "budget_exhausted": budget_exhausted,
+        })
+
+    @router.get(
+        "/investigations/{investigation_id}/ledger",
+        response_model=DataEnvelope[list[dict]],
+        summary=(
+            "Investigation ledger (oldest-first): discoveries, requests, "
+            "decisions, notes, and objectives with a human-readable text "
+            "field for the X-Ray timeline."
+        ),
+    )
+    @limiter.limit("120/minute")
+    async def get_investigation_ledger(
+        request: Request,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[list[dict]]:
+        del request
+        from aila.platform.services.ledger import LedgerService
+
+        inv = await _load_investigation(investigation_id, auth)
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
+
+        rows = await LedgerService().read_general(investigation_id, limit=10_000)
+
+        items: list[dict[str, Any]] = []
+        _text_keys = ("note", "summary", "rationale", "claim", "directive")
+        for row in rows:
+            payload = row.get("payload")
+            if not isinstance(payload, dict):
+                payload = {}
+            intent = payload.get("intent")
+            target_capability = payload.get("target_capability")
+            text: str = ""
+            for key in _text_keys:
+                val = payload.get(key)
+                if isinstance(val, str) and val.strip():
+                    text = val
+                    break
+            if not text:
+                try:
+                    text = _json.dumps(payload, separators=(",", ":"), sort_keys=True)
+                except (TypeError, ValueError):
+                    text = ""
+            created_at = row.get("created_at")
+            items.append({
+                "id": row.get("id"),
+                "kind": row.get("kind"),
+                "intent": intent if isinstance(intent, str) else None,
+                "objective_key": row.get("objective_key"),
+                "author_branch_id": row.get("author_branch_id"),
+                "owner_branch_id": row.get("owner_branch_id"),
+                "status": row.get("status"),
+                "target_capability": (
+                    target_capability if isinstance(target_capability, str) else None
+                ),
+                "text": text,
+                "created_at": created_at.isoformat() if created_at is not None
+                              and hasattr(created_at, "isoformat") else created_at,
+            })
+
+        return DataEnvelope(data=items)
+
+    @router.get(
+        "/investigations/{investigation_id}/mcp-calls",
+        response_model=DataEnvelope[list[dict]],
+        summary=(
+            "Per-investigation MCP call log (oldest-first, capped at 500) "
+            "including branch/turn join-keys for the X-Ray timing view."
+        ),
+    )
+    @limiter.limit("120/minute")
+    async def get_investigation_mcp_calls(
+        request: Request,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[list[dict]]:
+        del request
+        from .db_models import VRMcpCallLogRecord
+
+        inv = await _load_investigation(investigation_id, auth)
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
+
+        async with UnitOfWork() as uow:
+            rows = (await uow.session.exec(
+                select(VRMcpCallLogRecord)
+                .where(VRMcpCallLogRecord.investigation_id == investigation_id)
+                .order_by(VRMcpCallLogRecord.called_at.asc())  # type: ignore[union-attr]
+                .limit(500)
+            )).all()
+
+        items = [
+            {
+                "id": r.id,
+                "server_id": r.server_id,
+                "action": r.action,
+                "status": r.status,
+                "http_status": r.http_status,
+                "latency_ms": r.latency_ms,
+                "error_excerpt": r.error_excerpt,
+                "branch_id": r.branch_id,
+                "turn_number": r.turn_number,
+                "called_at": r.called_at.isoformat() if r.called_at else None,
+            }
+            for r in rows
+        ]
+        return DataEnvelope(data=items)
 
     @router.get(
         "/investigations/{investigation_id}/outcomes",

@@ -186,6 +186,21 @@ class PlatformConfigSchema(BaseModel):
     # fallbacks in llm/config.py, so resolution behavior is unchanged.
     llm_default_model: str = "antigravity/claude-opus-4-6-thinking"
     llm_base_url: str = "https://openrouter.ai/api/v1"
+    # Persona -> model_role routing map (#151). JSON object literal
+    # mapping :class:`PersonaVoice` string values (halvar / maddie /
+    # yuki / renzo / noor / wei, plus module-supplied specialist
+    # voices) to a task_type / model_role string the LLM config layer
+    # already resolves via ``llm_model_{model_role}``. Consumed by
+    # :func:`aila.platform.routing.persona_model.resolve_effective_task_type`
+    # on the turn-runner LLM path. Empty string is the
+    # behavior-preserving default: no persona carries an override, so
+    # every LLM call routes to the same task_type each sibling would
+    # have used pre-#151. Populate to give distinct personas distinct
+    # base models and unlock cross-error rejection during debate.
+    # Malformed JSON or a non-object payload logs a warning and
+    # collapses to the empty-map default rather than failing the
+    # turn.
+    persona_model_role_map: str = ""
     # 32768: a reasoning decision (reasoning + hypotheses + command +
     # observables) under extended-thinking needs a generous output ceiling;
     # 4096 risked truncating large decisions. Existing deployments already
@@ -195,6 +210,41 @@ class PlatformConfigSchema(BaseModel):
     llm_default_temperature: float = 0.0
     llm_tool_timeout_s: float = 300.0
     llm_kill_switch: bool = False
+
+    # fix #132 -- in-call LLM retry loop knobs. Previously read as
+    # module-level constants at ``client.py`` import time via
+    # ``os.environ.get("AILA_LLM_MAX_RETRIES"|"AILA_LLM_RETRY_BASE_DELAY_S"
+    # |"AILA_LLM_RETRY_MAX_DELAY_S"|"AILA_LLM_STRUCTURED_JSON_MAX_ATTEMPTS")``,
+    # which froze the value at process start and bypassed PUT /config.
+    # Now resolved through ConfigRegistry so operators can tune the
+    # fast-fail budget at runtime. Env form is
+    # ``AILA_PLATFORM_LLM_MAX_RETRIES`` (etc), which participates in the
+    # env > DB > default chain like every other platform key. Defaults
+    # match the historical fast-fail budget: 3 attempts, 1.0s base, 30s
+    # ceiling, 3 structured-JSON correction attempts.
+    llm_max_retries: int = 3
+    llm_retry_base_delay_s: float = 1.0
+    llm_retry_max_delay_s: float = 30.0
+    llm_structured_json_max_attempts: int = 3
+
+    # Per-call OpenAI/OmniRoute HTTP timeout in seconds. Previously read
+    # via ``os.environ.get("AILA_LLM_TIMEOUT_SECONDS")`` at each call;
+    # now resolved through ConfigRegistry so ops can widen the ceiling
+    # for slow providers without a worker restart.
+    llm_timeout_seconds: float = 180.0
+
+    # fix #132 -- platform reaper cron knobs (previously read via
+    # module-level ``os.environ.get("PLATFORM_WORKER_HEARTBEAT_GRACE_S"
+    # |"PLATFORM_REAPER_ZOMBIE_HEARTBEAT_MIN"
+    # |"PLATFORM_REAPER_CURSOR_BATCH_CAP")`` in ``tasks/worker.py`` at
+    # import time). Renamed env form (still env-first): the layered
+    # lookup accepts ``AILA_PLATFORM_REAPER_CRON_GRACE_S`` etc, and the
+    # DB value can be overridden via PUT /config/platform. Defaults
+    # match the historical values -- 600s cron grace, 10-min zombie
+    # heartbeat threshold, 5000 cursor rows per reaper tick.
+    reaper_cron_grace_s: int = 600
+    reaper_zombie_heartbeat_min: int = 10
+    reaper_cursor_batch_cap: int = 5000
 
     # LLM Pipeline step defaults (Phase 116)
     # Per-task-type overrides via PUT /config at runtime:
@@ -456,4 +506,125 @@ class PlatformConfigSchema(BaseModel):
     # the escalation entirely and keeps the pre-RFC-13-#68 behavior where
     # a stalled hub always emits ``hub_stalled`` -> COMPLETED.
     dispatch_replan_timeout_s: float = 1800.0
+
+    # ------------------------------------------------------------------
+    # Platform sandbox service (issue #147). See
+    # ``aila.platform.services.sandbox`` for the executor implementation.
+    #
+    # The sandbox is a platform-owned, one-VM-per-run isolation primitive
+    # every module reaches through ``SandboxService.run``. Backends run
+    # over SSH on a Linux host (Firecracker needs KVM; nsjail needs the
+    # nsjail binary). When no host is provisioned, callers see
+    # ``SandboxUnavailableError`` -- there is no local un-isolated
+    # fallback by design.
+    #
+    # sandbox_backend:
+    #   ``none``          -- no backend; every ``run`` raises Unavailable.
+    #   ``nsjail``        -- namespace + seccomp sandbox on the host.
+    #   ``firecracker``   -- microVM (KVM required); needs rootfs + kernel.
+    # sandbox_ssh_host / _user / _port:
+    #   SSH target for the sandbox host. Empty ``sandbox_ssh_host`` also
+    #   trips Unavailable so the operator cannot forget the wiring.
+    # sandbox_default_timeout_s / _max_timeout_s:
+    #   Service clamps every ``spec.timeout_s`` to ``max_timeout_s`` so
+    #   an over-eager caller cannot ask for a multi-hour run.
+    # sandbox_allow_network:
+    #   Master switch. When False the service forces every ``spec.network``
+    #   to False regardless of the caller's request.
+    # sandbox_vcpu / _mem_mb:
+    #   Per-run defaults when the caller left them at the SandboxSpec
+    #   defaults (1 vCPU, 512 MiB). Callers that pass explicit non-default
+    #   values are honoured up to the policy ceiling the backend enforces.
+    # sandbox_output_max_bytes:
+    #   Byte cap applied to stdout, stderr, and every collected output
+    #   file. Hitting the cap sets ``SandboxResult.truncated = True``.
+    # sandbox_nsjail_bin / _firecracker_bin / _jailer_bin:
+    #   Binary names or absolute paths on the sandbox host. Resolved via
+    #   ``command -v`` before every run; a missing binary raises
+    #   ``SandboxExecutionError`` with an actionable message.
+    # sandbox_rootfs_path / _kernel_path:
+    #   Required for the Firecracker backend. Point at the ext4 rootfs
+    #   image + Firecracker-compatible vmlinux on the sandbox host. The
+    #   rootfs MUST implement the guest-runner contract documented in
+    #   ``aila.platform.services.sandbox.backends.firecracker``.
+    # ------------------------------------------------------------------
+    # Trajectory-mined SFT/DPO corpus + LoRA fine-tune pipeline (issue #158).
+    #
+    # The nightly ``run_corpus_export`` platform task walks the last N
+    # days of module outcome-review rows, reconstructs each CHOSEN
+    # branch's turn history from platform_journal, and writes
+    # ``sft.jsonl`` + ``dpo.jsonl`` + ``manifest.json`` to
+    # ``corpus_output_dir``. The training script under
+    # :mod:`aila.platform.eval.training.train_lora` consumes the same
+    # files -- SFT then DPO then merge-and-unload -- behind the
+    # ``[training]`` optional extra.
+    #
+    # corpus_output_dir:
+    #   Absolute or project-relative directory the corpus files live
+    #   in. Empty string resolves to ``<PROJECT_ROOT>/data/eval_corpus``
+    #   -- the same ``data/`` tree ``secret_keyring_path`` claims by
+    #   default, so a fresh install has a usable path with no operator
+    #   setup.
+    # corpus_modules:
+    #   Comma-separated list of module ids whose outcome tables the
+    #   builder should scan (``<module_id>_investigation_outcomes``).
+    # corpus_min_turns:
+    #   Drop CHOSEN branches with fewer recorded turns than this
+    #   threshold. Typical fine-tune runs need a couple of turns of
+    #   context to be useful; 2 is the smallest defensible floor.
+    # corpus_max_field_chars:
+    #   Per-message soft cap applied at record construction time so a
+    #   single runaway tool result cannot dominate a SFT example.
+    # corpus_sft_states:
+    #   Outcome states treated as CHOSEN / expert. Rejected trajectories
+    #   are always ``rejected`` (hard-coded on the DPO side).
+    # training_base_model:
+    #   HuggingFace model id the LoRA pipeline fine-tunes. Empty ->
+    #   :mod:`aila.platform.eval.training.train_lora` refuses with a
+    #   clear ValueError so a GPU host cannot silently pick a random
+    #   base.
+    # training_lora_r / _alpha / _dropout:
+    #   Standard LoRA rank + alpha + dropout, wired straight into
+    #   ``peft.LoraConfig`` on the SFT step and reused on the DPO step.
+    # training_output_dir:
+    #   Absolute or project-relative directory the merged checkpoint
+    #   lands in. Empty -> ``<PROJECT_ROOT>/data/lora_out``.
+    corpus_output_dir: str = ""
+    corpus_modules: str = "vr,malware,forensics"
+    corpus_min_turns: int = 2
+    corpus_max_field_chars: int = 24_000
+    corpus_sft_states: str = "approved,dispatched"
+    training_base_model: str = ""
+    training_lora_r: int = 32
+    training_lora_alpha: int = 16
+    training_lora_dropout: float = 0.05
+    training_output_dir: str = ""
+
+    sandbox_backend: str = "none"
+    sandbox_ssh_host: str = ""
+    sandbox_ssh_user: str = ""
+    sandbox_ssh_port: int = 22
+    sandbox_default_timeout_s: float = 30.0
+    sandbox_max_timeout_s: float = 300.0
+    sandbox_allow_network: bool = False
+    sandbox_vcpu: int = 1
+    sandbox_mem_mb: int = 512
+    sandbox_output_max_bytes: int = 1_048_576
+    sandbox_nsjail_bin: str = "nsjail"
+    sandbox_firecracker_bin: str = "firecracker"
+    sandbox_jailer_bin: str = "jailer"
+    sandbox_rootfs_path: str = ""
+    sandbox_kernel_path: str = ""
+
+    # #159 part 1 -- MCP tool-description hash pin (supply-chain guard).
+    # When True, the platform bridge refuses to serve a projected tool
+    # catalogue whose sha256 differs from the first-sight pin,
+    # raising :class:`aila.platform.mcp.tool_hash.ToolDescriptionMismatchError`
+    # to the caller (prompt builder / tool_executor.registered_tools).
+    # Default False emits a WARNING and rotates the pin so legitimate
+    # rolling upgrades ("added new tool", "reworded description") do
+    # not ground every worker until an operator intervenes. Flip to
+    # True on hardened deployments where a poisoned tool description
+    # is a higher-severity outcome than a five-minute deploy stall.
+    mcp_tool_hash_strict: bool = False
 

@@ -20,6 +20,7 @@ from collections import defaultdict
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Request
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select
 
 from aila.api.auth import AuthContext, require_user_or_api_key
@@ -77,28 +78,31 @@ def _utc_now() -> datetime:
 
 
 async def _load_severity_counts(system_ids: list[int], platform: object) -> dict[int, SeverityCounts]:
-    """Load per-system severity counts through the registered module boundary."""
+    """Load per-system severity counts through the registered module boundary.
+
+    Fix (issue #199): opens a real session before calling into the module and
+    reads per-severity counts (not just the top-severity label) so the overlay
+    can carry multiple non-zero severity slots for a single system.
+    """
     if platform is None or not system_ids:
         return {}
     try:
-        module = platform.runtime.module_registry.first_with("fleet_severity_summary")
+        module = platform.runtime.module_registry.first_with("fleet_severity_counts")
         if module is None:
             return {}
-        labels = await module.fleet_severity_summary(system_ids, None)
-    except Exception:
+        async with async_session_scope() as session:
+            per_system = await module.fleet_severity_counts(system_ids, session)
+    except (SQLAlchemyError, RuntimeError, ValueError):
         _log.debug("severity overlay unavailable", exc_info=True)
         return {}
     counts: dict[int, SeverityCounts] = {}
-    for sid, severity in labels.items():
-        counts.setdefault(sid, SeverityCounts())
-        if severity == "critical":
-            counts[sid].critical += 1
-        elif severity == "high":
-            counts[sid].high += 1
-        elif severity == "medium":
-            counts[sid].medium += 1
-        elif severity == "low":
-            counts[sid].low += 1
+    for sid, buckets in per_system.items():
+        counts[sid] = SeverityCounts(
+            critical=int(buckets.get("critical", 0)),
+            high=int(buckets.get("high", 0)),
+            medium=int(buckets.get("medium", 0)),
+            low=int(buckets.get("low", 0)),
+        )
     return counts
 
 

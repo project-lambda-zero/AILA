@@ -1,16 +1,35 @@
 import { Fragment, useRef, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router";
+import {
+  Link,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from "react-router";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
-import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import {
+  DataGrid,
+  FilterChip,
+  MonoBadge,
+  SectionHeader,
+  Segmented,
+  StatBar,
+  toneColor,
+  type GridColumn,
+} from "@/components/aila/mock";
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
+import { getAuthTokenStandalone } from "@platform/auth/useAuthStore";
+import { saveBlobResponse } from "@platform/api/download";
+import { requestBlob } from "@platform/api/http";
+
+import { DeleteButton } from "../components/DeleteButton";
 import {
   MitigationsRibbon,
   type MitigationFlags,
 } from "../components/MitigationsRibbon";
-import { DeleteButton } from "../components/DeleteButton";
+import { TargetConnectedCard } from "../components/TargetConnectedCard";
 import { UploadDropzone } from "../components/UploadDropzone";
 import {
   APK_STATIC_CHECK_COUNT_ESTIMATE,
@@ -22,56 +41,55 @@ import {
   useDeleteTarget,
   useMasvsAudit,
   useRankTarget,
+  useResumeTargetAnalysis,
   useUploadTargetArtifact,
 } from "../mutations";
 import {
+  useApkStaticAuditAggregate,
   useInvestigationsForTarget,
   useMasvsAuditAggregate,
   useTarget,
   useTargetHypotheses,
   useWorkspaces,
 } from "../queries";
-import { requestBlob } from "@platform/api/http";
-import { saveBlobResponse } from "@platform/api/download";
-import { getAuthTokenStandalone } from "@platform/auth/useAuthStore";
-import { Link } from "react-router";
 import type {
   AnalysisState,
   ApkOverview,
+  ApkStaticControlVerdict,
+  ApkStaticVerdict,
   MasvsControlVerdict,
   MasvsVerdict,
   TargetKind,
   TargetStatus,
 } from "../types";
-import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
-const statusColor: Record<
-  TargetStatus,
-  "info" | "low" | "medium" | "high" | "critical"
-> = {
-  active: "low",
-  archived: "info",
-  quarantined: "high",
+// ---------------------------------------------------------------------------
+// Local tone maps (severity -> mock kit tone)
+// ---------------------------------------------------------------------------
+type Tone = "critical" | "high" | "medium" | "low" | "accent" | "ok" | "info" | "warn" | "muted";
+type PanelTone = "accent" | "ok" | "info" | "warn" | "muted";
+
+const analysisTone: Record<AnalysisState, Tone> = {
+  pending: "info",
+  ingesting: "warn",
+  ready: "ok",
+  failed: "critical",
 };
 
-const analysisColor: Record<
-  AnalysisState,
-  "info" | "low" | "medium" | "high" | "critical"
-> = {
-  pending: "info",
-  ingesting: "medium",
-  ready: "low",
-  failed: "critical",
+const statusTone: Record<TargetStatus, Tone> = {
+  active: "ok",
+  archived: "muted",
+  quarantined: "warn",
 };
 
 /** Per-kind operator-readable label for each AnalysisState. */
 function analysisLabel(state: AnalysisState, kind: TargetKind): string {
-  if (state === "ready") return "Ready";
-  if (state === "failed") return "Failed";
-  if (state === "pending") return "Queued";
+  if (state === "ready") return "ready";
+  if (state === "failed") return "failed";
+  if (state === "pending") return "queued";
   // ingesting
-  if (kind === "source_repo") return "Cloning + indexing source…";
-  if (kind === "cve") return "Resolving CVE record…";
+  if (kind === "source_repo") return "cloning + indexing source";
+  if (kind === "cve") return "resolving cve record";
   if (
     kind === "kernel_image" ||
     kind === "kernel_module" ||
@@ -80,12 +98,12 @@ function analysisLabel(state: AnalysisState, kind: TargetKind): string {
     kind === "jar" ||
     kind === "dotnet_assembly"
   ) {
-    return "Uploading + analyzing in IDA…";
+    return "uploading + analyzing in ida";
   }
   if (kind === "android_apk") {
-    return "APK_DECODE → JADX_DECOMPILE → INDEX_DECOMPILED → STATIC_SUMMARY…";
+    return "apk_decode \u2192 jadx_decompile \u2192 index \u2192 static_summary";
   }
-  return "Uploading + analyzing…";
+  return "uploading + analyzing";
 }
 
 function formatDate(value?: string | null): string {
@@ -97,27 +115,15 @@ function formatDate(value?: string | null): string {
   }
 }
 
-const UPLOAD_KINDS = new Set<TargetKind>([
-  "native_binary",
-  "kernel_image",
-  "kernel_module",
-  "hypervisor_image",
-  "ipa",
-  "jar",
-  "dotnet_assembly",
-]);
-
-function isUploadableKind(kind: TargetKind): boolean {
-  return UPLOAD_KINDS.has(kind);
-}
-
-/** Operator-visible filename for an uploaded artifact, or null. The
- *  backend projects this onto VRTargetSummary from mcp_handles_json. */
-function currentUploadedFilename(target: {
-  uploaded_filename?: string | null;
-}): string | null {
-  return target.uploaded_filename ?? null;
-}
+const UPLOADABLE_KINDS: Partial<Record<TargetKind, true>> = {
+  native_binary: true,
+  kernel_image: true,
+  kernel_module: true,
+  hypervisor_image: true,
+  ipa: true,
+  jar: true,
+  dotnet_assembly: true,
+};
 
 interface RankedFunction {
   name?: string;
@@ -136,10 +142,123 @@ interface FunctionRanking {
   top_k?: RankedFunction[];
 }
 
-// MitigationFlags interface lives in MitigationsRibbon (shared component).
+// ---------------------------------------------------------------------------
+// Shared inline primitives
+// ---------------------------------------------------------------------------
 
+const HEADER_BTN_BASE: React.CSSProperties = {
+  height: 28,
+  padding: "0 12px",
+  fontSize: 10,
+  letterSpacing: "0.08em",
+  borderRadius: 3,
+  cursor: "pointer",
+  fontFamily: "var(--font-mono)",
+};
 
-// ─── Tabs for §1.4 ────────────────────────────────────────────────────────
+function HeaderButton({
+  label,
+  onClick,
+  disabled,
+  primary,
+  title,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  primary?: boolean;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className="font-mono uppercase"
+      style={{
+        ...HEADER_BTN_BASE,
+        background: primary ? "var(--accent)" : "var(--surface-sunk)",
+        border: `1px solid ${primary ? "var(--accent)" : "var(--border-soft)"}`,
+        color: primary ? "var(--text-on-accent)" : "var(--text-primary)",
+        opacity: disabled ? 0.5 : 1,
+      }}
+    >
+      {label}
+    </button>
+  );
+}
+
+/** Uppercase mono label above value, border-bottom rule. Mirrors
+ *  ProjectDetailPage's `BriefRow`. */
+function BriefRow({
+  label,
+  children,
+}: {
+  label: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 3,
+        padding: "8px 0",
+        borderBottom: "1px solid var(--border-faint)",
+      }}
+    >
+      <span
+        className="font-mono uppercase"
+        style={{
+          fontSize: 9,
+          letterSpacing: "0.14em",
+          color: "var(--text-faint)",
+        }}
+      >
+        {label}
+      </span>
+      <span
+        className="font-mono"
+        style={{
+          fontSize: 11,
+          color: "var(--text-primary)",
+          minHeight: 14,
+          overflowWrap: "anywhere",
+        }}
+      >
+        {children}
+      </span>
+    </div>
+  );
+}
+
+function MonoEmpty({
+  children,
+  tone = "muted",
+}: {
+  children: React.ReactNode;
+  tone?: "muted" | "error";
+}) {
+  return (
+    <div
+      className="font-mono"
+      style={{
+        padding: 34,
+        textAlign: "center",
+        fontSize: 11.5,
+        color: tone === "error" ? "var(--accent)" : "var(--text-muted)",
+        letterSpacing: "0.04em",
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tabs
+// ---------------------------------------------------------------------------
 
 type TargetTab =
   | "functions"
@@ -148,85 +267,133 @@ type TargetTab =
   | "imports"
   | "notes";
 
-const TARGET_TABS: ReadonlyArray<{ id: TargetTab; label: string }> = [
-  { id: "functions", label: "Functions of interest" },
-  { id: "attack_surface", label: "Attack surface" },
-  { id: "hypotheses", label: "Hypotheses" },
-  { id: "imports", label: "Imports / exports" },
-  { id: "notes", label: "Notes" },
+const TARGET_TABS: ReadonlyArray<{ value: TargetTab; label: string }> = [
+  { value: "functions", label: "functions" },
+  { value: "attack_surface", label: "attack surface" },
+  { value: "hypotheses", label: "hypotheses" },
+  { value: "imports", label: "imports / exports" },
+  { value: "notes", label: "notes" },
 ];
+
+// ---------------------------------------------------------------------------
+// Attack surface tab
+// ---------------------------------------------------------------------------
 
 function AttackSurfaceTab({
   capability,
 }: {
   capability: Record<string, unknown>;
 }) {
-  // capability_profile.attack_surface is a list of
-  // {kind, name, location, severity_hint} populated by the
-  // CapabilityProfileBuilder (08_FRONTEND_UX.md §1.4).
-  const items = (capability.attack_surface as Array<{
-    kind: string;
-    name: string;
-    location?: string;
-    severity_hint?: string;
-  }> | undefined) ?? [];
+  const items =
+    (capability.attack_surface as
+      | Array<{
+          kind: string;
+          name: string;
+          location?: string;
+          severity_hint?: string;
+        }>
+      | undefined) ?? [];
+
   if (items.length === 0) {
     return (
-      <AilaCard  techBorder glow><EmptyState
-        title="No attack-surface entries enumerated yet"
-        description="audit-mcp `attack_surface` + IDA `classify_behavior` populate this on analyze. Re-run analysis if you expected entries."
-      /></AilaCard>
+      <WindowPanel title="attack surface" tone="muted">
+        <MonoEmpty>
+          no entries enumerated. audit-mcp attack_surface + ida classify_behavior
+          populate this on analyze -- re-run analysis if you expected entries.
+        </MonoEmpty>
+      </WindowPanel>
     );
   }
+
   return (
-    <AilaCard  techBorder glow><ul className="space-y-1 text-xs font-mono">
-      {items.map((it, i) => (
-        <li
-          key={`${it.kind}-${it.name}-${i}`}
-          className="border border-border-default rounded px-2 py-1 flex items-center justify-between gap-2"
-        >
-          <div>
-            <span className="text-text-muted">{it.kind}</span>{" "}
-            <span className="text-foreground">{it.name}</span>
-            {it.location && (
-              <span className="text-text-muted ml-2">@ {it.location}</span>
-            )}
-          </div>
-          {it.severity_hint && (
-            <AilaBadge
-              severity={
-                it.severity_hint === "high"
-                  ? "high"
-                  : it.severity_hint === "medium"
-                    ? "medium"
-                    : "info"
-              }
-              size="sm"
+    <WindowPanel title={`attack surface (${items.length})`} tone="accent" flush>
+      <div>
+        {items.map((it, i) => {
+          const sevTone: Tone =
+            it.severity_hint === "high"
+              ? "high"
+              : it.severity_hint === "medium"
+                ? "medium"
+                : "info";
+          return (
+            <div
+              key={`${it.kind}-${it.name}-${i}`}
+              className="font-mono"
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 10,
+                padding: "8px 12px",
+                borderBottom: "1px solid var(--border-faint)",
+                background: "var(--surface-card)",
+                fontSize: 11,
+              }}
             >
-              {it.severity_hint}
-            </AilaBadge>
-          )}
-        </li>
-      ))}
-    </ul></AilaCard>
+              <div
+                style={{
+                  minWidth: 0,
+                  display: "flex",
+                  alignItems: "baseline",
+                  gap: 8,
+                  flexWrap: "wrap",
+                }}
+              >
+                <span
+                  className="uppercase"
+                  style={{
+                    fontSize: 9,
+                    letterSpacing: "0.12em",
+                    color: "var(--text-faint)",
+                  }}
+                >
+                  {it.kind}
+                </span>
+                <span style={{ color: "var(--text-primary)" }}>{it.name}</span>
+                {it.location && (
+                  <span style={{ color: "var(--text-muted)", fontSize: 10 }}>
+                    @ {it.location}
+                  </span>
+                )}
+              </div>
+              {it.severity_hint && (
+                <MonoBadge tone={sevTone}>{it.severity_hint}</MonoBadge>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </WindowPanel>
   );
 }
 
+// ---------------------------------------------------------------------------
+// Hypotheses tab
+// ---------------------------------------------------------------------------
+
+type HypoFilter = "all" | "live" | "rejected" | "resolved" | "mixed";
+
+const HYPO_COLUMNS: GridColumn[] = [
+  { label: "state", width: "90px" },
+  { label: "investigation", width: "minmax(0, 1fr)" },
+  { label: "hypothesis", width: "minmax(0, 1.4fr)" },
+  { label: "detail", width: "minmax(0, 1.2fr)" },
+];
+
+const HYPO_STATE_TONE: Record<string, Tone> = {
+  live: "info",
+  rejected: "muted",
+  resolved: "ok",
+  mixed: "warn",
+};
+
 function HypothesesTab({ targetId }: { targetId: string }) {
-  // Per-target aggregated hypothesis table. Replaces the prior
-  // "one card per investigation" rail which (a) drowned real data
-  // under 24+ empty cards for status=created investigations and
-  // (b) had no investigation context on each card so users couldn't
-  // tell which inv any hypothesis belonged to.
   const { rows, isLoading, isError, investigationCount, skippedCreatedCount } =
     useTargetHypotheses(targetId);
-  const [filter, setFilter] = useState<
-    "all" | "live" | "rejected" | "resolved" | "mixed"
-  >("all");
+  const [filter, setFilter] = useState<HypoFilter>("all");
 
   const visible = rows.filter((r) => filter === "all" || r.state === filter);
   const sorted = visible.slice().sort((a, b) => {
-    // live first, then mixed, then resolved, then rejected
     const rank: Record<string, number> = {
       live: 0, mixed: 1, resolved: 2, rejected: 3,
     };
@@ -244,197 +411,319 @@ function HypothesesTab({ targetId }: { targetId: string }) {
   };
 
   if (isLoading && rows.length === 0) {
-    return <LoadingSkeleton size="md" width="full" />;
+    return (
+      <WindowPanel title="hypotheses" tone="muted">
+        <LoadingSkeleton size="lg" width="full" />
+      </WindowPanel>
+    );
   }
 
   if (!isLoading && rows.length === 0) {
     return (
-      <AilaCard  techBorder glow><EmptyState
-        title="No hypotheses on this target yet"
-        description={
-          investigationCount === 0
-            ? "No investigation on this target has produced hypotheses yet. Start one -- agents populate hypotheses as evidence lands."
-            : `Aggregated across ${investigationCount} investigation(s) that have run. Hypotheses are emitted by the reasoning engine as it processes evidence.`
-        }
-      /></AilaCard>
+      <WindowPanel title="hypotheses" tone="muted">
+        <MonoEmpty>
+          {investigationCount === 0
+            ? "no investigation on this target has produced hypotheses yet. start one -- agents populate hypotheses as evidence lands."
+            : `aggregated across ${investigationCount} investigation(s). hypotheses are emitted by the reasoning engine as it processes evidence.`}
+        </MonoEmpty>
+      </WindowPanel>
     );
   }
 
-  return (
-    <div className="space-y-3 min-w-0">
-      <AilaCard  techBorder glow><div className="flex items-center justify-between gap-3 flex-wrap min-w-0">
-        <div className="text-sm font-semibold text-foreground">
-          {rows.length} hypotheses across {investigationCount} investigation
-          {investigationCount === 1 ? "" : "s"}
-          {skippedCreatedCount > 0 && (
-            <span className="ml-2 text-xs text-text-muted font-normal">
-              ({skippedCreatedCount} pending investigation
-              {skippedCreatedCount === 1 ? "" : "s"} not yet running)
-            </span>
-          )}
-        </div>
-        <div className="flex items-center gap-1 flex-wrap">
-          {(["all", "live", "mixed", "resolved", "rejected"] as const).map((f) => (
-            <button
-              key={f}
-              type="button"
-              onClick={() => setFilter(f)}
-              className={
-                "px-2 py-1 text-xs rounded-md border transition-colors " +
-                (filter === f
-                  ? "border-accent bg-accent/10 text-foreground"
-                  : "border-border-default text-text-muted hover:text-foreground")
-              }
-            >
-              {f} ({counts[f]})
-            </button>
-          ))}
-        </div>
-      </div>
-      {isError && (
-        <p className="mt-2 text-xs text-text-danger">
-          One or more per-investigation fetches failed; partial data shown.
-        </p>
-      )}</AilaCard>
+  const filterRow = (
+    <div className="flex items-center" style={{ gap: 6, flexWrap: "wrap" }}>
+      {(["all", "live", "mixed", "resolved", "rejected"] as const).map((f) => (
+        <FilterChip key={f} active={filter === f} onClick={() => setFilter(f)}>
+          {f} ({counts[f]})
+        </FilterChip>
+      ))}
+    </div>
+  );
 
-      <AilaCard className="p-0 overflow-x-auto" techBorder glow><table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
-            <th className="px-3 py-2 font-semibold">State</th>
-            <th className="px-3 py-2 font-semibold">Investigation</th>
-            <th className="px-3 py-2 font-semibold">Hypothesis</th>
-            <th className="px-3 py-2 font-semibold">Detail</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.map((r, i) => (
-            <tr
-              key={`${r.investigation_id}:${r.id}:${i}`}
-              className="border-b border-border-default last:border-b-0 align-top hover:bg-surface transition-colors"
+  return (
+    <div className="flex flex-col" style={{ gap: 10 }}>
+      <WindowPanel
+        title={`${rows.length} across ${investigationCount} investigation${investigationCount === 1 ? "" : "s"}`}
+        tone="info"
+        actions={
+          skippedCreatedCount > 0 ? (
+            <span
+              className="font-mono uppercase"
+              style={{
+                fontSize: 9,
+                color: "var(--text-faint)",
+                letterSpacing: "0.08em",
+              }}
             >
-              <td className="px-3 py-2 whitespace-nowrap">
-                <AilaBadge
-                  severity={
-                    r.state === "live"
-                      ? "info"
-                      : r.state === "rejected"
-                        ? "low"
-                        : "medium"
-                  }
-                  size="sm"
-                >
-                  {r.state}
-                </AilaBadge>
-              </td>
-              <td className="px-3 py-2 min-w-0" style={{ maxWidth: 260 }}>
-                <Link
-                  to={`/vr/investigations/${r.investigation_id}`}
-                  className="text-foreground hover:underline break-words text-xs"
-                >
-                  {r.investigation_title}
-                </Link>
-                <div className="text-3xs font-mono text-text-muted mt-0.5">
-                  {r.investigation_kind} · {r.investigation_status}
-                </div>
-              </td>
-              <td className="px-3 py-2 min-w-0 break-words">
-                <div className="text-foreground">{r.claim}</div>
-                <div className="text-3xs font-mono text-text-muted mt-0.5">
-                  {r.id}
-                </div>
-              </td>
-              <td className="px-3 py-2 min-w-0 break-words text-xs">
-                {r.rejection_reason ? (
-                  <div className="text-text-muted">
-                    <span className="text-text-danger">rejected:</span>{" "}
-                    {r.rejection_reason}
-                  </div>
-                ) : r.resolution_note ? (
-                  <div className="text-text-muted">
-                    <span className="text-amber-400">resolved:</span>{" "}
-                    {r.resolution_note}
-                  </div>
-                ) : r.why_plausible ? (
-                  <div className="text-text-muted">{r.why_plausible}</div>
-                ) : r.kill_criterion ? (
-                  <div className="text-text-muted">
-                    <span className="text-text-muted">kill if:</span>{" "}
-                    {r.kill_criterion}
-                  </div>
-                ) : (
-                  <span className="text-text-muted italic">--</span>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table></AilaCard>
+              {skippedCreatedCount} pending
+            </span>
+          ) : null
+        }
+      >
+        {filterRow}
+        {isError && (
+          <p
+            className="font-mono"
+            style={{
+              marginTop: 8,
+              fontSize: 10,
+              color: "var(--accent)",
+              letterSpacing: "0.06em",
+            }}
+          >
+            one or more per-investigation fetches failed; partial data shown.
+          </p>
+        )}
+      </WindowPanel>
+
+      <WindowPanel
+        title="rows"
+        tone="accent"
+        flush
+        actions={
+          <span
+            className="font-mono uppercase"
+            style={{
+              fontSize: 9,
+              color: "var(--text-faint)",
+              letterSpacing: "0.08em",
+            }}
+          >
+            {sorted.length}
+          </span>
+        }
+      >
+        <DataGrid
+          columns={HYPO_COLUMNS}
+          rows={sorted}
+          getKey={(r, i) => `${r.investigation_id}:${r.id}:${i}`}
+          empty={<MonoEmpty>no rows match the current filter.</MonoEmpty>}
+          renderCells={(r) => [
+            <MonoBadge tone={HYPO_STATE_TONE[r.state] ?? "muted"}>
+              {r.state}
+            </MonoBadge>,
+            <div style={{ minWidth: 0 }}>
+              <Link
+                to={`/vr/investigations/${r.investigation_id}`}
+                style={{
+                  color: "var(--text-primary)",
+                  textDecoration: "none",
+                  fontSize: 11,
+                  display: "block",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {r.investigation_title}
+              </Link>
+              <div
+                style={{
+                  marginTop: 2,
+                  fontSize: 9,
+                  color: "var(--text-faint)",
+                  letterSpacing: "0.06em",
+                }}
+              >
+                {r.investigation_kind} \u00b7 {r.investigation_status}
+              </div>
+            </div>,
+            <div style={{ minWidth: 0 }}>
+              <div
+                style={{
+                  color: "var(--text-primary)",
+                  fontSize: 11,
+                  overflowWrap: "anywhere",
+                }}
+              >
+                {r.claim}
+              </div>
+              <div
+                style={{
+                  marginTop: 2,
+                  fontSize: 9,
+                  color: "var(--text-faint)",
+                }}
+              >
+                {r.id}
+              </div>
+            </div>,
+            <div
+              style={{
+                minWidth: 0,
+                fontSize: 10.5,
+                color: "var(--text-muted)",
+                overflowWrap: "anywhere",
+              }}
+            >
+              {r.rejection_reason ? (
+                <span>
+                  <span style={{ color: "var(--accent)" }}>rejected:</span>{" "}
+                  {r.rejection_reason}
+                </span>
+              ) : r.resolution_note ? (
+                <span>
+                  <span style={{ color: "var(--status-warn)" }}>resolved:</span>{" "}
+                  {r.resolution_note}
+                </span>
+              ) : r.why_plausible ? (
+                r.why_plausible
+              ) : r.kill_criterion ? (
+                <span>
+                  <span style={{ color: "var(--text-faint)" }}>kill if:</span>{" "}
+                  {r.kill_criterion}
+                </span>
+              ) : (
+                <span style={{ color: "var(--text-faint)" }}>--</span>
+              )}
+            </div>,
+          ]}
+        />
+      </WindowPanel>
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Imports / exports tab
+// ---------------------------------------------------------------------------
 
 function ImportsExportsTab({
   capability,
 }: {
   capability: Record<string, unknown>;
 }) {
-  const imports = (capability.imports as Array<{ name: string; module?: string; dangerous?: boolean }> | undefined) ?? [];
-  const exports_ = (capability.exports as Array<{ name: string; reachable?: boolean }> | undefined) ?? [];
+  const imports =
+    (capability.imports as
+      | Array<{ name: string; module?: string; dangerous?: boolean }>
+      | undefined) ?? [];
+  const exports_ =
+    (capability.exports as
+      | Array<{ name: string; reachable?: boolean }>
+      | undefined) ?? [];
+
   if (imports.length === 0 && exports_.length === 0) {
     return (
-      <AilaCard  techBorder glow><EmptyState
-        title="No imports / exports recorded yet"
-        description="capability_profile.imports + exports backend wiring pending. Spec §1.4: dangerous imports (strcpy, sprintf, system, gets) get a yellow border; reachable exports get a 'reachable' badge."
-      /></AilaCard>
+      <WindowPanel title="imports / exports" tone="muted">
+        <MonoEmpty>
+          no imports / exports recorded yet. dangerous imports (strcpy, sprintf,
+          system, gets) render highlighted; reachable exports carry a
+          "reachable" chip.
+        </MonoEmpty>
+      </WindowPanel>
     );
   }
+
   return (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-      <AilaCard  techBorder glow><h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
-        Imports ({imports.length})
-      </h3>
-      <ul className="text-xs font-mono space-y-1 max-h-96 overflow-y-auto">
-        {imports.map((im) => (
-          <li
-            key={im.name}
-            className={
-              "px-2 py-1 rounded border " +
-              (im.dangerous
-                ? "border-amber-500 text-amber-300"
-                : "border-border-default text-foreground")
-            }
-          >
-            {im.name}
-            {im.module && <span className="text-text-muted ml-2">{im.module}</span>}
-          </li>
-        ))}
-      </ul></AilaCard>
-      <AilaCard  techBorder glow><h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
-        Exports ({exports_.length})
-      </h3>
-      <ul className="text-xs font-mono space-y-1 max-h-96 overflow-y-auto">
-        {exports_.map((ex) => (
-          <li
-            key={ex.name}
-            className="px-2 py-1 rounded border border-border-default text-foreground flex items-center justify-between gap-2"
-          >
-            <span>{ex.name}</span>
-            {ex.reachable && (
-              <AilaBadge severity="medium" size="sm">reachable</AilaBadge>
-            )}
-          </li>
-        ))}
-      </ul></AilaCard>
+    <div
+      className="grid"
+      style={{
+        gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+        gap: 12,
+      }}
+    >
+      <WindowPanel title={`imports (${imports.length})`} tone="warn">
+        <ul
+          className="font-mono"
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            maxHeight: 384,
+            overflowY: "auto",
+            fontSize: 11,
+            paddingRight: 4,
+          }}
+        >
+          {imports.map((im) => {
+            const danger = !!im.dangerous;
+            return (
+              <li
+                key={im.name}
+                style={{
+                  padding: "4px 8px",
+                  borderRadius: 2,
+                  border: `1px solid ${danger ? "var(--status-warn)" : "var(--border-faint)"}`,
+                  color: danger ? "var(--status-warn)" : "var(--text-primary)",
+                  background: danger
+                    ? "color-mix(in srgb, var(--status-warn) 8%, transparent)"
+                    : "var(--surface-card)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 8,
+                }}
+              >
+                <span style={{ overflowWrap: "anywhere" }}>{im.name}</span>
+                {im.module && (
+                  <span
+                    style={{
+                      fontSize: 9.5,
+                      color: "var(--text-faint)",
+                      letterSpacing: "0.06em",
+                    }}
+                  >
+                    {im.module}
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </WindowPanel>
+
+      <WindowPanel title={`exports (${exports_.length})`} tone="info">
+        <ul
+          className="font-mono"
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            maxHeight: 384,
+            overflowY: "auto",
+            fontSize: 11,
+            paddingRight: 4,
+          }}
+        >
+          {exports_.map((ex) => (
+            <li
+              key={ex.name}
+              style={{
+                padding: "4px 8px",
+                borderRadius: 2,
+                border: "1px solid var(--border-faint)",
+                color: "var(--text-primary)",
+                background: "var(--surface-card)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 8,
+              }}
+            >
+              <span style={{ overflowWrap: "anywhere" }}>{ex.name}</span>
+              {ex.reachable && <MonoBadge tone="medium">reachable</MonoBadge>}
+            </li>
+          ))}
+        </ul>
+      </WindowPanel>
     </div>
   );
 }
 
+// ---------------------------------------------------------------------------
+// Notes tab
+// ---------------------------------------------------------------------------
+
 function NotesTab({ targetId }: { targetId: string }) {
   const STORAGE_KEY = `vr.target.notes.${targetId}`;
   const initial =
-    typeof window === "undefined" ? "" : window.localStorage.getItem(STORAGE_KEY) ?? "";
+    typeof window === "undefined"
+      ? ""
+      : window.localStorage.getItem(STORAGE_KEY) ?? "";
   const [text, setText] = useState(initial);
-  const [savedAt, setSavedAt] = useState<string | null>(initial ? "loaded from local" : null);
+  const [savedAt, setSavedAt] = useState<string | null>(
+    initial ? "loaded from local" : null,
+  );
   function save() {
     try {
       window.localStorage.setItem(STORAGE_KEY, text);
@@ -444,37 +733,50 @@ function NotesTab({ targetId }: { targetId: string }) {
     }
   }
   return (
-    <AilaCard  techBorder glow><h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
-      Operator notes
-    </h3>
-    <textarea
-      value={text}
-      onChange={(e) => setText(e.target.value)}
-      onBlur={save}
-      rows={10}
-      placeholder="Free-text notes about this target. Stays in your browser until the backend per-target notes API ships."
-      aria-label="Operator notes"
-      className="w-full px-3 py-2 text-sm font-mono rounded bg-surface border border-border-default focus:border-accent focus:outline-none"
-    />
-    <p className="text-3xs text-text-muted mt-1">
-      Saved locally in your browser ({savedAt ?? "not saved yet"}). Spec §1.4
-      wants project-scoped sync -- backend pending.
-    </p></AilaCard>
+    <WindowPanel
+      title="operator notes"
+      tone="info"
+      status={
+        <span>
+          saved locally in your browser ({savedAt ?? "not saved yet"}).
+          project-scoped sync -- backend pending.
+        </span>
+      }
+    >
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onBlur={save}
+        rows={10}
+        placeholder="free-text notes about this target. stays in your browser until the backend per-target notes api ships."
+        aria-label="Operator notes"
+        className="font-mono"
+        style={{
+          width: "100%",
+          padding: "8px 10px",
+          fontSize: 11,
+          lineHeight: 1.55,
+          color: "var(--text-primary)",
+          background: "var(--surface-sunk)",
+          border: "1px solid var(--border-soft)",
+          borderRadius: 3,
+          resize: "vertical",
+          outline: "none",
+        }}
+      />
+    </WindowPanel>
   );
 }
 
-/** Per-bucket renderer for the apk_overview projection. The static
- * summary is the in-repo static summary; we read only the
- * keys we recognise and defensively skip anything else so an upstream
- * tool version bump doesn't crash the page.
- */
+// ---------------------------------------------------------------------------
+// Android APK overview
+// ---------------------------------------------------------------------------
+
 function AndroidApkOverview({ overview }: { overview: ApkOverview }) {
   const summary = (overview.static_summary ?? {}) as Record<string, unknown>;
 
-  const asStringArray = (v: unknown): string[] => {
-    if (!Array.isArray(v)) return [];
-    return v.filter((x): x is string => typeof x === "string");
-  };
+  const asStringArray = (v: unknown): string[] =>
+    !Array.isArray(v) ? [] : v.filter((x): x is string => typeof x === "string");
   const asString = (v: unknown): string | null =>
     typeof v === "string" && v.length > 0 ? v : null;
   const asNumber = (v: unknown): number | null =>
@@ -509,215 +811,258 @@ function AndroidApkOverview({ overview }: { overview: ApkOverview }) {
     : [];
   const signingScheme = asString(summary.signing_scheme);
 
+  const exportedTotal =
+    activities.length + services.length + receivers.length + providers.length;
+
   return (
-    <AilaCard techBorder glow>
-      <h2 className="text-sm font-semibold text-foreground mb-3">
-        Android APK
-      </h2>
-
-      {/* Package metadata block. Two-column grid keeps scan-the-list ergonomic
-          for the operator. Hyphen renders when the static summary didn't
-          surface a field (older APK or pipeline incomplete). */}
-      <dl className="grid grid-cols-2 gap-3 text-sm mb-4">
-        <div>
-          <dt className="text-text-muted text-xs">Package</dt>
-          <dd className="font-mono text-xs">{pkg ?? "--"}</dd>
-        </div>
-        <div>
-          <dt className="text-text-muted text-xs">Version</dt>
-          <dd className="font-mono text-xs">
+    <div className="flex flex-col" style={{ gap: 12 }}>
+      <WindowPanel title="android apk" tone="accent">
+        <div
+          className="grid"
+          style={{
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+            gap: "0 20px",
+          }}
+        >
+          <BriefRow label="package">{pkg ?? "--"}</BriefRow>
+          <BriefRow label="version">
             {versionName ?? "--"}
-            {versionCode != null && ` (${versionCode})`}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-text-muted text-xs">SDK range</dt>
-          <dd className="font-mono text-xs">
+            {versionCode != null ? ` (${versionCode})` : ""}
+          </BriefRow>
+          <BriefRow label="sdk range">
             {minSdk != null ? `min ${minSdk}` : "--"}
-            {targetSdk != null ? ` · target ${targetSdk}` : ""}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-text-muted text-xs">Signing scheme</dt>
-          <dd className="font-mono text-xs">{signingScheme ?? "--"}</dd>
-        </div>
-        <div>
-          <dt className="text-text-muted text-xs">SHA-256</dt>
-          <dd className="font-mono text-[10px] break-all">
-            {overview.sha256 ?? "--"}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-text-muted text-xs">Jadx classes</dt>
-          <dd className="font-mono text-xs">
+            {targetSdk != null ? ` \u00b7 target ${targetSdk}` : ""}
+          </BriefRow>
+          <BriefRow label="signing scheme">{signingScheme ?? "--"}</BriefRow>
+          <BriefRow label="sha-256">
+            <span style={{ fontSize: 10 }}>{overview.sha256 ?? "--"}</span>
+          </BriefRow>
+          <BriefRow label="jadx classes">
             {overview.jadx_class_count?.toLocaleString() ?? "--"}
-          </dd>
+          </BriefRow>
         </div>
-      </dl>
+      </WindowPanel>
 
-      {/* Native libraries -- single most-asked APK question (".so files").
-          Surfaced prominently because operator's complaint specifically
-          named these. */}
       {nativeLibs.length > 0 && (
-        <div className="mb-4">
-          <h3 className="text-xs font-semibold text-foreground mb-1">
-            Native libraries ({nativeLibs.length})
-          </h3>
-          <ul className="text-xs font-mono text-text-muted space-y-0.5 max-h-40 overflow-y-auto">
+        <WindowPanel title={`native libraries (${nativeLibs.length})`} tone="info">
+          <ul
+            className="font-mono"
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 2,
+              maxHeight: 220,
+              overflowY: "auto",
+              fontSize: 10.5,
+              color: "var(--text-muted)",
+              paddingRight: 4,
+            }}
+          >
             {nativeLibs.map((lib) => (
               <li key={lib}>{lib}</li>
             ))}
           </ul>
-        </div>
+        </WindowPanel>
       )}
 
-      {/* Permissions -- dangerous called out separately. */}
       {permissions.length > 0 && (
-        <div className="mb-4">
-          <h3 className="text-xs font-semibold text-foreground mb-1">
-            Permissions ({permissions.length})
-            {dangerousPerms.length > 0 && (
-              <span className="ml-2 text-critical">
+        <WindowPanel
+          title={`permissions (${permissions.length})`}
+          tone={dangerousPerms.length > 0 ? "warn" : "info"}
+          actions={
+            dangerousPerms.length > 0 ? (
+              <MonoBadge tone="critical">
                 {dangerousPerms.length} dangerous
-              </span>
-            )}
-          </h3>
+              </MonoBadge>
+            ) : null
+          }
+        >
           <details>
-            <summary className="text-xs text-text-muted cursor-pointer">
+            <summary
+              className="font-mono uppercase"
+              style={{
+                fontSize: 9.5,
+                letterSpacing: "0.1em",
+                color: "var(--text-muted)",
+                cursor: "pointer",
+              }}
+            >
               show list
             </summary>
-            <ul className="text-xs font-mono text-text-muted space-y-0.5 mt-2 max-h-60 overflow-y-auto">
+            <ul
+              className="font-mono"
+              style={{
+                marginTop: 8,
+                display: "flex",
+                flexDirection: "column",
+                gap: 2,
+                maxHeight: 320,
+                overflowY: "auto",
+                fontSize: 10.5,
+                color: "var(--text-muted)",
+                paddingRight: 4,
+              }}
+            >
               {permissions.map((p) => (
                 <li
                   key={p}
-                  className={
-                    dangerousPerms.includes(p) ? "text-critical" : undefined
-                  }
+                  style={{
+                    color: dangerousPerms.includes(p)
+                      ? "var(--accent)"
+                      : "var(--text-muted)",
+                  }}
                 >
                   {p}
                 </li>
               ))}
             </ul>
           </details>
-        </div>
+        </WindowPanel>
       )}
 
-      {/* Exported components -- attack surface, by definition. */}
-      {(activities.length + services.length + receivers.length + providers.length) > 0 && (
-        <div className="mb-4">
-          <h3 className="text-xs font-semibold text-foreground mb-1">
-            Exported components
-          </h3>
-          <dl className="grid grid-cols-4 gap-2 text-xs">
-            <div>
-              <dt className="text-text-muted">Activities</dt>
-              <dd className="font-mono">{activities.length}</dd>
-            </div>
-            <div>
-              <dt className="text-text-muted">Services</dt>
-              <dd className="font-mono">{services.length}</dd>
-            </div>
-            <div>
-              <dt className="text-text-muted">Receivers</dt>
-              <dd className="font-mono">{receivers.length}</dd>
-            </div>
-            <div>
-              <dt className="text-text-muted">Providers</dt>
-              <dd className="font-mono">{providers.length}</dd>
-            </div>
-          </dl>
-        </div>
+      {exportedTotal > 0 && (
+        <WindowPanel title="exported components" tone="info">
+          <div
+            className="grid"
+            style={{
+              gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+              gap: 1,
+              background: "var(--border-faint)",
+              border: "1px solid var(--border-faint)",
+              borderRadius: 3,
+            }}
+          >
+            <StatusCell label="activities" value={activities.length} />
+            <StatusCell label="services" value={services.length} />
+            <StatusCell label="receivers" value={receivers.length} />
+            <StatusCell label="providers" value={providers.length} />
+          </div>
+        </WindowPanel>
       )}
 
-      {/* Certificates -- signing identity. SHA-1 / SHA-256 fingerprints +
-          subject DN are the fields operators actually compare. */}
       {certificates.length > 0 && (
-        <div className="mb-4">
-          <h3 className="text-xs font-semibold text-foreground mb-1">
-            Certificates ({certificates.length})
-          </h3>
-          <ul className="text-xs space-y-2">
+        <WindowPanel title={`certificates (${certificates.length})`} tone="info">
+          <ul
+            className="font-mono"
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+              fontSize: 11,
+            }}
+          >
             {certificates.map((cert, idx) => (
               <li
                 key={`${(cert.sha256 as string) ?? idx}`}
-                className="border-l-2 border-border-default pl-2"
+                style={{
+                  borderLeft: "2px solid var(--border-soft)",
+                  paddingLeft: 10,
+                }}
               >
-                <div className="font-mono text-foreground">
-                  {(cert.subject as string) ?? (cert.issuer as string) ?? "--"}
+                <div style={{ color: "var(--text-primary)" }}>
+                  {(cert.subject as string) ??
+                    (cert.issuer as string) ??
+                    "--"}
                 </div>
                 {cert.sha256 != null && (
-                  <div className="font-mono text-[10px] text-text-muted break-all">
-                    SHA-256 {String(cert.sha256)}
+                  <div
+                    style={{
+                      fontSize: 9.5,
+                      color: "var(--text-muted)",
+                      overflowWrap: "anywhere",
+                    }}
+                  >
+                    sha-256 {String(cert.sha256)}
                   </div>
                 )}
                 {cert.sha1 != null && (
-                  <div className="font-mono text-[10px] text-text-muted break-all">
-                    SHA-1 {String(cert.sha1)}
+                  <div
+                    style={{
+                      fontSize: 9.5,
+                      color: "var(--text-muted)",
+                      overflowWrap: "anywhere",
+                    }}
+                  >
+                    sha-1 {String(cert.sha1)}
                   </div>
                 )}
               </li>
             ))}
           </ul>
-        </div>
+        </WindowPanel>
       )}
 
-      {/* Backend handles -- operator-facing path strings. Useful for
-          spelunking via the audit-mcp index id or running ad-hoc
-          jadx-tree queries from a shell. */}
-      <div className="mb-3">
-        <h3 className="text-xs font-semibold text-foreground mb-1">
-          Backend handles
-        </h3>
-        <dl className="grid grid-cols-1 gap-1 text-xs">
-          {overview.decoded_dir && (
-            <div className="flex gap-2">
-              <dt className="text-text-muted shrink-0">apktool</dt>
-              <dd className="font-mono text-[10px] break-all">
-                {overview.decoded_dir}
-              </dd>
-            </div>
+      <WindowPanel title="backend handles" tone="muted">
+        {overview.decoded_dir && (
+          <BriefRow label="apktool">{overview.decoded_dir}</BriefRow>
+        )}
+        {overview.decompiled_dir && (
+          <BriefRow label="jadx">{overview.decompiled_dir}</BriefRow>
+        )}
+        {overview.manifest_path && (
+          <BriefRow label="manifest">{overview.manifest_path}</BriefRow>
+        )}
+        {overview.audit_mcp_index_id && (
+          <BriefRow label="audit_mcp idx">
+            {overview.audit_mcp_index_id}
+          </BriefRow>
+        )}
+        {!overview.decoded_dir &&
+          !overview.decompiled_dir &&
+          !overview.manifest_path &&
+          !overview.audit_mcp_index_id && (
+            <MonoEmpty>no backend handles projected yet.</MonoEmpty>
           )}
-          {overview.decompiled_dir && (
-            <div className="flex gap-2">
-              <dt className="text-text-muted shrink-0">jadx</dt>
-              <dd className="font-mono text-[10px] break-all">
-                {overview.decompiled_dir}
-              </dd>
-            </div>
-          )}
-          {overview.manifest_path && (
-            <div className="flex gap-2">
-              <dt className="text-text-muted shrink-0">manifest</dt>
-              <dd className="font-mono text-[10px] break-all">
-                {overview.manifest_path}
-              </dd>
-            </div>
-          )}
-          {overview.audit_mcp_index_id && (
-            <div className="flex gap-2">
-              <dt className="text-text-muted shrink-0">audit_mcp idx</dt>
-              <dd className="font-mono text-[10px] break-all">
-                {overview.audit_mcp_index_id}
-              </dd>
-            </div>
-          )}
-        </dl>
-      </div>
-
-    </AilaCard>
+      </WindowPanel>
+    </div>
   );
 }
 
-/** D-4b dispatcher card. Appears on android_apk targets once the
- * STATIC_SUMMARY ingestion stage has populated `apk_overview` with
- * a non-empty static_summary dict (the same gate the backend
- * enforces in `vr/api_router.py::dispatch_masvs_audit`).
- *
- * The button shows the estimated total spend (≈ N × per-child
- * budget) before confirming so the operator knows what they're
- * committing to. The dispatcher is idempotent -- re-clicking with
- * an active parent for the same catalog version returns the
- * existing ids verbatim. */
+function StatusCell({
+  label,
+  value,
+}: {
+  label: string;
+  value: number | string;
+}) {
+  return (
+    <div
+      className="font-mono"
+      style={{
+        background: "var(--surface-sunk)",
+        padding: "10px 12px",
+        display: "flex",
+        flexDirection: "column",
+        gap: 4,
+      }}
+    >
+      <span
+        className="uppercase"
+        style={{
+          fontSize: 9,
+          letterSpacing: "0.14em",
+          color: "var(--text-faint)",
+        }}
+      >
+        {label}
+      </span>
+      <span
+        style={{
+          fontSize: 20,
+          color: "var(--text-primary)",
+          letterSpacing: "-0.02em",
+        }}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// APK static / MASVS dispatcher, progress, report, control-table, analytics
+// ---------------------------------------------------------------------------
+
 function MasvsAuditCard({
   targetId,
   packageLabel,
@@ -733,7 +1078,7 @@ function MasvsAuditCard({
   const handleClick = () => {
     const ok = window.confirm(
       `Dispatch OWASP MASVS L1 audit against ${packageDisplay}?\n\n` +
-        `≈ ${MASVS_L1_CONTROL_COUNT_ESTIMATE} child investigations, ` +
+        `\u2248 ${MASVS_L1_CONTROL_COUNT_ESTIMATE} child investigations, ` +
         `~$${MASVS_DEFAULT_CHILD_BUDGET_USD} budget each ` +
         `(~$${estimatedTotal} total expected spend).\n\n` +
         "Each child runs the full vuln_researcher scout / critic / " +
@@ -745,50 +1090,46 @@ function MasvsAuditCard({
     masvsMut.mutate();
   };
 
+  const action = (
+    <HeaderButton
+      label={
+        masvsMut.isPending
+          ? "dispatching\u2026"
+          : `run legacy masvs audit (~$${estimatedTotal})`
+      }
+      onClick={handleClick}
+      disabled={masvsMut.isPending}
+    />
+  );
+
   return (
-    <AilaCard variant="elevated">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-sm font-semibold text-text-muted">
-              MASVS audit
-            </h2>
-            <AilaBadge severity="neutral" size="sm">
-              LEGACY COMPLIANCE
-            </AilaBadge>
-          </div>
-          <p className="text-xs text-text-muted mt-1">
-            Broad OWASP MASVS L1 compliance sweep, kept for regulated
-            audits that still require the L1 control list verbatim.
-            Prefer the APK static audit above for evidence-backed
-            findings on this APK. Fans out \u2248 {MASVS_L1_CONTROL_COUNT_ESTIMATE}
-            parallel child investigations (one per L1 control), each
-            driving the standard vuln_researcher workflow against the
-            jadx-decompiled tree. Estimated total spend \u2248 $
-            {estimatedTotal} (~${MASVS_DEFAULT_CHILD_BUDGET_USD}
-            per child \u00d7 {MASVS_L1_CONTROL_COUNT_ESTIMATE} controls).
-          </p>
+    <WindowPanel
+      title="masvs audit"
+      tone="muted"
+      actions={
+        <div className="flex items-center" style={{ gap: 8 }}>
+          <MonoBadge tone="muted">legacy compliance</MonoBadge>
+          {action}
         </div>
-        <button
-          type="button"
-          onClick={handleClick}
-          disabled={masvsMut.isPending}
-          className="px-3 py-1.5 text-xs font-medium rounded-md border border-border text-text-muted hover:bg-elevated hover:text-foreground disabled:opacity-50 shrink-0"
-        >
-          {masvsMut.isPending
-            ? "Dispatching\u2026"
-            : `Run legacy MASVS audit (~$${estimatedTotal})`}
-        </button>
-      </div>
-    </AilaCard>
+      }
+    >
+      <p
+        className="font-mono"
+        style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.55 }}
+      >
+        broad owasp masvs l1 compliance sweep, kept for regulated audits that
+        still require the l1 control list verbatim. prefer the apk static audit
+        above for evidence-backed findings on this apk. fans out{" "}
+        {MASVS_L1_CONTROL_COUNT_ESTIMATE} parallel child investigations (one
+        per l1 control), each driving the standard vuln_researcher workflow
+        against the jadx-decompiled tree. estimated total spend \u2248 $
+        {estimatedTotal} (~${MASVS_DEFAULT_CHILD_BUDGET_USD} per child
+        \u00d7 {MASVS_L1_CONTROL_COUNT_ESTIMATE} controls).
+      </p>
+    </WindowPanel>
   );
 }
 
-/** APK static-analysis dispatcher card. Sibling of MasvsAuditCard,
- * gated identically (android_apk + STATIC_SUMMARY populated). Fans one
- * child investigation per STATIC catalog check -- sharp, evidence-backed
- * checks with a definite file:line source, complementary to the broader
- * MASVS compliance audit. Idempotent on (target, catalog version). */
 function ApkStaticAuditCard({
   targetId,
   packageLabel,
@@ -816,69 +1157,59 @@ function ApkStaticAuditCard({
     apkMut.mutate();
   };
 
+  const action = (
+    <HeaderButton
+      label={
+        apkMut.isPending
+          ? "dispatching\u2026"
+          : `run apk static audit (~$${estimatedTotal})`
+      }
+      onClick={handleClick}
+      disabled={apkMut.isPending}
+      primary
+    />
+  );
+
   return (
-    <AilaCard techBorder glow>
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-sm font-semibold text-foreground">
-              APK static audit
-            </h2>
-            <AilaBadge severity="info" size="sm">
-              RECOMMENDED -- EVIDENCE-BACKED
-            </AilaBadge>
-          </div>
-          <p className="text-xs text-text-muted mt-1">
-            Primary APK audit. Runs the APK static-analysis check
-            catalog -- sharp, evidence-backed investigations each with
-            a definite file:line source in the decompiled tree. Fans
-            out \u2248 {APK_STATIC_CHECK_COUNT_ESTIMATE} parallel child
-            investigations (one per concrete static check -- manifest,
-            secrets, crypto, WebView, IPC, storage, exploit chains),
-            each driving the standard vuln_researcher workflow against
-            the jadx-decompiled tree. Estimated total spend \u2248 $
-            {estimatedTotal} (~${APK_STATIC_DEFAULT_CHILD_BUDGET_USD}
-            per child \u00d7 {APK_STATIC_CHECK_COUNT_ESTIMATE} checks).
-          </p>
+    <WindowPanel
+      title="apk static audit"
+      tone="accent"
+      actions={
+        <div className="flex items-center" style={{ gap: 8 }}>
+          <MonoBadge tone="info">recommended \u00b7 evidence-backed</MonoBadge>
+          {action}
         </div>
-        <button
-          type="button"
-          onClick={handleClick}
-          disabled={apkMut.isPending}
-          className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 shrink-0"
-        >
-          {apkMut.isPending
-            ? "Dispatching\u2026"
-            : `Run APK static audit (~$${estimatedTotal})`}
-        </button>
-      </div>
-    </AilaCard>
+      }
+    >
+      <p
+        className="font-mono"
+        style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.55 }}
+      >
+        primary apk audit. runs the apk static-analysis check catalog -- sharp,
+        evidence-backed investigations each with a definite file:line source in
+        the decompiled tree. fans out {APK_STATIC_CHECK_COUNT_ESTIMATE}
+        parallel child investigations (manifest, secrets, crypto, webview, ipc,
+        storage, exploit chains). estimated total spend \u2248 ${estimatedTotal}{" "}
+        (~${APK_STATIC_DEFAULT_CHILD_BUDGET_USD} per child \u00d7{" "}
+        {APK_STATIC_CHECK_COUNT_ESTIMATE} checks).
+      </p>
+    </WindowPanel>
   );
 }
 
-/** U-1 progress card. Sibling of MasvsAuditCard / MasvsReportCard:
- * appears once the operator has dispatched a MASVS audit for this
- * target. Surfaces total / completed / running / failed counts plus
- * an ETA estimate derived from the median per-child wall-clock of
- * terminal siblings.
- *
- * Reuses the same `useInvestigationsForTarget` query the report card
- * polls -- React Query dedupes the 8s refresh across cards so all
- * three (dispatcher, progress, report) share one network round.
- *
- * ETA is intentionally serial-upper-bound: median × remaining. The
- * dispatcher fans children through ARQ workers in parallel, so the
- * real wall-clock will be lower depending on the live vr-queue
- * concurrency the operator owns. We surface the per-control median
- * + the worst-case sum so the operator can scale mentally to their
- * own worker count rather than reading a fabricated point estimate.
- * If no terminal child has both timestamps yet, both numbers render
- * as "--" -- partial signals beat fake confidence.
- *
- * Same `inv.kind as string` workaround as MasvsReportCard -- the
- * InvestigationKind union doesn't yet include "masvs_audit" because
- * InvestigationsListPage.tsx has an exhaustive `Record<Kind, Icon>`
- * that would also need an icon assignment. Out of scope for U-1. */
+function formatDurationCompact(seconds: number): string {
+  if (!Number.isFinite(seconds) || seconds < 0) return "--";
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  if (seconds < 3600) {
+    const m = Math.floor(seconds / 60);
+    const s = Math.round(seconds % 60);
+    return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  }
+  const h = Math.floor(seconds / 3600);
+  const m = Math.round((seconds % 3600) / 60);
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
 function MasvsProgressCard({
   targetId,
   packageLabel,
@@ -890,10 +1221,6 @@ function MasvsProgressCard({
     useInvestigationsForTarget(targetId);
   const investigations = investigationsResult?.data ?? [];
 
-  // Mirror MasvsReportCard's parent-resolution rule: pick the most
-  // recent kind=masvs_audit parent for this target. created_at is
-  // an ISO-8601 string from the wire so localeCompare orders it
-  // chronologically without parsing dates.
   const masvsParents = investigations
     .filter(
       (inv) =>
@@ -910,24 +1237,15 @@ function MasvsProgressCard({
   );
   const totalChildren = children.length;
 
-  // Status buckets. Terminal = completed | failed | abandoned per
-  // InvestigationStatus in types.ts. Anything else (created, running,
-  // paused) bucketizes as "running" for the operator's overview --
-  // they don't need to distinguish the three at this card's level.
   let completedCount = 0;
   let runningCount = 0;
   let failedCount = 0;
   const terminalDurationsSec: number[] = [];
   for (const c of children) {
     if (c.status === "completed") completedCount++;
-    else if (c.status === "failed" || c.status === "abandoned")
-      failedCount++;
+    else if (c.status === "failed" || c.status === "abandoned") failedCount++;
     else runningCount++;
 
-    // Median wall-time signal -- include every terminal child with
-    // both timestamps, including failures (they consumed worker
-    // time too). A failed child that timed out at the cost cap is
-    // a legitimate data point for the per-control distribution.
     const isTerminal =
       c.status === "completed" ||
       c.status === "failed" ||
@@ -944,13 +1262,14 @@ function MasvsProgressCard({
   const percentComplete =
     totalChildren > 0 ? Math.round((terminalCount / totalChildren) * 100) : 0;
 
-  // P50 of terminal-child wall-times.
   let medianSec: number | null = null;
   if (terminalDurationsSec.length > 0) {
     const sorted = [...terminalDurationsSec].sort((a, b) => a - b);
     const mid = Math.floor(sorted.length / 2);
     medianSec =
-      sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+      sorted.length % 2 === 0
+        ? (sorted[mid - 1] + sorted[mid]) / 2
+        : sorted[mid];
   }
 
   const medianLabel =
@@ -963,130 +1282,84 @@ function MasvsProgressCard({
   const packageDisplay = packageLabel ?? "this APK";
 
   return (
-    <AilaCard techBorder glow>
-      <div className="space-y-3">
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <div className="flex-1 min-w-0">
-            <h2 className="text-sm font-semibold text-foreground">
-              MASVS audit progress · {packageDisplay}
-            </h2>
-            <p className="text-xs text-text-muted mt-1 font-mono break-all">
-              parent {parent.id.slice(0, 8)} · {parent.status}
-            </p>
-          </div>
-          <AilaBadge severity="info" size="sm">
-            {percentComplete}% complete
-          </AilaBadge>
-        </div>
-
-        {/* Linear progress bar -- terminalCount/total. */}
+    <WindowPanel
+      title={`masvs progress \u00b7 ${packageDisplay}`}
+      tone="info"
+      actions={<MonoBadge tone="info">{percentComplete}% complete</MonoBadge>}
+      status={
+        <span>
+          parent {parent.id.slice(0, 8)} \u00b7 {parent.status}
+        </span>
+      }
+    >
+      <div className="flex flex-col" style={{ gap: 12 }}>
         <div
-          className="w-full h-2 bg-surface rounded overflow-hidden border border-border-default"
           role="progressbar"
           aria-valuenow={percentComplete}
           aria-valuemin={0}
           aria-valuemax={100}
           aria-label="MASVS audit child completion"
+          style={{
+            width: "100%",
+            height: 8,
+            background: "var(--surface-sunk)",
+            border: "1px solid var(--border-soft)",
+            borderRadius: 2,
+            overflow: "hidden",
+          }}
         >
           <div
-            className="h-full bg-accent transition-all duration-500"
-            style={{ width: `${percentComplete}%` }}
+            style={{
+              height: "100%",
+              width: `${percentComplete}%`,
+              background: "var(--accent)",
+              transition: "width 500ms",
+            }}
           />
         </div>
 
-        {/* Count tiles */}
-        <dl className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-          <div>
-            <dt className="text-text-muted">Total</dt>
-            <dd className="font-mono text-foreground text-sm">
-              {totalChildren}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-text-muted">Completed</dt>
-            <dd className="font-mono text-foreground text-sm">
-              {completedCount}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-text-muted">Running</dt>
-            <dd className="font-mono text-foreground text-sm">
-              {runningCount}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-text-muted">Failed</dt>
-            <dd className="font-mono text-foreground text-sm">
-              {failedCount}
-            </dd>
-          </div>
-        </dl>
+        <div
+          className="grid"
+          style={{
+            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+            gap: 1,
+            background: "var(--border-faint)",
+            border: "1px solid var(--border-faint)",
+            borderRadius: 3,
+          }}
+        >
+          <StatusCell label="total" value={totalChildren} />
+          <StatusCell label="completed" value={completedCount} />
+          <StatusCell label="running" value={runningCount} />
+          <StatusCell label="failed" value={failedCount} />
+        </div>
 
-        {/* Timing block -- separated by a divider so the operator's
-            eye groups counts vs estimates. */}
-        <dl className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs border-t border-border-default pt-3">
-          <div>
-            <dt className="text-text-muted">
-              Median wall-time per child
-            </dt>
-            <dd className="font-mono text-foreground">{medianLabel}</dd>
-          </div>
-          <div>
-            <dt className="text-text-muted">ETA (serial upper bound)</dt>
-            <dd className="font-mono text-foreground">{etaLabel}</dd>
-          </div>
-        </dl>
-        <p className="text-xs text-text-muted">
-          ETA = median × remaining. Children run through ARQ workers
-          in parallel, so actual wall-clock scales down with the live
-          vr-queue concurrency on this host.
+        <div
+          className="grid"
+          style={{
+            gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+            gap: 12,
+            paddingTop: 8,
+            borderTop: "1px solid var(--border-faint)",
+          }}
+        >
+          <BriefRow label="median wall-time per child">{medianLabel}</BriefRow>
+          <BriefRow label="eta (serial upper bound)">{etaLabel}</BriefRow>
+        </div>
+
+        <p
+          className="font-mono"
+          style={{ fontSize: 10, color: "var(--text-faint)", lineHeight: 1.5 }}
+        >
+          eta = median \u00d7 remaining. children run through arq workers in
+          parallel, so actual wall-clock scales down with the live vr-queue
+          concurrency on this host.
         </p>
       </div>
-    </AilaCard>
+    </WindowPanel>
   );
 }
 
-/** Render seconds as `Ns` / `Nm Ss` / `Nh Nm`. Used by U-1's progress
- * card for the per-child median and ETA cells -- kept compact so the
- * AilaBadge-style tiles don't wrap on narrow viewports. */
-function formatDurationCompact(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) return "--";
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  if (seconds < 3600) {
-    const m = Math.floor(seconds / 60);
-    const s = Math.round(seconds % 60);
-    return s > 0 ? `${m}m ${s}s` : `${m}m`;
-  }
-  const h = Math.floor(seconds / 3600);
-  const m = Math.round((seconds % 3600) / 60);
-  return m > 0 ? `${h}h ${m}m` : `${h}h`;
-}
-
-/** R-4 report-download card. Sibling of MasvsAuditCard: appears once
- * the operator has dispatched a MASVS audit for this target. The
- * dispatcher (D-1) creates one parent VRInvestigation with
- * kind=masvs_audit and N children with parent_investigation_id
- * pointing at it; the parent transitions to COMPLETED only once
- * every child reaches a terminal state (D-5 reconciler).
- *
- * The PDF endpoint (R-3) accepts partial aggregates -- children
- * still in flight render as INCONCLUSIVE rows so the operator can
- * hand the CISO a checkpoint copy without waiting for the full
- * ~60min batch. Following that, the button enables once at least
- * one child has reached a terminal state and stays enabled for the
- * rest of the audit lifetime. If no terminal children exist yet,
- * the button stays disabled with a tooltip explaining why.
- *
- * No new mutation hook -- the download is a one-shot read-only side
- * effect that bypasses React Query (matches ExportReportButton).
- *
- * Note: VRInvestigationSummary.kind is currently typed as the
- * pre-MASVS union (discovery | variant_hunt | triage | n_day |
- * audit) in `types.ts`. The runtime payload now also carries
- * "masvs_audit" for parent records -- the `as string` cast below
- * acknowledges that drift without expanding the type system in
- * this iteration. Update `InvestigationKind` when U-1 / U-2 land,
- * which will need the narrowing anyway. */
 function MasvsReportCard({
   targetId,
   packageLabel,
@@ -1101,12 +1374,6 @@ function MasvsReportCard({
 
   const investigations = investigationsResult?.data ?? [];
 
-  // Pick the most recent MASVS_AUDIT parent for this target. The
-  // dispatcher is idempotent on (target, catalog_version) for ACTIVE
-  // parents (D-3) -- once that parent reaches a terminal state the
-  // operator can fire a fresh batch, so we sort created_at desc and
-  // pick the head. created_at is an ISO-8601 string from the wire so
-  // localeCompare orders it chronologically without parsing dates.
   const masvsParents = investigations
     .filter(
       (inv) =>
@@ -1116,19 +1383,11 @@ function MasvsReportCard({
     .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""));
   const parent = masvsParents[0] ?? null;
 
-  // No parent means the operator hasn't dispatched yet -- surface
-  // nothing here so the MasvsAuditCard above is the only CTA. The
-  // download card appears the moment a parent row exists, even
-  // before any child has finished, so the operator sees the
-  // disabled control with a clear "waiting on children" status.
   if (isLoading || parent == null) return null;
 
   const children = investigations.filter(
     (inv) => inv.parent_investigation_id === parent.id,
   );
-  // VRInvestigation terminal statuses per types.ts InvestigationStatus.
-  // R-3 docstring confirms the PDF tolerates non-terminal children --
-  // they render as INCONCLUSIVE rows in the per-control table.
   const terminalChildren = children.filter(
     (c) =>
       c.status === "completed" ||
@@ -1146,10 +1405,6 @@ function MasvsReportCard({
     setError(null);
     try {
       const token = await getAuthTokenStandalone();
-      // Cache-buster query param: backend sets Cache-Control:
-      // no-store but entries already in the browser disk cache from
-      // earlier visits would otherwise survive. ts changes per
-      // click so each request hits a unique URL.
       const params = new URLSearchParams({
         audit_id: parent.id,
         ts: String(Date.now()),
@@ -1158,10 +1413,6 @@ function MasvsReportCard({
         `/vr/targets/${encodeURIComponent(targetId)}/masvs-report?${params.toString()}`,
         { method: "GET", token },
       );
-      // Filename fallback -- the backend's Content-Disposition is
-      // authoritative when present (masvs_<pkg>_<YYYYMMDD>.pdf per
-      // R-3's _masvs_report_filename). The fallback covers the
-      // unlikely case where the header is dropped by a proxy.
       const safePackage = (packageLabel ?? "android-apk")
         .replace(/[^a-zA-Z0-9_-]+/g, "_")
         .slice(0, 80);
@@ -1176,10 +1427,10 @@ function MasvsReportCard({
   }
 
   const buttonLabel = busy
-    ? "Downloading…"
+    ? "downloading\u2026"
     : allTerminal
-      ? "Download MASVS report"
-      : `Download partial report (${terminalCount}/${totalChildren})`;
+      ? "download masvs report"
+      : `download partial (${terminalCount}/${totalChildren})`;
   const buttonTitle = canDownload
     ? allTerminal
       ? "Download the full PDF aggregate"
@@ -1187,69 +1438,86 @@ function MasvsReportCard({
     : "Disabled until at least one child investigation reaches a terminal state";
 
   return (
-    <AilaCard techBorder glow>
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div className="flex-1 min-w-0">
-          <h2 className="text-sm font-semibold text-foreground">
-            MASVS report
-          </h2>
-          <p className="text-xs text-text-muted mt-1">
-            ReportLab PDF aggregating every child investigation
-            outcome through the S-4 verdict mapper, grouped by MASVS
-            control group with per-control evidence excerpts. Children
-            still in flight render as INCONCLUSIVE rows -- partial
-            reports are valid handoffs for an interim checkpoint.
-          </p>
-          <p className="text-xs text-text-muted mt-2 font-mono">
-            {terminalCount} / {totalChildren} child investigation
-            {totalChildren === 1 ? "" : "s"} terminal
-            {allTerminal
-              ? " · all complete"
-              : totalChildren === 0
-                ? " · waiting on dispatch"
-                : " · in progress"}
-          </p>
-          {error && (
-            <p className="text-xs text-text-danger mt-2 break-all">
-              {error}
-            </p>
-          )}
-        </div>
-        <button
-          type="button"
+    <WindowPanel
+      title="masvs report"
+      tone={allTerminal ? "ok" : "info"}
+      actions={
+        <HeaderButton
+          label={buttonLabel}
           onClick={handleClick}
           disabled={!canDownload || busy}
+          primary={canDownload}
           title={buttonTitle}
-          className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50 shrink-0"
+        />
+      }
+    >
+      <p
+        className="font-mono"
+        style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.55 }}
+      >
+        reportlab pdf aggregating every child investigation outcome through the
+        s-4 verdict mapper, grouped by masvs control group with per-control
+        evidence excerpts. children still in flight render as inconclusive rows
+        -- partial reports are valid handoffs for an interim checkpoint.
+      </p>
+      <p
+        className="font-mono"
+        style={{
+          marginTop: 8,
+          fontSize: 10.5,
+          color: "var(--text-primary)",
+        }}
+      >
+        {terminalCount} / {totalChildren} child
+        {totalChildren === 1 ? "" : "ren"} terminal
+        {allTerminal
+          ? " \u00b7 all complete"
+          : totalChildren === 0
+            ? " \u00b7 waiting on dispatch"
+            : " \u00b7 in progress"}
+      </p>
+      {error && (
+        <p
+          className="font-mono"
+          style={{
+            marginTop: 8,
+            fontSize: 10,
+            color: "var(--accent)",
+            overflowWrap: "anywhere",
+          }}
         >
-          {buttonLabel}
-        </button>
-      </div>
-    </AilaCard>
+          {error}
+        </p>
+      )}
+    </WindowPanel>
   );
 }
 
-/** U-2 per-control table. Sibling of MasvsAuditCard / MasvsProgressCard
- * / MasvsReportCard. Once a parent masvs_audit row exists for this
- * target the card fetches the JSON aggregate from
- * `GET /vr/targets/{id}/masvs-audit-aggregate?audit_id=<parent>` and
- * renders one row per child investigation: control id, group, title,
- * status, verdict + confidence (when terminal), and a link out to the
- * child investigation detail page so the operator can drill into the
- * underlying evidence + branch tree.
- *
- * The table self-hides until a parent exists (so a fresh APK only
- * surfaces the dispatcher card above). Polling cadence (8s) matches
- * the investigations list + progress card, so a child landing a new
- * verdict appears within one tick.
- *
- * Resolution of the active parent mirrors MasvsReportCard /
- * MasvsProgressCard verbatim: most-recent kind=masvs_audit parent
- * for this target, picked by created_at desc (ISO-8601 strings sort
- * correctly via localeCompare). The dispatcher is idempotent on the
- * active parent (D-3), so under normal operation there is exactly
- * one parent at a time.
- */
+/** Verdict -> mock kit tone. Used at 3 call sites (analytics bars,
+ *  control table row, distribution renderer). */
+const VERDICT_TONE: Record<MasvsVerdict, Tone> = {
+  finding: "critical",
+  inconclusive: "warn",
+  no_finding: "ok",
+  not_applicable: "muted",
+};
+
+const VERDICT_LABEL: Record<MasvsVerdict, string> = {
+  finding: "finding",
+  inconclusive: "inconclusive",
+  no_finding: "no finding",
+  not_applicable: "n/a",
+};
+
+const MASVS_TABLE_COLUMNS: GridColumn[] = [
+  { label: "control", width: "minmax(0, 1.6fr)" },
+  { label: "group", width: "110px" },
+  { label: "status", width: "100px" },
+  { label: "verdict", width: "120px" },
+  { label: "conf", width: "70px", align: "right" },
+  { label: "link", width: "60px", align: "right" },
+];
+
 function MasvsControlTable({
   targetId,
   packageLabel,
@@ -1278,259 +1546,558 @@ function MasvsControlTable({
 
   if (isLoadingInvs || parent == null) return null;
 
-  // Cross-reference per-child status from the investigations list so
-  // the table can show a live status badge even when the aggregate
-  // omits an entry (e.g. a child whose secondary_target_refs_json
-  // failed to encode a masvs_control_id -- server-side this surfaces
-  // as a logged warning and a missing verdict row).
   const childById = new Map<string, (typeof investigations)[number]>();
   for (const inv of investigations) {
     if (inv.parent_investigation_id === parent.id) childById.set(inv.id, inv);
   }
   const totalChildren = childById.size;
-
   const packageDisplay = packageLabel ?? "this APK";
   const verdicts: MasvsControlVerdict[] = aggregate?.verdicts ?? [];
 
+  const bodyPanel = (body: React.ReactNode, flush = false) => (
+    <WindowPanel
+      title={`masvs controls \u00b7 ${packageDisplay}`}
+      tone="accent"
+      flush={flush}
+      status={
+        <span>
+          parent {parent.id.slice(0, 8)} \u00b7 {totalChildren} child
+          {totalChildren === 1 ? "" : "ren"}
+          {aggregate?.masvs_spec_version
+            ? ` \u00b7 catalog ${aggregate.masvs_spec_version}`
+            : ""}
+          {aggregate?.generated_at
+            ? ` \u00b7 generated ${new Date(aggregate.generated_at).toLocaleString()}`
+            : ""}
+        </span>
+      }
+    >
+      {body}
+    </WindowPanel>
+  );
+
+  if (isLoadingAgg && verdicts.length === 0) {
+    return bodyPanel(<LoadingSkeleton size="lg" width="full" />);
+  }
+  if (aggError) {
+    return bodyPanel(
+      <MonoEmpty tone="error">
+        aggregate fetch failed:{" "}
+        {aggError instanceof Error
+          ? aggError.message.slice(0, 200)
+          : String(aggError).slice(0, 200)}
+      </MonoEmpty>,
+    );
+  }
+  if (verdicts.length === 0) {
+    return bodyPanel(
+      <MonoEmpty>
+        no verdicts resolved yet -- children still in created / running with no
+        primary outcome. the table populates as each child reaches a terminal
+        state.
+      </MonoEmpty>,
+    );
+  }
+
   return (
-    <AilaCard techBorder glow>
-      <div className="space-y-3">
-        <div className="flex items-start justify-between gap-3 flex-wrap">
-          <div className="flex-1 min-w-0">
-            <h2 className="text-sm font-semibold text-foreground">
-              MASVS controls · {packageDisplay}
-            </h2>
-            <p className="text-xs text-text-muted mt-1 font-mono break-all">
-              parent {parent.id.slice(0, 8)} · {totalChildren} child
-              investigation{totalChildren === 1 ? "" : "s"}
-              {aggregate?.masvs_spec_version
-                ? ` · catalog ${aggregate.masvs_spec_version}`
-                : ""}
-            </p>
-          </div>
-        </div>
-
-        {isLoadingAgg && verdicts.length === 0 ? (
-          <p className="text-xs text-text-muted">Loading aggregate…</p>
-        ) : aggError ? (
-          <p className="text-xs text-text-danger break-all">
-            Aggregate fetch failed:{" "}
-            {aggError instanceof Error
-              ? aggError.message.slice(0, 200)
-              : String(aggError).slice(0, 200)}
-          </p>
-        ) : verdicts.length === 0 ? (
-          <p className="text-xs text-text-muted">
-            No verdicts resolved yet -- children still in CREATED /
-            RUNNING with no primary outcome. The table will populate
-            as each child reaches a terminal state.
-          </p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-border-default text-left text-text-muted">
-                  <th className="px-2 py-1 font-semibold">Control</th>
-                  <th className="px-2 py-1 font-semibold w-20">Group</th>
-                  <th className="px-2 py-1 font-semibold w-24">Status</th>
-                  <th className="px-2 py-1 font-semibold w-28">Verdict</th>
-                  <th className="px-2 py-1 font-semibold w-20 text-right">
-                    Confidence
-                  </th>
-                  <th className="px-2 py-1 font-semibold w-16 text-right">
-                    Link
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {verdicts.map((v) => {
-                  const child = childById.get(v.child_investigation_id);
-                  const childStatus = child?.status ?? "unknown";
-                  // Group prefix lives inside the control id --
-                  // ``MSTG-STORAGE-1`` \u2192 ``STORAGE``,
-                  // ``MASVS-PRIVACY-1`` \u2192 ``PRIVACY``. The aggregate's
-                  // ``by_group`` map carries the canonical mapping but
-                  // is keyed by group, not by control; recovering the
-                  // single-row group via id parsing avoids an O(N)
-                  // reverse lookup per row.
-                  const groupLabel = _extractGroupFromControlId(v.control_id);
-                  // Panel-summary projection carried from the child
-                  // investigation's canonical outcome. All three fields
-                  // are optional -- historical rows written before the
-                  // synthesis-scope contract landed leave them unset, as
-                  // do children that never resolved a panel_summary
-                  // (timeout, cost cap, no primary outcome). Only
-                  // render the details row when at least one field has
-                  // content, so legacy aggregates keep the compact one-
-                  // row-per-control layout.
-                  const scope = v.scope?.trim() || null;
-                  const headline = v.headline?.trim() || null;
-                  const keyPoints = (v.key_points ?? []).filter(
-                    (p) => p && p.trim().length > 0,
-                  );
-                  const hasPanelSummary =
-                    scope != null || headline != null || keyPoints.length > 0;
-                  return (
-                    <Fragment key={v.child_investigation_id}>
-                      <tr
-                        className={
-                          hasPanelSummary
-                            ? ""
-                            : "border-b border-border-default last:border-b-0"
-                        }
-                      >
-                        <td className="px-2 py-1 font-mono text-foreground break-all">
-                          {v.control_id}
-                        </td>
-                        <td className="px-2 py-1 font-mono text-text-muted">
-                          {groupLabel}
-                        </td>
-                        <td className="px-2 py-1">
-                          <AilaBadge severity="info" size="sm">
-                            {childStatus}
-                          </AilaBadge>
-                        </td>
-                        <td className="px-2 py-1">
-                          <AilaBadge
-                            severity={_verdictSeverity(v.verdict)}
-                            size="sm"
-                          >
-                            {_verdictLabel(v.verdict)}
-                          </AilaBadge>
-                          {v.reason && v.verdict === "inconclusive" && (
-                            <span className="text-text-muted text-[10px] ml-1 font-mono">
-                              {v.reason}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-2 py-1 font-mono text-right text-foreground">
-                          {v.verdict === "inconclusive" && v.confidence === 0
-                            ? "--"
-                            : v.confidence.toFixed(2)}
-                        </td>
-                        <td className="px-2 py-1 text-right">
-                          <Link
-                            to={`/vr/investigations/${encodeURIComponent(
-                              v.child_investigation_id,
-                            )}`}
-                            className="text-accent hover:underline font-mono"
-                          >
-                            open
-                          </Link>
-                        </td>
-                      </tr>
-                      {hasPanelSummary && (
-                        <tr className="border-b border-border-default last:border-b-0">
-                          <td
-                            colSpan={6}
-                            className="px-2 pb-2 pt-0 align-top"
-                          >
-                            <div className="space-y-1.5 text-xs">
-                              {scope && (
-                                <div>
-                                  <span className="text-text-muted font-mono uppercase tracking-wider text-[10px] mr-1">
-                                    Scope:
-                                  </span>
-                                  <span className="text-foreground whitespace-pre-wrap break-words">
-                                    {scope}
-                                  </span>
-                                </div>
-                              )}
-                              {headline && (
-                                <div>
-                                  <span className="text-text-muted font-mono uppercase tracking-wider text-[10px] mr-1">
-                                    Headline:
-                                  </span>
-                                  <span className="text-foreground whitespace-pre-wrap break-words">
-                                    {headline}
-                                  </span>
-                                </div>
-                              )}
-                              {keyPoints.length > 0 && (
-                                <div>
-                                  <div className="text-text-muted font-mono uppercase tracking-wider text-[10px]">
-                                    Key points:
-                                  </div>
-                                  <ul className="list-disc pl-4 mt-0.5 space-y-0.5">
-                                    {keyPoints.map((point, idx) => (
-                                      <li
-                                        key={idx}
-                                        className="text-foreground whitespace-pre-wrap break-words"
-                                      >
-                                        {point}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </div>
-                              )}
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {aggregate?.generated_at && (
-          <p className="text-xs text-text-muted font-mono">
-            generated_at:{" "}
-            {new Date(aggregate.generated_at).toLocaleString()}
-          </p>
-        )}
-      </div>
-    </AilaCard>
+    <div className="flex flex-col" style={{ gap: 10 }}>
+      {bodyPanel(
+        <DataGrid
+          columns={MASVS_TABLE_COLUMNS}
+          rows={verdicts}
+          getKey={(v) => v.child_investigation_id}
+          renderCells={(v) => {
+            const child = childById.get(v.child_investigation_id);
+            const childStatus = child?.status ?? "unknown";
+            // MASVS v1.4.2 (MSTG-...) + v2.1.0 (MASVS-...) share the
+            // ``<PREFIX>-<GROUP>-<N>`` shape; the same split rule handles both.
+            const groupParts = v.control_id.split("-");
+            const groupLabel = groupParts.length >= 2 ? groupParts[1] : "--";
+            const scope = v.scope?.trim() || null;
+            const headline = v.headline?.trim() || null;
+            const keyPoints = (v.key_points ?? []).filter(
+              (p) => p && p.trim().length > 0,
+            );
+            const hasPanelSummary =
+              scope != null || headline != null || keyPoints.length > 0;
+            return [
+              <div style={{ minWidth: 0 }}>
+                <div
+                  style={{
+                    color: "var(--text-primary)",
+                    fontSize: 11,
+                    overflowWrap: "anywhere",
+                  }}
+                >
+                  {v.control_id}
+                </div>
+                {hasPanelSummary && (
+                  <div
+                    style={{
+                      marginTop: 4,
+                      fontSize: 10,
+                      color: "var(--text-muted)",
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {scope && (
+                      <div>
+                        <span
+                          className="uppercase"
+                          style={{
+                            color: "var(--text-faint)",
+                            fontSize: 9,
+                            letterSpacing: "0.12em",
+                            marginRight: 4,
+                          }}
+                        >
+                          scope:
+                        </span>
+                        {scope}
+                      </div>
+                    )}
+                    {headline && (
+                      <div>
+                        <span
+                          className="uppercase"
+                          style={{
+                            color: "var(--text-faint)",
+                            fontSize: 9,
+                            letterSpacing: "0.12em",
+                            marginRight: 4,
+                          }}
+                        >
+                          headline:
+                        </span>
+                        {headline}
+                      </div>
+                    )}
+                    {keyPoints.length > 0 && (
+                      <div>
+                        <span
+                          className="uppercase"
+                          style={{
+                            color: "var(--text-faint)",
+                            fontSize: 9,
+                            letterSpacing: "0.12em",
+                          }}
+                        >
+                          key points:
+                        </span>
+                        <ul
+                          style={{
+                            listStyle: "disc",
+                            paddingLeft: 16,
+                            marginTop: 2,
+                          }}
+                        >
+                          {keyPoints.map((p, i) => (
+                            <li key={i}>{p}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>,
+              <span style={{ color: "var(--text-muted)", fontSize: 10.5 }}>
+                {groupLabel}
+              </span>,
+              <MonoBadge
+                tone={
+                  childStatus === "completed"
+                    ? "ok"
+                    : childStatus === "failed" || childStatus === "abandoned"
+                      ? "critical"
+                      : childStatus === "running"
+                        ? "info"
+                        : childStatus === "paused"
+                          ? "warn"
+                          : "muted"
+                }
+              >
+                {childStatus}
+              </MonoBadge>,
+              <MonoBadge
+                tone={VERDICT_TONE[v.verdict]}
+                title={
+                  v.reason && v.verdict === "inconclusive"
+                    ? v.reason
+                    : undefined
+                }
+              >
+                {VERDICT_LABEL[v.verdict]}
+              </MonoBadge>,
+              <span
+                style={{
+                  color: "var(--text-primary)",
+                  fontSize: 10.5,
+                  textAlign: "right",
+                }}
+              >
+                {v.verdict === "inconclusive" && v.confidence === 0
+                  ? "--"
+                  : v.confidence.toFixed(2)}
+              </span>,
+              <span
+                onClick={(e) => e.stopPropagation()}
+                style={{
+                  display: "inline-flex",
+                  justifyContent: "flex-end",
+                }}
+              >
+                <Link
+                  to={`/vr/investigations/${encodeURIComponent(
+                    v.child_investigation_id,
+                  )}`}
+                  className="font-mono uppercase"
+                  style={{
+                    fontSize: 9,
+                    letterSpacing: "0.08em",
+                    color: "var(--accent)",
+                    textDecoration: "none",
+                  }}
+                >
+                  open
+                </Link>
+              </span>,
+            ];
+          }}
+        />,
+        true,
+      )}
+    </div>
   );
 }
 
-/** Recover the MASVS group token from a control id. Both legacy
- * MASVS v1.4.2 ids (`MSTG-<GROUP>-N`) and v2.1.0 ids
- * (`MASVS-<GROUP>-N`) share the same `-<GROUP>-` middle segment, so a
- * single split rule handles both vintages. Returns "--" for ids the
- * pattern can't parse (defensive -- the catalog enforces the format
- * but a stray entry shouldn't crash the table). */
-function _extractGroupFromControlId(controlId: string): string {
-  const parts = controlId.split("-");
-  return parts.length >= 2 ? parts[1] : "--";
+// ---------------------------------------------------------------------------
+// Analytics -- StatBar rows instead of Recharts
+// ---------------------------------------------------------------------------
+
+interface VerdictBucket {
+  key: MasvsVerdict;
+  label: string;
+  count: number;
 }
 
-/** Verdict → AilaBadge severity. FINDING is the audit signal worth
- * flagging in red; INCONCLUSIVE warns; NO_FINDING is the
- * compliance-clear baseline; NOT_APPLICABLE is purely informational. */
-function _verdictSeverity(
-  verdict: MasvsVerdict,
-): "critical" | "high" | "medium" | "low" | "info" {
-  switch (verdict) {
-    case "finding":
-      return "critical";
-    case "inconclusive":
-      return "medium";
-    case "no_finding":
-      return "low";
-    case "not_applicable":
-    default:
-      return "info";
-  }
+interface GroupBucket {
+  group: string;
+  findings: number;
+  total: number;
 }
 
-/** Verdict → stable uppercase label so a screen reader / copy-paste
- * always lands on the same string regardless of source enum value. */
-function _verdictLabel(verdict: MasvsVerdict): string {
-  switch (verdict) {
-    case "finding":
-      return "FINDING";
-    case "not_applicable":
-      return "N/A";
-    case "no_finding":
-      return "NO FINDING";
-    case "inconclusive":
-    default:
-      return "INCONCLUSIVE";
+const _VERDICT_ORDER: ReadonlyArray<{ key: MasvsVerdict; label: string }> = [
+  { key: "finding", label: "finding" },
+  { key: "inconclusive", label: "inconclusive" },
+  { key: "no_finding", label: "no finding" },
+  { key: "not_applicable", label: "n/a" },
+];
+
+function _buildVerdictBuckets(
+  verdicts: ReadonlyArray<MasvsControlVerdict | ApkStaticControlVerdict>,
+): VerdictBucket[] {
+  const counts: Partial<Record<MasvsVerdict, number>> = {};
+  for (const v of verdicts) {
+    counts[v.verdict] = (counts[v.verdict] ?? 0) + 1;
   }
+  return _VERDICT_ORDER.map(({ key, label }) => ({
+    key,
+    label,
+    count: counts[key] ?? 0,
+  }));
 }
+
+function _buildGroupBuckets(
+  verdicts: ReadonlyArray<MasvsControlVerdict | ApkStaticControlVerdict>,
+): GroupBucket[] {
+  const acc = new Map<string, { findings: number; total: number }>();
+  for (const v of verdicts) {
+    const parts = v.control_id.split("-");
+    const g = parts.length >= 2 ? parts[1] : "--";
+    const row = acc.get(g) ?? { findings: 0, total: 0 };
+    row.total += 1;
+    if (v.verdict === "finding") row.findings += 1;
+    acc.set(g, row);
+  }
+  return Array.from(acc.entries())
+    .map(([group, row]) => ({ group, ...row }))
+    .sort((a, b) => b.findings - a.findings || a.group.localeCompare(b.group));
+}
+
+function VerdictDistribution({
+  title,
+  buckets,
+  spec,
+}: {
+  title: string;
+  buckets: VerdictBucket[];
+  spec?: string | null;
+}) {
+  const max = buckets.reduce((m, b) => Math.max(m, b.count), 0);
+  const hasData = buckets.some((b) => b.count > 0);
+  return (
+    <WindowPanel
+      title={title}
+      tone="info"
+      actions={
+        spec ? (
+          <span
+            className="font-mono uppercase"
+            style={{
+              fontSize: 9,
+              color: "var(--text-faint)",
+              letterSpacing: "0.08em",
+            }}
+          >
+            catalog {spec}
+          </span>
+        ) : null
+      }
+    >
+      {!hasData ? (
+        <MonoEmpty>no verdicts resolved yet.</MonoEmpty>
+      ) : (
+        <div className="flex flex-col" style={{ gap: 6 }}>
+          {buckets.map((b) => (
+            <StatBar
+              key={b.key}
+              label={b.label}
+              color={toneColor(VERDICT_TONE[b.key])}
+              value={b.count}
+              max={max}
+            />
+          ))}
+        </div>
+      )}
+    </WindowPanel>
+  );
+}
+
+function GroupFindingDistribution({
+  title,
+  groups,
+}: {
+  title: string;
+  groups: GroupBucket[];
+}) {
+  const max = groups.reduce((m, g) => Math.max(m, g.findings), 0);
+  const hasData = groups.some((g) => g.findings > 0);
+  return (
+    <WindowPanel title={title} tone="warn">
+      {!hasData ? (
+        <MonoEmpty>no group breakdown yet.</MonoEmpty>
+      ) : (
+        <div className="flex flex-col" style={{ gap: 6 }}>
+          {groups.map((g) => (
+            <StatBar
+              key={g.group}
+              label={g.group}
+              color={toneColor("critical")}
+              value={g.findings}
+              max={max}
+            />
+          ))}
+        </div>
+      )}
+    </WindowPanel>
+  );
+}
+
+function AuditAggregateAnalytics({ targetId }: { targetId: string }) {
+  const { data: investigationsResult, isLoading: isLoadingInvs } =
+    useInvestigationsForTarget(targetId);
+  const investigations = investigationsResult?.data ?? [];
+
+  const masvsParent =
+    investigations
+      .filter(
+        (inv) =>
+          (inv.kind as string) === "masvs_audit" &&
+          inv.parent_investigation_id == null,
+      )
+      .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""))[0] ??
+    null;
+
+  const apkStaticParent =
+    investigations
+      .filter(
+        (inv) =>
+          (inv.kind as string) === "apk_static_audit" &&
+          inv.parent_investigation_id == null,
+      )
+      .sort((a, b) => (b.created_at ?? "").localeCompare(a.created_at ?? ""))[0] ??
+    null;
+
+  const { data: masvsAgg } = useMasvsAuditAggregate(
+    targetId,
+    masvsParent?.id ?? null,
+  );
+  const { data: apkStaticAgg } = useApkStaticAuditAggregate(
+    targetId,
+    apkStaticParent?.id ?? null,
+  );
+
+  if (isLoadingInvs) return null;
+  if (masvsParent == null && apkStaticParent == null) return null;
+
+  return (
+    <div className="flex flex-col" style={{ gap: 12 }}>
+      <SectionHeader icon="\u25a4" title="analytics" size={18} />
+      <p
+        className="font-mono"
+        style={{
+          fontSize: 10.5,
+          color: "var(--text-muted)",
+          lineHeight: 1.55,
+          marginTop: -6,
+        }}
+      >
+        verdict distribution across masvs controls and apk static checks, plus
+        per-group finding density. updates live as child investigations resolve.
+      </p>
+
+      {masvsAgg && (
+        <div
+          className="grid"
+          style={{
+            gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+            gap: 12,
+          }}
+        >
+          <VerdictDistribution
+            title={`masvs verdicts (${masvsAgg.verdicts.length})`}
+            buckets={_buildVerdictBuckets(masvsAgg.verdicts)}
+            spec={masvsAgg.masvs_spec_version}
+          />
+          <GroupFindingDistribution
+            title="masvs findings by group"
+            groups={_buildGroupBuckets(masvsAgg.verdicts)}
+          />
+        </div>
+      )}
+
+      {apkStaticAgg && (
+        <div
+          className="grid"
+          style={{
+            gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+            gap: 12,
+          }}
+        >
+          <VerdictDistribution
+            title={`apk static verdicts (${apkStaticAgg.verdicts.length})`}
+            buckets={_buildVerdictBuckets(apkStaticAgg.verdicts)}
+            spec={apkStaticAgg.apk_static_spec_version}
+          />
+          <GroupFindingDistribution
+            title="apk static findings by group"
+            groups={_buildGroupBuckets(apkStaticAgg.verdicts)}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Function ranking table
+// ---------------------------------------------------------------------------
+
+const RANK_COLUMNS: GridColumn[] = [
+  { label: "#", width: "40px", align: "right" },
+  { label: "function", width: "minmax(0, 2fr)" },
+  { label: "score", width: "70px", align: "right" },
+  { label: "reasons", width: "minmax(0, 1.4fr)" },
+];
+
+function FunctionRankingPanel({
+  ranking,
+}: {
+  ranking: FunctionRanking;
+}) {
+  const rows = (ranking.top_k ?? []).slice(0, 50);
+  const statusFooter = ranking.produced_at ? (
+    <span>
+      produced_at: {formatDate(ranking.produced_at)}
+      {ranking.source ? ` \u00b7 source: ${ranking.source}` : ""}
+    </span>
+  ) : null;
+
+  if (rows.length === 0) {
+    return (
+      <WindowPanel title="function ranking" tone="muted" status={statusFooter}>
+        <MonoEmpty>
+          no ranking yet. click "rank functions" above to trigger the reranker.
+        </MonoEmpty>
+      </WindowPanel>
+    );
+  }
+
+  return (
+    <WindowPanel
+      title={`function ranking (${rows.length} of ${ranking.total_candidates ?? 0})`}
+      tone="accent"
+      flush
+      status={statusFooter}
+    >
+      <DataGrid
+        columns={RANK_COLUMNS}
+        rows={rows}
+        getKey={(f, i) => `${f.address ?? f.file_path ?? "_"}-${i}`}
+        renderCells={(f, i) => [
+          <span style={{ color: "var(--text-faint)", fontSize: 10.5 }}>
+            {f.rank ?? i + 1}
+          </span>,
+          <div style={{ minWidth: 0 }}>
+            <span style={{ color: "var(--text-primary)", fontSize: 11 }}>
+              {f.name ?? "<unnamed>"}
+            </span>
+            {f.address && (
+              <span
+                style={{
+                  color: "var(--text-muted)",
+                  fontSize: 10,
+                  marginLeft: 8,
+                }}
+              >
+                @ {f.address}
+              </span>
+            )}
+            {f.file_path && (
+              <div
+                style={{
+                  color: "var(--text-muted)",
+                  fontSize: 9.5,
+                  marginTop: 2,
+                  overflowWrap: "anywhere",
+                }}
+              >
+                {f.file_path}
+                {f.line != null ? `:${f.line}` : ""}
+              </div>
+            )}
+          </div>,
+          <span style={{ color: "var(--text-primary)", fontSize: 10.5 }}>
+            {f.score?.toFixed(2) ?? "--"}
+          </span>,
+          <span
+            style={{
+              color: "var(--text-muted)",
+              fontSize: 10,
+              overflowWrap: "anywhere",
+            }}
+          >
+            {(f.reasons ?? []).join("; ")}
+          </span>,
+        ]}
+      />
+    </WindowPanel>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Top-level page
+// ---------------------------------------------------------------------------
 
 export function TargetDetailPage() {
   const { targetId } = useParams<{ targetId: string }>();
@@ -1544,11 +2111,16 @@ export function TargetDetailPage() {
 
   useUpdatePageHeader({
     title: target?.display_name,
-    subtitle: target ? (workspaceName ? `${workspaceName} · ${target.kind.replace(/_/g, ' ')}` : target.kind.replace(/_/g, ' ')) : undefined,
+    subtitle: target
+      ? workspaceName
+        ? `${workspaceName} \u00b7 ${target.kind.replace(/_/g, " ")}`
+        : target.kind.replace(/_/g, " ")
+      : undefined,
     status: null,
   });
 
   const analyzeMut = useAnalyzeTarget(tid);
+  const resumeAnalysisMut = useResumeTargetAnalysis(tid);
   const rankMut = useRankTarget(tid);
   const uploadMut = useUploadTargetArtifact(tid);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1563,7 +2135,11 @@ export function TargetDetailPage() {
   const navigate = useNavigate();
 
   if (isLoading || !target) {
-    return <LoadingSkeleton size="lg" width="full" />;
+    return (
+      <WindowPanel title="target" tone="muted">
+        <LoadingSkeleton size="lg" width="full" />
+      </WindowPanel>
+    );
   }
 
   const capability =
@@ -1579,112 +2155,155 @@ export function TargetDetailPage() {
   const defaultDisclosure =
     (capability.default_disclosure_tracks as string[]) || [];
 
-  return (
-    <div className="space-y-4">
-      {/* Header -- humans, not IDs */}
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <DeleteButton
-          id={target.id}
-          label={`target "${target.display_name}"`}
-          mutation={deleteMut}
-          onDeleted={() => navigate("/vr/targets")}
+  const isApk =
+    target.kind === "android_apk" &&
+    !!target.apk_overview?.static_summary &&
+    Object.keys(target.apk_overview.static_summary).length > 0;
+  const packageLabel = isApk
+    ? typeof target.apk_overview!.static_summary!.package === "string"
+      ? (target.apk_overview!.static_summary!.package as string)
+      : target.android_package_name ?? null
+    : null;
+
+  const headerActions = (
+    <div className="flex items-center" style={{ gap: 8, flexWrap: "wrap" }}>
+      {target.analysis_state === "failed" && (
+        <HeaderButton
+          label={resumeAnalysisMut.isPending ? "resuming\u2026" : "resume"}
+          onClick={() => resumeAnalysisMut.mutate()}
+          disabled={resumeAnalysisMut.isPending}
+          title="Reset any FAILED stages back to PENDING and re-enqueue the ingest \u2192 profile \u2192 ranking pipeline. Stages already DONE are skipped."
         />
-      </div>
-
-      {/* Status banner */}
-      <AilaCard className={
-        target.analysis_state === "failed"
-          ? "border-border-danger"
-          : undefined
-      } techBorder glow><div className="flex items-center justify-between flex-wrap gap-2">
-        <div className="flex items-center gap-2 flex-wrap">
-          <AilaBadge severity={analysisColor[target.analysis_state]} size="sm">
-            {analysisLabel(target.analysis_state, target.kind)}
-          </AilaBadge>
-          <AilaBadge severity={statusColor[target.status] ?? "info"} size="sm">
-            {target.status}
-          </AilaBadge>
-          {target.primary_language && (
-            <AilaBadge severity="info" size="sm">
-              {target.primary_language}
-            </AilaBadge>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {(target.analysis_state === "failed" ||
-            target.analysis_state === "ready") && (
-            <button
-              type="button"
-              onClick={() => analyzeMut.mutate()}
-              disabled={analyzeMut.isPending}
-              className="px-3 py-1.5 text-xs font-medium rounded-md bg-surface border border-border-default hover:bg-surface-hover disabled:opacity-50"
-            >
-              {analyzeMut.isPending ? "Re-analyzing…" : "Re-analyze"}
-            </button>
-          )}
-          {target.analysis_state === "ready" && (
-            <button
-              type="button"
-              onClick={() => rankMut.mutate()}
-              disabled={rankMut.isPending}
-              className="px-3 py-1.5 text-xs font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:opacity-50"
-            >
-              {rankMut.isPending ? "Ranking…" : "Rank functions"}
-            </button>
-          )}
-        </div>
-      </div>
-      {target.analysis_state_message && (
-        <p
-          className={`text-xs mt-2 ${
-            target.analysis_state === "failed"
-              ? "text-text-danger"
-              : "text-text-muted"
-          }`}
-        >
-          {target.analysis_state_message}
-        </p>
       )}
-      {target.analysis_state === "ingesting" && (
-        <p className="text-xs text-text-muted mt-2">
-          Started{" "}
-          {target.analysis_started_at
-            ? new Date(target.analysis_started_at).toLocaleTimeString()
-            : "--"}
-          . This usually takes 30s–10min depending on artifact size.
-        </p>
-      )}</AilaCard>
+      {(target.analysis_state === "failed" ||
+        target.analysis_state === "ready") && (
+        <HeaderButton
+          label={analyzeMut.isPending ? "re-analyzing\u2026" : "re-analyze"}
+          onClick={() => analyzeMut.mutate()}
+          disabled={analyzeMut.isPending}
+        />
+      )}
+      {target.analysis_state === "ready" && (
+        <HeaderButton
+          label={rankMut.isPending ? "ranking\u2026" : "rank functions"}
+          onClick={() => rankMut.mutate()}
+          disabled={rankMut.isPending}
+          primary
+        />
+      )}
+      <DeleteButton
+        id={target.id}
+        label={`target "${target.display_name}"`}
+        mutation={deleteMut}
+        onDeleted={() => navigate("/vr/targets")}
+      />
+    </div>
+  );
 
-      {/* Upload widget -- only for upload-capable kinds. AILA streams the
-          file through to the IDA MCP; nothing is stored on the platform. */}
-      {isUploadableKind(target.kind) && (
-        <AilaCard  techBorder glow><div className="space-y-3">
-          <div>
-            <h2 className="text-sm font-semibold text-foreground">
-              Binary artifact
-            </h2>
-            <p className="text-xs text-text-muted mt-1">
-              Upload the {target.kind.replace(/_/g, " ")} from your
-              workstation. AILA streams it to the IDA MCP
-              (no copy stays on the platform) and re-runs analysis.
-              {currentUploadedFilename(target) ? (
-                <>
-                  {" "}
-                  Current:{" "}
-                  <span className="font-mono text-foreground">
-                    {currentUploadedFilename(target)}
-                  </span>
-                </>
-              ) : null}
+  const primaryLangTone: Tone = "info";
+
+  return (
+    <div className="flex flex-col" style={{ gap: 14 }}>
+      <h2 className="sr-only">Target sections</h2>
+      <SectionHeader
+        icon="\u25c8"
+        title={target.display_name}
+        actions={headerActions}
+      />
+
+      <div className="flex" style={{ gap: 8, flexWrap: "wrap" }}>
+        <MonoBadge tone={analysisTone[target.analysis_state]}>
+          {analysisLabel(target.analysis_state, target.kind)}
+        </MonoBadge>
+        <MonoBadge tone={statusTone[target.status] ?? "muted"}>
+          {target.status}
+        </MonoBadge>
+        <MonoBadge tone="muted">
+          kind {target.kind.replace(/_/g, " ")}
+        </MonoBadge>
+        {workspaceName && (
+          <MonoBadge tone="muted">ws {workspaceName}</MonoBadge>
+        )}
+        {target.primary_language && (
+          <MonoBadge tone={primaryLangTone}>{target.primary_language}</MonoBadge>
+        )}
+      </div>
+
+      {(target.analysis_state_message || target.analysis_state === "ingesting") && (
+        <WindowPanel
+          title="analysis message"
+          tone={target.analysis_state === "failed" ? "warn" : "muted"}
+        >
+          {target.analysis_state_message && (
+            <p
+              className="font-mono"
+              style={{
+                fontSize: 11,
+                color:
+                  target.analysis_state === "failed"
+                    ? "var(--accent)"
+                    : "var(--text-primary)",
+                lineHeight: 1.55,
+                overflowWrap: "anywhere",
+              }}
+            >
+              {target.analysis_state_message}
             </p>
-          </div>
+          )}
+          {target.analysis_state === "ingesting" && (
+            <p
+              className="font-mono"
+              style={{
+                marginTop: target.analysis_state_message ? 6 : 0,
+                fontSize: 10.5,
+                color: "var(--text-muted)",
+              }}
+            >
+              started{" "}
+              {target.analysis_started_at
+                ? new Date(target.analysis_started_at).toLocaleTimeString()
+                : "--"}
+              . this usually takes 30s\u201310min depending on artifact size.
+            </p>
+          )}
+        </WindowPanel>
+      )}
+
+      {UPLOADABLE_KINDS[target.kind] && (
+        <WindowPanel
+          title="binary artifact"
+          tone="info"
+          status={
+            target.uploaded_filename ? (
+              <span>
+                current:{" "}
+                <span style={{ color: "var(--text-primary)" }}>
+                  {target.uploaded_filename}
+                </span>
+              </span>
+            ) : null
+          }
+        >
+          <p
+            className="font-mono"
+            style={{
+              fontSize: 11,
+              color: "var(--text-muted)",
+              lineHeight: 1.55,
+              marginBottom: 10,
+            }}
+          >
+            upload the {target.kind.replace(/_/g, " ")} from your workstation.
+            aila streams it to the ida mcp (no copy stays on the platform) and
+            re-runs analysis.
+          </p>
           <UploadDropzone
             onFile={(f) => uploadMut.mutate(f)}
             disabled={uploadMut.isPending}
             hint={
               uploadMut.isPending
-                ? "uploading…"
-                : currentUploadedFilename(target)
+                ? "uploading\u2026"
+                : target.uploaded_filename
                   ? "drop a different file to replace"
                   : "drag a binary here or click pick from disk"
             }
@@ -1700,279 +2319,141 @@ export function TargetDetailPage() {
               e.target.value = "";
             }}
           />
-        </div></AilaCard>
+        </WindowPanel>
       )}
 
-      {/* Capability profile */}
-      <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
-        Capability profile
-      </h2>
-      {target.analysis_state !== "ready" ? (
-        <p className="text-sm text-text-muted">
-          Available once analysis completes.
-        </p>
-      ) : (
-        <dl className="grid grid-cols-2 gap-3 text-sm">
-          <div>
-            <dt className="text-text-muted text-xs">Applicable MCP servers</dt>
-            <dd className="font-mono text-xs">
+      <WindowPanel title="capability profile" tone="accent">
+        {target.analysis_state !== "ready" ? (
+          <MonoEmpty>available once analysis completes.</MonoEmpty>
+        ) : (
+          <div
+            className="grid"
+            style={{
+              gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+              gap: "0 20px",
+            }}
+          >
+            <BriefRow label="applicable mcp servers">
               {applicableMcp.length > 0 ? applicableMcp.join(", ") : "--"}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-text-muted text-xs">Applicable fuzzing engines</dt>
-            <dd className="font-mono text-xs">
-              {applicableEngines.length > 0 ? applicableEngines.join(", ") : "--"}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-text-muted text-xs">Applicable strategies</dt>
-            <dd className="font-mono text-xs">
+            </BriefRow>
+            <BriefRow label="applicable fuzzing engines">
+              {applicableEngines.length > 0
+                ? applicableEngines.join(", ")
+                : "--"}
+            </BriefRow>
+            <BriefRow label="applicable strategies">
               {applicableStrategies.length > 0
                 ? applicableStrategies.join(", ")
                 : "--"}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-text-muted text-xs">Default disclosure tracks</dt>
-            <dd className="font-mono text-xs">
-              {defaultDisclosure.length > 0 ? defaultDisclosure.join(", ") : "--"}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-text-muted text-xs">Default reasoning strategy</dt>
-            <dd className="font-mono text-xs">
+            </BriefRow>
+            <BriefRow label="default disclosure tracks">
+              {defaultDisclosure.length > 0
+                ? defaultDisclosure.join(", ")
+                : "--"}
+            </BriefRow>
+            <BriefRow label="default reasoning strategy">
               {(capability.default_reasoning_strategy as string) ?? "--"}
-            </dd>
+            </BriefRow>
+            <BriefRow label="est. cost / investigation">
+              $
+              {(capability.estimated_cost_per_investigation_usd as number) ??
+                "--"}
+            </BriefRow>
           </div>
-          <div>
-            <dt className="text-text-muted text-xs">Est. cost / investigation</dt>
-            <dd className="font-mono text-xs">
-              ${(capability.estimated_cost_per_investigation_usd as number) ?? "--"}
-            </dd>
-          </div>
-        </dl>
-      )}</AilaCard>
+        )}
+      </WindowPanel>
 
-      {/* Android APK overview -- only shown for android_apk targets that
-          have at least one stage handle. Each section inside the card
-          gates on its own data, so the operator sees what's ready as
-          the 5-stage pipeline progresses. */}
+      <TargetConnectedCard target={target} />
+
       {target.kind === "android_apk" && target.apk_overview && (
         <AndroidApkOverview overview={target.apk_overview} />
       )}
 
-      {/* Primary APK audit dispatcher. Gated to android_apk targets
-          whose ingestion pipeline has reached STATIC_SUMMARY (matches
-          the backend precondition in dispatch_apk_static_audit). Sits
-          ABOVE the legacy MASVS card so operators land on the
-          evidence-backed catalog by default; MASVS is kept below for
-          regulated audits that require the L1 compliance list
-          verbatim. */}
-      {target.kind === "android_apk"
-        && target.apk_overview?.static_summary
-        && Object.keys(target.apk_overview.static_summary).length > 0 && (
-        <ApkStaticAuditCard
-          targetId={target.id}
-          packageLabel={
-            typeof target.apk_overview.static_summary.package === "string"
-              ? (target.apk_overview.static_summary.package as string)
-              : target.android_package_name ?? null
-          }
-        />
-      )}
-
-      {/* Legacy MASVS L1 compliance dispatcher. Same STATIC_SUMMARY
-          gate as the primary card above. Kept available but rendered
-          in secondary styling -- see MasvsAuditCard for the LEGACY
-          COMPLIANCE badge and elevated (non-glow) surface. */}
-      {target.kind === "android_apk"
-        && target.apk_overview?.static_summary
-        && Object.keys(target.apk_overview.static_summary).length > 0 && (
-        <MasvsAuditCard
-          targetId={target.id}
-          packageLabel={
-            typeof target.apk_overview.static_summary.package === "string"
-              ? (target.apk_overview.static_summary.package as string)
-              : target.android_package_name ?? null
-          }
-        />
-      )}
-
-      {/* U-1 progress card. Same gate as the dispatcher (above) and
-          the report card (below) -- APK kinds with STATIC_SUMMARY.
-          The card self-hides until a parent masvs_audit row exists,
-          so on a fresh APK only the dispatcher renders. Once a
-          dispatch has fired, the card surfaces live counts +
-          per-child median wall-time + serial-upper-bound ETA. */}
-      {target.kind === "android_apk"
-        && target.apk_overview?.static_summary
-        && Object.keys(target.apk_overview.static_summary).length > 0 && (
-        <MasvsProgressCard
-          targetId={target.id}
-          packageLabel={
-            typeof target.apk_overview.static_summary.package === "string"
-              ? (target.apk_overview.static_summary.package as string)
-              : target.android_package_name ?? null
-          }
-        />
-      )}
-
-      {/* R-4 "Download MASVS report" card. Gated identically to the
-          dispatcher above so the report card only ever shows up for
-          APK targets whose ingestion has reached STATIC_SUMMARY.
-          The card itself self-hides until a parent masvs_audit
-          investigation exists for this target, so on a fresh APK
-          only the dispatcher above renders. Disabled until at least
-          one child reaches a terminal state (partial reports are
-          valid per R-3). */}
-      {target.kind === "android_apk"
-        && target.apk_overview?.static_summary
-        && Object.keys(target.apk_overview.static_summary).length > 0 && (
-        <MasvsReportCard
-          targetId={target.id}
-          packageLabel={
-            typeof target.apk_overview.static_summary.package === "string"
-              ? (target.apk_overview.static_summary.package as string)
-              : target.android_package_name ?? null
-          }
-        />
-      )}
-
-      {/* U-2 per-control table. Same APK + STATIC_SUMMARY gate as
-          the dispatcher / progress / report cards above. The table
-          self-hides until a parent masvs_audit row exists, so on a
-          fresh APK only the dispatcher renders. Once a dispatch has
-          fired, the table surfaces one row per child investigation
-          (control id + group + status + verdict + confidence) with
-          a deep-link to the child's detail page. */}
-      {target.kind === "android_apk"
-        && target.apk_overview?.static_summary
-        && Object.keys(target.apk_overview.static_summary).length > 0 && (
-        <MasvsControlTable
-          targetId={target.id}
-          packageLabel={
-            typeof target.apk_overview.static_summary.package === "string"
-              ? (target.apk_overview.static_summary.package as string)
-              : target.android_package_name ?? null
-          }
-        />
-      )}
-
-      {/* Mitigations -- uses shared MitigationsRibbon (§1.4 promise) */}
-      {target.analysis_state === "ready" && (
-        <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
-          Mitigations
-        </h2>
-        <MitigationsRibbon mitigations={mitigations} /></AilaCard>
-      )}
-
-      {/* Tabs per 08_FRONTEND_UX.md §1.4. URL state via ?tab= so the
-          operator can deep-link a teammate to "look at this tab." */}
-      {target.analysis_state === "ready" && (
+      {isApk && (
         <>
-          <div className="border-b border-border-default flex gap-1 overflow-x-auto">
-            {TARGET_TABS.map((tab) => {
-              const isActive = activeTab === tab.id;
-              return (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  className={
-                    "px-3 py-2 text-xs font-mono whitespace-nowrap border-b-2 transition-colors " +
-                    (isActive
-                      ? "border-accent text-foreground"
-                      : "border-transparent text-text-muted hover:text-foreground")
-                  }
-                >
-                  {tab.label}
-                </button>
-              );
-            })}
-          </div>
-
-          {activeTab === "attack_surface" && (
-            <AttackSurfaceTab capability={capability} />
-          )}
-          {activeTab === "hypotheses" && <HypothesesTab targetId={target.id} />}
-          {activeTab === "imports" && <ImportsExportsTab capability={capability} />}
-          {activeTab === "notes" && <NotesTab targetId={target.id} />}
+          <ApkStaticAuditCard
+            targetId={target.id}
+            packageLabel={packageLabel}
+          />
+          <MasvsAuditCard targetId={target.id} packageLabel={packageLabel} />
+          <MasvsProgressCard
+            targetId={target.id}
+            packageLabel={packageLabel}
+          />
+          <MasvsReportCard targetId={target.id} packageLabel={packageLabel} />
+          <MasvsControlTable
+            targetId={target.id}
+            packageLabel={packageLabel}
+          />
+          <AuditAggregateAnalytics targetId={target.id} />
         </>
       )}
 
-
-      {/* Functions of interest tab content */}
-      {target.analysis_state === "ready" && activeTab === "functions" && (
-        <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
-          Function ranking ({ranking.top_k?.length ?? 0} of{" "}
-          {ranking.total_candidates ?? 0})
-        </h2>
-        {!ranking.top_k || ranking.top_k.length === 0 ? (
-          <p className="text-sm text-text-muted">
-            No ranking yet. Click <strong>Rank functions</strong> above.
-          </p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-border-default text-left text-text-muted">
-                  <th className="px-2 py-1 font-semibold w-10">#</th>
-                  <th className="px-2 py-1 font-semibold">Function</th>
-                  <th className="px-2 py-1 font-semibold w-20 text-right">Score</th>
-                  <th className="px-2 py-1 font-semibold">Reasons</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ranking.top_k.slice(0, 50).map((f, i) => (
-                  <tr
-                    key={`${f.address ?? f.file_path ?? "_"}-${i}`}
-                    className="border-b border-border-default last:border-b-0"
-                  >
-                    <td className="px-2 py-1 font-mono text-text-muted">
-                      {f.rank ?? i + 1}
-                    </td>
-                    <td className="px-2 py-1 font-mono text-foreground">
-                      {f.name ?? "<unnamed>"}
-                      {f.address && (
-                        <span className="text-text-muted ml-2">@ {f.address}</span>
-                      )}
-                      {f.file_path && (
-                        <span className="text-text-muted ml-2">
-                          {f.file_path}
-                          {f.line != null ? `:${f.line}` : ""}
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-2 py-1 font-mono text-right text-foreground">
-                      {f.score?.toFixed(2) ?? "--"}
-                    </td>
-                    <td className="px-2 py-1 text-text-muted">
-                      {(f.reasons ?? []).join("; ")}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-        {ranking.produced_at && (
-          <p className="text-xs text-text-muted mt-2 font-mono">
-            produced_at: {formatDate(ranking.produced_at)}
-            {ranking.source && ` · source: ${ranking.source}`}
-          </p>
-        )}</AilaCard>
+      {target.analysis_state === "ready" && (
+        <WindowPanel title="mitigations" tone="info">
+          <MitigationsRibbon mitigations={mitigations} />
+        </WindowPanel>
       )}
 
-      {/* Descriptor -- collapsed for debugging only */}
-      <AilaCard  techBorder glow><details>
-        <summary className="text-sm font-semibold text-foreground cursor-pointer">
-          Operator-supplied descriptor
-        </summary>
-        <pre className="text-xs font-mono text-text-muted whitespace-pre-wrap overflow-x-auto mt-2">
-          {JSON.stringify(target.descriptor, null, 2)}
-        </pre>
-      </details></AilaCard>
+      {target.analysis_state === "ready" && (
+        <Fragment>
+          <Segmented<TargetTab>
+            options={TARGET_TABS.map((t) => ({
+              value: t.value,
+              label: t.label,
+            }))}
+            value={activeTab}
+            onChange={setActiveTab}
+          />
+          {activeTab === "functions" && (
+            <FunctionRankingPanel ranking={ranking} />
+          )}
+          {activeTab === "attack_surface" && (
+            <AttackSurfaceTab capability={capability} />
+          )}
+          {activeTab === "hypotheses" && (
+            <HypothesesTab targetId={target.id} />
+          )}
+          {activeTab === "imports" && (
+            <ImportsExportsTab capability={capability} />
+          )}
+          {activeTab === "notes" && <NotesTab targetId={target.id} />}
+        </Fragment>
+      )}
+
+      <WindowPanel title="operator-supplied descriptor" tone="muted">
+        <details>
+          <summary
+            className="font-mono uppercase"
+            style={{
+              fontSize: 10,
+              letterSpacing: "0.1em",
+              color: "var(--text-muted)",
+              cursor: "pointer",
+            }}
+          >
+            show descriptor json
+          </summary>
+          <pre
+            className="font-mono"
+            style={{
+              marginTop: 10,
+              padding: 12,
+              fontSize: 11,
+              lineHeight: 1.5,
+              color: "var(--text-primary)",
+              background: "var(--surface-sunk)",
+              border: "1px solid var(--border-soft)",
+              borderRadius: 3,
+              overflow: "auto",
+              maxHeight: 400,
+              whiteSpace: "pre",
+            }}
+          >
+            {JSON.stringify(target.descriptor, null, 2)}
+          </pre>
+        </details>
+      </WindowPanel>
     </div>
   );
 }

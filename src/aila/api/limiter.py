@@ -43,6 +43,9 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from starlette.requests import Request
 
+from aila.api.constants import JWT_ALGORITHM
+from aila.config import get_settings
+
 __all__ = ["limiter"]
 
 
@@ -50,18 +53,30 @@ def _authenticated_user_key(request: Request) -> str:
     """Rate-limit bucket by authenticated user/key identity.
 
     Reads the Bearer token from the Authorization header and decodes the JWT
-    payload WITHOUT signature verification -- we only need the identity claim
-    for bucketing, not for security.  Falls back to remote IP for unauthenticated
-    requests so the limiter still applies to the auth endpoints themselves.
+    with full signature verification against the platform's HS256 secret.
+    Only when the signature verifies do we bucket by the ``user_id`` / ``key_id``
+    claim.  On ANY failure -- missing/malformed header, invalid signature,
+    expired token, forged payload -- we fall back to ``get_remote_address``.
 
-    This prevents shared-egress / proxy collapse where all users behind a NAT
-    share a single IP bucket (STRIDE T-04 finding from Phase 181 review).
+    Signature verification is load-bearing here (issue #172): with the previous
+    ``verify_signature=False`` decode, anyone could send a forged JWT carrying
+    a fabricated or rotating ``user_id`` to escape the per-IP brute-force limit
+    on ``/auth/token`` (5/min) and ``/auth/login`` (10/min), or set a real
+    admin ``key_id`` to exhaust that admin's quota.
+
+    Bucketing by verified identity still preserves the legitimate NAT /
+    shared-egress mitigation (D-31 / STRIDE T-04) for real logged-in users
+    behind a shared IP.
     """
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         token = auth_header[7:]
         try:
-            payload = jwt.decode(token, options={"verify_signature": False}, algorithms=["HS256"])
+            payload = jwt.decode(
+                token,
+                get_settings().jwt_secret_key,
+                algorithms=[JWT_ALGORITHM],
+            )
             uid: str | None = payload.get("user_id") or payload.get("key_id")
             if uid:
                 return uid

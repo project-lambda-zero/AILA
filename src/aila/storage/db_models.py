@@ -57,6 +57,7 @@ class ManagedSystemRecord(TeamScopedMixin, SQLModel, table=True):
     description: str = Field(default="")
     private_key_path: str | None = None
     private_key_secret_id: str | None = None
+    private_key_passphrase_secret_id: str | None = None
     password_secret_id: str | None = None
     known_hosts_path: str | None = None
     host_key_fingerprint: str | None = None
@@ -137,6 +138,10 @@ class WorkflowRunRecord(TeamScopedMixin, SQLModel, table=True):
 
     __table_args__ = (
         Index("ix_wfr_status_completed", "status", "completed_at"),
+        # #176: systems scan_map orders by ``completed_at DESC`` per
+        # matching row without a ``status`` predicate; the compound
+        # ``(status, completed_at)`` index cannot serve that ORDER BY.
+        Index("ix_workflowrunrecord_completed_at", "completed_at"),
     )
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     query_text: str
@@ -422,6 +427,13 @@ class AuditEventRecord(TeamScopedMixin, SQLModel, table=True):
     "system" for automated actions; operator-initiated actions set it explicitly.
     Records are immutable once written -- no UPDATE operations are performed.
     """
+
+    # #204: audit list is scoped by team_id and ordered by created_at
+    # DESC; the standalone ``ix_auditeventrecord_created_at`` (migration
+    # 075) still serves the god-tier admin scan.
+    __table_args__ = (
+        Index("ix_auditeventrecord_team_created", "team_id", "created_at"),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     run_id: str = Field(index=True)
@@ -976,9 +988,21 @@ class FindingWorkflowRecord(SQLModel, table=True):
     State machine: new -> investigating -> mitigated -> verified -> closed.
     Written by: POST /findings/{id}/transition (operator+).
     Consumed by: GET /findings/{id}/workflow (BE-08).
+
+    Team-scoped (#99): ``team_id`` is stamped from the transitioning
+    principal. A god-tier admin (team_id=NULL, TEAM-06) owns NULL-team
+    rows and sees every row; a team-scoped caller sees and mutates only
+    rows carrying its own team_id. Cross-team reads/transitions return
+    404 so the row's existence does not leak.
     """
 
     __tablename__ = "finding_workflow_records"
+    # #204: dashboard MTTR aggregation buckets by ``current_state`` and
+    # orders by ``created_at``; the individual column indexes cannot
+    # serve the combined predicate + ORDER BY on their own.
+    __table_args__ = (
+        Index("ix_finding_workflow_state_created", "current_state", "created_at"),
+    )
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     finding_id: str = Field(index=True)
@@ -987,6 +1011,7 @@ class FindingWorkflowRecord(SQLModel, table=True):
     previous_state: str | None = Field(default=None)
     transitioned_by: str
     notes: str = Field(default="", sa_column=Column(Text))
+    team_id: str | None = Field(default=None, index=True, max_length=64)
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 

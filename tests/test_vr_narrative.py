@@ -34,15 +34,67 @@ import pytest
 from pydantic import ValidationError
 
 from aila.modules.vr.agents.narrative_agent import (
-    _LENGTH_DIRECTIVES,
-    _SYSTEM_PROMPT,
-    _TONE_DIRECTIVES,
-    NarrativeAgent,
-    NarrativeOptions,
-    NarrativeResponse,
-    _render_narrative_prompt,
+    VRNarrativeAgent as NarrativeAgent,
+)
+from aila.modules.vr.agents.narrative_agent import (
+    _load_system_prompt,
+    _render_branch_roster_section,
+    _render_message_chronology_section,
     _summarize_message_payload,
 )
+from aila.platform.agents.narrative_agent import (
+    LENGTH_DIRECTIVES,
+    TONE_DIRECTIVES,
+    NarrativeOptions,
+    NarrativePromptContext,
+    NarrativeResponse,
+    render_narrative_prompt,
+)
+
+
+def _render_narrative_prompt(
+    *,
+    investigation_id: str,
+    inv_question: str,
+    inv_title: str,
+    verdict: str,
+    branch_roster: list,
+    panel_contributions: list,
+    panel_summary: dict,
+    verifier_report: dict,
+    messages: list,
+    options: NarrativeOptions,
+) -> str:
+    """Test-local adapter: build a NarrativePromptContext from the VR
+    kwargs (via the module's real section renderers) and delegate to the
+    shared platform renderer. Replaces the removed production shim."""
+    chronology_sections: list[str] = []
+    roster_section = _render_branch_roster_section(branch_roster)
+    if roster_section:
+        chronology_sections.append(roster_section)
+    chrono_section = _render_message_chronology_section(messages)
+    if chrono_section:
+        chronology_sections.append(chrono_section)
+    return render_narrative_prompt(
+        NarrativePromptContext(
+            investigation_id=investigation_id,
+            options=options,
+            inv_question=inv_question,
+            inv_title=inv_title,
+            verdict=verdict,
+            verifier_report=verifier_report if verifier_report else None,
+            panel_summary=panel_summary if panel_summary else None,
+            panel_contributions=list(panel_contributions or []),
+            chronology_sections=chronology_sections,
+        ),
+    )
+
+# The historical test referenced a module-level ``_SYSTEM_PROMPT`` string
+# constant that predates the RFC-09 PromptRegistry rework; the current
+# module resolves the body lazily through ``_load_system_prompt()``. We
+# keep the name as a module-local snapshot so the existing assertions
+# read the resolved body without a wider rewrite.
+_SYSTEM_PROMPT = _load_system_prompt()
 
 # --------------------------------------------------------------------- #
 #  Schema + options                                                     #
@@ -136,13 +188,13 @@ class TestNarrativeAgentConstruction:
 class TestPromptComposition:
     def test_tone_directives_cover_every_tone(self) -> None:
         for tone in ("blog", "incident_report", "thriller", "academic", "casual"):
-            assert tone in _TONE_DIRECTIVES
-            assert len(_TONE_DIRECTIVES[tone]) > 100
+            assert tone in TONE_DIRECTIVES
+            assert len(TONE_DIRECTIVES[tone]) > 100
 
     def test_length_directives_cover_every_length(self) -> None:
         for length in ("short", "standard", "long"):
-            assert length in _LENGTH_DIRECTIVES
-            assert "word" in _LENGTH_DIRECTIVES[length].lower()
+            assert length in LENGTH_DIRECTIVES
+            assert "word" in LENGTH_DIRECTIVES[length].lower()
 
     def test_system_prompt_names_vulnerability_research(self) -> None:
         # This is a VR narrative, not a malware narrative -- the
@@ -511,18 +563,20 @@ def patch_agent_seams(monkeypatch: pytest.MonkeyPatch):
             holder["uow"] = _FakeUoW()
         return holder["uow"]
 
+    # RFC #208 P2: the run() template now lives in the platform base,
+    # so the seams to patch are on aila.platform.agents.narrative_agent.
     monkeypatch.setattr(
-        "aila.modules.vr.agents.narrative_agent.UnitOfWork",
+        "aila.platform.agents.narrative_agent.UnitOfWork",
         _make_uow,
     )
     monkeypatch.setattr(
-        "aila.modules.vr.agents.narrative_agent.ServiceFactory",
+        "aila.platform.agents.narrative_agent.ServiceFactory",
         _StubFactory,
     )
 
     llm = _CannedLLM(_FakeLLMResponse(content=_canned_narrative_json()))
     monkeypatch.setattr(
-        "aila.modules.vr.agents.narrative_agent.idempotent_llm_call",
+        "aila.platform.agents.narrative_agent.idempotent_llm_call",
         llm,
     )
 

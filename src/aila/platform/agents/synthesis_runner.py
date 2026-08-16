@@ -68,6 +68,90 @@ __all__ = ["SynthesisRunnerBase", "synthesis_confidence"]
 
 _log = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------- #
+#  verifier_report -> panel annotation (issue #105 wiring).              #
+# ---------------------------------------------------------------------- #
+
+# The claim verifier writes at most one ``verifier_report`` dict onto
+# the canonical outcome payload (see
+# :class:`aila.platform.agents.claim_verifier.ClaimVerifier`). Its
+# ``verdict`` is one of ``"confirmed"`` / ``"refuted"`` /
+# ``"inconclusive"``. Anything else -- missing dict, unknown verdict --
+# collapses to ``"unverified"`` so the annotation always reads as a
+# well-known token both for the synthesis prompt and for downstream
+# consumers.
+_KNOWN_VERIFIER_VERDICTS: frozenset[str] = frozenset(
+    {"confirmed", "refuted", "inconclusive"},
+)
+
+
+def _verified_status_from_payload(canonical_payload: dict[str, Any]) -> str:
+    """Map ``canonical_payload['verifier_report']['verdict']`` to a token.
+
+    Returns one of ``"confirmed"``, ``"refuted"``, ``"inconclusive"``,
+    or ``"unverified"``. Never raises; a malformed payload collapses to
+    ``"unverified"``.
+    """
+    report = canonical_payload.get("verifier_report")
+    if not isinstance(report, dict):
+        return "unverified"
+    verdict = report.get("verdict")
+    if isinstance(verdict, str) and verdict in _KNOWN_VERIFIER_VERDICTS:
+        return verdict
+    return "unverified"
+
+
+def _render_verifier_annotation(
+    canonical_payload: dict[str, Any],
+    panel: list[dict[str, Any]],
+) -> str:
+    """Render a per-persona verifier-status block appended to the prompt.
+
+    Emitted alongside :meth:`SynthesisRunnerBase._render_user_prompt`
+    output so the synthesis model sees which claims already carry an
+    independent claim-verifier verdict (confirmed vs refuted vs
+    inconclusive) and can weight the panel narrative accordingly
+    instead of dropping refuted contributions silently.
+
+    Returns an empty string when no panel entries exist so callers can
+    unconditionally concatenate the block.
+    """
+    if not panel:
+        return ""
+    status_seen = {p.get("verified_status", "unverified") for p in panel}
+    report = canonical_payload.get("verifier_report") or {}
+    if not isinstance(report, dict):
+        report = {}
+    summary_raw = str(report.get("summary") or "").strip()
+    summary = summary_raw[:400]
+    lines: list[str] = [
+        "",
+        "# Claim verifier annotations",
+        "",
+        (
+            "Each panel entry below carries a ``verified_status`` derived "
+            "from the canonical outcome's ``verifier_report``. "
+            "``confirmed`` means an independent probe reproduced the "
+            "claim; ``refuted`` means the probe contradicted it; "
+            "``inconclusive`` means the probe ran but could not decide; "
+            "``unverified`` means the claim verifier has not run yet. "
+            "Weight the synthesis toward confirmed claims and treat "
+            "refuted claims as counter-evidence; do NOT drop refuted "
+            "personas -- name the refutation explicitly."
+        ),
+        "",
+    ]
+    for entry in panel:
+        persona = str(entry.get("persona_voice") or "(none)")
+        branch = str(entry.get("branch_id") or "")
+        status = str(entry.get("verified_status") or "unverified")
+        lines.append(f"- {persona} (branch={branch}): verified_status={status}")
+    if summary and status_seen - {"unverified"}:
+        lines.append("")
+        lines.append(f"Verifier summary: {summary}")
+    return "\n".join(lines)
+
 # Investigation statuses on which synthesis may write its consolidated
 # outcome. CREATED / RUNNING are the live states; COMPLETED is included
 # because the dispatch hub finalises the investigation through the emit
@@ -167,13 +251,24 @@ class SynthesisRunnerBase(ABC):
           - ``confidence``
           - ``answer``
           - ``reasoning``
+          - ``verified_status``
+
+        ``verified_status`` is derived from the canonical payload's
+        ``verifier_report`` (written by
+        :class:`aila.platform.agents.claim_verifier.ClaimVerifier`
+        post-synthesis, per issue #105 wiring). One verifier verdict
+        applies to the whole canonical outcome so every panel entry
+        carries the same status; the annotation lets the synthesiser
+        know which claims already have an independent probe verdict
+        instead of dropping refuted claims silently. Values:
+        ``"confirmed"``, ``"refuted"``, ``"inconclusive"``, or
+        ``"unverified"`` when no report has been written yet.
 
         Subclasses may add module-specific fields. vr overrides to
         include ``affected_components`` and ``variant_hunt_orders``
         derived from the canonical payload; those fields are only read
         by vr's ``_render_user_prompt``.
         """
-        del canonical_payload  # default: no per-payload extras
         return {
             "branch_id": contribution.get("branch_id") or "",
             "persona_voice": contribution.get("persona") or "(none)",
@@ -182,6 +277,7 @@ class SynthesisRunnerBase(ABC):
             "confidence": contribution.get("confidence") or "unknown",
             "answer": contribution.get("answer_brief") or "",
             "reasoning": "",
+            "verified_status": _verified_status_from_payload(canonical_payload),
         }
 
     @abstractmethod
@@ -470,6 +566,21 @@ class SynthesisRunnerBase(ABC):
         # (TimeoutError, httpx errors, validation failures, etc.) surface
         # instead of crashing the worker. BudgetExceededError is re-raised
         # so the caller sees the budget halt for what it is.
+        # #105 wiring -- append the claim-verifier per-persona status
+        # block AFTER the subclass-rendered panel so the synthesis
+        # model is told which claims already have an independent probe
+        # verdict. When no verifier_report exists (initial synthesis
+        # pass) every entry annotates as ``unverified`` and the model
+        # sees an empty verdict roster; on re-synthesis the confirmed
+        # vs refuted vs inconclusive tokens shape which claims the
+        # narrative should lead with vs argue against.
+        user_prompt = self._render_user_prompt(panel, reviews)
+        verifier_block = _render_verifier_annotation(
+            canonical_payload, panel,
+        )
+        if verifier_block:
+            user_prompt = f"{user_prompt}\n{verifier_block}"
+
         services = ServiceFactory()
         try:
             response, _ = await idempotent_llm_call(
@@ -478,10 +589,7 @@ class SynthesisRunnerBase(ABC):
                 task_type=self._TASK_TYPE,
                 messages=[
                     {"role": "system", "content": self._SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": self._render_user_prompt(panel, reviews),
-                    },
+                    {"role": "user", "content": user_prompt},
                 ],
                 model_class=self._response_model,
                 investigation_id=self.investigation_id,

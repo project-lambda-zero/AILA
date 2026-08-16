@@ -1,9 +1,13 @@
 import { Link } from "react-router";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
-import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import {
+  DataGrid,
+  MonoBadge,
+  SectionHeader,
+  type GridColumn,
+} from "@/components/aila/mock";
 
 import { useInvestigations, useMcpCalls } from "../queries";
 
@@ -19,10 +23,7 @@ import { useInvestigations, useMcpCalls } from "../queries";
  *     hypothesis confirm / etc. Spec wants these in a dedicated
  *     VRAuditEventRecord; v0.5 surfaces them from operator-sender
  *     messages on each investigation.
- *
- *  Per spec §6.2 -- "Reading the timeline plus the audit log gives a
- *  complete picture of what happened on this engagement, by whom,
- *  when." */
+ */
 export function AuditLogPage() {
   const { data: callsResult, isLoading: callsLoading } = useMcpCalls();
   const { data: invsResult, isLoading: invsLoading } = useInvestigations();
@@ -30,121 +31,243 @@ export function AuditLogPage() {
   const calls = callsResult?.data ?? [];
   const investigations = invsResult?.data ?? [];
 
+  const recentCalls = calls.slice(0, 20);
+
   // Mutation events derived from the investigation list: each is the
-  // signature point where the operator changed state ("paused N
-  // investigations", "created M").
+  // signature point where the operator changed state.
   const operatorEvents = investigations
-    .filter((i) => i.status === "paused" || i.status === "abandoned" || i.status === "completed")
+    .filter(
+      (i) =>
+        i.status === "paused" ||
+        i.status === "abandoned" ||
+        i.status === "completed",
+    )
     .map((i) => ({
       id: `inv-${i.id}`,
       kind: "investigation_state" as const,
-      label: `${i.title} → ${i.status}`,
+      label: `${i.title} \u2192 ${i.status}`,
       time: i.updated_at ?? i.stopped_at ?? i.created_at,
       link: `/vr/investigations/${i.id}`,
     }));
 
+  const callColumns: GridColumn[] = [
+    { label: "time", width: "90px" },
+    { label: "server", width: "130px" },
+    { label: "action", width: "1fr" },
+    { label: "status", width: "90px", align: "center" },
+    { label: "latency", width: "80px", align: "right" },
+  ];
+
   return (
-    <div className="space-y-4">
+    <div className="flex flex-col" style={{ gap: 14 }}>
+      <SectionHeader icon="\u25c8" title="audit log" />
 
-      <AilaCard className="border-dashed" techBorder glow><AilaBadge severity="info" size="sm">
-        backend pending
-      </AilaBadge>
-      <p className="text-3xs text-text-muted mt-1">
-        A dedicated VRAuditEventRecord table (operator action /
-        actor_id / target / details / timestamp) isn't on the
-        schema yet. v0.5 surfaces what's queryable today: operator-
-        driven investigation state changes + the MCP call log.
-      </p></AilaCard>
+      <WindowPanel title="scope" tone="muted">
+        <div className="flex items-start" style={{ gap: 10 }}>
+          <MonoBadge tone="info">backend pending</MonoBadge>
+          <p
+            className="font-mono"
+            style={{
+              fontSize: 10.5,
+              lineHeight: 1.5,
+              color: "var(--text-muted)",
+              letterSpacing: "0.02em",
+            }}
+          >
+            a dedicated vr_audit_event_record table (operator action /
+            actor_id / target / details / timestamp) is not on the schema
+            yet. v0.5 surfaces what is queryable today: operator-driven
+            investigation state changes plus the mcp call log.
+          </p>
+        </div>
+      </WindowPanel>
 
-      {/* MCP calls -- direct read from the log */}
-      <AilaCard  techBorder glow><div className="flex items-center justify-between gap-2 mb-2">
-        <h2 className="text-sm font-semibold text-foreground">
-          Delegated MCP calls
-        </h2>
-        <Link
-          to="/vr/mcp/calls"
-          className="text-xs text-accent hover:underline"
-        >
-          full log →
-        </Link>
-      </div>
-      {callsLoading ? (
-        <LoadingSkeleton size="md" width="full" />
-      ) : calls.length === 0 ? (
-        <EmptyState
-          title="No MCP calls yet"
-          description="Run an analyze, rank, or upload action to populate this list."
-        />
-      ) : (
-        <ul className="text-xs font-mono space-y-1 max-h-96 overflow-y-auto">
-          {calls.slice(0, 20).map((c) => (
-            <li
-              key={c.id}
-              className="flex items-center gap-2 border border-border-default rounded px-2 py-1"
-            >
-              <span className="text-text-muted whitespace-nowrap">
+      <WindowPanel
+        title="delegated mcp calls"
+        tone="info"
+        flush
+        actions={
+          <Link
+            to="/vr/mcp/calls"
+            className="font-mono uppercase"
+            style={{
+              fontSize: 9,
+              letterSpacing: "0.12em",
+              color: "var(--accent)",
+              textDecoration: "none",
+            }}
+          >
+            {"full log \u2192"}
+          </Link>
+        }
+      >
+        <h2 className="sr-only">Delegated MCP calls</h2>
+        {callsLoading ? (
+          <div style={{ padding: 12 }}>
+            <LoadingSkeleton size="lg" width="full" />
+          </div>
+        ) : (
+          <DataGrid
+            columns={callColumns}
+            rows={recentCalls}
+            getKey={(c) => c.id}
+            renderCells={(c) => [
+              <span
+                key="t"
+                style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+              >
                 {new Date(c.called_at).toLocaleTimeString()}
-              </span>
-              <span className="text-foreground">{c.server_id}</span>
-              <span className="text-foreground">{c.action}</span>
-              <AilaBadge
-                severity={
+              </span>,
+              <span
+                key="s"
+                style={{ fontSize: 10.5, color: "var(--text-primary)" }}
+              >
+                {c.server_id}
+              </span>,
+              <span
+                key="a"
+                style={{
+                  fontSize: 10.5,
+                  color: "var(--text-primary)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {c.action}
+              </span>,
+              <MonoBadge
+                key="st"
+                tone={
                   c.status === "ready"
-                    ? "low"
+                    ? "ok"
                     : c.status === "error"
                       ? "critical"
-                      : "medium"
+                      : "warn"
                 }
-                size="sm"
               >
                 {c.status}
-              </AilaBadge>
-              {c.latency_ms != null && (
-                <span className="text-text-muted ml-auto">
-                  {c.latency_ms}ms
-                </span>
-              )}
-            </li>
-          ))}
-        </ul>
-      )}</AilaCard>
+              </MonoBadge>,
+              <span
+                key="l"
+                style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+              >
+                {c.latency_ms != null ? `${c.latency_ms}ms` : "\u2014"}
+              </span>,
+            ]}
+            empty={
+              <div
+                className="font-mono"
+                style={{
+                  padding: 34,
+                  textAlign: "center",
+                  fontSize: 11.5,
+                  color: "var(--text-muted)",
+                  letterSpacing: "0.04em",
+                }}
+              >
+                no mcp calls yet. run an analyze, rank, or upload action to
+                populate this list.
+              </div>
+            }
+          />
+        )}
+      </WindowPanel>
 
-      {/* Operator events -- investigation state changes */}
-      <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
-        Operator events ({operatorEvents.length})
-      </h2>
-      {invsLoading ? (
-        <LoadingSkeleton size="md" width="full" />
-      ) : operatorEvents.length === 0 ? (
-        <EmptyState
-          title="No operator state changes recorded"
-          description="Pause, complete, or abandon an investigation and it appears here. Per-message operator-intent events (steering / correction / dismissal) require a dedicated audit endpoint that's backend pending."
-        />
-      ) : (
-        <ul className="text-xs space-y-1">
-          {operatorEvents.map((e) => (
-            <li
-              key={e.id}
-              className="flex items-start gap-2 border border-border-default rounded px-2 py-1.5"
-            >
-              <span className="w-2 h-2 rounded-full bg-accent mt-1.5 flex-shrink-0" />
-              <div className="flex-1 min-w-0">
+      <WindowPanel
+        title="operator events"
+        tone="muted"
+        actions={
+          <span
+            className="font-mono tabular-nums"
+            style={{
+              fontSize: 10,
+              letterSpacing: "0.08em",
+              color: "var(--text-muted)",
+            }}
+          >
+            {operatorEvents.length}
+          </span>
+        }
+      >
+        <h2 className="sr-only">
+          Operator events ({operatorEvents.length})
+        </h2>
+        {invsLoading ? (
+          <LoadingSkeleton size="lg" width="full" />
+        ) : operatorEvents.length === 0 ? (
+          <div
+            className="font-mono"
+            style={{
+              padding: 24,
+              textAlign: "center",
+              fontSize: 11,
+              color: "var(--text-muted)",
+              letterSpacing: "0.04em",
+            }}
+          >
+            no operator state changes recorded. pause, complete, or abandon
+            an investigation and it appears here. per-message operator-intent
+            events require a dedicated audit endpoint that is backend
+            pending.
+          </div>
+        ) : (
+          <ul
+            className="flex flex-col"
+            style={{ gap: 4, margin: 0, padding: 0, listStyle: "none" }}
+          >
+            {operatorEvents.map((e) => (
+              <li
+                key={e.id}
+                className="flex items-center font-mono"
+                style={{
+                  gap: 10,
+                  padding: "6px 10px",
+                  border: "1px solid var(--border-faint)",
+                  borderRadius: 3,
+                  background: "var(--surface-sunk)",
+                  fontSize: 11,
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    width: 6,
+                    height: 6,
+                    background: "var(--accent)",
+                    borderRadius: 1,
+                    flex: "0 0 auto",
+                  }}
+                />
                 <Link
                   to={e.link}
-                  className="font-mono text-foreground hover:underline truncate"
+                  style={{
+                    color: "var(--text-primary)",
+                    textDecoration: "none",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    flex: 1,
+                    minWidth: 0,
+                  }}
                 >
                   {e.label}
                 </Link>
-                <span className="text-text-muted text-3xs ml-2">
-                  {e.time
-                    ? new Date(e.time).toLocaleString()
-                    : "--"}
+                <span
+                  style={{
+                    fontSize: 9.5,
+                    color: "var(--text-faint)",
+                    letterSpacing: "0.04em",
+                    flex: "0 0 auto",
+                  }}
+                >
+                  {e.time ? new Date(e.time).toLocaleString() : "\u2014"}
                 </span>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}</AilaCard>
+              </li>
+            ))}
+          </ul>
+        )}
+      </WindowPanel>
     </div>
   );
 }

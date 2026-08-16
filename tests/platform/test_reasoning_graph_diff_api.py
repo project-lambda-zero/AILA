@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Generator
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 from uuid import uuid4
@@ -12,6 +13,29 @@ from aila.modules.forensics.contracts import ReasoningGraphDiffResult
 from aila.modules.forensics.db_models import ForensicsProjectRecord, InvestigationRunRecord
 from aila.platform.services.reasoning_graphs import ReasoningGraphService
 from aila.storage.database import async_session_scope
+
+
+@pytest.fixture(autouse=True)
+def _disable_slowapi_limiter() -> Generator[None, None, None]:
+    """Neutralise the slowapi limiter for this file.
+
+    The forensics diff endpoint is decorated with ``@limiter.limit("60/minute")``
+    and slowapi's storage is process-global. With ``pytest-randomly`` the
+    test can run after 60+ hits from other suites against the same route,
+    so the direct handler call trips ``RateLimitExceeded`` before its
+    assertions run. Mirrors the autouse fixture in ``tests/api/conftest.py``
+    which disables the limiter for every API test.
+    """
+    from aila.api.limiter import limiter
+
+    was_enabled = limiter.enabled
+    limiter.enabled = False
+    limiter.reset()
+    try:
+        yield
+    finally:
+        limiter.enabled = was_enabled
+        limiter.reset()
 
 
 def _utc_now() -> datetime:

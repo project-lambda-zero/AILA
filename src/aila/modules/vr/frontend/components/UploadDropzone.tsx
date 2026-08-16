@@ -1,14 +1,14 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState, type CSSProperties } from "react";
 
 /**
  * Drag-drop file uploader for binary target artifacts
  * (08_FRONTEND_UX.md §1.2 promise -- wizard step 1 + TargetDetailPage).
  *
- * Renders a dashed-border drop zone. Accepts files via drag-drop OR a
- * regular file picker button. On selection it surfaces the picked file
- * to the parent (`onFile`) -- the parent decides whether to upload
- * immediately (TargetDetailPage) or stash the filename and upload after
- * project create (Wizard).
+ * Renders a mock-language bordered dashed drop zone. Accepts files via
+ * drag-drop OR a regular file picker button. On selection it surfaces
+ * the picked file to the parent (`onFile`) -- the parent decides whether
+ * to upload immediately (TargetDetailPage) or stash the filename and
+ * upload after project create (Wizard).
  *
  * The dropzone itself does no uploading and holds no transient state
  * beyond `dragging`. Upload progress + errors are the parent's
@@ -48,6 +48,28 @@ export function UploadDropzone({
     [onFile],
   );
 
+  const borderColor = disabled
+    ? "var(--border-faint)"
+    : dragging
+      ? "var(--accent)"
+      : "var(--border-soft)";
+  const background = disabled
+    ? "var(--surface-sunk)"
+    : dragging
+      ? "var(--surface-hover)"
+      : "var(--surface-sunk)";
+
+  const outerStyle: CSSProperties = {
+    border: `1px dashed ${borderColor}`,
+    background,
+    padding: 18,
+    textAlign: "center",
+    borderRadius: 3,
+    opacity: disabled ? 0.5 : 1,
+    cursor: disabled ? "not-allowed" : "default",
+    transition: "border-color 120ms, background 120ms",
+  };
+
   return (
     <div
       onDragOver={(event) => {
@@ -61,24 +83,37 @@ export function UploadDropzone({
         setDragging(false);
       }}
       onDrop={handleDrop}
-      className={
-        "border-2 border-dashed rounded p-4 text-center transition-colors " +
-        (disabled
-          ? "border-border-default opacity-40 cursor-not-allowed"
-          : dragging
-            ? "border-accent bg-accent/5"
-            : "border-border-default bg-surface hover:bg-surface-hover")
-      }
+      className="font-mono uppercase"
+      style={outerStyle}
       role="region"
       aria-label="Upload file by drag and drop or click to pick"
       aria-disabled={disabled}
     >
-      <p className="text-sm font-medium text-foreground">
-        {dragging ? "Drop to upload" : "Drag a file here"}
-      </p>
-      <p className="text-xs text-text-muted mt-1">
+      <div
+        style={{
+          fontSize: 11,
+          letterSpacing: "0.08em",
+          color: "var(--text-primary)",
+        }}
+      >
+        {dragging ? "drop to upload" : "drag a file here"}
+      </div>
+      <div
+        style={{
+          fontSize: 10,
+          letterSpacing: "0.06em",
+          color: "var(--text-muted)",
+          marginTop: 6,
+        }}
+      >
         or{" "}
-        <label className="text-accent hover:underline cursor-pointer">
+        <label
+          style={{
+            color: "var(--accent)",
+            cursor: disabled ? "not-allowed" : "pointer",
+            textDecoration: "underline",
+          }}
+        >
           pick from disk
           <input
             type="file"
@@ -88,9 +123,19 @@ export function UploadDropzone({
             onChange={handlePick}
           />
         </label>
-      </p>
+      </div>
       {hint && (
-        <p className="text-3xs text-text-muted mt-2 font-mono">{hint}</p>
+        <div
+          style={{
+            fontSize: 9.5,
+            letterSpacing: "0.06em",
+            color: "var(--text-faint)",
+            marginTop: 10,
+            textTransform: "none",
+          }}
+        >
+          {hint}
+        </div>
       )}
     </div>
   );

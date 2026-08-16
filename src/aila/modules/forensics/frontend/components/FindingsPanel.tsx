@@ -1,12 +1,19 @@
 import { useMemo, useState } from "react";
 
-import { AilaCard } from "@/components/aila/AilaCard";
-import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
-import { Button } from "@/components/ui/button";
+import { Warning } from "@phosphor-icons/react/dist/csr/Warning";
 
+import { EmptyState } from "@/components/aila/EmptyState";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { MonoBadge } from "@/components/aila/mock";
+
+import { FindingRowSkeletonList } from "./skeletons";
 import { useSuppressFinding } from "../mutations";
 import type { Finding } from "../queries";
 import { useProjectFindings } from "../queries";
+
+// ---------------------------------------------------------------------------
+// Business-logic helpers (preserved verbatim from the previous panel).
+// ---------------------------------------------------------------------------
 
 function reasonSentence(reasons: string[]): string {
   const parts: string[] = [];
@@ -120,9 +127,40 @@ function downloadFindings(findings: Finding[], projectId: string) {
   URL.revokeObjectURL(url);
 }
 
+// ---------------------------------------------------------------------------
+// Raw mono button styles (mock language).
+// ---------------------------------------------------------------------------
+
+const CHROME_BTN: React.CSSProperties = {
+  height: 24,
+  padding: "0 10px",
+  fontSize: 9,
+  letterSpacing: "0.1em",
+  color: "var(--text-muted)",
+  background: "transparent",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  cursor: "pointer",
+};
+
+const DANGER_BTN: React.CSSProperties = {
+  height: 24,
+  padding: "0 10px",
+  fontSize: 9,
+  letterSpacing: "0.1em",
+  color: "var(--accent)",
+  background: "color-mix(in srgb, var(--accent) 8%, transparent)",
+  border: "1px solid color-mix(in srgb, var(--accent) 40%, transparent)",
+  borderRadius: 3,
+  cursor: "pointer",
+};
+
+// ---------------------------------------------------------------------------
+// FindingRow -- one collapsible WindowPanel in the findings stack.
+// ---------------------------------------------------------------------------
+
 function FindingRow({
   f,
-  index,
   expanded,
   onToggle,
   projectId,
@@ -139,113 +177,206 @@ function FindingRow({
   const occ = f.occurrences ?? 1;
 
   return (
-    <li className="rounded-md border border-red-900/40 bg-red-950/20 overflow-hidden">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={expanded}
-        className="w-full px-4 py-2.5 flex items-center gap-3 text-left hover:bg-red-950/40 transition-colors"
-      >
-        <span className="text-3xs font-mono text-red-300/80 shrink-0 w-6">#{index + 1}</span>
-        <span className="text-xs font-mono text-red-300/70 shrink-0 select-none">
-          {expanded ? "▾" : "▸"}
-        </span>
-        <h4 className="text-sm font-semibold text-foreground flex-1 truncate">{n.title}</h4>
-        {occ > 1 && (
-          <span className="shrink-0 px-1.5 py-0.5 rounded bg-red-900/60 text-red-200 text-3xs font-mono">
-            ×{occ}
-          </span>
-        )}
-        <span className="shrink-0 text-3xs font-mono text-red-300/70">
-          {f.suspicious_reasons.length} reason{f.suspicious_reasons.length === 1 ? "" : "s"}
-        </span>
-      </button>
-
-      {expanded && (
-        <div className="px-4 pb-3 pt-1 space-y-2 border-t border-red-900/30">
-          <p className="text-sm text-text-muted leading-relaxed">{n.body}</p>
-
-          <div className="flex flex-wrap gap-1">
-            {f.suspicious_reasons.map((r, j) => (
-              <span
-                key={j}
-                className="px-1.5 py-0.5 rounded bg-red-900/60 text-red-200 text-3xs font-mono"
-              >
-                {r}
-              </span>
-            ))}
-          </div>
-
-          {commandFields.length > 0 && (
-            <div className="rounded border border-red-900/30 bg-black/30 p-2">
-              <div className="text-3xs font-mono text-red-300/70 mb-1 uppercase tracking-wide">
-                Exact parameters
-              </div>
-              <dl className="grid gap-x-3 gap-y-1 text-xs font-mono" style={{ gridTemplateColumns: "min-content 1fr" }}>
-                {commandFields.map(([k, v]) => (
-                  <div key={k} className="contents">
-                    <dt className="text-red-300/80">{k}</dt>
-                    <dd className="text-foreground break-all whitespace-pre-wrap">{v}</dd>
-                  </div>
-                ))}
-              </dl>
-            </div>
-          )}
-
-          {f.raw_record && (
-            <details className="rounded border border-red-900/30 bg-black/30">
-              <summary className="cursor-pointer px-2 py-1 text-3xs font-mono text-red-300/70 uppercase tracking-wide hover:text-red-200">
-                Full raw record
-              </summary>
-              <pre className="p-2 text-2xs font-mono text-foreground/80 overflow-x-auto max-h-96">
-                {JSON.stringify(f.raw_record, null, 2)}
-              </pre>
-            </details>
-          )}
-
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex gap-2 text-3xs font-mono text-red-300/60">
-              <span>family: {f.artifact_family}</span>
-              <span>·</span>
-              <span>type: {f.artifact_type}</span>
-              {f.source_tool && (
-                <>
-                  <span>·</span>
-                  <span>tool: {f.source_tool}</span>
-                </>
-              )}
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 px-2 text-3xs border-amber-600 text-amber-400 hover:bg-amber-950/30"
-              disabled={suppress.isPending || !f.fingerprint}
-              onClick={() => {
-                if (!f.fingerprint) return;
-                if (
-                  !window.confirm(
-                    "Mark this finding as false positive? It will be hidden from the list, and every future investigation will see 'analyst cleared this as benign'.",
-                  )
-                )
-                  return;
-                suppress.mutate({
-                  fingerprint: f.fingerprint,
-                  artifact_type: f.artifact_type,
-                  executable:
-                    typeof f.executable === "string" ? f.executable : null,
-                  path: f.path ?? null,
-                  name: f.name ?? null,
-                  finding_user: f.user ?? null,
-                  reasons: f.suspicious_reasons,
-                });
+    <div
+      role="button"
+      tabIndex={0}
+      aria-expanded={expanded}
+      onClick={onToggle}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onToggle();
+        }
+      }}
+      style={{ cursor: "pointer" }}
+    >
+      <WindowPanel
+        title={n.title}
+        tone="accent"
+        flush={!expanded}
+        actions={
+          <div className="flex items-center" style={{ gap: 6 }}>
+            {occ > 1 ? <MonoBadge tone="critical">{`\u00d7${occ}`}</MonoBadge> : null}
+            <MonoBadge tone="critical">
+              {`${f.suspicious_reasons.length} reason${f.suspicious_reasons.length === 1 ? "" : "s"}`}
+            </MonoBadge>
+            <span
+              aria-hidden="true"
+              className="font-mono"
+              style={{
+                fontSize: 11,
+                color: "var(--accent)",
+                width: 14,
+                textAlign: "center",
+                userSelect: "none",
               }}
             >
-              {suppress.isPending ? "Saving…" : "Mark false positive"}
-            </Button>
+              {expanded ? "\u25be" : "\u25b8"}
+            </span>
           </div>
-        </div>
-      )}
-    </li>
+        }
+      >
+        {expanded ? (
+          <div
+            className="space-y-3"
+            onClick={(e) => e.stopPropagation()}
+            role="presentation"
+          >
+            <p
+              className="font-mono"
+              style={{ fontSize: 11, lineHeight: 1.6, color: "var(--text-primary)" }}
+            >
+              {n.body}
+            </p>
+
+            <div className="flex flex-wrap items-center" style={{ gap: 6 }}>
+              {f.suspicious_reasons.map((r) => (
+                <MonoBadge key={r} tone="critical">
+                  {r}
+                </MonoBadge>
+              ))}
+            </div>
+
+            {commandFields.length > 0 && (
+              <div
+                style={{
+                  border: "1px solid var(--border-soft)",
+                  background: "var(--surface-sunk)",
+                  borderRadius: 3,
+                  padding: 10,
+                }}
+              >
+                <div
+                  className="font-mono uppercase"
+                  style={{
+                    fontSize: 9,
+                    letterSpacing: "0.12em",
+                    color: "var(--text-faint)",
+                    marginBottom: 6,
+                  }}
+                >
+                  Exact parameters
+                </div>
+                <dl
+                  className="grid font-mono"
+                  style={{
+                    gridTemplateColumns: "minmax(0,140px) 1fr",
+                    columnGap: 12,
+                    rowGap: 4,
+                    fontSize: 10,
+                  }}
+                >
+                  {commandFields.map(([k, v]) => (
+                    <div key={k} className="contents">
+                      <dt style={{ color: "var(--text-faint)" }}>{k}</dt>
+                      <dd
+                        style={{
+                          color: "var(--text-primary)",
+                          wordBreak: "break-all",
+                          whiteSpace: "pre-wrap",
+                        }}
+                      >
+                        {v}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            )}
+
+            {f.raw_record && (
+              <details
+                style={{
+                  border: "1px solid var(--border-soft)",
+                  background: "var(--surface-sunk)",
+                  borderRadius: 3,
+                }}
+              >
+                <summary
+                  className="font-mono uppercase"
+                  style={{
+                    cursor: "pointer",
+                    padding: "6px 10px",
+                    fontSize: 9,
+                    letterSpacing: "0.12em",
+                    color: "var(--text-faint)",
+                    listStyle: "none",
+                  }}
+                >
+                  Full raw record
+                </summary>
+                <pre
+                  className="font-mono"
+                  style={{
+                    padding: 10,
+                    fontSize: 10,
+                    lineHeight: 1.5,
+                    color: "var(--text-muted)",
+                    overflowX: "auto",
+                    maxHeight: 384,
+                    margin: 0,
+                  }}
+                >
+                  {JSON.stringify(f.raw_record, null, 2)}
+                </pre>
+              </details>
+            )}
+
+            <div className="flex items-center justify-between" style={{ gap: 8 }}>
+              <div
+                className="flex font-mono"
+                style={{ gap: 10, fontSize: 9, color: "var(--text-faint)" }}
+              >
+                <span>family: {f.artifact_family}</span>
+                <span>{"\u00b7"}</span>
+                <span>type: {f.artifact_type}</span>
+                {f.source_tool && (
+                  <>
+                    <span>{"\u00b7"}</span>
+                    <span>tool: {f.source_tool}</span>
+                  </>
+                )}
+              </div>
+              <button
+                type="button"
+                className="font-mono uppercase"
+                style={{
+                  ...DANGER_BTN,
+                  color: "var(--status-warn)",
+                  borderColor:
+                    "color-mix(in srgb, var(--status-warn) 40%, transparent)",
+                  background:
+                    "color-mix(in srgb, var(--status-warn) 8%, transparent)",
+                }}
+                disabled={suppress.isPending || !f.fingerprint}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  if (!f.fingerprint) return;
+                  if (
+                    !window.confirm(
+                      "Mark this finding as false positive? It will be hidden from the list, and every future investigation will see 'analyst cleared this as benign'.",
+                    )
+                  )
+                    return;
+                  suppress.mutate({
+                    fingerprint: f.fingerprint,
+                    artifact_type: f.artifact_type,
+                    executable:
+                      typeof f.executable === "string" ? f.executable : null,
+                    path: f.path ?? null,
+                    name: f.name ?? null,
+                    finding_user: f.user ?? null,
+                    reasons: f.suspicious_reasons,
+                  });
+                }}
+              >
+                {suppress.isPending ? "Saving\u2026" : "Mark false positive"}
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </WindowPanel>
+    </div>
   );
 }
 
@@ -263,10 +394,21 @@ export function FindingsPanel({ projectId }: { projectId: string }) {
   const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
   const [expandAll, setExpandAll] = useState(false);
 
-  if (isLoading) return <LoadingSkeleton size="md" width="full" />;
+  if (isLoading) return <FindingRowSkeletonList count={5} />;
   if (isError) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load findings.</p></AilaCard>
+      <WindowPanel
+        title="auto-findings"
+        tone="warn"
+        status="forensics ; findings unavailable"
+      >
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--accent)" }}
+        >
+          Failed to load findings.
+        </p>
+      </WindowPanel>
     );
   }
 
@@ -292,59 +434,64 @@ export function FindingsPanel({ projectId }: { projectId: string }) {
   };
 
   return (
-    <AilaCard  techBorder glow><div className="flex items-start justify-between gap-3 mb-3">
-      <div className="min-w-0">
-        <h3 className="text-sm font-semibold text-foreground">Auto-findings</h3>
-        <p className="text-xs text-text-muted mt-0.5">
-          Rows the collector heuristics flagged as suspicious (LOLBAS, AppData/Temp execution,
-          double-extension…). Click a row to see the exact command parameters, or mark as false
-          positive to hide it and teach future runs it's benign.
+    <WindowPanel
+      title="auto-findings"
+      tone="accent"
+      status={`forensics ; ${findings.length} suspicious row${findings.length === 1 ? "" : "s"}`}
+    >
+      <div className="flex items-start justify-between" style={{ gap: 12, marginBottom: 12 }}>
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--text-muted)", maxWidth: 640, lineHeight: 1.5 }}
+        >
+          Rows the collector heuristics flagged as suspicious (LOLBAS,
+          AppData/Temp execution, double-extension\u2026). Click a row to see the
+          exact command parameters, or mark as false positive to hide it and
+          teach future runs it's benign.
         </p>
-      </div>
-      <div className="flex items-center gap-2 shrink-0">
-        <span className="text-xs text-text-muted font-mono">
-          {findings.length}
-        </span>
         {findings.length > 0 && (
-          <>
+          <div className="flex items-center shrink-0" style={{ gap: 6 }}>
             <button
               type="button"
               onClick={toggleAll}
-              className="text-3xs font-mono px-2 py-1 rounded border border-red-900/40 bg-red-950/20 text-red-200 hover:bg-red-900/40"
+              className="font-mono uppercase"
+              style={CHROME_BTN}
             >
-              {expandAll ? "collapse all" : "expand all"}
+              {expandAll ? "Collapse all" : "Expand all"}
             </button>
             <button
               type="button"
               onClick={() => downloadFindings(findings, projectId)}
-              className="text-3xs font-mono px-2 py-1 rounded border border-red-900/40 bg-red-950/20 text-red-200 hover:bg-red-900/40"
+              className="font-mono uppercase"
+              style={CHROME_BTN}
               title="Download all findings as JSON"
             >
-              download json
+              Download JSON
             </button>
-          </>
+          </div>
         )}
       </div>
-    </div>
-    
-    {findings.length === 0 ? (
-      <p className="text-sm text-text-muted italic py-6 text-center">
-        No suspicious findings yet. Run Full Analysis to populate -- the heuristics will tag any
-        LOLBAS, AppData/Temp execution, or double-extension patterns automatically.
-      </p>
-    ) : (
-      <ol className="space-y-1.5">
-        {findings.map((f, i) => (
-          <FindingRow
-            key={f.fingerprint ?? i}
-            f={f}
-            index={i}
-            expanded={expanded.has(i)}
-            onToggle={() => toggle(i)}
-            projectId={projectId}
-          />
-        ))}
-      </ol>
-    )}</AilaCard>
+
+      {findings.length === 0 ? (
+        <EmptyState
+          icon={<Warning className="h-10 w-10" />}
+          title="No suspicious findings yet."
+          description="Run Full Analysis on the project dashboard to populate this list -- the collector heuristics tag LOLBAS, AppData/Temp execution, and double-extension patterns automatically."
+        />
+      ) : (
+        <div className="space-y-2">
+          {findings.map((f, i) => (
+            <FindingRow
+              key={f.fingerprint ?? i}
+              f={f}
+              index={i}
+              expanded={expanded.has(i)}
+              onToggle={() => toggle(i)}
+              projectId={projectId}
+            />
+          ))}
+        </div>
+      )}
+    </WindowPanel>
   );
 }

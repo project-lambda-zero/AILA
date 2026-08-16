@@ -1102,7 +1102,38 @@ class DurableStateMachine:
                 .values(heartbeat_at=_emit_now)
             )
 
-            await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError:
+                # #203: only the cursor-recreation branch above stages a
+                # fresh INSERT on WorkflowStateCursor; a concurrent
+                # engine attempt that also observed the "cursor vanished"
+                # window can insert the same PK first, and our commit
+                # then trips the PK constraint. Mirror the recovery in
+                # ``_load_or_init_cursor``: roll back, re-read the
+                # winner's row, and surface a WorkflowConflictError so
+                # ARQ retries this attempt cleanly rather than logging
+                # a raw traceback the operator has to triage.
+                if not _cursor_recreated:
+                    raise
+                await session.rollback()
+                async with async_session_scope() as verify:
+                    existing = await verify.get(
+                        WorkflowStateCursor, run_id,
+                    )
+                _log.warning(
+                    "workflow.cursor_recreate_lost_race",
+                    run_id=run_id,
+                    winner_version=(
+                        existing.version if existing is not None else None
+                    ),
+                    winner_state=(
+                        existing.current_state if existing is not None else None
+                    ),
+                )
+                raise WorkflowConflictError(
+                    "Concurrent workflow modification detected"
+                ) from None
         # Phase 181 D-02: best-effort SSE fan-out after commit.
         await emit_transition_event(
             run_id=run_id,

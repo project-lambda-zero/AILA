@@ -4,9 +4,9 @@ from typing import Protocol
 
 import httpx
 
-from .ssrf import SSRFValidatingTransport
+from .ssrf import SSRFValidatingAsyncTransport, SSRFValidatingTransport
 
-__all__ = ["HTTPClientSettings", "build_http_client"]
+__all__ = ["HTTPClientSettings", "build_async_http_client", "build_http_client"]
 
 
 class HTTPClientSettings(Protocol):
@@ -46,6 +46,42 @@ def build_http_client(
     return httpx.Client(
         transport=transport,
         timeout=settings.request_timeout_seconds,
+        headers={"User-Agent": settings.user_agent},
+        follow_redirects=True,
+    )
+
+
+def build_async_http_client(
+    settings: HTTPClientSettings,
+    *,
+    verify: bool | str | None = None,
+    proxies: str | None = None,
+    timeout: float | None = None,
+) -> httpx.AsyncClient:
+    """Async counterpart of :func:`build_http_client`.
+
+    Modules that dispatch outbound HTTP from async request handlers (e.g.
+    MCP-bridge upload/refresh fetches whose ``base_url`` is operator-set
+    via the mcp registry) call this instead of constructing
+    ``httpx.AsyncClient`` directly, so every request hop -- initial URL AND
+    each redirect target -- is validated against the SSRF egress policy
+    before its socket opens. A blocked scheme/port/address raises
+    :class:`aila.platform.services.ssrf.SSRFBlockedError` and aborts the
+    chain.
+
+    ``timeout`` overrides ``settings.request_timeout_seconds`` for
+    long-running paths (large uploads, index rebuilds) that legitimately
+    need longer than the default request budget.
+    """
+    inner_kwargs: dict[str, object] = {"verify": True if verify is None else verify}
+    if proxies:
+        inner_kwargs["proxy"] = proxies
+    transport = SSRFValidatingAsyncTransport(
+        httpx.AsyncHTTPTransport(**inner_kwargs),  # type: ignore[arg-type]
+    )
+    return httpx.AsyncClient(
+        transport=transport,
+        timeout=settings.request_timeout_seconds if timeout is None else timeout,
         headers={"User-Agent": settings.user_agent},
         follow_redirects=True,
     )

@@ -5,7 +5,7 @@ Covers:
   - POST /analyze 422 for empty query_text (min_length=1 enforcement)
   - POST /analyze admin allowed (admin >= operator)
   - run_platform_handle robustness: init failure, handle failure, happy path
-  - GET /scans/{run_id} response shape with result_path
+  - GET /scans/{run_id} response shape
   - SSE catchup + live event delivery, exception handling, stream_events usage
 
 Does NOT duplicate tests in:
@@ -40,9 +40,9 @@ def _seed_task(
     group_id: str = "operator",
     task_id: str = "scan-deep-001",
     status: str = TaskStatus.RUNNING,
-    result_path: str | None = None,
 ) -> TaskRecord:
     """Seed a TaskRecord for test use."""
+    # #144: ``result_path`` dropped by migration 126.
     record = TaskRecord(
         id=task_id,
         user_id=user_id,
@@ -52,7 +52,6 @@ def _seed_task(
         fn_module="__platform__",
         kwargs_json="{}",
         status=status,
-        result_path=result_path,
         created_at=utc_now(),
         started_at=utc_now() if status != TaskStatus.QUEUED else None,
         completed_at=utc_now() if status == TaskStatus.DONE else None,
@@ -246,18 +245,22 @@ async def test_run_platform_handle_happy_path() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scan_status_completed_has_result_path(
+async def test_scan_status_completed_reports_terminal_state(
     async_client: AsyncClient,
     admin_key_record: ApiKeyRecord,
     admin_token: str,
 ) -> None:
-    """GET /scans/{run_id} for completed task returns result_path field populated."""
+    """GET /scans/{run_id} for a completed task reports status=done + completed_at.
+
+    #144 dropped ``result_path`` from the response entirely; module-owned
+    result tables (``vr_findings``, ``scan_findings``, ...) are the real
+    result surface.
+    """
     task = _seed_task(
         user_id=admin_key_record.id,
         group_id="admin",
         task_id="scan-complete-001",
         status=TaskStatus.DONE,
-        result_path="/tmp/result.json",
     )
     resp = await async_client.get(
         f"/scans/{task.id}",
@@ -265,7 +268,9 @@ async def test_scan_status_completed_has_result_path(
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["result_path"] == "/tmp/result.json"
+    assert data["status"] == "done"
+    assert data["completed_at"] is not None
+    assert "result_path" not in data
 
 
 @pytest.mark.asyncio
@@ -274,7 +279,10 @@ async def test_scan_status_response_shape(
     admin_key_record: ApiKeyRecord,
     admin_token: str,
 ) -> None:
-    """GET /scans/{run_id} response has all expected keys: run_id, status, track, started_at, completed_at, result_path."""
+    """GET /scans/{run_id} response has: run_id, status, track, started_at, completed_at.
+
+    #144: ``result_path`` was dropped from the response.
+    """
     task = _seed_task(
         user_id=admin_key_record.id,
         group_id="admin",
@@ -287,8 +295,9 @@ async def test_scan_status_response_shape(
     )
     assert resp.status_code == 200
     data = resp.json()
-    expected_keys = {"run_id", "status", "track", "started_at", "completed_at", "result_path"}
+    expected_keys = {"run_id", "status", "track", "started_at", "completed_at"}
     assert expected_keys.issubset(data.keys()), f"Missing keys: {expected_keys - data.keys()}"
+    assert "result_path" not in data
 
 
 # ---------------------------------------------------------------------------

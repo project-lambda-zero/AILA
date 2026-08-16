@@ -35,33 +35,46 @@ class LoginRequest(BaseModel):
 class RefreshTokenRequest(BaseModel):
     """Request body for POST /auth/refresh/user.
 
-    #36: the refresh token was previously accepted as a URL query
-    parameter, which leaked the long-lived credential into web-server
-    access logs, browser history, and any intermediary that captures
-    the request URI. Moving it to the JSON body keeps the token in the
-    request stream that TLS protects and that access loggers redact by
-    default.
+    #119: the refresh token is now issued as an ``HttpOnly`` cookie
+    (``aila_refresh``) so JS -- and therefore XSS -- cannot read it.
+    The endpoint reads the cookie directly; ``refresh_token`` here is
+    an optional legacy hook for callers that still POST a body. New
+    callers should send an empty body and let the browser attach the
+    cookie automatically.
+
+    #36 (retained): body-only was the previous shape. Query-parameter
+    passing remains rejected with 422 because ``refresh_token`` is not
+    exposed as a query field on the endpoint.
     """
 
-    refresh_token: str = Field(min_length=1)
+    refresh_token: str | None = Field(default=None, min_length=1)
 
 
 class LogoutRequest(BaseModel):
     """Request body for POST /auth/logout.
 
-    #36: the refresh token was previously accepted as a URL query
-    parameter (same log/history leak as :class:`RefreshTokenRequest`);
-    accepted in the JSON body now.
+    #119: identical rationale to :class:`RefreshTokenRequest` -- the
+    server now revokes the refresh token identified by the
+    ``aila_refresh`` cookie and clears the auth cookies on the
+    response. The body field remains optional for compatibility.
     """
 
-    refresh_token: str = Field(min_length=1)
+    refresh_token: str | None = Field(default=None, min_length=1)
 
 
 class TokenResponse(BaseModel):
-    """Response body for POST /auth/login and POST /auth/refresh."""
+    """Response body for POST /auth/login and POST /auth/refresh.
+
+    #119: ``refresh_token`` is no longer returned by the user-password
+    endpoints -- the value ships as an ``HttpOnly`` cookie so no
+    script (including XSS) can read it. The field is kept optional on
+    the wire so the API-key ``POST /auth/token`` path (Bearer flow,
+    schemas.auth.TokenResponse) can still populate it if needed by
+    non-browser clients; user-facing endpoints leave it ``None``.
+    """
 
     access_token: str
-    refresh_token: str
+    refresh_token: str | None = None
     token_type: str = "bearer"
     expires_in: int
 

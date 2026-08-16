@@ -30,6 +30,7 @@ from aila.platform.contracts import utc_now
 from aila.platform.uow import UnitOfWork
 
 __all__ = [
+    "CrossTeamSpecialistError",
     "SpecialistAgentCreate",
     "SpecialistAgentRecord",
     "SpecialistAgentRegistry",
@@ -62,13 +63,14 @@ class SpecialistAgentRecord(SQLModel, table=True):
         default_factory=utc_now, sa_type=DateTime(timezone=True),
     )
 
-    __table_args__ = (
-        {"sqlite_autoincrement": False},
-    )
-
 
 class SpecialistAgentSummary(BaseModel):
-    """Read-only projection of a specialist agent."""
+    """Read-only projection of a specialist agent.
+
+    ``team_id`` is NULL for platform-global built-ins and the caller's
+    team_id for team-scoped rows; API callers see it so a team-scoped
+    operator can tell an owned row from a global default.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -79,6 +81,7 @@ class SpecialistAgentSummary(BaseModel):
     strategy_family: str | None = None
     description: str = ""
     enabled: bool = True
+    team_id: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -130,22 +133,55 @@ def _to_summary(rec: SpecialistAgentRecord) -> SpecialistAgentSummary:
         id=rec.id, module_id=rec.module_id, name=rec.name,
         capability=rec.capability, strategy_family=rec.strategy_family,
         description=rec.description or "", enabled=rec.enabled,
+        team_id=rec.team_id,
         created_at=rec.created_at, updated_at=rec.updated_at,
     )
+
+
+class CrossTeamSpecialistError(Exception):
+    """Raised by the registry when a caller addresses another team's row.
+
+    The router translates this into a 404 (never 403) so a team-scoped
+    caller cannot use the response code as an existence oracle for other
+    teams' specialists.
+    """
 
 
 class SpecialistAgentRegistry:
     """CRUD + lookup over the specialist_agent table."""
 
     async def list_by_module(
-        self, module_id: str, *, enabled_only: bool = False,
+        self,
+        module_id: str,
+        *,
+        enabled_only: bool = False,
+        team_id: str | None = None,
+        is_admin: bool = True,
     ) -> list[SpecialistAgentSummary]:
+        """Return specialists visible to the caller.
+
+        * ``is_admin=True`` (god-tier admin, team_id=None): every row is
+          visible regardless of its team stamp.
+        * A team-scoped caller (``is_admin=False``, ``team_id="team-x"``)
+          sees rows whose ``team_id`` equals its own PLUS rows whose
+          ``team_id`` is NULL -- the platform-global built-in defaults are
+          visible to every team.
+
+        The ``team_id`` kwarg is ignored when ``is_admin`` is True; the
+        two together model TeamContext without a hard dependency on the
+        api layer.
+        """
         async with UnitOfWork() as uow:
             stmt = select(SpecialistAgentRecord).where(
                 SpecialistAgentRecord.module_id == module_id,
             )
             if enabled_only:
                 stmt = stmt.where(SpecialistAgentRecord.enabled.is_(True))
+            if not is_admin:
+                stmt = stmt.where(
+                    (SpecialistAgentRecord.team_id == team_id)
+                    | (SpecialistAgentRecord.team_id.is_(None)),  # type: ignore[union-attr]
+                )
             rows = list((await uow.session.exec(stmt)).all())
         return [_to_summary(r) for r in sorted(rows, key=lambda r: r.name)]
 
@@ -188,7 +224,23 @@ class SpecialistAgentRegistry:
             )).first()
         return _to_summary(row) if row is not None else None
 
-    async def upsert(self, spec: SpecialistAgentCreate) -> SpecialistAgentSummary:
+    async def upsert(
+        self,
+        spec: SpecialistAgentCreate,
+        *,
+        team_id: str | None = None,
+        is_admin: bool = True,
+    ) -> SpecialistAgentSummary:
+        """Create or update a specialist, stamping the caller's team.
+
+        * On INSERT the new row's ``team_id`` is the caller's team
+          (``None`` for an admin, which yields a platform-global row).
+        * On UPDATE a team-scoped caller may only touch a row whose
+          ``team_id`` matches its own. Cross-team writes (including
+          writes against a NULL-team global by a non-admin) raise
+          :class:`CrossTeamSpecialistError`; the router converts that
+          into a 404 so no existence oracle leaks.
+        """
         async with UnitOfWork() as uow:
             existing = (await uow.session.exec(
                 select(SpecialistAgentRecord).where(
@@ -202,9 +254,14 @@ class SpecialistAgentRegistry:
                     capability=spec.capability,
                     strategy_family=spec.strategy_family,
                     description=spec.description, enabled=spec.enabled,
+                    team_id=team_id,
                 )
                 uow.session.add(rec)
             else:
+                if not is_admin and existing.team_id != team_id:
+                    raise CrossTeamSpecialistError(
+                        f"specialist {spec.module_id}/{spec.name} not owned by caller",
+                    )
                 existing.capability = spec.capability
                 existing.strategy_family = spec.strategy_family
                 existing.description = spec.description
@@ -216,7 +273,22 @@ class SpecialistAgentRegistry:
             await uow.session.refresh(rec)
             return _to_summary(rec)
 
-    async def delete(self, module_id: str, name: str) -> bool:
+    async def delete(
+        self,
+        module_id: str,
+        name: str,
+        *,
+        team_id: str | None = None,
+        is_admin: bool = True,
+    ) -> bool:
+        """Delete a specialist owned by the caller.
+
+        A team-scoped caller may only delete rows carrying its own
+        ``team_id``. Missing rows AND rows owned by another team (or the
+        NULL-team global built-ins, when the caller is not admin) both
+        return ``False`` so the caller cannot distinguish "does not
+        exist" from "not yours".
+        """
         async with UnitOfWork() as uow:
             row = (await uow.session.exec(
                 select(SpecialistAgentRecord).where(
@@ -226,6 +298,8 @@ class SpecialistAgentRegistry:
             )).first()
             if row is None:
                 return False
+            if not is_admin and row.team_id != team_id:
+                return False
             await uow.session.delete(row)
             await uow.session.commit()
             return True
@@ -233,18 +307,30 @@ class SpecialistAgentRegistry:
     async def seed_defaults(self, module_id: str) -> int:
         """Insert this module's built-in specialists that are not present.
 
-        Idempotent: existing names are left untouched. Returns the count
+        Built-in defaults are platform-global: every row is inserted
+        with ``team_id=NULL`` regardless of caller so a team-scoped
+        operator seeding on a fresh install produces the same globally
+        visible defaults an admin would.
+
+        Idempotent: existing names (whether NULL-team globals or a
+        team-owned override) are left untouched. Returns the count
         inserted.
         """
         inserted = 0
         for tmpl in _BUILTINS.get(module_id, ()):
             if await self.get_by_name(module_id, tmpl["name"]) is not None:
                 continue
-            await self.upsert(SpecialistAgentCreate(
-                module_id=module_id,
-                name=tmpl["name"],
-                capability=tmpl["capability"],
-                description=tmpl.get("description", ""),
-            ))
+            # Always write globals; upsert is called in admin mode with
+            # team_id=None so the row gets team_id=NULL.
+            await self.upsert(
+                SpecialistAgentCreate(
+                    module_id=module_id,
+                    name=tmpl["name"],
+                    capability=tmpl["capability"],
+                    description=tmpl.get("description", ""),
+                ),
+                team_id=None,
+                is_admin=True,
+            )
             inserted += 1
         return inserted

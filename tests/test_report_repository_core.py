@@ -696,7 +696,17 @@ def _repo_returning_report(rows_doc: list[dict] | None, report_path: str | None 
         rows_artifact_id=3,
         summary_path="/s.json",
     )
-    return ReportRepository(artifact_store=store)
+    repo = ReportRepository(artifact_store=store)
+    # ``latest_report_rows`` now falls back to ``run_findings`` when the
+    # artifact bundle has ``rows_document=None``. The vulnerability module
+    # registers a default ``_run_findings_query`` at import time, so any
+    # ``ReportRepository()`` inherits it via the ClassVar and the fallback
+    # fires with an empty DB result rather than raising NotFoundError. The
+    # tests in this suite exercise the "no rows_document on the bundle"
+    # contract in isolation; disable the fallback here so the exception
+    # path under test is reachable again.
+    repo._run_findings_query = None
+    return repo
 
 
 class TestLatestReportRows:

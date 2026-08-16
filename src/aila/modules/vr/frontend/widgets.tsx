@@ -1,8 +1,8 @@
 import { Link } from "react-router";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
 import { AilaChart } from "@/components/aila/AilaChart";
+import { MonoBadge } from "@/components/aila/mock";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import type { WidgetContribution } from "@platform/extension-registry/types";
 
 import { CVSSBadge } from "./components/CVSSBadge";
@@ -25,6 +25,45 @@ import {
  *  use only react-query hooks the module already exports so they're
  *  zero net network calls when the user is on a VR page. */
 
+// ---------------------------------------------------------------------------
+// Local styling helpers -- mock language: dense mono, inline px sizing.
+// ---------------------------------------------------------------------------
+
+const BIG_NUM_STYLE: React.CSSProperties = {
+  fontSize: 30,
+  color: "var(--text-primary)",
+  letterSpacing: "-0.02em",
+  lineHeight: 1.1,
+};
+
+const SUB_STYLE: React.CSSProperties = {
+  marginTop: 4,
+  fontSize: 10,
+  color: "var(--text-faint)",
+  letterSpacing: "0.02em",
+};
+
+function OpenLink({ to, label }: { to: string; label: string }) {
+  return (
+    <Link
+      to={to}
+      className="font-mono uppercase"
+      style={{
+        fontSize: 9,
+        letterSpacing: "0.1em",
+        color: "var(--accent)",
+        textDecoration: "none",
+      }}
+    >
+      {label} {"\u2192"}
+    </Link>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Widgets
+// ---------------------------------------------------------------------------
+
 function ActiveProjectsWidget() {
   const { data, isLoading } = useVRProjects();
   const projects = data?.data ?? [];
@@ -32,23 +71,21 @@ function ActiveProjectsWidget() {
   const failed = projects.filter((p) => p.status === "failed");
 
   return (
-    <AilaCard className="h-full flex flex-col" techBorder glow><div className="flex items-center justify-between mb-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
-        Active Research
-      </h3>
-      <Link
-        to="/vr"
-        className="text-3xs text-accent hover:underline"
-      >
-        open →
-      </Link>
-    </div>
-    <p className="text-3xl font-bold font-mono text-foreground">
-      {isLoading ? "--" : active.length}
-    </p>
-    <p className="text-xs text-text-muted mt-1">
-      {projects.length} total · {failed.length} failed
-    </p></AilaCard>
+    <WindowPanel
+      title="active research"
+      tone="accent"
+      actions={<OpenLink to="/vr" label="open" />}
+      className="h-full"
+    >
+      <div className="flex flex-col" style={{ gap: 4 }}>
+        <p className="font-mono" style={BIG_NUM_STYLE}>
+          {isLoading ? "--" : active.length}
+        </p>
+        <p className="font-mono" style={SUB_STYLE}>
+          {projects.length} total {"\u00b7"} {failed.length} failed
+        </p>
+      </div>
+    </WindowPanel>
   );
 }
 
@@ -63,48 +100,47 @@ function CrashesFoundWidget() {
   const last24h = bucketByDay(crashes, 1)[0]?.count ?? 0;
 
   return (
-    <AilaCard className="h-full flex flex-col" techBorder glow><div className="flex items-center justify-between mb-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
-        Crashes Found
-      </h3>
-    </div>
-    <p className="text-3xl font-bold font-mono text-foreground">
-      {isLoading ? "--" : total.toLocaleString()}
-    </p>
-    <p className="text-xs text-text-muted mt-1">
-      +{last24h} in the last 24h
-    </p>
-    <div className="mt-2 -mx-2 -mb-2 flex-1" style={{ minHeight: 40 }}>
-      {trend.length > 0 && (
-        <AilaChart
-          type="bar"
-          data={trend}
-          dataKey="count"
-          xKey="day"
-          size="sm"
-          ariaLabel="Crashes per day (last 7 days)"
-        />
-      )}
-    </div>
-    {trend.length > 0 && (
-      <table className="sr-only">
-        <caption>Crashes per day, last 7 days</caption>
-        <thead>
-          <tr>
-            <th>Day</th>
-            <th>Count</th>
-          </tr>
-        </thead>
-        <tbody>
-          {trend.map((row) => (
-            <tr key={row.day}>
-              <td>{row.day}</td>
-              <td>{row.count}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    )}</AilaCard>
+    <WindowPanel title="crashes found" tone="warn" className="h-full">
+      <div className="flex flex-col" style={{ gap: 4 }}>
+        <p className="font-mono" style={BIG_NUM_STYLE}>
+          {isLoading ? "--" : total.toLocaleString()}
+        </p>
+        <p className="font-mono" style={SUB_STYLE}>
+          +{last24h} in the last 24h
+        </p>
+        <div style={{ marginTop: 8, minHeight: 40 }}>
+          {trend.length > 0 && (
+            <AilaChart
+              type="bar"
+              data={trend}
+              dataKey="count"
+              xKey="day"
+              size="sm"
+              ariaLabel="Crashes per day (last 7 days)"
+            />
+          )}
+        </div>
+        {trend.length > 0 && (
+          <table className="sr-only">
+            <caption>Crashes per day, last 7 days</caption>
+            <thead>
+              <tr>
+                <th>Day</th>
+                <th>Count</th>
+              </tr>
+            </thead>
+            <tbody>
+              {trend.map((row) => (
+                <tr key={row.day}>
+                  <td>{row.day}</td>
+                  <td>{row.count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </WindowPanel>
   );
 }
 
@@ -117,33 +153,39 @@ function ExploitableWidget() {
   const medium = security.filter((c) => c.severity === "medium").length;
 
   return (
-    <AilaCard className="h-full flex flex-col" techBorder glow><div className="flex items-center justify-between mb-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
-        Exploitable
-      </h3>
-      <Link
-        to="/vr/fuzz/campaigns"
-        className="text-3xs text-accent hover:underline"
-      >
-        fuzz crashes →
-      </Link>
-    </div>
-    <p className="text-3xl font-bold font-mono text-foreground">
-      {isLoading ? "--" : security.length}
-    </p>
-    <div className="text-xs text-text-muted mt-1 flex flex-wrap gap-1">
-      {critical > 0 && (
-        <span className="text-red-500 font-semibold">
-          {critical} critical
-        </span>
-      )}
-      {high > 0 && <span>{high} high</span>}
-      {medium > 0 && <span>{medium} medium</span>}
-      {security.length === 0 && <span>no exploitable crashes</span>}
-    </div>
-    <div className="mt-2">
-      <CVSSBadge score={critical > 0 ? 9.8 : high > 0 ? 7.5 : 0} />
-    </div></AilaCard>
+    <WindowPanel
+      title="exploitable"
+      tone="accent"
+      actions={<OpenLink to="/vr/fuzz/campaigns" label="fuzz crashes" />}
+      className="h-full"
+    >
+      <div className="flex flex-col" style={{ gap: 4 }}>
+        <p className="font-mono" style={BIG_NUM_STYLE}>
+          {isLoading ? "--" : security.length}
+        </p>
+        <div
+          className="flex flex-wrap items-center"
+          style={{ gap: 6, marginTop: 2 }}
+        >
+          {critical > 0 && (
+            <MonoBadge tone="critical">{critical} critical</MonoBadge>
+          )}
+          {high > 0 && <MonoBadge tone="high">{high} high</MonoBadge>}
+          {medium > 0 && <MonoBadge tone="medium">{medium} medium</MonoBadge>}
+          {security.length === 0 && (
+            <span
+              className="font-mono"
+              style={{ fontSize: 10, color: "var(--text-faint)" }}
+            >
+              no exploitable crashes
+            </span>
+          )}
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <CVSSBadge score={critical > 0 ? 9.8 : high > 0 ? 7.5 : 0} />
+        </div>
+      </div>
+    </WindowPanel>
   );
 }
 
@@ -170,48 +212,42 @@ function FuzzingCoverageWidget() {
       : 0;
 
   return (
-    <AilaCard className="h-full" techBorder glow><div className="flex items-center justify-between mb-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
-        Fuzzing Coverage
-      </h3>
-      <Link
-        to="/vr/fuzz/campaigns"
-        className="text-3xs text-accent hover:underline"
-      >
-        campaigns →
-      </Link>
-    </div>
-    <p className="text-3xl font-bold font-mono text-foreground">
-      {isLoading ? "--" : `${avgCoverage.toFixed(1)}%`}
-    </p>
-    <p className="text-xs text-text-muted mt-1">
-      avg across {running.length} running
-    </p>
-    <div className="mt-2 flex items-center gap-1.5 flex-wrap text-3xs">
-      {stable > 0 && (
-        <AilaBadge severity="low" size="sm">
-          {stable} stable
-        </AilaBadge>
-      )}
-      {stuck.length > 0 && (
-        <AilaBadge severity="high" size="sm">
-          {stuck.length} stuck
-        </AilaBadge>
-      )}
-      {paused.length > 0 && (
-        <AilaBadge severity="info" size="sm">
-          {paused.length} paused
-        </AilaBadge>
-      )}
-      {failed.length > 0 && (
-        <AilaBadge severity="critical" size="sm">
-          {failed.length} failed
-        </AilaBadge>
-      )}
-    </div>
-    <p className="text-3xs text-text-muted mt-1">
-      Stuck = no progress in 4h despite high exec/sec.
-    </p></AilaCard>
+    <WindowPanel
+      title="fuzzing coverage"
+      tone="info"
+      actions={<OpenLink to="/vr/fuzz/campaigns" label="campaigns" />}
+      className="h-full"
+    >
+      <div className="flex flex-col" style={{ gap: 4 }}>
+        <p className="font-mono" style={BIG_NUM_STYLE}>
+          {isLoading ? "--" : `${avgCoverage.toFixed(1)}%`}
+        </p>
+        <p className="font-mono" style={SUB_STYLE}>
+          avg across {running.length} running
+        </p>
+        <div
+          className="flex flex-wrap items-center"
+          style={{ gap: 6, marginTop: 6 }}
+        >
+          {stable > 0 && <MonoBadge tone="low">{stable} stable</MonoBadge>}
+          {stuck.length > 0 && (
+            <MonoBadge tone="high">{stuck.length} stuck</MonoBadge>
+          )}
+          {paused.length > 0 && (
+            <MonoBadge tone="info">{paused.length} paused</MonoBadge>
+          )}
+          {failed.length > 0 && (
+            <MonoBadge tone="critical">{failed.length} failed</MonoBadge>
+          )}
+        </div>
+        <p
+          className="font-mono"
+          style={{ marginTop: 6, fontSize: 9.5, color: "var(--text-faint)" }}
+        >
+          Stuck = no progress in 4h despite high exec/sec.
+        </p>
+      </div>
+    </WindowPanel>
   );
 }
 
@@ -246,44 +282,66 @@ function PendingFuzzProposalsWidget() {
   const { data, isLoading } = useFuzzProposals({ status: "pending" });
   const proposals = data?.data ?? [];
   return (
-    <AilaCard className="h-full flex flex-col" techBorder glow><div className="flex items-center justify-between mb-2">
-      <h3 className="text-xs font-semibold uppercase tracking-wide text-text-muted">
-        Pending Fuzz Proposals
-      </h3>
-      <Link
-        to="/vr/investigations"
-        className="text-3xs text-accent hover:underline"
-      >
-        review →
-      </Link>
-    </div>
-    <p className="text-3xl font-bold font-mono text-foreground">
-      {isLoading ? "--" : proposals.length}
-    </p>
-    <p className="text-xs text-text-muted mt-1">
-      agent-authored, awaiting operator decision
-    </p>
-    {proposals.length > 0 && (
-      <ul className="mt-2 space-y-1 text-3xs font-mono max-h-32 overflow-y-auto">
-        {proposals.slice(0, 5).map((p) => (
-          <li
-            key={p.id}
-            className="border border-border-default rounded px-2 py-1 flex items-center justify-between gap-2"
+    <WindowPanel
+      title="pending fuzz proposals"
+      tone="info"
+      actions={<OpenLink to="/vr/investigations" label="review" />}
+      className="h-full"
+    >
+      <div className="flex flex-col" style={{ gap: 4 }}>
+        <p className="font-mono" style={BIG_NUM_STYLE}>
+          {isLoading ? "--" : proposals.length}
+        </p>
+        <p className="font-mono" style={SUB_STYLE}>
+          agent-authored, awaiting operator decision
+        </p>
+        {proposals.length > 0 && (
+          <ul
+            className="font-mono"
+            style={{
+              marginTop: 8,
+              maxHeight: 128,
+              overflowY: "auto",
+              display: "flex",
+              flexDirection: "column",
+              gap: 4,
+              padding: 0,
+              listStyle: "none",
+            }}
           >
-            <span className="text-foreground truncate">{p.profile}</span>
-            <AilaBadge
-              severity={
-                p.confidence === "strong" || p.confidence === "exact"
-                  ? "info" : "medium"
-              }
-              size="sm"
-            >
-              {p.confidence}
-            </AilaBadge>
-          </li>
-        ))}
-      </ul>
-    )}</AilaCard>
+            {proposals.slice(0, 5).map((p) => (
+              <li
+                key={p.id}
+                className="flex items-center justify-between"
+                style={{
+                  gap: 8,
+                  padding: "4px 8px",
+                  border: "1px solid var(--border-soft)",
+                  borderRadius: 2,
+                  background: "var(--surface-sunk)",
+                }}
+              >
+                <span
+                  className="truncate"
+                  style={{ fontSize: 10, color: "var(--text-primary)" }}
+                >
+                  {p.profile}
+                </span>
+                <MonoBadge
+                  tone={
+                    p.confidence === "strong" || p.confidence === "exact"
+                      ? "info"
+                      : "medium"
+                  }
+                >
+                  {p.confidence}
+                </MonoBadge>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </WindowPanel>
   );
 }
 

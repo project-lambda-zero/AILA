@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query, Request
+from sqlalchemy import func
 from sqlmodel import select
 
 from aila.api.auth import AuthContext, require_role
@@ -83,48 +84,70 @@ async def list_llm_log(
     task_type_values = _split_csv(task_type)
     status_values = _split_csv(status)
 
-    # Build the base LLMCostRecord query. We filter on the cost record table
-    # directly and then look up run task_type via a second query so the main
-    # query stays a straightforward index scan.
+    # #204: aggregate + page in SQL. Previously loaded every matching row into
+    # Python to compute ``total`` + ``total_cost`` and then sliced
+    # ``[offset:offset+limit]``. LLMCostRecord grows one row per LLM call and
+    # the admin filter widgets can be permissive, so a wide filter set could
+    # materialize >1M rows into worker memory per request.
+    filters: list[Any] = []
+
+    # Team scoping. Admin tokens may pass team_id explicitly to cross tenants;
+    # otherwise we honor the caller's own team_id.
+    if team_id is not None:
+        filters.append(LLMCostRecord.team_id == team_id)
+    elif auth.team_id is not None:
+        filters.append(LLMCostRecord.team_id == auth.team_id)
+
+    if model_values:
+        filters.append(LLMCostRecord.model_id.in_(model_values))  # type: ignore[attr-defined]
+    if task_type_values:
+        filters.append(LLMCostRecord.task_type.in_(task_type_values))  # type: ignore[attr-defined]
+    if status_values:
+        filters.append(LLMCostRecord.status.in_(status_values))  # type: ignore[attr-defined]
+    if from_date is not None:
+        filters.append(LLMCostRecord.created_at >= from_date)
+    if to_date is not None:
+        filters.append(LLMCostRecord.created_at <= to_date)
+    if min_cost is not None:
+        filters.append(LLMCostRecord.cost_usd >= min_cost)
+    if max_cost is not None:
+        filters.append(LLMCostRecord.cost_usd <= max_cost)
+    if search:
+        # ILIKE for case-insensitive substring match on prompt_preview.
+        # A NULL preview won't match ILIKE, which is the desired behaviour
+        # (rows without captured text shouldn't satisfy a text search).
+        pattern = f"%{search}%"
+        filters.append(LLMCostRecord.prompt_preview.ilike(pattern))  # type: ignore[attr-defined]
+
+    # #124 user filter: LLMCostRecord.user_id is populated at write time
+    # from ``current_user_id()`` (the ContextVar bound by the auth
+    # dependency). Filter is now a direct index scan on the correct column.
+    # Worker-triggered rows (agent turns, background scans) have NULL
+    # user_id and never match, which is honest -- they have no live user.
+    if user:
+        filters.append(LLMCostRecord.user_id == user)
+
     async with async_session_scope() as session:
-        stmt = select(LLMCostRecord)
+        aggregate_stmt = select(
+            func.count(LLMCostRecord.id).label("total"),
+            func.coalesce(func.sum(LLMCostRecord.cost_usd), 0.0).label("total_cost"),
+        ).where(*filters)
+        aggregate = (await session.exec(aggregate_stmt)).one()
+        total = int(aggregate.total or 0)
+        total_cost = round(float(aggregate.total_cost or 0.0), 6)
 
-        # Team scoping. Admin tokens may pass team_id explicitly to cross tenants;
-        # otherwise we honor the caller's own team_id.
-        if team_id is not None:
-            stmt = stmt.where(LLMCostRecord.team_id == team_id)
-        elif auth.team_id is not None:
-            stmt = stmt.where(LLMCostRecord.team_id == auth.team_id)
+        page_stmt = (
+            select(LLMCostRecord)
+            .where(*filters)
+            .order_by(LLMCostRecord.created_at.desc())  # type: ignore[attr-defined]
+            .offset(offset)
+            .limit(limit)
+        )
+        page_rows = list((await session.exec(page_stmt)).all())
 
-        if model_values:
-            stmt = stmt.where(LLMCostRecord.model_id.in_(model_values))  # type: ignore[attr-defined]
-        if task_type_values:
-            stmt = stmt.where(LLMCostRecord.task_type.in_(task_type_values))  # type: ignore[attr-defined]
-        if status_values:
-            stmt = stmt.where(LLMCostRecord.status.in_(status_values))  # type: ignore[attr-defined]
-        if from_date is not None:
-            stmt = stmt.where(LLMCostRecord.created_at >= from_date)
-        if to_date is not None:
-            stmt = stmt.where(LLMCostRecord.created_at <= to_date)
-        if min_cost is not None:
-            stmt = stmt.where(LLMCostRecord.cost_usd >= min_cost)
-        if max_cost is not None:
-            stmt = stmt.where(LLMCostRecord.cost_usd <= max_cost)
-        if search:
-            # ILIKE for case-insensitive substring match on prompt_preview.
-            # A NULL preview won't match ILIKE, which is the desired behaviour
-            # (rows without captured text shouldn't satisfy a text search).
-            pattern = f"%{search}%"
-            stmt = stmt.where(LLMCostRecord.prompt_preview.ilike(pattern))  # type: ignore[attr-defined]
-
-        # Pull all matching rows so we can compute total + total_cost without
-        # a separate COUNT/SUM round-trip. LLMCostRecord is small (one row per
-        # LLM call) and filtered; paging over >1M records isn't a concern yet.
-        all_rows = list((await session.exec(stmt)).all())
-
-        # Optional user_id filter runs via WorkflowRun join. We defer it here
-        # so we can reuse a single run-id resolution pass and avoid N+1s.
-        run_ids = {r.run_id for r in all_rows if r.run_id and r.run_id != "_no_run"}
+        # Resolve run task_type context for the page only (was previously
+        # keyed off the fully materialized result set).
+        run_ids = {r.run_id for r in page_rows if r.run_id and r.run_id != "_no_run"}
         run_map: dict[str, WorkflowRunRecord] = {}
         if run_ids:
             run_stmt = select(WorkflowRunRecord).where(
@@ -132,30 +155,6 @@ async def list_llm_log(
             )
             for run in (await session.exec(run_stmt)).all():
                 run_map[run.id] = run
-
-    # Apply user filter (WorkflowRunRecord has no user_id today -- the
-    # closest honest signal is the run's team_id, so we match on that when
-    # `user` is passed).  If the user filter cannot be resolved honestly we
-    # produce zero rows rather than silently ignore the filter.
-    if user:
-        filtered: list[LLMCostRecord] = []
-        for rec in all_rows:
-            run = run_map.get(rec.run_id)
-            # Match if the explicit user string equals the run's team_id --
-            # the only user-linked identifier presently stored on WorkflowRun.
-            if run is not None and run.team_id == user:
-                filtered.append(rec)
-        all_rows = filtered
-
-    # Sort newest-first for the log view.
-    all_rows.sort(
-        key=lambda r: r.created_at if r.created_at is not None else datetime.min,
-        reverse=True,
-    )
-
-    total = len(all_rows)
-    total_cost = round(sum(r.cost_usd for r in all_rows), 6)
-    page_rows = all_rows[offset : offset + limit]
 
     items: list[LLMLogEntry] = []
     for rec in page_rows:
@@ -172,7 +171,7 @@ async def list_llm_log(
                 duration_ms=rec.duration_ms,
                 status=rec.status,
                 run_id=rec.run_id,
-                user_id=None,
+                user_id=rec.user_id,
                 team_id=rec.team_id,
                 prompt_preview=rec.prompt_preview,
                 response_preview=rec.response_preview,

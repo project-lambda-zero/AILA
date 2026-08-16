@@ -10,6 +10,7 @@
  * is enough signal. If a richer preview is needed later, swap this
  * component for a real highlighter -- the prop surface won't change.
  */
+import type { CSSProperties } from "react";
 
 type Lang = "python" | "javascript" | "ts" | "c" | "bash" | "text";
 
@@ -71,9 +72,19 @@ interface Token {
   value: string;
 }
 
+const KEYWORD_LOOKUP: Record<Lang, Record<string, true>> = (() => {
+  const out = {} as Record<Lang, Record<string, true>>;
+  (Object.keys(LANG_KEYWORDS) as Lang[]).forEach((k) => {
+    const tbl: Record<string, true> = {};
+    LANG_KEYWORDS[k].forEach((w) => { tbl[w] = true; });
+    out[k] = tbl;
+  });
+  return out;
+})();
+
 function tokenize(source: string, lang: Lang): Token[] {
   if (lang === "text") return [{ type: "text", value: source }];
-  const keywords = new Set(LANG_KEYWORDS[lang]);
+  const keywords = KEYWORD_LOOKUP[lang];
   const tokens: Token[] = [];
 
   // Comment styles per language.
@@ -129,7 +140,7 @@ function tokenize(source: string, lang: Lang): Token[] {
       while (j < source.length && /[A-Za-z0-9_]/.test(source[j])) j += 1;
       const word = source.slice(i, j);
       tokens.push({
-        type: keywords.has(word) ? "kw" : "text",
+        type: keywords[word] ? "kw" : "text",
         value: word,
       });
       i = j;
@@ -142,12 +153,29 @@ function tokenize(source: string, lang: Lang): Token[] {
   return tokens;
 }
 
-const STYLE: Record<Token["type"], string> = {
-  kw: "text-violet-300",
-  str: "text-amber-300",
-  num: "text-cyan-300",
-  comment: "text-text-muted italic",
-  text: "text-foreground",
+// Mock-language token colouring. Keyword = accent (identifier signal),
+// string = ok (literal), number = signal (numeric literal), comment = faint.
+const TOKEN_STYLE: Record<Token["type"], CSSProperties> = {
+  kw: { color: "var(--accent)" },
+  str: { color: "var(--status-ok)" },
+  num: { color: "var(--status-signal)" },
+  comment: { color: "var(--text-faint)", fontStyle: "italic" },
+  text: { color: "var(--text-primary)" },
+};
+
+const PRE_STYLE: CSSProperties = {
+  margin: 0,
+  padding: 12,
+  fontSize: 11,
+  lineHeight: 1.5,
+  color: "var(--text-primary)",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  overflow: "auto",
+  maxHeight: 400,
+  whiteSpace: "pre",
+  fontFamily: "var(--font-mono)",
 };
 
 export function SyntaxHighlighter({
@@ -163,16 +191,13 @@ export function SyntaxHighlighter({
   const tokens = tokenize(code, lang);
   return (
     <pre
-      className={
-        "text-xs font-mono whitespace-pre overflow-x-auto p-2 "
-        + "rounded bg-surface/60 border border-border-default "
-        + (className ?? "")
-      }
+      className={`font-mono ${className ?? ""}`.trim()}
+      style={PRE_STYLE}
       data-language={lang}
     >
       <code>
         {tokens.map((t, idx) => (
-          <span key={idx} className={STYLE[t.type]}>
+          <span key={idx} style={TOKEN_STYLE[t.type]}>
             {t.value}
           </span>
         ))}

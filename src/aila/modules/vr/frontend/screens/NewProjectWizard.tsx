@@ -1,8 +1,12 @@
 import { useState } from "react";
 import { useNavigate } from "react-router";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import {
+  SectionHeader,
+  Segmented,
+  MonoBadge,
+} from "@/components/aila/mock";
 
 import { useCreateVRProject } from "../mutations";
 import { useRegisteredSystems, useWorkspaces } from "../queries";
@@ -16,22 +20,12 @@ import type {
 import { UploadDropzone } from "../components/UploadDropzone";
 import { WorkstationCompatibilityBadge } from "../components/WorkstationCompatibilityBadge";
 
-/** 3-stage New Project Wizard (08_FRONTEND_UX.md §1.2).
+/** 3-stage New Investigation wizard (08_FRONTEND_UX.md §1.2).
  *
- *  Steps:
- *    1. Target intake -- input source (upload / git_repo / http_url),
- *       target class, repo URL / refs.
- *    2. Workstation selection -- pick a registered SSH host.
- *    3. Scope + authorisation -- name, CVE, notes, authorisation toggle.
- *
- *  The wizard never persists until the final step. Closing the tab
- *  discards everything per spec.
- *
- *  Backend gap: upload widget for firmware/binary upload at step 1 is
- *  pending (the workstation needs a binary already on its filesystem;
- *  v0.4.5 only supports IDA MCP upload via a separate target). Wizard
- *  shows the field but routes that flow through git_repo / http_url
- *  for now. */
+ *  1. Target intake -- input source (upload / git_repo / http_url),
+ *     target class, repo URL / refs / upload.
+ *  2. Workstation selection -- pick a registered SSH host.
+ *  3. Scope + authorisation -- name, CVE, notes, authorisation toggle. */
 
 const INPUT_SOURCES: InputSource[] = ["upload", "git_repo", "http_url"];
 
@@ -50,15 +44,81 @@ const TARGET_CLASSES: TargetClass[] = [
   "dotnet",
 ];
 
-type Step = 1 | 2 | 3;
+type StepId = "target" | "workstation" | "scope";
 
+const STEP_OPTIONS: { value: StepId; label: string }[] = [
+  { value: "target", label: "target" },
+  { value: "workstation", label: "workstation" },
+  { value: "scope", label: "scope" },
+];
+
+const STEP_ORDER: StepId[] = ["target", "workstation", "scope"];
+
+// Shared inline styles for mock-language raw form controls.
+const MOCK_INPUT_STYLE: React.CSSProperties = {
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  color: "var(--text-primary)",
+  fontFamily: "var(--font-mono)",
+  fontSize: 10.5,
+  padding: "3px 6px",
+  height: 26,
+  borderRadius: 3,
+  outline: "none",
+  width: "100%",
+};
+
+const MOCK_TEXTAREA_STYLE: React.CSSProperties = {
+  ...MOCK_INPUT_STYLE,
+  height: "auto",
+  padding: "6px 8px",
+  lineHeight: 1.5,
+};
+
+const LABEL_STYLE: React.CSSProperties = {
+  display: "block",
+  fontFamily: "var(--font-mono)",
+  fontSize: 9,
+  letterSpacing: "0.14em",
+  color: "var(--text-faint)",
+  textTransform: "uppercase",
+  marginBottom: 5,
+};
+
+const FIELD_GAP = 12;
+
+// ---------------------------------------------------------------------------
+// Field wrapper -- lowercase mono uppercase label above the control.
+// ---------------------------------------------------------------------------
+function Field({
+  label,
+  htmlFor,
+  children,
+}: {
+  label: string;
+  htmlFor?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <label htmlFor={htmlFor} style={LABEL_STYLE}>
+        {label}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// NewProjectWizard
+// ---------------------------------------------------------------------------
 export function NewProjectWizard() {
   const navigate = useNavigate();
   const { data: workspacesResult } = useWorkspaces();
   const { data: systems } = useRegisteredSystems();
   const createMut = useCreateVRProject();
 
-  const [step, setStep] = useState<Step>(1);
+  const [step, setStep] = useState<StepId>("target");
 
   // Step 1 -- target intake
   const [workspaceId, setWorkspaceId] = useState("");
@@ -83,16 +143,27 @@ export function NewProjectWizard() {
   const workspaces: VRWorkspaceSummary[] = workspacesResult?.data ?? [];
   const systemList: RegisteredSystem[] = systems ?? [];
 
-  const step1Ready =
+  const targetReady =
     !!workspaceId &&
     (inputSource === "upload"
       ? !!uploadFilename
       : inputSource === "git_repo"
         ? !!repoUrl
         : !!downloadUrl);
+  const workstationReady = !!systemId;
+  const scopeReady = !!name && authorised;
 
-  const step2Ready = !!systemId;
-  const step3Ready = !!name && authorised;
+  // Only allow segment clicks to travel to an already-reachable step.
+  const currentIdx = STEP_ORDER.indexOf(step);
+  function onStepClick(next: StepId) {
+    const nextIdx = STEP_ORDER.indexOf(next);
+    if (nextIdx <= currentIdx) {
+      setStep(next);
+      return;
+    }
+    if (nextIdx === 1 && targetReady) setStep("workstation");
+    else if (nextIdx === 2 && targetReady && workstationReady) setStep("scope");
+  }
 
   function buildSpec(): TargetIngestionSpec {
     return {
@@ -108,7 +179,7 @@ export function NewProjectWizard() {
   }
 
   function submit() {
-    if (!step3Ready || !systemId) return;
+    if (!scopeReady || !systemId) return;
     createMut.mutate(
       {
         name,
@@ -127,386 +198,441 @@ export function NewProjectWizard() {
     );
   }
 
+  const headerActions = (
+    <div className="flex items-center" style={{ gap: 10 }}>
+      <Segmented<StepId>
+        options={STEP_OPTIONS}
+        value={step}
+        onChange={onStepClick}
+      />
+      <button
+        type="button"
+        onClick={() => navigate("/vr")}
+        className="font-mono uppercase"
+        style={{
+          height: 26,
+          padding: "0 10px",
+          fontSize: 9.5,
+          letterSpacing: "0.09em",
+          background: "transparent",
+          color: "var(--text-muted)",
+          border: "1px solid var(--border-soft)",
+          borderRadius: 3,
+          cursor: "pointer",
+        }}
+      >
+        cancel
+      </button>
+    </div>
+  );
+
   return (
-    <div className="space-y-4 max-w-3xl mx-auto">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <button
-          type="button"
-          onClick={() => navigate("/vr")}
-          className="text-xs px-3 py-1.5 rounded bg-surface border border-border-default hover:bg-surface-hover"
-        >
-          Cancel
-        </button>
-      </div>
+    <div className="flex flex-col" style={{ gap: 18 }}>
+      <SectionHeader title="New Investigation" actions={headerActions} />
 
-      {/* Stepper */}
-      <WizardStepper step={step} />
+      {step === "target" && (
+        <WindowPanel title="step 1 -- target intake" tone="accent">
+          <div className="flex flex-col" style={{ gap: FIELD_GAP }}>
+            <Field label="workspace" htmlFor="npw-workspace">
+              <select
+                id="npw-workspace"
+                value={workspaceId}
+                onChange={(e) => setWorkspaceId(e.target.value)}
+                style={MOCK_INPUT_STYLE}
+              >
+                <option value="">-- pick a workspace --</option>
+                {workspaces.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.name} ({w.theme})
+                  </option>
+                ))}
+              </select>
+            </Field>
 
-      {/* Step 1 -- Target intake */}
-      {step === 1 && (
-        <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
-          Step 1 -- Target intake
-        </h2>
-        <div className="space-y-3 text-sm">
-          <Field label="Workspace" htmlFor="npw-workspace">
-            <select
-              id="npw-workspace"
-              value={workspaceId}
-              onChange={(e) => setWorkspaceId(e.target.value)}
-              className="w-full px-2 py-1.5 text-sm rounded bg-surface border border-border-default"
-            >
-              <option value="">-- Pick a workspace --</option>
-              {workspaces.map((w) => (
-                <option key={w.id} value={w.id}>
-                  {w.name} ({w.theme})
-                </option>
-              ))}
-            </select>
-          </Field>
-        
-          <Field label="Input source">
-            <div className="flex gap-1 flex-wrap">
-              {INPUT_SOURCES.map((s) => (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => setInputSource(s)}
-                  className={
-                    "px-2 py-1 text-xs font-mono rounded border " +
-                    (inputSource === s
-                      ? "bg-accent text-white border-accent"
-                      : "bg-surface text-foreground border-border-default hover:bg-surface-hover")
-                  }
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
-          </Field>
-        
-          <Field label="Target class" htmlFor="npw-target-class">
-            <select
-              id="npw-target-class"
-              value={targetClass}
-              onChange={(e) => setTargetClass(e.target.value as TargetClass)}
-              className="px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
-            >
-              {TARGET_CLASSES.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </Field>
-        
-          <label className="flex items-center gap-2 text-xs">
-            <input
-              type="checkbox"
-              checked={sourceAvailable}
-              onChange={(e) => setSourceAvailable(e.target.checked)}
-            />
-            <span>Source code available (enables source-aware analysis)</span>
-          </label>
-        
-          {/* Source-specific fields */}
-          {inputSource === "git_repo" && (
-            <>
-              <Field label="Repo URL" htmlFor="npw-repo-url">
+            <Field label="input source">
+              <div className="flex flex-wrap" style={{ gap: 6 }}>
+                {INPUT_SOURCES.map((s) => {
+                  const active = inputSource === s;
+                  return (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setInputSource(s)}
+                      className="font-mono uppercase"
+                      style={{
+                        height: 26,
+                        padding: "0 10px",
+                        fontSize: 9.5,
+                        letterSpacing: "0.09em",
+                        background: active ? "var(--accent)" : "var(--surface-sunk)",
+                        color: active ? "var(--text-on-accent)" : "var(--text-muted)",
+                        border: `1px solid ${active ? "var(--accent)" : "var(--border-soft)"}`,
+                        borderRadius: 3,
+                        cursor: "pointer",
+                      }}
+                    >
+                      {s.replace("_", " ")}
+                    </button>
+                  );
+                })}
+              </div>
+            </Field>
+
+            <Field label="target class" htmlFor="npw-target-class">
+              <select
+                id="npw-target-class"
+                value={targetClass}
+                onChange={(e) => setTargetClass(e.target.value as TargetClass)}
+                style={{ ...MOCK_INPUT_STYLE, width: 260 }}
+              >
+                {TARGET_CLASSES.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <fieldset style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+              <legend className="sr-only">source availability</legend>
+              <label
+                className="flex items-center font-mono"
+                style={{ gap: 6, fontSize: 10.5, color: "var(--text-primary)" }}
+              >
                 <input
-                  id="npw-repo-url"
+                  type="checkbox"
+                  checked={sourceAvailable}
+                  onChange={(e) => setSourceAvailable(e.target.checked)}
+                />
+                <span>source code available (enables source-aware analysis)</span>
+              </label>
+            </fieldset>
+
+            {inputSource === "git_repo" && (
+              <>
+                <Field label="repo url" htmlFor="npw-repo-url">
+                  <input
+                    id="npw-repo-url"
+                    type="text"
+                    value={repoUrl}
+                    onChange={(e) => setRepoUrl(e.target.value)}
+                    placeholder="https://github.com/owner/repo"
+                    style={MOCK_INPUT_STYLE}
+                  />
+                </Field>
+                <div
+                  className="grid"
+                  style={{ gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}
+                >
+                  <Field label="vulnerable ref (optional)" htmlFor="npw-vulnerable-ref">
+                    <input
+                      id="npw-vulnerable-ref"
+                      type="text"
+                      value={vulnerableRef}
+                      onChange={(e) => setVulnerableRef(e.target.value)}
+                      placeholder="commit / tag / branch"
+                      style={MOCK_INPUT_STYLE}
+                    />
+                  </Field>
+                  <Field label="patched ref (optional)" htmlFor="npw-patched-ref">
+                    <input
+                      id="npw-patched-ref"
+                      type="text"
+                      value={patchedRef}
+                      onChange={(e) => setPatchedRef(e.target.value)}
+                      placeholder="commit / tag / branch"
+                      style={MOCK_INPUT_STYLE}
+                    />
+                  </Field>
+                </div>
+              </>
+            )}
+
+            {inputSource === "http_url" && (
+              <Field label="download url" htmlFor="npw-download-url">
+                <input
+                  id="npw-download-url"
                   type="text"
-                  value={repoUrl}
-                  onChange={(e) => setRepoUrl(e.target.value)}
-                  placeholder="https://github.com/owner/repo"
-                  className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
+                  value={downloadUrl}
+                  onChange={(e) => setDownloadUrl(e.target.value)}
+                  placeholder="https://.../firmware.bin"
+                  style={MOCK_INPUT_STYLE}
                 />
               </Field>
-              <div className="grid grid-cols-2 gap-2">
-                <Field label="Vulnerable ref (optional)" htmlFor="npw-vulnerable-ref">
-                  <input
-                    id="npw-vulnerable-ref"
-                    type="text"
-                    value={vulnerableRef}
-                    onChange={(e) => setVulnerableRef(e.target.value)}
-                    placeholder="commit / tag / branch"
-                    className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
-                  />
-                </Field>
-                <Field label="Patched ref (optional)" htmlFor="npw-patched-ref">
-                  <input
-                    id="npw-patched-ref"
-                    type="text"
-                    value={patchedRef}
-                    onChange={(e) => setPatchedRef(e.target.value)}
-                    placeholder="commit / tag / branch"
-                    className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
-                  />
-                </Field>
-              </div>
-            </>
+            )}
+
+            {inputSource === "upload" && (
+              <Field label="upload artifact">
+                <UploadDropzone
+                  onFile={(file) => setUploadFilename(file.name)}
+                  hint={
+                    uploadFilename
+                      ? `picked: ${uploadFilename}`
+                      : "drop a .elf / .exe / .apk / .ipa / .so / .o"
+                  }
+                />
+                <p
+                  className="font-mono"
+                  style={{ marginTop: 6, fontSize: 9.5, color: "var(--text-faint)" }}
+                >
+                  the file streams to the ida mcp after the project is created
+                  (upload happens during scope submit). drop again to replace.
+                </p>
+              </Field>
+            )}
+          </div>
+          <StepNav
+            leftLabel={null}
+            onLeft={null}
+            rightLabel="next"
+            rightAccent
+            rightDisabled={!targetReady}
+            onRight={() => setStep("workstation")}
+          />
+        </WindowPanel>
+      )}
+
+      {step === "workstation" && (
+        <WindowPanel title="step 2 -- workstation" tone="info">
+          <p
+            className="font-mono"
+            style={{ fontSize: 10.5, color: "var(--text-muted)", marginBottom: 12 }}
+          >
+            the research workstation runs the analysis pipeline (ida / fuzzers / poc execution).
+            pick the host with the right tools + gpu + os.
+          </p>
+          {systemList.length === 0 ? (
+            <div
+              className="font-mono"
+              style={{
+                border: "1px dashed var(--accent)",
+                background: "color-mix(in srgb, var(--accent) 4%, transparent)",
+                borderRadius: 3,
+                padding: 12,
+                fontSize: 10.5,
+                color: "var(--accent)",
+              }}
+            >
+              no systems registered. register a workstation under <strong>systems</strong> first.
+            </div>
+          ) : (
+            <div className="flex flex-col" style={{ gap: 6 }}>
+              {systemList.map((s) => {
+                const active = systemId === s.id;
+                return (
+                  <label
+                    key={s.id}
+                    className="flex items-center"
+                    style={{
+                      gap: 10,
+                      border: `1px solid ${active ? "var(--accent)" : "var(--border-soft)"}`,
+                      background: active
+                        ? "color-mix(in srgb, var(--accent) 8%, transparent)"
+                        : "var(--surface-card)",
+                      borderRadius: 3,
+                      padding: "10px 12px",
+                      cursor: "pointer",
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="system"
+                      checked={active}
+                      onChange={() => setSystemId(s.id)}
+                    />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div
+                        className="font-mono"
+                        style={{
+                          fontSize: 12,
+                          color: "var(--text-primary)",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {s.name}
+                      </div>
+                      <div
+                        className="font-mono"
+                        style={{ fontSize: 10, color: "var(--text-muted)" }}
+                      >
+                        {s.username}@{s.host}:{s.port}
+                      </div>
+                    </div>
+                    <MonoBadge tone="info">system #{s.id}</MonoBadge>
+                    <WorkstationCompatibilityBadge system={s} kind={targetClass} />
+                  </label>
+                );
+              })}
+            </div>
           )}
-        
-          {inputSource === "http_url" && (
-            <Field label="Download URL" htmlFor="npw-download-url">
+          <StepNav
+            leftLabel="back"
+            onLeft={() => setStep("target")}
+            rightLabel="next"
+            rightAccent
+            rightDisabled={!workstationReady}
+            onRight={() => setStep("scope")}
+          />
+        </WindowPanel>
+      )}
+
+      {step === "scope" && (
+        <WindowPanel title="step 3 -- scope + authorisation" tone="warn">
+          <div className="flex flex-col" style={{ gap: FIELD_GAP }}>
+            <Field label="project name" htmlFor="npw-name">
               <input
-                id="npw-download-url"
+                id="npw-name"
                 type="text"
-                value={downloadUrl}
-                onChange={(e) => setDownloadUrl(e.target.value)}
-                placeholder="https://…/firmware.bin"
-                className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. cve-2024-12345 -- libpng analysis"
+                style={MOCK_INPUT_STYLE}
               />
             </Field>
-          )}
-        
-          {inputSource === "upload" && (
-            <Field label="Upload artifact">
-              <UploadDropzone
-                onFile={(file) => setUploadFilename(file.name)}
-                hint={
-                  uploadFilename
-                    ? `picked: ${uploadFilename}`
-                    : "drop a .elf / .exe / .apk / .ipa / .so / .o"
-                }
+            <Field label="cve id (optional)" htmlFor="npw-cve">
+              <input
+                id="npw-cve"
+                type="text"
+                value={cveId}
+                onChange={(e) => setCveId(e.target.value)}
+                placeholder="CVE-YYYY-NNNNN"
+                style={{ ...MOCK_INPUT_STYLE, width: 240 }}
               />
-              <p className="text-3xs text-text-muted mt-1">
-                The file streams to the IDA MCP after the project
-                is created (the upload happens during step 3 submit).
-                Drop again to replace.
-              </p>
             </Field>
+            <Field label="scope / context notes" htmlFor="npw-notes">
+              <textarea
+                id="npw-notes"
+                value={contextNotes}
+                onChange={(e) => setContextNotes(e.target.value)}
+                rows={5}
+                placeholder="what's in scope, what isn't. customer-supplied context. anything the agent should know up front."
+                style={MOCK_TEXTAREA_STYLE}
+              />
+            </Field>
+            <label
+              className="flex items-start font-mono"
+              style={{
+                gap: 8,
+                border: "1px solid var(--border-soft)",
+                background: "var(--surface-sunk)",
+                borderRadius: 3,
+                padding: 10,
+                fontSize: 10.5,
+                color: "var(--text-primary)",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={authorised}
+                onChange={(e) => setAuthorised(e.target.checked)}
+                style={{ marginTop: 2 }}
+              />
+              <span>
+                <strong>i confirm this engagement is in scope</strong> per signed
+                authorisation. the project cannot be created without this
+                (§1.2 / docs/vr/02_IDA_HEADLESS_MCP.md §6).
+              </span>
+            </label>
+          </div>
+
+          {createMut.isError && (
+            <div
+              className="font-mono"
+              style={{
+                marginTop: 12,
+                border: "1px solid var(--accent)",
+                background: "color-mix(in srgb, var(--accent) 5%, transparent)",
+                borderRadius: 3,
+                padding: 10,
+                fontSize: 10.5,
+                color: "var(--accent)",
+              }}
+            >
+              {(createMut.error as Error)?.message ?? "create failed."}
+            </div>
           )}
-        </div>
-        <div className="flex justify-between mt-4">
-          <span />
-          <button
-            type="button"
-            disabled={!step1Ready}
-            onClick={() => setStep(2)}
-            className="px-3 py-1.5 text-sm font-medium rounded bg-accent text-white hover:bg-accent/90 disabled:opacity-40"
-          >
-            Continue →
-          </button>
-        </div></AilaCard>
-      )}
 
-      {/* Step 2 -- Workstation */}
-      {step === 2 && (
-        <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
-          Step 2 -- Workstation selection
-        </h2>
-        <p className="text-xs text-text-muted mb-3">
-          The research workstation runs the analysis pipeline (IDA / fuzzers
-          / PoC execution). Pick the host with the right tools + GPU + OS.
-        </p>
-        {systemList.length === 0 ? (
-          <div className="border border-dashed border-border-danger rounded p-3 bg-surface/40">
-            <p className="text-xs text-text-danger">
-              No systems registered. Register a workstation under{" "}
-              <strong>Systems</strong> first.
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {systemList.map((s) => (
-              <label
-                key={s.id}
-                className={
-                  "block border rounded p-3 cursor-pointer transition-colors " +
-                  (systemId === s.id
-                    ? "border-accent bg-surface"
-                    : "border-border-default hover:bg-surface-hover")
-                }
-              >
-                <div className="flex items-center gap-3">
-                  <input
-                    type="radio"
-                    name="system"
-                    checked={systemId === s.id}
-                    onChange={() => setSystemId(s.id)}
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-sm font-mono text-foreground truncate">
-                      {s.name}
-                    </div>
-                    <div className="text-xs text-text-muted font-mono">
-                      {s.username}@{s.host}:{s.port}
-                    </div>
-                  </div>
-                  <AilaBadge severity="info" size="sm">
-                    system #{s.id}
-                  </AilaBadge>
-                  <WorkstationCompatibilityBadge
-                    system={s}
-                    kind={targetClass}
-                  />
-                </div>
-              </label>
-            ))}
-          </div>
-        )}
-        <div className="flex justify-between mt-4">
-          <button
-            type="button"
-            onClick={() => setStep(1)}
-            className="px-3 py-1.5 text-sm font-medium rounded bg-surface border border-border-default hover:bg-surface-hover"
-          >
-            ← Back
-          </button>
-          <button
-            type="button"
-            disabled={!step2Ready}
-            onClick={() => setStep(3)}
-            className="px-3 py-1.5 text-sm font-medium rounded bg-accent text-white hover:bg-accent/90 disabled:opacity-40"
-          >
-            Continue →
-          </button>
-        </div></AilaCard>
-      )}
-
-      {/* Step 3 -- Scope + authorisation */}
-      {step === 3 && (
-        <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
-          Step 3 -- Scope + authorisation
-        </h2>
-        <div className="space-y-3 text-sm">
-          <Field label="Project name" htmlFor="npw-name">
-            <input
-              id="npw-name"
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g. 'CVE-2024-12345 -- libpng analysis'"
-              className="w-full px-2 py-1.5 text-sm rounded bg-surface border border-border-default"
-            />
-          </Field>
-        
-          <Field label="CVE ID (optional)" htmlFor="npw-cve">
-            <input
-              id="npw-cve"
-              type="text"
-              value={cveId}
-              onChange={(e) => setCveId(e.target.value)}
-              placeholder="CVE-YYYY-NNNNN"
-              className="w-64 px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
-            />
-          </Field>
-        
-          <Field label="Scope / context notes" htmlFor="npw-notes">
-            <textarea
-              id="npw-notes"
-              value={contextNotes}
-              onChange={(e) => setContextNotes(e.target.value)}
-              rows={4}
-              placeholder="What's in scope, what isn't. Customer-supplied context. Anything the agent should know up front."
-              className="w-full px-2 py-1.5 text-sm font-mono rounded bg-surface border border-border-default"
-            />
-          </Field>
-        
-          <label className="flex items-start gap-2 text-xs border border-border-default rounded p-3 bg-surface/40">
-            <input
-              type="checkbox"
-              checked={authorised}
-              onChange={(e) => setAuthorised(e.target.checked)}
-              className="mt-0.5"
-            />
-            <span>
-              <strong className="text-foreground">
-                I confirm this engagement is in scope
-              </strong>{" "}
-              per signed authorisation. The project cannot be created
-              without this (§1.2 / docs/vr/02_IDA_HEADLESS_MCP.md §6).
-            </span>
-          </label>
-        </div>
-        
-        {createMut.isError && (
-          <div className="mt-3 border border-border-danger rounded p-2 bg-surface/40 text-xs text-text-danger">
-            {(createMut.error as Error)?.message ?? "Create failed."}
-          </div>
-        )}
-        
-        <div className="flex justify-between mt-4">
-          <button
-            type="button"
-            onClick={() => setStep(2)}
-            className="px-3 py-1.5 text-sm font-medium rounded bg-surface border border-border-default hover:bg-surface-hover"
-          >
-            ← Back
-          </button>
-          <button
-            type="button"
-            disabled={!step3Ready || createMut.isPending}
-            onClick={submit}
-            className="px-4 py-1.5 text-sm font-medium rounded bg-accent text-white hover:bg-accent/90 disabled:opacity-40"
-          >
-            {createMut.isPending ? "Starting…" : "Start research"}
-          </button>
-        </div></AilaCard>
+          <StepNav
+            leftLabel="back"
+            onLeft={() => setStep("workstation")}
+            rightLabel={createMut.isPending ? "creating..." : "create project"}
+            rightAccent
+            rightDisabled={!scopeReady || createMut.isPending}
+            onRight={submit}
+          />
+        </WindowPanel>
       )}
     </div>
   );
 }
 
-function Field({
-  label,
-  htmlFor,
-  children,
+// ---------------------------------------------------------------------------
+// StepNav -- back / next / create-project button row at panel bottom.
+// ---------------------------------------------------------------------------
+function StepNav({
+  leftLabel,
+  onLeft,
+  rightLabel,
+  rightAccent,
+  rightDisabled,
+  onRight,
 }: {
-  label: string;
-  htmlFor?: string;
-  children: React.ReactNode;
+  leftLabel: string | null;
+  onLeft: (() => void) | null;
+  rightLabel: string;
+  rightAccent: boolean;
+  rightDisabled: boolean;
+  onRight: () => void;
 }) {
   return (
-    <div>
-      <label htmlFor={htmlFor} className="block text-xs text-text-muted mb-1">{label}</label>
-      {children}
+    <div
+      className="flex items-center"
+      style={{ justifyContent: "space-between", marginTop: 18 }}
+    >
+      {leftLabel && onLeft ? (
+        <button
+          type="button"
+          onClick={onLeft}
+          className="font-mono uppercase"
+          style={{
+            height: 28,
+            padding: "0 14px",
+            fontSize: 10,
+            letterSpacing: "0.09em",
+            background: "transparent",
+            color: "var(--text-muted)",
+            border: "1px solid var(--border-soft)",
+            borderRadius: 3,
+            cursor: "pointer",
+          }}
+        >
+          {leftLabel}
+        </button>
+      ) : (
+        <span />
+      )}
+      <button
+        type="button"
+        onClick={onRight}
+        disabled={rightDisabled}
+        className="font-mono uppercase"
+        style={{
+          height: 28,
+          padding: "0 16px",
+          fontSize: 10,
+          letterSpacing: "0.09em",
+          background: rightAccent ? "var(--accent)" : "var(--surface-sunk)",
+          color: rightAccent ? "var(--text-on-accent)" : "var(--text-muted)",
+          border: `1px solid ${rightAccent ? "var(--accent)" : "var(--border-soft)"}`,
+          borderRadius: 3,
+          cursor: rightDisabled ? "not-allowed" : "pointer",
+          opacity: rightDisabled ? 0.4 : 1,
+        }}
+      >
+        {rightLabel}
+      </button>
     </div>
-  );
-}
-
-function WizardStepper({ step }: { step: Step }) {
-  const steps = ["Target intake", "Workstation", "Scope + auth"];
-  return (
-    <ol className="flex items-center gap-0 text-xs font-mono select-none">
-      {steps.map((label, i) => {
-        const num = (i + 1) as Step;
-        const active = num === step;
-        const done = num < step;
-        return (
-          <li key={label} className="flex items-center flex-1 last:flex-initial gap-2">
-            <div
-              className={
-                "w-6 h-6 rounded-full flex items-center justify-center text-3xs font-bold border-2 " +
-                (active
-                  ? "bg-accent border-accent text-white"
-                  : done
-                    ? "bg-surface border-border-default text-text-muted"
-                    : "bg-surface border-border-default text-text-muted opacity-60")
-              }
-            >
-              {done ? "✓" : num}
-            </div>
-            <span
-              className={
-                active
-                  ? "text-foreground font-semibold"
-                  : "text-text-muted " + (done ? "" : "opacity-60")
-              }
-            >
-              {label}
-            </span>
-            {i < steps.length - 1 && (
-              <div
-                className={
-                  "h-px flex-1 " +
-                  (done ? "bg-accent/40" : "bg-border-default")
-                }
-              />
-            )}
-          </li>
-        );
-      })}
-    </ol>
   );
 }

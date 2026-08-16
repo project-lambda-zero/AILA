@@ -31,9 +31,10 @@ from aila.platform.tasks.constants import __all__ as const_all
 
 
 class TestGetTaskTuning:
-    """get_task_tuning is currently a stub -- it always returns the caller's
-    default and never touches the DB. When an async-safe override path is
-    wired later, re-add the DB-read assertions removed here.
+    """get_task_tuning resolves namespace='platform' config live via
+    ConfigRegistry.get_sync, falling back to the caller's default when the key
+    is unset, uncastable, or the DB is unreachable. These cases cover the
+    default-fallback contract for unset keys.
     """
 
     def test_returns_default_int(self) -> None:
@@ -41,15 +42,18 @@ class TestGetTaskTuning:
         assert get_task_tuning("heartbeat_interval_s", 30) == 30
 
     def test_returns_default_for_arbitrary_key(self) -> None:
-        """Any key resolves to its default (no DB, no ConfigRegistry lookup)."""
+        """An unset key falls back to the caller's default (the ConfigRegistry
+        lookup misses)."""
         assert get_task_tuning("arq_max_tries", 3) == 3
         assert get_task_tuning("progress_stream_maxlen", 1000) == 1000
 
     def test_default_is_returned_verbatim(self) -> None:
-        """The stub returns the default object unchanged (identity for ints via
-        Python interning is incidental; equality is the contract)."""
+        """A key absent from PlatformConfigSchema returns the caller's default
+        unchanged (equality is the contract). get_task_tuning resolves known
+        platform keys live, so this uses a deliberately non-existent key whose
+        ConfigRegistry lookup misses and falls through to the default."""
         sentinel = 4242
-        assert get_task_tuning("heartbeat_interval_s", sentinel) == sentinel
+        assert get_task_tuning("aila_unset_tuning_probe_209", sentinel) == sentinel
 
     def test_does_not_touch_session_scope(self) -> None:
         """Stub path must not open a DB session (would crash ARQ startup).
@@ -116,10 +120,17 @@ class TestConstantToSchemaMapping:
         assert isinstance(schema_value, expected_type)
         assert const_value == expected_default
 
-    def test_xread_block_ms_not_in_schema_is_acceptable(self) -> None:
-        """XREAD_BLOCK_MS is derived from heartbeat and used directly, not via get_task_tuning."""
+    def test_xread_block_ms_derived_from_heartbeat_interval(self) -> None:
+        """The SSE XREAD block timeout is derived live from
+        ``platform.heartbeat_interval_s`` (see
+        :meth:`ProgressStream.stream_events`), so no ``xread_block_ms`` key
+        is declared in the schema and no ``XREAD_BLOCK_MS`` constant remains.
+        """
+        import aila.platform.tasks.constants as constants_module
+
         schema = PlatformConfigSchema()
         assert not hasattr(schema, "xread_block_ms")
+        assert not hasattr(constants_module, "XREAD_BLOCK_MS")
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +216,6 @@ class TestPackageExports:
             "ARQ_MAX_TRIES",
             "POISON_PILL_THRESHOLD",
             "WORKER_HEARTBEAT_UNHEALTHY_S",
-            "XREAD_BLOCK_MS",
             "PROGRESS_STREAM_MAXLEN",
             # Config registry keys
             "CONFIG_NS_PLATFORM",

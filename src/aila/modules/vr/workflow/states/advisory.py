@@ -137,6 +137,37 @@ async def _llm_narrative(
         }
 
 
+def _serialize_research_obligations(research: dict[str, Any]) -> str:
+    """Return ``research['obligations']`` as JSON text for VRFindingRecord.
+
+    fix #209 -- ``VRFindingRecord.obligations_json`` was created by
+    migration 040 and defaulted to ``"{}"`` on every insert because no
+    writer stamped it. ``NdayResearcher`` computes an obligation ledger
+    (``self.obligations.model_dump(mode="json")``) and returns it under
+    ``result['obligations']`` at ``modules/vr/agents/nday_researcher.py``;
+    ``state_research`` forwards that under ``input['research']`` and the
+    advisory state dropped it. Persist it here so the operator can audit
+    which evidence obligations the agent satisfied / waived on the
+    finding that shipped, matching the ``ObligationChecklist`` UI wired
+    at ``modules/vr/frontend/components/ObligationChecklist.tsx``.
+
+    A missing or malformed obligations block falls back to ``"{}"`` --
+    the column default -- so a research payload that predates the
+    ledger keeps the old shape.
+    """
+    payload = research.get("obligations") if isinstance(research, dict) else None
+    if not isinstance(payload, dict):
+        return "{}"
+    try:
+        return json.dumps(payload)
+    except (TypeError, ValueError):
+        _log.warning(
+            "advisory: research obligations payload is not JSON-serialisable; "
+            "persisting empty ledger",
+        )
+        return "{}"
+
+
 async def _persist_finding(
     project_id: str, advisory: dict[str, Any], poc: dict[str, Any] | None,
     crash_type: str, research: dict[str, Any], cvss: dict[str, Any],
@@ -160,6 +191,7 @@ async def _persist_finding(
         cvss_score=cvss.get("base_score"),
         cwe_id=(cwe or {}).get("cwe_id"),
         advisory_json=json.dumps(advisory),
+        obligations_json=_serialize_research_obligations(research),
     )
     try:
         async with UnitOfWork() as uow:

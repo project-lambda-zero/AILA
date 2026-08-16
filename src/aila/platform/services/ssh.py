@@ -4,6 +4,7 @@ import asyncio
 import base64
 import builtins
 import hashlib
+import io
 from pathlib import Path
 from threading import Lock
 
@@ -150,17 +151,9 @@ class SSHService:
             payload = integration
 
         password = await self._resolve_password(payload)
-
-        connect_kwargs: dict = {
-            "hostname": payload.host,
-            "port": payload.port,
-            "username": payload.username,
-            "timeout": connect_timeout,
-        }
-        if payload.private_key_path:
-            connect_kwargs["key_filename"] = payload.private_key_path
-        if password:
-            connect_kwargs["password"] = password
+        connect_kwargs = await self._build_connect_kwargs(
+            payload, password, connect_timeout,
+        )
 
         # `timeout_seconds` is an IDLE timeout (enforced inside
         # _run_command_blocking via channel.settimeout + exit-status polling),
@@ -265,17 +258,9 @@ class SSHService:
             payload = integration
 
         password = await self._resolve_password(payload)
-
-        connect_kwargs: dict = {
-            "hostname": payload.host,
-            "port": payload.port,
-            "username": payload.username,
-            "timeout": connect_timeout,
-        }
-        if payload.private_key_path:
-            connect_kwargs["key_filename"] = payload.private_key_path
-        if password:
-            connect_kwargs["password"] = password
+        connect_kwargs = await self._build_connect_kwargs(
+            payload, password, connect_timeout,
+        )
 
         # `timeout_seconds` remains an IDLE timeout enforced inside
         # _run_command_full_blocking via channel.settimeout + exit-status
@@ -504,17 +489,7 @@ class SSHService:
             payload = integration
 
         password = await self._resolve_password(payload)
-
-        connect_kwargs: dict = {
-            "hostname": payload.host,
-            "port": payload.port,
-            "username": payload.username,
-            "timeout": 15,
-        }
-        if payload.private_key_path:
-            connect_kwargs["key_filename"] = payload.private_key_path
-        if password:
-            connect_kwargs["password"] = password
+        connect_kwargs = await self._build_connect_kwargs(payload, password, 15.0)
 
         await asyncio.to_thread(
             self._upload_file_blocking, payload, str(local_path), remote_path,
@@ -590,16 +565,7 @@ class SSHService:
             payload = integration
 
         password = await self._resolve_password(payload)
-        connect_kwargs: dict = {
-            "hostname": payload.host,
-            "port": payload.port,
-            "username": payload.username,
-            "timeout": 15.0,
-        }
-        if payload.private_key_path:
-            connect_kwargs["key_filename"] = payload.private_key_path
-        if password:
-            connect_kwargs["password"] = password
+        connect_kwargs = await self._build_connect_kwargs(payload, password, 15.0)
 
         await asyncio.to_thread(
             self._download_file_blocking, payload, remote_path, str(local_path), timeout_seconds, connect_kwargs
@@ -705,6 +671,126 @@ class SSHService:
             return password
         return None
 
+    async def _resolve_private_key_material(
+        self, payload: SSHIntegrationInput,
+    ) -> tuple[str | None, str | None]:
+        """Return ``(pem_text, passphrase)`` from SecretStore for ``payload``.
+
+        Both values default to ``None`` when the corresponding secret id is
+        unset. A configured id that resolves to no plaintext raises
+        :class:`ValidationError`, mirroring :meth:`_resolve_password`.
+        """
+        pem: str | None = None
+        passphrase: str | None = None
+        needs = payload.private_key_secret_id or payload.private_key_passphrase_secret_id
+        if not needs:
+            return None, None
+        async with async_session_scope(self.settings) as session:
+            if payload.private_key_secret_id:
+                pem = await self.secret_store.get_secret_by_id(
+                    session, payload.private_key_secret_id,
+                )
+                if not pem:
+                    raise ValidationError(
+                        f"Stored private-key secret {payload.private_key_secret_id} could not be loaded.",
+                    )
+            if payload.private_key_passphrase_secret_id:
+                passphrase = await self.secret_store.get_secret_by_id(
+                    session, payload.private_key_passphrase_secret_id,
+                )
+                if not passphrase:
+                    raise ValidationError(
+                        f"Stored private-key passphrase secret {payload.private_key_passphrase_secret_id} could not be loaded.",
+                    )
+        return pem, passphrase
+
+    @staticmethod
+    def _parse_private_key(pem: str, passphrase: str | None) -> paramiko.PKey:
+        """Parse a PEM/OpenSSH private key blob into a paramiko ``PKey``.
+
+        Tries the base ``PKey.from_private_key`` auto-detector first, then
+        falls back through the concrete key classes in the order most
+        common on modern hosts (Ed25519, RSA, ECDSA, DSS). Every parser
+        gets a fresh ``StringIO`` cursor -- ``from_private_key`` reads to
+        EOF and does not rewind.
+
+        Raises :class:`AuthenticationError` when every parser rejects the
+        material: either the passphrase is wrong or the blob is not one
+        of the four key formats paramiko understands. The narrow
+        ``(paramiko.SSHException, ValueError)`` catch keeps genuine
+        programming errors (``TypeError``, ``AttributeError``, ...)
+        surfacing untouched.
+        """
+        # ``DSSKey`` was removed from paramiko 5.x; append it only when
+        # the running paramiko still exposes it so operators on either
+        # side of that boundary get the same behaviour without a hard
+        # ``AttributeError`` at import.
+        parsers: list = [
+            paramiko.PKey,
+            paramiko.Ed25519Key,
+            paramiko.RSAKey,
+            paramiko.ECDSAKey,
+        ]
+        dss_key_cls = getattr(paramiko, "DSSKey", None)
+        if dss_key_cls is not None:
+            parsers.append(dss_key_cls)
+        password = passphrase or None
+        last_exc: Exception | None = None
+        for parser in parsers:
+            try:
+                return parser.from_private_key(io.StringIO(pem), password=password)
+            except (paramiko.SSHException, ValueError, TypeError) as exc:
+                # ``TypeError`` narrowly covers the paramiko 5.x quirk
+                # where ``PKey.from_private_key`` (the auto-detecting
+                # base call) forwards ``file_obj`` to a subclass
+                # ``__init__`` that never accepted it. Falling through
+                # to the concrete key classes still works there.
+                last_exc = exc
+                continue
+        raise AuthenticationError(
+            "private key could not be decrypted -- wrong passphrase or unsupported key format",
+        ) from last_exc
+
+    async def _build_connect_kwargs(
+        self,
+        payload: SSHIntegrationInput,
+        password: str | None,
+        connect_timeout: float,
+    ) -> dict:
+        """Assemble the ``paramiko.SSHClient.connect`` kwargs for ``payload``.
+
+        Single source of truth for the four SSH surfaces (exec, exec-full,
+        upload, download) -- historically each site inlined its own
+        password/key-file plumbing, so a change to key handling had to be
+        applied in four places and any drift silently degraded that one
+        surface. Contract:
+
+        * ``pkey`` takes priority: when ``private_key_secret_id`` resolves
+          to PEM material we parse it here and hand paramiko a ready
+          ``PKey``. This is the pasted-key path.
+        * ``key_filename`` is the legacy on-disk fallback used when only
+          ``private_key_path`` is set. Paramiko honours ``passphrase``
+          alongside ``key_filename`` to decrypt encrypted key files, so
+          we pass both.
+        * ``password`` is set when :meth:`_resolve_password` produced one.
+        """
+        pem, passphrase = await self._resolve_private_key_material(payload)
+        connect_kwargs: dict = {
+            "hostname": payload.host,
+            "port": payload.port,
+            "username": payload.username,
+            "timeout": connect_timeout,
+        }
+        if pem:
+            connect_kwargs["pkey"] = self._parse_private_key(pem, passphrase)
+        elif payload.private_key_path:
+            connect_kwargs["key_filename"] = payload.private_key_path
+            if passphrase:
+                connect_kwargs["passphrase"] = passphrase
+        if password:
+            connect_kwargs["password"] = password
+        return connect_kwargs
+
     @staticmethod
     def _to_ssh_integration(system: RegisteredSystem) -> SSHIntegrationInput:
         return SSHIntegrationInput(
@@ -715,6 +801,8 @@ class SSHService:
             distro=system.distro,
             description=system.description,
             private_key_path=system.private_key_path,
+            private_key_secret_id=system.private_key_secret_id,
+            private_key_passphrase_secret_id=system.private_key_passphrase_secret_id,
             password_secret_id=system.password_secret_id,
             known_hosts_path=system.known_hosts_path,
             host_key_fingerprint=system.host_key_fingerprint,

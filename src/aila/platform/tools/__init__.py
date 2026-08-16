@@ -10,6 +10,7 @@ from .pruner import ToolStoragePruneReport, prune_tool_storage
 from .registry import PermanentMemoryTool, SystemRegistryTool
 from .reporting import ReportWriteTool, TargetReportArtifactInput
 from .reports import ReportsQueryTool
+from .sandbox import SandboxExecTool
 from .secrets import SecretsManageTool
 from .ssh import SSHCommandTool
 
@@ -25,6 +26,7 @@ __all__ = [
     "ReportWriteTool",
     "ReportsQueryTool",
     "SSHCommandTool",
+    "SandboxExecTool",
     "SecretsManageTool",
     "SystemRegistryTool",
     "TargetReportArtifactInput",

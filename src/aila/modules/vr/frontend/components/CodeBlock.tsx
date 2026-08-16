@@ -1,8 +1,4 @@
-import { lazy, Suspense, useMemo, useState } from "react";
-
-const MonacoEditor = lazy(() =>
-  import("@monaco-editor/react").then((m) => ({ default: m.default })),
-);
+import { useMemo, useState, type CSSProperties } from "react";
 
 /** Detect language from file path or content heuristics. */
 function detectLanguage(path: string, content: string): string {
@@ -25,12 +21,6 @@ function detectLanguage(path: string, content: string): string {
   return "plaintext";
 }
 
-/** Compute line count for editor height. */
-function lineCount(text: string, max = 30, min = 3): number {
-  const lines = text.split("\n").length;
-  return Math.max(min, Math.min(lines, max));
-}
-
 interface CodeBlockProps {
   code: string;
   filePath?: string;
@@ -38,84 +28,107 @@ interface CodeBlockProps {
   className?: string;
 }
 
+const HEADER_STYLE: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "space-between",
+  gap: 8,
+  padding: "6px 10px",
+  background: "var(--surface-sunk)",
+  borderBottom: "1px solid var(--border-soft)",
+  fontSize: 10,
+  letterSpacing: "0.08em",
+};
+
+const PRE_STYLE: CSSProperties = {
+  margin: 0,
+  padding: 12,
+  fontSize: 11,
+  lineHeight: 1.5,
+  color: "var(--text-primary)",
+  background: "var(--surface-sunk)",
+  overflow: "auto",
+  maxHeight: 400,
+  whiteSpace: "pre",
+  fontFamily: "var(--font-mono)",
+};
+
+const FOOT_BTN_STYLE: CSSProperties = {
+  width: "100%",
+  padding: "4px 10px",
+  fontSize: 10,
+  letterSpacing: "0.08em",
+  color: "var(--text-muted)",
+  background: "var(--surface-sunk)",
+  borderTop: "1px solid var(--border-soft)",
+  borderRadius: 0,
+  cursor: "pointer",
+  textAlign: "center",
+  fontFamily: "var(--font-mono)",
+};
+
 /**
- * Monaco-powered read-only code viewer for source/decompiled code
- * in investigation turn cards. Lazy-loaded so Monaco's ~2MB bundle
- * doesn't block initial page render.
+ * Read-only code viewer rendered as a mock-language sunk-surface
+ * `<pre>` block. Displays optional header (path + language) and a
+ * collapse toggle for long snippets.
  */
 export function CodeBlock({ code: rawCode, filePath = "", address, className = "" }: CodeBlockProps) {
   // Strip indexer preamble like "[file extent: 10160 lines total; ...]"
   // and unescape \\n → newline, \\t → tab
   const code = useMemo(() => {
-    let cleaned = rawCode
+    return rawCode
       .replace(/^\[file extent:.*?\]\s*/i, "")
       .replace(/\\n/g, "\n")
       .replace(/\\t/g, "\t")
       .trim();
-    return cleaned;
   }, [rawCode]);
 
   const [collapsed, setCollapsed] = useState(code.length > 2000);
-  const displayCode = collapsed ? code.slice(0, 2000) + "\n// … truncated" : code;
+  const displayCode = collapsed ? code.slice(0, 2000) + "\n// \u2026 truncated" : code;
   const lang = useMemo(() => detectLanguage(filePath || address || "", code), [filePath, address, code]);
-  const height = lineCount(displayCode) * 19 + 10;
+
+  const label = filePath || address;
 
   return (
-    <div className={`rounded-md border border-border-default/40 overflow-hidden ${className}`}>
-      {(filePath || address) && (
-        <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-elevated/80 border-b border-border-default/40">
-          <span className="text-2xs font-mono text-foreground/80 truncate">
-            {filePath || address}
+    <div
+      className={className}
+      style={{
+        border: "1px solid var(--border-soft)",
+        borderRadius: 3,
+        background: "var(--surface-sunk)",
+        overflow: "hidden",
+      }}
+    >
+      {label && (
+        <div className="font-mono uppercase" style={HEADER_STYLE}>
+          <span
+            style={{
+              color: "var(--text-primary)",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {label}
           </span>
-          <span className="text-4xs font-mono text-text-muted uppercase tracking-wider shrink-0">
+          <span style={{ color: "var(--text-muted)", flexShrink: 0 }}>
             {lang}
           </span>
         </div>
       )}
-      <Suspense
-        fallback={
-          <pre className="p-3 text-2xs font-mono text-foreground/80 whitespace-pre-wrap bg-elevated/40">
-            {displayCode}
-          </pre>
-        }
-      >
-        <MonacoEditor
-          value={displayCode}
-          language={lang}
-          theme="vs-dark"
-          height={height}
-          options={{
-            readOnly: true,
-            minimap: { enabled: false },
-            scrollBeyondLastLine: false,
-            lineNumbers: "on",
-            lineNumbersMinChars: 3,
-            folding: false,
-            fontSize: 12,
-            fontFamily: "'Geist Mono', 'JetBrains Mono', 'Fira Code', monospace",
-            renderLineHighlight: "none",
-            overviewRulerLanes: 0,
-            hideCursorInOverviewRuler: true,
-            overviewRulerBorder: false,
-            scrollbar: {
-              vertical: "hidden",
-              horizontal: "auto",
-              verticalScrollbarSize: 0,
-            },
-            wordWrap: "on",
-            padding: { top: 8, bottom: 8 },
-            contextmenu: false,
-            domReadOnly: true,
-          }}
-        />
-      </Suspense>
+      <pre className="font-mono" style={PRE_STYLE}>
+        {displayCode}
+      </pre>
       {code.length > 2000 && (
         <button
           type="button"
           onClick={() => setCollapsed((v) => !v)}
-          className="w-full py-1 text-3xs font-mono uppercase tracking-wider text-text-muted hover:text-foreground bg-elevated/60 border-t border-border-default/40"
+          className="font-mono uppercase"
+          style={FOOT_BTN_STYLE}
         >
-          {collapsed ? `expand (+${(code.length - 2000).toLocaleString()} chars)` : "collapse"}
+          {collapsed
+            ? `expand (+${(code.length - 2000).toLocaleString()} chars)`
+            : "collapse"}
         </button>
       )}
     </div>

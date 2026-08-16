@@ -405,6 +405,10 @@ class TestLifespan:
         application = FastAPI()
         mock_platform = MagicMock()
         mock_platform._ensure_initialized = AsyncMock()
+        # Shutdown path awaits `platform._runtime.runtime_model.aclose()` when
+        # it is set. Leaving `_runtime` as an auto-generated MagicMock produces
+        # a non-awaitable MagicMock at that call site; None short-circuits.
+        mock_platform._runtime = None
         with patch("aila.api.app.AILAPlatform", return_value=mock_platform):
             async with lifespan(application):
                 assert hasattr(application.state, "start_time")
@@ -433,6 +437,7 @@ class TestLifespan:
         application = FastAPI()
         mock_platform = MagicMock()
         mock_platform._ensure_initialized = AsyncMock()
+        mock_platform._runtime = None
         with patch("aila.api.app.AILAPlatform", return_value=mock_platform):
             async with lifespan(application):
                 pass
@@ -471,6 +476,7 @@ class TestLifespan:
         application = FastAPI()
         mock_platform = MagicMock()
         mock_platform._ensure_initialized = AsyncMock()
+        mock_platform._runtime = None
         with patch("aila.api.app.AILAPlatform", return_value=mock_platform):
             async with lifespan(application):
                 pass
@@ -493,6 +499,7 @@ class TestLifespan:
         application = FastAPI()
         mock_platform = MagicMock()
         mock_platform._ensure_initialized = AsyncMock()
+        mock_platform._runtime = None
         with patch("aila.api.app.AILAPlatform", return_value=mock_platform):
             async with lifespan(application):
                 pass

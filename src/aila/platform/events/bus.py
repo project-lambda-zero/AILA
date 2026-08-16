@@ -27,13 +27,11 @@ isolation.
 """
 from __future__ import annotations
 
-import logging
 import threading
 from collections.abc import Callable
 from typing import Any
 
-from aila.platform.exceptions import AILAError
-
+from ._dispatch import safe_dispatch
 from .domain_events import DomainEvent
 
 __all__ = [
@@ -45,33 +43,7 @@ __all__ = [
     "unsubscribe",
 ]
 
-_log = logging.getLogger(__name__)
-
-
 SubscriberFn = Callable[[DomainEvent], None]
-
-
-# Same isolation policy as the PlatformEvent emitter (see
-# aila.platform.events.emitter._DESTINATION_ISOLATION_ERRORS). A
-# subscriber that raises one of these is logged + counted; the bus
-# continues to deliver to the remaining subscribers. BaseException
-# subclasses (KeyboardInterrupt, SystemExit) intentionally propagate.
-_SUBSCRIBER_ISOLATION_ERRORS: tuple[type[BaseException], ...] = (
-    RuntimeError,
-    OSError,
-    TimeoutError,
-    ValueError,
-    TypeError,
-    AttributeError,
-    KeyError,
-    IndexError,
-    LookupError,
-    ArithmeticError,
-    ImportError,
-    AssertionError,
-    ReferenceError,
-    AILAError,
-)
 
 
 class DomainEventBus:
@@ -127,25 +99,37 @@ class DomainEventBus:
 
         A subscriber failure is isolated: the remaining subscribers
         still receive the event, the exception is logged with full
-        traceback, and :meth:`failure_count` for the named subscriber
+        traceback, and :meth:`failure_counts` for the named subscriber
         increments. Snapshot under the lock so a concurrent subscribe
-        cannot mutate the list mid-iteration.
+        cannot mutate the list mid-iteration. The isolation guard and
+        exception tuple live in
+        :mod:`aila.platform.events._dispatch` so this bus and
+        :class:`aila.platform.events.emitter.EventEmitter` cannot
+        drift.
         """
         with self._lock:
             snapshot = list(self._subscribers)
+        description = event.event_type or event.__class__.__name__
         for name, fn in snapshot:
-            try:
-                fn(event)
-            except _SUBSCRIBER_ISOLATION_ERRORS as exc:
-                _log.warning(
-                    "domain-event subscriber %r raised on %s: %s",
-                    name,
-                    event.event_type or event.__class__.__name__,
-                    exc.__class__.__name__,
-                    exc_info=True,
-                )
-                with self._lock:
-                    self._failures[name] = self._failures.get(name, 0) + 1
+            safe_dispatch(
+                name,
+                fn,
+                event,
+                log_label="domain-event subscriber",
+                event_description=description,
+                on_failure=self._record_subscriber_failure,
+            )
+
+    def _record_subscriber_failure(self, name: str, _exc: BaseException) -> None:
+        """Bump the named subscriber's failure counter under the bus lock.
+
+        Invoked by :func:`safe_dispatch` after the guard has already
+        logged the exception. The lock guards the counter map so a
+        concurrent :meth:`failure_counts` snapshot sees a consistent
+        integer, matching the pre-extraction behaviour.
+        """
+        with self._lock:
+            self._failures[name] = self._failures.get(name, 0) + 1
 
     def failure_counts(self) -> dict[str, int]:
         """Snapshot of per-subscriber failure counts. Test/telemetry hook."""

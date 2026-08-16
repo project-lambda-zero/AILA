@@ -2,7 +2,6 @@
 
 Requirements covered:
   MOD-09 (resume PAUSED→QUEUED), MOD-12 (has_checkpoint field), MOD-13 (group_id scoping)
-  INFRA-06 (result_path is Text/path not blob)
   TASK-08, TASK-09 (SSE endpoint returns text/event-stream)
 
 Pattern: use async_client from conftest.py (ASGITransport, no TestClient),
@@ -27,10 +26,10 @@ def _seed_task(
     group_id: str = "reader",
     user_id: str = "user-test-001",
     track: str = "vuln",
-    result_path: str | None = None,
 ) -> TaskRecord:
     """Seed a TaskRecord directly into the test DB. Returns the created record."""
     # Phase 179: legacy cursor column dropped from TaskRecord.
+    # #144: result_path dropped by migration 126.
     record = TaskRecord(
         track=track,
         fn_path="aila.modules.vulnerability.tasks.scan",
@@ -38,7 +37,6 @@ def _seed_task(
         status=status,
         user_id=user_id,
         group_id=group_id,
-        result_path=result_path,
     )
     with session_scope() as session:
         session.add(record)
@@ -164,25 +162,22 @@ async def test_get_task_by_id_wrong_group_returns_404(
 
 
 # ---------------------------------------------------------------------------
-# 5. test_task_response_has_result_path_and_has_checkpoint (INFRA-06, MOD-12)
+# 5. test_task_response_has_checkpoint (MOD-12; #144 dropped result_path)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_task_response_has_result_path_and_has_checkpoint(
+async def test_task_response_has_checkpoint(
     async_client: AsyncClient, admin_token: str, test_db
 ) -> None:
-    """TaskResponse includes result_path (INFRA-06) and has_checkpoint (Phase 179).
+    """TaskResponse includes has_checkpoint (Phase 179).
 
     Phase 179: has_checkpoint is now always False (legacy cursor column
     dropped; cursor state is in workflow_state_cursor and will surface via
-    Phase 180's wiring).
+    Phase 180's wiring). #144 dropped the retired ``result_path`` field
+    entirely; ``extra='forbid'`` guarantees no consumer can revive it.
     """
-    task = _seed_task(
-        status=TaskStatus.DONE,
-        group_id="admin",
-        result_path="/reports/vuln_scan_001.json",
-    )
+    task = _seed_task(status=TaskStatus.DONE, group_id="admin")
 
     response = await async_client.get(
         f"/tasks/{task.id}",
@@ -191,13 +186,12 @@ async def test_task_response_has_result_path_and_has_checkpoint(
     assert response.status_code == 200
     data = response.json()
 
-    # INFRA-06: result_path is a filesystem path string, not a blob
-    assert "result_path" in data, "TaskResponse must include result_path (INFRA-06)"
-    assert data["result_path"] == "/reports/vuln_scan_001.json"
-
     # Phase 179: has_checkpoint field retained for wire compatibility; always False.
     assert "has_checkpoint" in data
     assert data["has_checkpoint"] is False
+
+    # #144: result_path is gone from the response shape entirely.
+    assert "result_path" not in data
 
 
 # ---------------------------------------------------------------------------

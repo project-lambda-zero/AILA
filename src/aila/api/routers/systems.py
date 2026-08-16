@@ -7,7 +7,6 @@ List endpoint returns enriched items with connectivity, tags, scan status, and t
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import math
 import time as _time
@@ -16,6 +15,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import Text, cast
+from sqlalchemy import text as sa_text
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import func, select
 
@@ -155,29 +155,52 @@ async def _build_scan_map(session: object, system_names: list[str]) -> dict[str,
 
     Uses the route_json string-contains pattern established in get_system() (D-12).
     Returns the most recent completed_at per system name.
+
+    #176: previously loaded every ``WorkflowRunRecord`` into Python and did
+    O(N*M) ``json.dumps`` + substring matching. The DISTINCT ON query below
+    performs the name match and per-name "most recent" selection in a single
+    round-trip -- only rows whose serialized ``route_json`` contains at least
+    one supplied system name are considered, and Postgres returns exactly one
+    row per matched name (the one with the greatest ``completed_at``).
+
+    ``strpos(route_json::text, name) > 0`` preserves the pre-JSONB
+    substring semantics without LIKE wildcard escaping. Postgres serializes
+    JSONB in a compact form (no whitespace, canonical key order) whereas
+    ``json.dumps`` used the Python dict's insertion order; for realistic
+    system-name identifiers the string appears verbatim in both encodings
+    so the observable result is unchanged.
     """
     if not system_names:
         return {}
 
     try:
-        all_runs = (await session.exec(select(WorkflowRunRecord))).all()  # type: ignore[union-attr]
+        rows = (await session.exec(  # type: ignore[union-attr]
+            sa_text(
+                "SELECT DISTINCT ON (n.name) n.name AS name, "
+                "       w.completed_at AS completed_at, "
+                "       w.status AS status "
+                "FROM unnest(CAST(:names AS text[])) AS n(name) "
+                "JOIN workflowrunrecord w "
+                "  ON strpos(CAST(w.route_json AS text), n.name) > 0 "
+                "ORDER BY n.name, w.completed_at DESC NULLS LAST"
+            ).bindparams(names=list(system_names))
+        )).all()
     except Exception:
         _log.debug("scan_map query failed", exc_info=True)
         return {}
 
-    # Group by system name match (string-contains, same trade-off as
-    # get_system). #45: ``route_json`` is now JSONB and arrives as a dict via
-    # SQLAlchemy on both drivers; serialize it back to text so the substring
-    # semantics are byte-identical to the pre-JSONB ``Text``-column behavior.
     result: dict[str, tuple[object, str | None]] = {}
-    for run in all_runs:
-        payload = run.route_json if isinstance(run.route_json, dict) else {}
-        route = json.dumps(payload) if payload else ""
-        for name in system_names:
-            if name in route:
-                existing = result.get(name)
-                if existing is None or (run.completed_at and (existing[0] is None or run.completed_at > existing[0])):
-                    result[name] = (run.completed_at, run.status)
+    for row in rows:
+        # Row is a SQLAlchemy Row -- support both mapping and tuple access
+        # depending on session driver.
+        mapping = row._mapping if hasattr(row, "_mapping") else None
+        if mapping is not None:
+            name = mapping["name"]
+            completed_at = mapping["completed_at"]
+            status_ = mapping["status"]
+        else:  # pragma: no cover -- defensive
+            name, completed_at, status_ = row[0], row[1], row[2]
+        result[name] = (completed_at, status_)
     return result
 
 
@@ -452,6 +475,8 @@ async def get_system_heartbeat(
                 "username": sys_record.username,
                 "port": sys_record.port,
                 "private_key_path": sys_record.private_key_path,
+                "private_key_secret_id": sys_record.private_key_secret_id,
+                "private_key_passphrase_secret_id": sys_record.private_key_passphrase_secret_id,
                 "password_secret_id": sys_record.password_secret_id,
                 "known_hosts_path": sys_record.known_hosts_path,
                 "host_key_fingerprint": sys_record.host_key_fingerprint,
@@ -621,33 +646,49 @@ async def get_system_scans(
     """Return scan history for a system (workflow runs linked to this system)."""
     from aila.api.schemas.reports import ReportSummaryResponse
 
-    async def _query() -> tuple[ManagedSystemRecord | None, list[WorkflowRunRecord]]:
+    async def _query() -> tuple[ManagedSystemRecord | None, int, list[WorkflowRunRecord]]:
         async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
             sys_record = (await session.exec(
                 select(ManagedSystemRecord).where(ManagedSystemRecord.id == system_id)
             )).first()
             if sys_record is None:
-                return None, []
-            stmt = select(WorkflowRunRecord).order_by(WorkflowRunRecord.created_at.desc())  # type: ignore[attr-defined]  # SQLModel column expression
-            all_runs = list((await session.exec(stmt)).all())
-            # #45: JSONB round-trip through json.dumps preserves the pre-JSONB
-            # substring-match semantics (route_json arrives as a dict).
-            matching = [
-                r for r in all_runs
-                if sys_record.name in json.dumps(r.route_json if isinstance(r.route_json, dict) else {})
-            ]
-            return sys_record, matching
+                return None, 0, []
 
-    sys_record, runs = await _query()
+            # #176: push the name-match, count, and page into SQL. Previously
+            # loaded every ``WorkflowRunRecord`` into Python and filtered by
+            # ``sys_record.name in json.dumps(route_json)``; this is the same
+            # substring semantics expressed as ``strpos(...) > 0`` on the
+            # JSONB text form (Postgres serializes JSONB compactly with
+            # canonical key order, which contains realistic system-name
+            # identifiers verbatim).
+            match_predicate = sa_text(
+                "strpos(CAST(route_json AS text), :sys_name) > 0"
+            ).bindparams(sys_name=sys_record.name)
+
+            count_stmt = (
+                select(func.count(WorkflowRunRecord.id))
+                .where(match_predicate)
+            )
+            total_ = int((await session.exec(count_stmt)).one())
+
+            offset = (page - 1) * page_size
+            page_stmt = (
+                select(WorkflowRunRecord)
+                .where(match_predicate)
+                .order_by(WorkflowRunRecord.created_at.desc())  # type: ignore[attr-defined]
+                .offset(offset)
+                .limit(page_size)
+            )
+            page_runs = list((await session.exec(page_stmt)).all())
+            return sys_record, total_, page_runs
+
+    sys_record, total, page_runs = await _query()
     if sys_record is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"System {system_id} not found -- verify the ID via GET /systems",
         )
 
-    total = len(runs)
-    offset = (page - 1) * page_size
-    page_runs = runs[offset : offset + page_size]
     items = [
         ReportSummaryResponse(
             run_id=r.id,
@@ -701,16 +742,31 @@ async def import_systems_csv(
 
                 private_key_secret_id: str | None = None
                 if item.private_key:
-                    secret_rec = await secret_store.store(
+                    secret_rec = await secret_store.upsert_secret(
                         session, scope="ssh",
                         secret_key=f"system.{item.name}.private_key",
                         plaintext=item.private_key,
                     )
                     private_key_secret_id = secret_rec.id
 
+                # #40-8: the previous CSV import silently dropped
+                # ``private_key_passphrase`` -- the request accepted it but
+                # no code path persisted it, so encrypted PEMs imported
+                # from CSV could never be unlocked at scan time. Persist
+                # under the SecretStore key convention shared with the
+                # single-system POST/PUT paths below.
+                private_key_passphrase_secret_id: str | None = None
+                if item.private_key_passphrase:
+                    secret_rec = await secret_store.upsert_secret(
+                        session, scope="ssh",
+                        secret_key=f"system.{item.name}.private_key_passphrase",
+                        plaintext=item.private_key_passphrase,
+                    )
+                    private_key_passphrase_secret_id = secret_rec.id
+
                 password_secret_id: str | None = None
                 if item.password:
-                    secret_rec = await secret_store.store(
+                    secret_rec = await secret_store.upsert_secret(
                         session, scope="ssh",
                         secret_key=f"system.{item.name}.password",
                         plaintext=item.password,
@@ -726,6 +782,7 @@ async def import_systems_csv(
                     distro=item.distro,
                     description=item.description,
                     private_key_secret_id=private_key_secret_id,
+                    private_key_passphrase_secret_id=private_key_passphrase_secret_id,
                     password_secret_id=password_secret_id,
                 )
                 session.add(record)
@@ -806,6 +863,21 @@ async def create_system(
                 )
                 private_key_secret_id = secret_rec.id
 
+            # Encrypt private-key passphrase if provided. Prior to this
+            # persistence the API silently accepted the field then dropped
+            # it, so encrypted PEMs registered here could never be
+            # unlocked by ``paramiko.SSHClient.connect`` and every scan
+            # against such a system failed at auth time.
+            private_key_passphrase_secret_id: str | None = None
+            if req.private_key_passphrase:
+                secret_rec = await secret_store.upsert_secret(
+                    session,
+                    scope="ssh",
+                    secret_key=f"system.{req.name}.private_key_passphrase",
+                    plaintext=req.private_key_passphrase,
+                )
+                private_key_passphrase_secret_id = secret_rec.id
+
             # Encrypt password if provided
             password_secret_id: str | None = None
             if req.password:
@@ -826,6 +898,7 @@ async def create_system(
                 distro=req.distro,
                 description=req.description,
                 private_key_secret_id=private_key_secret_id,
+                private_key_passphrase_secret_id=private_key_passphrase_secret_id,
                 password_secret_id=password_secret_id,
             )
             session.add(record)
@@ -899,36 +972,70 @@ async def update_system(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"System {system_id} not found -- verify the ID via GET /systems",
                 )
+            # ``exclude_none=True`` for the setattr loop preserves the
+            # existing contract for scalar columns (a missing or null
+            # column is left unchanged instead of nulling e.g. distro).
+            # For the three encrypted secret fields we need to distinguish
+            # "not sent" from "explicitly sent null", so we also compute
+            # the ``exclude_unset`` view and consult it below: a present-
+            # and-null value means the caller wants the secret cleared.
             update_data = req.model_dump(exclude_none=True)
+            raw_update = req.model_dump(exclude_unset=True)
 
             from aila.storage.secrets import SecretStore
             secret_store = SecretStore()
 
-            # Handle private key content -- encrypt and store as secret
-            if "private_key" in update_data:
-                plaintext = update_data.pop("private_key")
-                secret_rec = await secret_store.store(
-                    session, scope="ssh",
-                    secret_key=f"system.{record.name}.private_key",
-                    plaintext=plaintext,
-                    secret_id=record.private_key_secret_id,
-                )
-                record.private_key_secret_id = secret_rec.id
+            async def _apply_secret(
+                field_name: str,
+                secret_key_suffix: str,
+                current_id: str | None,
+            ) -> tuple[bool, str | None]:
+                """Return ``(changed, new_secret_id)`` for one secret field.
 
-            # Handle password encryption
-            if "password" in update_data:
-                plaintext = update_data.pop("password")
-                secret_rec = await secret_store.store(
-                    session, scope="ssh",
-                    secret_key=f"system.{record.name}.password",
-                    plaintext=plaintext,
-                    secret_id=record.password_secret_id,
+                ``changed`` is True when the caller sent the field (either
+                a value to upsert or a null to clear); the caller then
+                writes ``new_secret_id`` back onto the record. When the
+                caller did not send the field this is a no-op.
+                """
+                if field_name not in raw_update:
+                    return False, current_id
+                value = raw_update[field_name]
+                update_data.pop(field_name, None)
+                if value is None or value == "":
+                    if current_id:
+                        await secret_store.delete_secret(session, secret_id=current_id)
+                    return True, None
+                secret_rec = await secret_store.upsert_secret(
+                    session,
+                    scope="ssh",
+                    secret_key=f"system.{record.name}.{secret_key_suffix}",
+                    plaintext=value,
+                    secret_id=current_id,
                 )
-                record.password_secret_id = secret_rec.id
+                return True, secret_rec.id
 
-            # Handle passphrase -- not a direct DB field, pop to avoid setattr
-            if "private_key_passphrase" in update_data:
-                update_data.pop("private_key_passphrase")
+            changed, new_id = await _apply_secret(
+                "private_key", "private_key", record.private_key_secret_id,
+            )
+            if changed:
+                record.private_key_secret_id = new_id
+
+            # Persist / clear the private-key passphrase alongside the
+            # PEM. Prior code path popped the field without storing it,
+            # so encrypted keys stayed unusable after every update.
+            changed, new_id = await _apply_secret(
+                "private_key_passphrase",
+                "private_key_passphrase",
+                record.private_key_passphrase_secret_id,
+            )
+            if changed:
+                record.private_key_passphrase_secret_id = new_id
+
+            changed, new_id = await _apply_secret(
+                "password", "password", record.password_secret_id,
+            )
+            if changed:
+                record.password_secret_id = new_id
 
             for field, value in update_data.items():
                 setattr(record, field, value)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 from ..config import ApplicationSettings
 from ..contracts._common import ActionId, JsonObject
@@ -87,6 +87,23 @@ class ModuleRouteSpec:
 
 
 UNROUTABLE_ACTION_ID: ActionId = action_id_for("platform", "unknown_request")
+
+
+ModuleKind = Literal["reasoning", "pipeline"]
+"""Machine-readable classifier for a module's execution mode (RFC #208 P2).
+
+A module declares which of two execution modes it implements so cross-module
+capability routing can enumerate every registered module without concluding
+that an empty ``reasoning_strategies()`` return is a configuration defect.
+
+- ``"reasoning"`` -- drives the platform ``CyberReasoningEngine`` with a
+  hypothesis-based investigation loop. Publishes non-empty
+  ``reasoning_strategies()`` and ``reasoning_domain_profiles()``. Today:
+  ``vr``, ``forensics``, ``malware``.
+- ``"pipeline"`` -- runs a deterministic scoring / aggregation pipeline over
+  live data feeds and never enters the reasoning engine; declares no
+  reasoning strategies. Today: ``vulnerability``.
+"""
 
 
 @dataclass(frozen=True, slots=True)
@@ -376,16 +393,32 @@ class ModuleProtocol(Protocol):
         """
         return {"items": [], "total": 0}
 
-    async def report_count(self, run_id: str, session: Any) -> dict[str, Any]:
+    async def report_count(
+        self,
+        run_id: str,
+        session: Any,
+        *,
+        team_id: str | None = None,
+    ) -> dict[str, Any]:
         """Return semantic count breakdown for a report owned by this module (optional).
 
-        Called by GET /reports/{run_id}/count. The vulnerability module returns
-        severity breakdown + kev_count. Modules that do not own this run_id
+        Called by GET /reports/{run_id}/count and by the platform
+        dashboard aggregator. The vulnerability module returns severity
+        breakdown + kev_count. Modules that do not own this run_id
         should return {} without raising.
 
         Args:
-            run_id: WorkflowRunRecord primary key.
+            run_id: WorkflowRunRecord primary key. Dashboard aggregator
+                passes an empty string when it wants a module-wide
+                summary (each module decides what that means).
             session: Active AsyncSession.
+            team_id: Caller's team id (#36). When provided, implementations
+                MUST scope aggregate queries to that team so a per-team
+                dashboard cannot leak counts from other teams. ``None``
+                means god-tier (TEAM-06) and no team filter is applied.
+                Every dashboard caller passes ``team_id``, so silently
+                accepting the kwarg is required -- an implementation that
+                omits it raises ``TypeError`` on every dashboard load.
 
         Returns:
             Dict of count fields (e.g. {"total_findings": 55, "critical": 5}).
@@ -477,13 +510,59 @@ class ModuleProtocol(Protocol):
         """
         return {}
 
+    async def fleet_severity_counts(
+        self, system_ids: list[int], session: Any,
+    ) -> dict[int, dict[str, int]]:
+        """Return per-severity counts per system_id for the given fleet slice.
+
+        Companion to ``fleet_severity_summary`` (which collapses to a single
+        top-severity label). This method preserves the full distribution so
+        the topology overlay can render, e.g., critical=1 AND high=1 on a
+        single system. The systems list endpoint continues to use the
+        top-severity summary; only overlays that display multi-severity
+        counts should call this.
+
+        Args:
+            system_ids: List of ManagedSystemRecord primary keys.
+            session: Active AsyncSession.
+
+        Returns:
+            Dict mapping system_id to a ``{severity_slot: count}`` mapping
+            using the topology ``SeverityCounts`` slots
+            (``critical`` / ``high`` / ``medium`` / ``low``). Omit a
+            system_id if it has no findings. Return ``{}`` if the module
+            has no data.
+        """
+        return {}
+
+    def module_kind(self) -> ModuleKind:
+        """Return the module's execution-mode classifier (RFC #208 P2, issue #138).
+
+        Two kinds today (see :data:`ModuleKind`):
+
+        - ``"reasoning"`` -- the safe default; module drives the platform
+          ``CyberReasoningEngine`` and publishes non-empty
+          ``reasoning_strategies()`` / ``reasoning_domain_profiles()``.
+          ``vr``, ``forensics``, and ``malware`` all inherit this default.
+        - ``"pipeline"`` -- deterministic aggregation / scoring module
+          that never enters the reasoning engine; declares no reasoning
+          surface. ``vulnerability`` overrides to this value.
+
+        The classifier is machine-readable so cross-module capability routing
+        can enumerate every module without treating an empty
+        ``reasoning_strategies()`` return as a defect. OPTIONAL.
+        """
+        return "reasoning"
+
     def reasoning_strategies(self) -> list[ReasoningStrategyDeclaration]:
         """Return the reasoning strategy families this module publishes.
 
         Collected by the platform builder at load into the platform
         StrategyRegistry. The platform owns only the ``generic`` family;
         every domain-specific family is module-declared. OPTIONAL --
-        defaults to none.
+        defaults to none. Modules that return an empty list SHOULD also
+        override ``module_kind()`` to ``"pipeline"`` so the empty return
+        is machine-readable as intentional.
         """
         return []
 

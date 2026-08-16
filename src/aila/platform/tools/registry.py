@@ -179,6 +179,8 @@ class SystemRegistryTool(Tool):
             distro=record.distro,
             description=record.description,
             private_key_path=record.private_key_path,
+            private_key_secret_id=record.private_key_secret_id,
+            private_key_passphrase_secret_id=record.private_key_passphrase_secret_id,
             password_secret_id=record.password_secret_id,
             known_hosts_path=record.known_hosts_path,
             host_key_fingerprint=record.host_key_fingerprint,

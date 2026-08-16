@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { DataGrid } from "@/components/aila/mock";
 
 import { useRegistryAnalysis } from "../queries";
 
@@ -22,23 +23,33 @@ type RegTab =
 interface RegTabDef {
   id: RegTab;
   label: string;
-  icon: string;
 }
 
 const REG_TABS: RegTabDef[] = [
-  { id: "autoruns", label: "Autoruns", icon: "▶" },
-  { id: "services", label: "Services", icon: "⚙" },
-  { id: "software", label: "Software", icon: "📦" },
-  { id: "users", label: "User Accounts", icon: "👤" },
-  { id: "usb", label: "USB History", icon: "🔌" },
-  { id: "recent", label: "Recent Docs", icon: "📋" },
-  { id: "network", label: "Network", icon: "🌐" },
-  { id: "shellbags", label: "ShellBags", icon: "📂" },
-  { id: "amcache", label: "AmCache", icon: "💾" },
-  { id: "shimcache", label: "ShimCache", icon: "🔄" },
-  { id: "bam", label: "BAM", icon: "📊" },
-  { id: "security", label: "Security Pkgs", icon: "🔒" },
+  { id: "autoruns", label: "Autoruns" },
+  { id: "services", label: "Services" },
+  { id: "software", label: "Software" },
+  { id: "users", label: "User Accounts" },
+  { id: "usb", label: "USB History" },
+  { id: "recent", label: "Recent Docs" },
+  { id: "network", label: "Network" },
+  { id: "shellbags", label: "ShellBags" },
+  { id: "amcache", label: "AmCache" },
+  { id: "shimcache", label: "ShimCache" },
+  { id: "bam", label: "BAM" },
+  { id: "security", label: "Security Pkgs" },
 ];
+
+const INPUT_STYLE: React.CSSProperties = {
+  height: 26,
+  padding: "0 10px",
+  fontSize: 11,
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  color: "var(--text-primary)",
+  borderRadius: 3,
+  minWidth: 220,
+};
 
 export function RegistryViewer({ projectId }: { projectId: string }) {
   const { data: registry, isLoading, isError } = useRegistryAnalysis(projectId);
@@ -48,9 +59,18 @@ export function RegistryViewer({ projectId }: { projectId: string }) {
 
   if (isError) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow>
-        <p className="text-sm text-text-danger">Failed to load registry analysis.</p>
-      </AilaCard>
+      <WindowPanel
+        title="registry"
+        tone="warn"
+        status="forensics ; registry unavailable"
+      >
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--accent)" }}
+        >
+          Failed to load registry analysis.
+        </p>
+      </WindowPanel>
     );
   }
 
@@ -71,67 +91,124 @@ export function RegistryViewer({ projectId }: { projectId: string }) {
     security: registry.security_packages,
   };
 
-  const totalItems = Object.values(dataMap).reduce((sum, arr) => sum + arr.length, 0);
+  const totalItems = Object.values(dataMap).reduce(
+    (sum, arr) => sum + arr.length,
+    0,
+  );
 
   if (totalItems === 0) {
     return (
-      <AilaCard  techBorder glow>
-        <p className="text-sm text-text-muted text-center py-8">
-          No registry data available. This project may not contain a Windows disk image.
+      <WindowPanel
+        title="registry"
+        tone="muted"
+        status="forensics ; no windows hive"
+      >
+        <p
+          className="font-mono"
+          style={{
+            fontSize: 11,
+            color: "var(--text-muted)",
+            textAlign: "center",
+            padding: "24px 0",
+          }}
+        >
+          No registry data available. This project may not contain a Windows
+          disk image.
         </p>
-      </AilaCard>
+      </WindowPanel>
     );
   }
 
   const activeData = dataMap[activeTab];
+  const activeLabel = REG_TABS.find((t) => t.id === activeTab)?.label ?? "";
 
   return (
-    <div className="space-y-0">
-      {/* Sub-tab bar */}
-      <div className="flex flex-wrap gap-0.5 bg-surface-secondary rounded-t-lg p-1 border border-b-0 border-border">
-        {REG_TABS.map((tab) => {
-          const count = dataMap[tab.id].length;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                activeTab === tab.id
-                  ? "bg-surface text-foreground shadow-sm border border-border"
-                  : "text-text-muted hover:text-foreground hover:bg-surface/50"
-              }`}
-            >
-              <span>{tab.icon}</span>
-              <span>{tab.label}</span>
-              {count > 0 && (
-                <span className={`ml-1 px-1.5 py-0.5 rounded-full text-3xs font-bold ${
-                  activeTab === tab.id
-                    ? "bg-primary/10 text-primary"
-                    : "bg-surface-secondary text-text-muted"
-                }`}>
-                  {count}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
+    <WindowPanel
+      title="registry"
+      status={`hives ; ${totalItems} entries across ${REG_TABS.length} views`}
+    >
+      <div className="space-y-3">
+        {/* Sub-tab bar -- mock language chip strip. */}
+        <div className="flex flex-wrap" style={{ gap: 4 }}>
+          {REG_TABS.map((tab) => {
+            const count = dataMap[tab.id].length;
+            const active = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveTab(tab.id)}
+                className="font-mono uppercase"
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  height: 24,
+                  padding: "0 10px",
+                  fontSize: 9.5,
+                  letterSpacing: "0.08em",
+                  borderRadius: 3,
+                  color: active ? "var(--text-on-accent)" : "var(--text-muted)",
+                  background: active
+                    ? "var(--accent)"
+                    : "var(--surface-sunk)",
+                  border: `1px solid ${
+                    active ? "var(--accent)" : "var(--border-soft)"
+                  }`,
+                  cursor: "pointer",
+                }}
+              >
+                <span>{tab.label}</span>
+                {count > 0 && (
+                  <span
+                    style={{
+                      padding: "1px 5px",
+                      fontSize: 8.5,
+                      borderRadius: 2,
+                      background: active
+                        ? "color-mix(in srgb, var(--text-on-accent) 20%, transparent)"
+                        : "var(--surface-card)",
+                      color: active
+                        ? "var(--text-on-accent)"
+                        : "var(--text-faint)",
+                      border: active
+                        ? "1px solid color-mix(in srgb, var(--text-on-accent) 30%, transparent)"
+                        : "1px solid var(--border-faint)",
+                    }}
+                  >
+                    {count}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
 
-      {/* Data display */}
-      <div className="border border-border rounded-b-lg bg-surface text-foreground">
+        {/* Data display */}
         {activeData.length === 0 ? (
-          <div className="py-12 text-center">
-            <p className="text-sm text-text-muted">
-              No {REG_TABS.find((t) => t.id === activeTab)?.label.toLowerCase()} data found.
+          <div
+            style={{
+              padding: "40px 0",
+              textAlign: "center",
+            }}
+          >
+            <p
+              className="font-mono"
+              style={{ fontSize: 11, color: "var(--text-muted)" }}
+            >
+              No {activeLabel.toLowerCase()} data found.
             </p>
           </div>
         ) : (
           <RegistryTable rows={activeData} />
         )}
       </div>
-    </div>
+    </WindowPanel>
   );
+}
+
+interface RegistryRow extends Record<string, unknown> {
+  __idx: number;
 }
 
 function RegistryTable({ rows }: { rows: Record<string, unknown>[] }) {
@@ -139,77 +216,127 @@ function RegistryTable({ rows }: { rows: Record<string, unknown>[] }) {
   const [expandedRow, setExpandedRow] = useState<number | null>(null);
 
   const columns = Object.keys(rows[0] ?? {}).filter(
-    (k) => typeof rows[0][k] !== "object"
+    (k) => typeof rows[0][k] !== "object",
   );
 
   const filtered = filterText
     ? rows.filter((row) =>
         columns.some((col) =>
-          String(row[col] ?? "").toLowerCase().includes(filterText.toLowerCase())
-        )
+          String(row[col] ?? "")
+            .toLowerCase()
+            .includes(filterText.toLowerCase()),
+        ),
       )
     : rows;
 
+  const gridColumns = [
+    { label: "#", width: "40px" },
+    ...columns.map((col) => ({
+      label: col,
+      width: "minmax(0, 1fr)" as const,
+    })),
+  ];
+
+  const capped: RegistryRow[] = filtered.slice(0, 500).map((row, i) => ({
+    ...row,
+    __idx: i,
+  }));
+
   return (
-    <div>
-      <div className="px-3 py-2 border-b border-border bg-surface-secondary/50">
+    <div className="space-y-2">
+      <div className="flex items-center" style={{ gap: 12 }}>
         <input
           aria-label="Search registry data"
           type="text"
-          placeholder="Search registry data..."
+          placeholder="search registry data..."
           value={filterText}
           onChange={(e) => setFilterText(e.target.value)}
-          className="w-full max-w-xs px-2.5 py-1 text-xs rounded border border-border bg-surface text-foreground placeholder:text-text-muted focus:outline-none focus:border-primary"
+          className="font-mono"
+          style={INPUT_STYLE}
         />
-        <span className="ml-3 text-3xs text-text-muted">
+        <span
+          className="font-mono"
+          style={{ fontSize: 9.5, color: "var(--text-faint)" }}
+        >
           {filtered.length} of {rows.length} entries
         </span>
       </div>
-      <div className="overflow-x-auto overflow-y-auto" style={{ maxHeight: 600 }}>
-        <table className="w-full text-xs">
-          <thead className="bg-surface-secondary sticky top-0 z-10">
-            <tr>
-              <th className="text-left px-3 py-2 text-text-muted font-medium w-8">#</th>
-              {columns.map((col) => (
-                <th key={col} className="text-left px-3 py-2 text-text-muted font-medium whitespace-nowrap">
-                  {col}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.slice(0, 500).map((row, i) => (
-              <>
-                <tr
-                  key={i}
-                  onClick={() => setExpandedRow(expandedRow === i ? null : i)}
-                  className="border-t border-border hover:bg-surface-secondary/30 cursor-pointer"
-                >
-                  <td className="px-3 py-1.5 text-text-muted font-mono">{i + 1}</td>
-                  {columns.map((col) => (
-                    <td
-                      key={col}
-                      className="px-3 py-1.5 text-foreground font-mono whitespace-nowrap truncate max-w-xs"
-                      title={String(row[col] ?? "")}
-                    >
-                      {String(row[col] ?? "\u2014")}
-                    </td>
-                  ))}
-                </tr>
-                {expandedRow === i && (
-                  <tr key={`${i}-detail`} className="border-t border-border/50">
-                    <td colSpan={columns.length + 1} className="px-4 py-3 bg-surface-secondary/20">
-                      <pre className="text-3xs font-mono text-foreground whitespace-pre-wrap break-all max-h-48 overflow-y-auto">
-                        {JSON.stringify(row, null, 2)}
-                      </pre>
-                    </td>
-                  </tr>
+      <div
+        style={{
+          overflowX: "auto",
+          overflowY: "auto",
+          maxHeight: 600,
+        }}
+        aria-label="Registry entries"
+      >
+        <DataGrid<RegistryRow>
+          columns={gridColumns}
+          rows={capped}
+          getKey={(r) => r.__idx}
+          onRowClick={(r) =>
+            setExpandedRow(expandedRow === r.__idx ? null : r.__idx)
+          }
+          renderCells={(row) => [
+            <span
+              key="idx"
+              className="font-mono"
+              style={{ fontSize: 10, color: "var(--text-faint)" }}
+            >
+              {row.__idx + 1}
+            </span>,
+            ...columns.map((col) => (
+              <Fragment key={col}>
+                {expandedRow === row.__idx ? (
+                  <span
+                    className="font-mono whitespace-pre-wrap break-all"
+                    style={{
+                      fontSize: 10,
+                      color: "var(--text-primary)",
+                    }}
+                    title={String(row[col] ?? "")}
+                  >
+                    {String(row[col] ?? "\u2014")}
+                  </span>
+                ) : (
+                  <span
+                    className="font-mono truncate"
+                    style={{
+                      fontSize: 10,
+                      color: "var(--text-primary)",
+                      display: "block",
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                    title={String(row[col] ?? "")}
+                  >
+                    {String(row[col] ?? "\u2014")}
+                  </span>
                 )}
-              </>
-            ))}
-          </tbody>
-        </table>
+              </Fragment>
+            )),
+          ]}
+        />
       </div>
+      {expandedRow !== null && capped[expandedRow] && (
+        <pre
+          className="font-mono whitespace-pre-wrap break-all"
+          style={{
+            padding: 12,
+            fontSize: 10,
+            lineHeight: 1.5,
+            color: "var(--text-muted)",
+            background: "var(--surface-sunk)",
+            border: "1px solid var(--border-soft)",
+            borderRadius: 3,
+            maxHeight: 320,
+            overflowY: "auto",
+            margin: 0,
+          }}
+        >
+          {JSON.stringify(capped[expandedRow], null, 2)}
+        </pre>
+      )}
     </div>
   );
 }

@@ -1,9 +1,9 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useParams } from "react-router";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { SectionHeader, MonoBadge } from "@/components/aila/mock";
 
 import { outcomeKindLabel } from "../components/OutcomeKindBadge";
 import {
@@ -11,6 +11,7 @@ import {
   type GraphEdgeInput,
   type GraphNodeInput,
 } from "../components/EvidenceGraph";
+import { PanelBoundary } from "../components/PanelBoundary";
 import {
   useEvidenceGraph,
   useInvestigation,
@@ -176,151 +177,327 @@ export function EvidenceGraphPage() {
     return { nodes: ns, edges: es, serverPositions: new Map() };
   }, [snapshotResult, branches, outcomes]);
 
-  if (isLoading) return <LoadingSkeleton size="lg" width="full" />;
+  if (isLoading) {
+    return (
+      <div className="flex flex-col" style={{ gap: 14 }}>
+        <SectionHeader icon="\u25c8" title="Evidence graph" />
+        <div style={{ padding: 12 }}>
+          <LoadingSkeleton size="lg" width="full" />
+        </div>
+      </div>
+    );
+  }
   if (!inv) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Investigation not found.</p></AilaCard>
+      <div className="flex flex-col" style={{ gap: 14 }}>
+        <SectionHeader icon="\u25c8" title="Evidence graph" />
+        <WindowPanel title="not found" tone="accent">
+          <p
+            className="font-mono"
+            style={{
+              padding: 34,
+              textAlign: "center",
+              fontSize: 11.5,
+              letterSpacing: "0.04em",
+              color: "var(--accent)",
+            }}
+          >
+            investigation not found.
+          </p>
+        </WindowPanel>
+      </div>
     );
   }
 
   return (
-    <div className="space-y-3">
+    <div className="flex flex-col" style={{ gap: 14 }}>
       {/* sr-only section heading bridges PageShell h1 → rail card h3s for screen readers. */}
       <h2 className="sr-only">Evidence graph</h2>
-
-      <ServerSnapshotStatus investigationId={investigationId} />
-
+      <SectionHeader icon="\u25c8" title="Evidence graph" />
 
       <div className="grid grid-cols-1 lg:grid-cols-rail gap-3">
-        <EvidenceGraph
-          nodes={nodes}
-          edges={edges}
-          serverPositions={serverPositions}
-          height={620}
-          onNodeClick={(node, event) => {
-            // Cmd/Ctrl-click → open the node's dedicated page in a new
-            // tab per §3.6 / §1.9. Each node kind has its own target URL.
-            if (event.metaKey || event.ctrlKey) {
-              const url = openUrlForNode(node);
-              if (url) window.open(url, "_blank", "noopener");
-              return;
-            }
-            setSelected(node);
-          }}
-        />
+        <PanelBoundary
+          label="Evidence graph"
+          invalidateKeyPrefix={["vr", "evidence-graph", investigationId]}
+        >
+          <WindowPanel title="evidence graph" tone="accent" flush>
+            <EvidenceGraph
+              nodes={nodes}
+              edges={edges}
+              serverPositions={serverPositions}
+              height={620}
+              onNodeClick={(node, event) => {
+                // Cmd/Ctrl-click → open the node's dedicated page in a new
+                // tab per §3.6 / §1.9. Each node kind has its own target URL.
+                if (event.metaKey || event.ctrlKey) {
+                  const url = openUrlForNode(node);
+                  if (url) window.open(url, "_blank", "noopener");
+                  return;
+                }
+                setSelected(node);
+              }}
+            />
+          </WindowPanel>
+        </PanelBoundary>
 
-        {/* Right rail: selected node detail */}
-        <aside className="space-y-2">
-          <AilaCard  techBorder glow><h2 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
-            Selection
-          </h2>
-          {selected ? (
-            <div className="text-xs space-y-2">
-              <div className="flex items-center gap-1 flex-wrap">
-                <AilaBadge severity="info" size="sm">
-                  {selected.kind}
-                </AilaBadge>
-                {selected.state && (
-                  <AilaBadge severity="info" size="sm">
-                    {selected.state}
-                  </AilaBadge>
-                )}
-              </div>
-              <p className="font-mono text-foreground break-all">
-                {selected.label}
-              </p>
-              <p className="text-3xs text-text-muted font-mono break-all">
-                id: {selected.id}
-              </p>
-              {selected.meta && (
-                <pre className="text-3xs font-mono text-text-muted whitespace-pre-wrap max-h-60 overflow-y-auto">
-                  {JSON.stringify(selected.meta, null, 2)}
-                </pre>
-              )}
-              {selected.kind === "evidence" && selectedObservableKey && (
-                <div className="mt-1">
-                  <p className="text-3xs uppercase tracking-wide text-text-muted mb-1">
-                    full tool output
-                  </p>
-                  {observableLoading ? (
-                    <p className="text-3xs text-text-muted">loading...</p>
-                  ) : observableResult?.data ? (
-                    <pre className="text-3xs font-mono text-foreground whitespace-pre-wrap max-h-96 overflow-y-auto border border-border-default rounded p-2 bg-surface/40">
-                      {typeof observableResult.data.value === "string"
-                        ? observableResult.data.value
-                        : JSON.stringify(observableResult.data.value, null, 2)}
-                    </pre>
-                  ) : (
-                    <p className="text-3xs text-text-muted">
-                      no output found for this reading
-                    </p>
-                  )}
-                </div>
-              )}
-              {(() => {
-                const url = openUrlForNode(selected);
-                if (!url) return null;
-                return (
-                  <a
-                    href={url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-3xs text-accent hover:underline mt-1 inline-block"
+        {/* Right rail: snapshot status + selection brief + counts */}
+        <aside className="flex flex-col" style={{ gap: 8 }}>
+          <ServerSnapshotStatus investigationId={investigationId} />
+
+          <WindowPanel title="selection" tone="muted">
+            <h3 className="sr-only">Selection</h3>
+            {selected ? (
+              <div className="flex flex-col" style={{ gap: 2 }}>
+                <BriefRow label="kind">
+                  <MonoBadge tone="info">{selected.kind}</MonoBadge>
+                </BriefRow>
+                {selected.state ? (
+                  <BriefRow label="state">
+                    <MonoBadge tone="ok">{selected.state}</MonoBadge>
+                  </BriefRow>
+                ) : null}
+                <BriefRow label="target">
+                  <span
+                    className="font-mono"
+                    style={{ overflowWrap: "anywhere" }}
                   >
-                    open {selected.kind} page in new tab →
-                  </a>
-                );
-              })()}
-              {selected.kind === "obligation" && (
-                <div className="mt-2 border border-dashed border-border-default rounded p-2 bg-surface/40">
-                  <AilaBadge severity="info" size="sm">operator-only</AilaBadge>
-                  <p className="text-3xs text-text-muted mt-1">
-                    "Manually close" -- backend pending.
-                  </p>
-                </div>
-              )}
-            </div>
-          ) : (
-            <p className="text-xs text-text-muted">
-              Click a node to inspect its payload.
-            </p>
-          )}</AilaCard>
+                    {selected.label}
+                  </span>
+                </BriefRow>
+                <BriefRow label="id">
+                  <span
+                    className="font-mono"
+                    style={{
+                      fontSize: 10,
+                      color: "var(--text-muted)",
+                      overflowWrap: "anywhere",
+                    }}
+                  >
+                    {selected.id}
+                  </span>
+                </BriefRow>
+                {selected.meta ? (
+                  <BriefRow label="meta">
+                    <pre
+                      className="font-mono"
+                      style={{
+                        margin: 0,
+                        padding: 8,
+                        fontSize: 9.5,
+                        lineHeight: 1.5,
+                        color: "var(--text-muted)",
+                        background: "var(--surface-sunk)",
+                        border: "1px solid var(--border-soft)",
+                        borderRadius: 3,
+                        maxHeight: 220,
+                        overflow: "auto",
+                        whiteSpace: "pre-wrap",
+                        overflowWrap: "anywhere",
+                      }}
+                    >
+                      {JSON.stringify(selected.meta, null, 2)}
+                    </pre>
+                  </BriefRow>
+                ) : null}
+                {selected.kind === "evidence" && selectedObservableKey ? (
+                  <BriefRow label="full tool output">
+                    {observableLoading ? (
+                      <span
+                        className="font-mono"
+                        style={{
+                          fontSize: 10,
+                          color: "var(--text-muted)",
+                          letterSpacing: "0.04em",
+                        }}
+                      >
+                        loading\u2026
+                      </span>
+                    ) : observableResult?.data ? (
+                      <pre
+                        className="font-mono"
+                        style={{
+                          margin: 0,
+                          padding: 8,
+                          fontSize: 10,
+                          lineHeight: 1.5,
+                          color: "var(--text-primary)",
+                          background: "var(--surface-sunk)",
+                          border: "1px solid var(--border-soft)",
+                          borderRadius: 3,
+                          maxHeight: 320,
+                          overflow: "auto",
+                          whiteSpace: "pre-wrap",
+                          overflowWrap: "anywhere",
+                        }}
+                      >
+                        {typeof observableResult.data.value === "string"
+                          ? observableResult.data.value
+                          : JSON.stringify(observableResult.data.value, null, 2)}
+                      </pre>
+                    ) : (
+                      <span
+                        className="font-mono"
+                        style={{
+                          fontSize: 10,
+                          color: "var(--text-muted)",
+                          letterSpacing: "0.04em",
+                        }}
+                      >
+                        no output found for this reading.
+                      </span>
+                    )}
+                  </BriefRow>
+                ) : null}
+                {(() => {
+                  const url = openUrlForNode(selected);
+                  if (!url) return null;
+                  return (
+                    <a
+                      href={url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-mono uppercase"
+                      style={{
+                        marginTop: 8,
+                        fontSize: 10,
+                        letterSpacing: "0.08em",
+                        color: "var(--accent)",
+                      }}
+                    >
+                      open {selected.kind} page in new tab \u2192
+                    </a>
+                  );
+                })()}
+                {selected.kind === "obligation" ? (
+                  <div
+                    style={{
+                      marginTop: 10,
+                      padding: 10,
+                      border: "1px dashed var(--border-soft)",
+                      borderRadius: 3,
+                      background: "var(--surface-sunk)",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 6,
+                    }}
+                  >
+                    <MonoBadge tone="info">operator-only</MonoBadge>
+                    <p
+                      className="font-mono"
+                      style={{
+                        margin: 0,
+                        fontSize: 10,
+                        color: "var(--text-muted)",
+                        letterSpacing: "0.04em",
+                      }}
+                    >
+                      "manually close" -- backend pending.
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <p
+                className="font-mono"
+                style={{
+                  margin: 0,
+                  padding: 12,
+                  fontSize: 10.5,
+                  color: "var(--text-muted)",
+                  letterSpacing: "0.04em",
+                }}
+              >
+                click a node to inspect its payload.
+              </p>
+            )}
+          </WindowPanel>
 
-          <AilaCard  techBorder glow><h2 className="text-xs font-semibold uppercase tracking-wide text-text-muted mb-2">
-            Counts
-          </h2>
-          <dl className="text-xs grid grid-cols-2 gap-1 font-mono">
-            <dt className="text-text-muted">branches</dt>
-            <dd className="text-foreground text-right">
-              {nodes.filter((n) => n.kind === "branch").length}
-            </dd>
-            <dt className="text-text-muted">hypotheses</dt>
-            <dd className="text-foreground text-right">
-              {nodes.filter((n) => n.kind === "hypothesis").length}
-            </dd>
-            <dt className="text-text-muted">outcomes</dt>
-            <dd className="text-foreground text-right">
-              {nodes.filter((n) => n.kind === "outcome").length}
-            </dd>
-            <dt className="text-text-muted">findings</dt>
-            <dd className="text-foreground text-right">
-              {nodes.filter((n) => n.kind === "finding").length}
-            </dd>
-            <dt className="text-text-muted">crashes</dt>
-            <dd className="text-foreground text-right">
-              {nodes.filter((n) => n.kind === "crash").length}
-            </dd>
-            <dt className="text-text-muted">advisories</dt>
-            <dd className="text-foreground text-right">
-              {nodes.filter((n) => n.kind === "advisory").length}
-            </dd>
-            <dt className="text-text-muted">obligations</dt>
-            <dd className="text-foreground text-right">
-              {nodes.filter((n) => n.kind === "obligation").length}
-            </dd>
-          </dl></AilaCard>
+          <WindowPanel title="counts" tone="muted">
+            <h3 className="sr-only">Counts</h3>
+            <dl
+              className="font-mono"
+              style={{
+                margin: 0,
+                display: "grid",
+                gridTemplateColumns: "1fr auto",
+                rowGap: 4,
+                columnGap: 12,
+                fontSize: 10.5,
+                letterSpacing: "0.04em",
+              }}
+            >
+              {([
+                ["branches", "branch"],
+                ["hypotheses", "hypothesis"],
+                ["outcomes", "outcome"],
+                ["findings", "finding"],
+                ["crashes", "crash"],
+                ["advisories", "advisory"],
+                ["obligations", "obligation"],
+              ] as const).map(([label, kind]) => (
+                <div key={label} style={{ display: "contents" }}>
+                  <dt style={{ color: "var(--text-muted)" }}>{label}</dt>
+                  <dd
+                    style={{
+                      margin: 0,
+                      textAlign: "right",
+                      color: "var(--text-primary)",
+                    }}
+                  >
+                    {nodes.filter((n) => n.kind === kind).length}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </WindowPanel>
         </aside>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// BriefRow -- uppercase mono label above the mono value, border-bottom rule.
+// Matches ProjectDetailPage's brief pattern.
+// ---------------------------------------------------------------------------
+function BriefRow({
+  label,
+  children,
+}: {
+  label: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 3,
+        padding: "8px 0",
+        borderBottom: "1px solid var(--border-faint)",
+      }}
+    >
+      <span
+        className="font-mono uppercase"
+        style={{
+          fontSize: 9,
+          letterSpacing: "0.14em",
+          color: "var(--text-faint)",
+        }}
+      >
+        {label}
+      </span>
+      <span
+        className="font-mono"
+        style={{
+          fontSize: 11,
+          color: "var(--text-primary)",
+          minHeight: 14,
+          overflowWrap: "anywhere",
+        }}
+      >
+        {children}
+      </span>
     </div>
   );
 }
@@ -367,7 +544,7 @@ function openUrlForNode(node: GraphNodeInput): string | null {
   if (node.kind === "crash") {
     const o = meta?.outcome as { id?: string } | undefined;
     // Outcomes don't carry crash_id directly -- fall back to a generic
-    // fuzz crashes list; once a crash \u2192 outcome mapping ships, this
+    // fuzz crashes list; once a crash → outcome mapping ships, this
     // resolves to /vr/fuzz/crashes/:id.
     if (o?.id) return `/vr/fuzz/campaigns`;
   }
@@ -393,28 +570,54 @@ function ServerSnapshotStatus({
 }) {
   const { data, isLoading, error } = useEvidenceGraph(investigationId);
   const ready = !!data && !error;
+  const panelTone: "info" | "warn" | "muted" = error
+    ? "warn"
+    : ready
+      ? "info"
+      : "muted";
+  const badgeTone = error ? "warn" : ready ? "ok" : "info";
+  const badgeLabel = error
+    ? "unavailable"
+    : isLoading
+      ? "loading"
+      : ready
+        ? "ready"
+        : "idle";
+  const meta = data?.data;
   return (
-    <AilaCard className="border-dashed" techBorder glow><div className="flex items-center justify-between gap-2 flex-wrap">
-      <div>
-        <AilaBadge severity={error ? "high" : ready ? "low" : "info"} size="sm">
+    <WindowPanel title="snapshot" tone={panelTone}>
+      <h3 className="sr-only">Server snapshot status</h3>
+      <div className="flex flex-col" style={{ gap: 8 }}>
+        <div className="flex items-center" style={{ gap: 6, flexWrap: "wrap" }}>
+          <MonoBadge tone={badgeTone}>{badgeLabel}</MonoBadge>
+          {meta ? (
+            <span
+              className="font-mono"
+              style={{
+                fontSize: 9.5,
+                letterSpacing: "0.06em",
+                color: "var(--text-faint)",
+              }}
+            >
+              layout={meta.layout} \u00b7 {meta.nodes.length} nodes \u00b7 {meta.edges.length} edges
+            </span>
+          ) : null}
+        </div>
+        <p
+          className="font-mono"
+          style={{
+            margin: 0,
+            fontSize: 9.5,
+            lineHeight: 1.5,
+            letterSpacing: "0.04em",
+            color: "var(--text-muted)",
+          }}
+        >
           {error
-            ? "server snapshot unavailable -- using local fallback"
-            : isLoading
-              ? "loading server snapshot\u2026"
-              : "server snapshot in use"}
-        </AilaBadge>
-        {data && (
-          <span className="text-3xs text-text-muted ml-2 font-mono">
-            layout={data.data.layout} \u00b7 {data.data.nodes.length} nodes \u00b7{" "}
-            {data.data.edges.length} edges
-          </span>
-        )}
+            ? "server snapshot unavailable -- rendering local fallback (branches + outcomes only)."
+            : "content + coordinates come from the backend so the graph reads the same across operators and sessions."}
+        </p>
       </div>
-      <p className="text-3xs text-text-muted">
-        Content and coordinates both come from the backend so the
-        graph reads the same across operators + sessions. The local
-        fallback shows branches and outcomes only.
-      </p>
-    </div></AilaCard>
+    </WindowPanel>
   );
 }

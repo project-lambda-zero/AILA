@@ -178,17 +178,25 @@ class HelloWorldModule(ModuleProtocol):
         del system_id, session
         return {}
 
-    async def report_count(self, run_id: str, session: Any) -> dict[str, Any]:
+    async def report_count(
+        self,
+        run_id: str,
+        session: Any,
+        *,
+        team_id: str | None = None,
+    ) -> dict[str, Any]:
         """Return semantic count breakdown for a report.
 
         Args:
             run_id: WorkflowRunRecord primary key.
             session: Active SQLModel session.
+            team_id: Caller's team id (#192). Accepted for protocol
+                compatibility; unused because hello_world has no reports.
 
         Returns:
             Empty dict -- hello_world has no reports.
         """
-        del run_id, session
+        del run_id, session, team_id
         return {}
 
     def health_checks(self) -> dict[str, object]:

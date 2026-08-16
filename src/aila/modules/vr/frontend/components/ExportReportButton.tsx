@@ -57,19 +57,40 @@ export function ExportReportButton({
   }
 
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center" style={{ gap: 8 }}>
       <button
         type="button"
         onClick={handleClick}
         disabled={busy}
-        className="text-xs px-3 py-1.5 rounded-md bg-surface border border-border-default hover:bg-surface-hover text-foreground disabled:opacity-50"
+        className="font-mono uppercase"
+        style={{
+          height: 28,
+          padding: "0 12px",
+          fontSize: 10,
+          letterSpacing: "0.08em",
+          background: "var(--accent)",
+          border: "1px solid var(--accent)",
+          color: "var(--text-on-accent)",
+          borderRadius: 3,
+          cursor: busy ? "not-allowed" : "pointer",
+          opacity: busy ? 0.5 : 1,
+        }}
         title="Generate enterprise PDF report (writer agent + ReportLab)"
       >
-        {busy ? "Generating…" : "Export PDF ↓"}
+        {busy ? "generating\u2026" : "export pdf \u2193"}
       </button>
       {error && (
         <span
-          className="text-xs text-red-500 max-w-xs truncate"
+          className="font-mono"
+          style={{
+            fontSize: 10,
+            letterSpacing: "0.06em",
+            color: "var(--accent)",
+            maxWidth: "20rem",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
           title={error}
         >
           {error}

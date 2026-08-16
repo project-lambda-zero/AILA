@@ -225,19 +225,21 @@ async def update_schedule(
         _validate_cron(body.cron_expression)
 
     async with async_session_scope() as session:
-        record = await session.get(AutomationScheduleRecord, schedule_id)
+        # #114: use a team-scoped SELECT and return 404 on out-of-scope so the
+        # endpoint is not a cross-tenant existence oracle. session.get() takes
+        # the identity-map fast path that bypasses the do_orm_execute team
+        # filter and the 403 branch confirmed row existence to a caller in a
+        # different team. Mirror findings_workflow.py.
+        stmt = select(AutomationScheduleRecord).where(
+            AutomationScheduleRecord.id == schedule_id
+        )
+        if auth.team_id is not None:
+            stmt = stmt.where(AutomationScheduleRecord.team_id == auth.team_id)
+        record = (await session.exec(stmt)).first()
         if record is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Schedule '{schedule_id}' not found",
-            )
-
-        # Team ownership check
-        record_team_id = getattr(record, "team_id", None)
-        if auth.team_id is not None and record_team_id != auth.team_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Schedule '{schedule_id}' is not owned by your team",
             )
 
         if body.cron_expression is not None:
@@ -268,19 +270,18 @@ async def delete_schedule(
 ) -> None:
     """Delete an automation schedule. Verifies team ownership."""
     async with async_session_scope() as session:
-        record = await session.get(AutomationScheduleRecord, schedule_id)
+        # #114: same rationale as update_schedule -- team-scoped SELECT and
+        # 404 on out-of-scope avoids leaking existence of other teams' rows.
+        stmt = select(AutomationScheduleRecord).where(
+            AutomationScheduleRecord.id == schedule_id
+        )
+        if auth.team_id is not None:
+            stmt = stmt.where(AutomationScheduleRecord.team_id == auth.team_id)
+        record = (await session.exec(stmt)).first()
         if record is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Schedule '{schedule_id}' not found",
-            )
-
-        # Team ownership check
-        record_team_id = getattr(record, "team_id", None)
-        if auth.team_id is not None and record_team_id != auth.team_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Schedule '{schedule_id}' is not owned by your team",
             )
 
         await session.delete(record)

@@ -8,8 +8,7 @@ from typing import TYPE_CHECKING
 
 import sqlalchemy.exc
 
-from aila.platform.exceptions import AILAError
-
+from ._dispatch import safe_dispatch
 from .event import PlatformEvent
 
 if TYPE_CHECKING:
@@ -80,30 +79,6 @@ def _bump_sse_write_failure(source: str) -> None:
         _log.debug("resilience signal skipped: %s", exc)
 
 
-# Comprehensive tuple used to isolate destination failures at fan-out time.
-# Any exception a destination might reasonably raise (I/O, coercion, missing
-# key, config bug, platform error) is caught, logged, and counted so the
-# next destination in the registration list still receives the event.
-# BaseException-only subclasses (KeyboardInterrupt, SystemExit) intentionally
-# propagate -- the interpreter is going down and drain must not swallow that.
-_DESTINATION_ISOLATION_ERRORS: tuple[type[BaseException], ...] = (
-    RuntimeError,
-    OSError,
-    TimeoutError,
-    ValueError,
-    TypeError,
-    AttributeError,
-    KeyError,
-    IndexError,
-    LookupError,
-    ArithmeticError,
-    ImportError,
-    AssertionError,
-    ReferenceError,
-    AILAError,
-)
-
-
 class EventEmitter:
     """Fan-out emitter: one emit() call delivers to all registered destinations.
 
@@ -140,10 +115,13 @@ class EventEmitter:
             self._dispatch(name, fn, event)
 
     def _dispatch(self, name: str, fn: DestinationFn, event: PlatformEvent) -> None:
-        """Call one destination under the isolation guard.
+        """Call one destination under the shared isolation guard.
 
         Kept as a hook so ThreadSafeEventEmitter reuses the identical
-        per-destination policy from inside its drain loop.
+        per-destination policy from inside its drain loop. The isolation
+        exception tuple and the try/except/log block live in
+        :mod:`aila.platform.events._dispatch` so this emitter and
+        :class:`aila.platform.events.bus.DomainEventBus` cannot drift.
 
         SSE / progress-stream destinations (``progress`` and
         ``redis_stream``) additionally increment SSE_WRITE_FAILURES_TOTAL
@@ -152,22 +130,28 @@ class EventEmitter:
         import is deferred so importing the emitter module never pulls
         in prometheus_client on paths that do not need it.
         """
-        try:
-            fn(event)
-        except _DESTINATION_ISOLATION_ERRORS as exc:
-            _log.warning(
-                "emitter destination %r raised on event %s/%s: %s",
-                name,
-                event.stage,
-                event.action,
-                exc.__class__.__name__,
-                exc_info=True,
-            )
-            self._destination_failures[name] = (
-                self._destination_failures.get(name, 0) + 1
-            )
-            if name in _SSE_DESTINATION_NAMES:
-                _bump_sse_write_failure("emitter")
+        safe_dispatch(
+            name,
+            fn,
+            event,
+            log_label="emitter destination",
+            event_description=f"event {event.stage}/{event.action}",
+            on_failure=self._record_destination_failure,
+        )
+
+    def _record_destination_failure(self, name: str, _exc: BaseException) -> None:
+        """Bump per-destination failure count and any additional signals.
+
+        Invoked by :func:`safe_dispatch` after the isolation guard has
+        already logged the exception. Splitting the counter policy out
+        of the guard keeps the shared primitive free of destination-set
+        knowledge (the SSE bump is emitter-specific).
+        """
+        self._destination_failures[name] = (
+            self._destination_failures.get(name, 0) + 1
+        )
+        if name in _SSE_DESTINATION_NAMES:
+            _bump_sse_write_failure("emitter")
 
     def get_destination_failures(self) -> dict[str, int]:
         """Return a snapshot of per-destination failure counts.

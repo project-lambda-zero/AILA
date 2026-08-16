@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aila"
-version = "0.3.20"
+version = "0.5.35"
 description = "Modular AI security platform with pluggable analysis modules."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -40,6 +40,9 @@ dependencies = [
   "sqlalchemy==2.0.45",
   "jinja2==3.1.6",
   "reportlab==4.5.1",
+  "asn1crypto==1.5.1",  # APK v2/v3 signing block (CMS/PKCS7) parsing in platform.apk
+  "PyYAML==6.0.3",      # YAML parsing in platform code (imported unguarded)
+  "python-multipart==0.0.27",  # fastapi Form/File parsing (upload endpoints)
   'python-magic==0.4.27; platform_system != "Windows"',
   'python-magic-bin==0.4.14; platform_system == "Windows"',
   # ──────────────────────────────────────────────────────────────
@@ -68,14 +71,18 @@ dev = [
   "httpx>=0.27.0",
   "mypy>=1.10.0",
   "pytest>=9.0.3",  # CVE-2025-71176 fixed in 9.0.3
+  "pytest-asyncio>=1.3.0,<1.4.0",  # asyncio_mode=auto (conftest.py); 1.4 loop-factory change breaks session-scoped async fixtures
   "pytest-cov>=5.0.0",
   "pytest-randomly>=3.15.0",
+  "pytest-timeout>=2.3.0",  # per-test wall-clock cap so a hang fails fast (with stack) instead of stalling CI
+  "pypdf>=4.0.0",  # test-only: parse generated MASVS report PDFs in assertions
   "ruff>=0.5.0",
   "types-paramiko>=3.4.0",
   "vulture>=2.11",
   "pip-audit>=2.7.0",
   "bandit>=1.8.0",
   "pre-commit>=4.0.0",
+  "msal>=1.28.0",  # exercises the Microsoft OIDC provider path in tests (optional extra in prod)
 ]
 pdf-weasyprint = [
   # Optional: enables the WeasyPrint HTML→PDF renderer when GTK
@@ -85,6 +92,33 @@ pdf-weasyprint = [
 ]
 server = [
   "gunicorn>=25.3.0",
+]
+microsoft-oidc = [
+  # Optional: enables the Microsoft (Entra ID) OIDC provider. The provider
+  # module imports ``msal`` lazily inside the microsoft branch, so this stays
+  # out of core deps -- install it only when configuring the microsoft provider.
+  "msal>=1.28.0",
+]
+training = [
+  # Issue #158: TRL + PEFT QLoRA SFT -> DPO -> merge pipeline. Every dep
+  # here is imported LAZILY inside
+  # ``aila.platform.eval.training.train_lora.train_lora_from_corpus`` so
+  # importing that module (or the training package) on a CPU-only host
+  # never pulls the stack. Install on a CUDA GPU host with
+  # ``pip install .[training]``. GPU + driver requirements:
+  #   * NVIDIA GPU with CUDA >= 11.8 (bitsandbytes 0.44+ requirement)
+  #   * >= 24 GiB VRAM for a 7B/8B base under 4-bit QLoRA (batch 1
+  #     + gradient accumulation 8). Larger bases need more.
+  #   * matching NVIDIA driver + cuDNN runtime for the torch build.
+  # These pins are minimum floors -- the trainer works with any newer
+  # patch release, so the resolver can pick up security fixes.
+  "torch>=2.4.0",
+  "transformers>=4.45.0",
+  "trl>=0.11.0",
+  "peft>=0.13.0",
+  "datasets>=3.0.0",
+  "accelerate>=0.34.0",
+  "bitsandbytes>=0.44.0",
 ]
 
 [project.scripts]
@@ -195,6 +229,21 @@ ignore = [
 # transcript.py is loaded through the eval-package init chain, so
 # db_models cannot be imported at transcript-module import time.
 "src/aila/platform/eval/transcript.py" = ["PLC0415"]
+# corpus/builder.py: PLC0415 for the same deferred PlatformJournalRecord
+# import inside _load_branch_turns. Same cycle as transcript.py -- the
+# builder ships alongside the rest of the eval package and cannot pull
+# db_models at module-import time.
+"src/aila/platform/eval/corpus/builder.py" = ["PLC0415"]
+# training/__init__.py: PLC0415 for the deferred train_lora import
+# inside __getattr__. Every heavy dep (torch/trl/peft/...) is behind
+# the [training] extra, so importing the package on the API process
+# must not trigger the deferred import until train_lora_from_corpus
+# is actually resolved.
+"src/aila/platform/eval/training/__init__.py" = ["PLC0415"]
+# training/train_lora.py: PLC0415 for the QLoRA import block inside
+# train_lora_from_corpus. Deferred so the module imports cleanly on a
+# CPU-only host without the [training] extra installed.
+"src/aila/platform/eval/training/train_lora.py" = ["PLC0415"]
 # calibration_sweep.py: PLC0415 for the deferred CalibrationTrainer
 # import inside run_calibrator_trainer_sweep. calibrator.py imports
 # DEFAULT_CALIBRATION_TABLES + _read_samples_from_table_pair from
@@ -365,6 +414,15 @@ ignore = [
 # circular import cycle -- same pattern VR + malware use).
 "src/aila/modules/forensics/workflow/panel/setup.py" = ["PLC0415"]
 "src/aila/modules/vr/services/followup_discovery.py" = ["PLC0415"]
+# fuzz_service child-spawn helper: PLC0415 for the deferred
+# ``workflow.task`` / ``TaskQueue`` / ``branch``+``investigation``
+# contract imports inside ``_spawn_child_investigation_for_crash``.
+# The spawn path is config-gated OFF by default
+# (VRConfigSchema.fuzz_crash_spawn_child), and the imports transitively
+# pull the ARQ runtime + platform-task registration cycle -- promoting
+# them to module scope would drag ARQ into every crash-registration
+# call. Mirrors the vr/services/stall_recovery + stuck_healer entries.
+"src/aila/modules/vr/services/fuzz_service.py" = ["PLC0415"]
 "src/aila/modules/_template/services/stall_recovery.py" = ["PLC0415"]
 "src/aila/modules/vr/services/stall_recovery.py" = ["PLC0415"]
 # stuck_healer bindings: PLC0415 for the deferred ``_task_queue`` /

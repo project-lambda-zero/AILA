@@ -20,8 +20,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections import OrderedDict
-from typing import Any
+from typing import Any, ClassVar
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
@@ -85,6 +86,87 @@ class ToolExecutor(ToolExecutorHelpersBase):
     _AGENT_ALLOWED_SERVERS: frozenset[str] = frozenset(
         {"audit_mcp", "ida_headless", "android_mcp", "knowledge"},
     )
+
+    # ---- Lateral-vulnerability discovery patterns (issue #95, #136) ----
+    # Passive tells the platform's auto-steering rule 5 scans over
+    # ``read_function`` / ``read_lines`` / ``semantic_search`` bodies.
+    # Migrated out of ``platform/agents/auto_steering.py`` so the
+    # platform reasoning layer never carries FFmpeg / codec-shaped
+    # regex vocabulary. Empty on other modules -- the platform base's
+    # default -- turns the scan into a no-op for them.
+    lateral_patterns: ClassVar[list[tuple[re.Pattern[str], str]]] = [
+        # ``else if (av_strstart(proto, "http", NULL)) ;`` -- protocol
+        # dispatch that recognises a name and then does nothing with it.
+        # Also catches empty ``{}`` bodies. Typical FFmpeg protocol.c /
+        # muxer registration bug shape.
+        (
+            re.compile(
+                # Balanced one-level paren nesting so ``strcmp(a, b)`` /
+                # ``av_strstart(p, "x", NULL)`` inside the if-condition
+                # doesn't fool the outer ``\)`` anchor.
+                r"(?:else\s+if|elif)\s*\("
+                r"(?:[^()]|\([^()]*\))*"
+                r"(?:strstart|strcmp|strncmp|strcasecmp|strncasecmp)"
+                r"(?:[^()]|\([^()]*\))*"
+                r"\)\s*(?:;|\{\s*\})",
+            ),
+            "protocol_passthrough_no_check",
+        ),
+        # ``int size = w * h;`` / ``unsigned len = a * b;`` -- integer
+        # multiply into a narrow type with no overflow guard. Anchored
+        # to a statement boundary so we don't match ``if (a * b > c)``.
+        (
+            re.compile(
+                # Accept ``int|long|...`` as the type, OR bare
+                # ``unsigned|signed`` with an optional
+                # ``int|long|short|char`` suffix (``unsigned len`` is
+                # legal C shorthand for ``unsigned int len``). Anchored
+                # to a statement boundary so ``if (a * b > c)`` never
+                # matches.
+                r"(?:^|[;{\n])\s*"
+                r"(?:(?:unsigned|signed)(?:\s+(?:int|long|short|char))?"
+                r"|int|long|short|size_t|ssize_t"
+                r"|uint(?:8|16|32|64)_t|int(?:8|16|32|64)_t)"
+                r"\s+[A-Za-z_]\w*\s*=\s*[^;\n]*\*[^;\n]*;",
+                re.MULTILINE,
+            ),
+            "unchecked_int_multiply",
+        ),
+        # ``memcpy(dst, src, len)`` where the length is a bare identifier
+        # rather than a literal constant. The identifier could be
+        # untrusted-input-derived; worth surfacing for review.
+        (
+            re.compile(
+                r"\b(?:memcpy|memmove|memset)\s*\("
+                r"\s*[^,]+,\s*[^,]+,\s*"
+                r"[A-Za-z_]\w*\s*\)",
+            ),
+            "memop_variable_length",
+        ),
+        # ``width >>= chroma;`` / ``h >>= vsub;`` -- dimension halving
+        # by a subsampling factor. Common truncation site in codec
+        # dimension math.
+        (
+            re.compile(
+                r">>=\s*[A-Za-z_]*(?:chroma|sub|shift|vsub)[A-Za-z_0-9]*",
+            ),
+            "truncating_dimension_shift",
+        ),
+        # ``avio_r*(...); ... av_malloc(...)`` -- input-derived value
+        # flows into an allocation size within a small window. DOTALL
+        # + bounded gap so we don't cross file-scope boundaries.
+        (
+            re.compile(
+                r"(?:avio_r[a-z0-9_]+|bytestream2?_get[a-z0-9_]+|get_bits\d*)\b"
+                r"[^;]*;.{0,300}?"
+                r"\b(?:av_mallocz?|av_realloc|av_mallocz_array|av_calloc|"
+                r"malloc|calloc|realloc|av_frame_get_buffer|ff_get_buffer|"
+                r"av_new_packet|av_image_alloc)\b",
+                re.DOTALL,
+            ),
+            "input_to_allocation",
+        ),
+    ]
 
     # Merged-dispatch config (ToolExecutorHelpersBase.execute reads these).
     _TOOLRUN_EXAMPLE_JSON = (
@@ -236,9 +318,11 @@ class ToolExecutor(ToolExecutorHelpersBase):
     # store so a later branch turn can still recall it by query. Best
     # effort by base-class contract -- a store failure logs and returns;
     # it MUST NOT propagate because the tool result has already committed.
-    # extract_entities/link_neighbors are off: evicted observations are
-    # high-volume and the per-write cost of entity extraction is not paid
-    # back on this retrieval path (query hits go through the vector index).
+    # #128: extract_entities and link_neighbors are enabled so observation
+    # entries carry graph edges (semantic neighbours + entity edges) --
+    # otherwise the graph retrieval route cannot traverse observations
+    # and the RFC-12 semantic-neighbour promise silently excludes the
+    # highest-volume KB writes. Matches pattern_store's write shape.
     async def _on_observables_evicted(
         self,
         investigation_id: str,
@@ -275,8 +359,8 @@ class ToolExecutor(ToolExecutorHelpersBase):
                         "source": "evicted_observation",
                     },
                     dedup_key=f"obs:{investigation_id}:{branch_id}:{key}",
-                    extract_entities=False,
-                    link_neighbors=False,
+                    extract_entities=True,
+                    link_neighbors=True,
                 )
             except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
                 _log.warning(

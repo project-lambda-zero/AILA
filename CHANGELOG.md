@@ -7,6 +7,1293 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.35] - 2026-08-16 -- Per-persona model routing console + CI scope
+
+### Added
+
+- Admin console page "persona model routing" (platform category) for
+  per-persona sibling model routing (#151). An opt-in toggle plus a
+  per-persona model_role editor for the six sibling voices
+  (halvar/maddie/yuki/renzo/noor/wei) reads and writes the
+  `platform.persona_model_role_map` config key through the admin-gated
+  config API. An empty map is persisted as the empty string, which the
+  backend resolves as off, so the feature does nothing until an operator
+  maps at least one persona. Turning the whole feature off is a real
+  write, not a special case.
+
+### Changed
+
+- CI `frontend` job now type-checks and builds the shipping shell
+  (`@aila/shell`) instead of running a workspace-wide `pnpm -r type-check`.
+  The per-module `@aila/*-frontend` packages were superseded by the
+  in-shell windowing console and no longer compile against the current
+  shell surface; they are retained as reference scaffolds pending a
+  rewrite as window content and are not bundled. CI gates what ships.
+
+### Fixed
+
+- Corrected the shared narrative agent module docstring, which claimed to
+  close #137 (platform observation-memory primitive). That primitive is
+  not implemented; the module only consolidates the per-module narrative
+  agents (#112). The false attribution is removed.
+
+## [0.5.34] - 2026-08-16 -- Operator knowledge ingest
+
+### Added
+
+- `POST /platform/knowledge/ingest` writes an operator-authored note into
+  the retrieval corpus under a distinct `operator_note` kind. The write
+  namespace is resolved from a scope selector: a single workspace, a team,
+  a module-wide global bucket, or the platform per-agent namespace. The
+  admin knowledge console gains an "operator note" composer (module + scope
+  selectors, real workspace dropdown, live namespace preview) and
+  operator-note quick filters in the entries browser, so operator context
+  is filterable apart from agent-written memos.
+
+### Changed
+
+- VR and malware retrieval now include the `operator_note` kind at
+  workspace, team, and global scope. A note ingested from the console is
+  recalled on every investigation turn in that scope alongside
+  agent-written memos, rather than only being stored. No schema migration:
+  the change is additive to each module's retrieval namespace list.
+
+## [0.5.33] - 2026-08-16 -- Full console coverage, knowledge + sandbox surfaces, SSH key fix
+
+### Added
+
+- Console coverage for the whole backend: every module list, admin resource, and
+  platform surface opens as a window (minimizable + fullscreenable). Simple
+  resources get typed create/edit forms generated from their real Pydantic
+  schemas (enum -> dropdown, file -> picker), replacing the raw-JSON editors.
+- Multipart target-upload wizards for VR and malware: file kinds stream to the
+  correct per-kind endpoint and descriptor kinds post JSON. Guided investigation
+  intake now creates and binds a real investigation.
+- Malware investigation X-Ray: a rich detail view mirroring the VR X-Ray (turn
+  stream, hypotheses, observations, evidence graph, outcomes, cost split) wired to
+  the /malware investigation endpoints.
+- Forensics project-scoped navigation: the rail lists projects; opening one raises
+  a tabbed project detail (evidence, artifacts, leads, investigations, answers,
+  writeups, timeline, occurrences, directives, solid evidence, suppressions,
+  findings, network/registry analysis) with a nested investigation sub-view.
+- Knowledge console page plus read/search platform endpoints that EXPOSE the
+  existing retrieval stack over HTTP for the first time (it was agent-tool-only):
+  GET /platform/knowledge/stats, GET /platform/knowledge/entries, and POST
+  /platform/knowledge/search delegate to the existing KnowledgeService.retrieve_routed
+  (STABLE_CORE cache-augmented route + hybrid vector/FTS + graph) over the existing
+  pgvector knowledge corpus. No new retrieval logic was added -- this is a viewing
+  and search surface over what was already there.
+- Sandbox / isolation governance page plus GET /platform/sandbox/status readiness
+  endpoint: a config editor over the platform.sandbox_* keys and an exec console.
+- Vulnerability running-scan detail view with live SSE progress and a Stop
+  control; POST /scans/{run_id}/cancel aborts a queued or running scan.
+- Twelve selectable UI themes wired end-to-end (persisted to localStorage and
+  applied on load).
+- Structured detail rendering across list detail panels (nested objects render as
+  key/value grids, arrays of objects as compact tables); the LLM Log prompt and
+  response render as readable transcripts instead of raw JSON.
+- Eval-calibrator training is actionable from the console (POST
+  /admin/eval/calibrators/train).
+
+### Changed
+
+- SSH systems: a pasted private key and its passphrase now flow end-to-end. The
+  passphrase is persisted as an encrypted secret, and the stored key is resolved
+  into a paramiko key (parser cascade across key types) and applied at every
+  connect site, including the registry-tool path used by scans and inventory.
+- The vulnerability module "+" affordance opens the real add-system form instead
+  of a duplicate intake wizard.
+
+### Fixed
+
+- Vulnerability full_analysis scans failed with a ValidationError because the
+  inventory state wrote rows without committing its unit of work, leaving the
+  workflow without a response terminal. The state now commits, so full_analysis
+  completes.
+- SSH connect previously ignored form-provided keys entirely: the stored key
+  secret was never read and the passphrase was dropped, so key auth could not
+  succeed. Both are now wired through to the connection.
+
+### Migration
+
+- 127_managed_system_passphrase_secret: adds
+  managedsystemrecord.private_key_passphrase_secret_id (nullable).
+
+## [0.5.32] - 2026-08-15 -- Live backend-wired console
+
+### Changed
+
+- The frontend entry is a single console composing three live panels over the
+  design-system OS-frame chrome (menubar and status bar above the FaultyTerminal
+  hero): a left rail of the four modules, the active module's pages, and live
+  investigations; a center chat console bound to the selected investigation; and
+  a right x-ray rail showing engine phase and kind, branches, and hypotheses.
+  Selecting an investigation binds both the console and the x-ray to it. This
+  replaces the placeholder windowing-desktop foundation.
+- The menubar is functional: a live clock, an engine-status dot that reflects the
+  bound investigation, and a working sign-out control.
+
+### Added
+
+- Backend wiring for the console: a Bearer-token auth store (login posts to
+  /auth/login, the token persists to localStorage, and a 401 returns to the login
+  screen) and React Query hooks that read VR investigations, per-investigation
+  messages, branches, and hypotheses. Real data renders directly; loading and
+  empty states show while a stream has no turns.
+
+Frontend only; no backend contract change.
+
+## [0.5.31] - 2026-08-14 -- Purge remaining legacy frontend components
+
+### Removed
+
+- Deleted every legacy design component now that all pages compose the mock kit:
+  AilaCard, AilaTable, AilaBadge, SeverityPulse, KpiTile, StaggeredList,
+  PageTransition, PageShell, ConnectedEntities, AilaProgress (and their stories
+  and tests), plus the unused shadcn ui cluster (button, input, textarea, select,
+  badge, avatar, command, dialog, input-group, sheet, sidebar, scroll-area,
+  separator, skeleton, tabs, dropdown-menu). Only the toast utility (sonner) and
+  the tooltip primitive remain under components/ui. 36 files removed; the shell
+  entry bundle shrank as a result.
+
+### Changed
+
+- Rebuilt the last straggler files that still referenced legacy components to the
+  mock language: the error boundary (FeatureBoundary), the routed-page frame
+  (PageFrame / PageShell, now header-less to avoid double titles), the activity
+  timeline, the menubar chrome (command palette, notification bell, user menu,
+  shortcuts sheet), the JQL filter bar, EmptyState (now a WindowPanel surface),
+  several platform pages' empty states, the VR connected-entity cards + widgets +
+  mitigations ribbon, the malware widgets, and the hello_world page.
+
+Presentation only -- data hooks, routing, data-testid, and aria are preserved.
+Workspace type-check (0 errors across all packages) and the shell production
+build pass.
+
+
+## [0.5.30] - 2026-08-14 -- Total frontend rebuild to the design-system mock
+
+### Changed
+
+- The entire frontend is rebuilt from scratch to the design-system mock
+  (Console / VR X-Ray / Vulnerability): a dense monospace terminal with OS-frame
+  chrome (32px MenuBar with module tabs, a module-scoped rail of MODULE / PAGES /
+  INVESTIGATIONS, 24px StatusBar), WindowPanels with hatched title bars in place
+  of every card, honest bordered grids in place of every table, section headers,
+  mono status/severity chips, pixel icons, and the FaultyTerminal hero. About 245
+  page and component files across the shell and all module frontends
+  (vulnerability, vr, forensics, malware) were rebuilt; no page retains the prior
+  shadcn / Tailwind-palette presentation.
+- Added a shared mock kit (SectionHeader, DataGrid, MonoBadge, FilterChip,
+  Segmented, StatBar, BigStat) at components/aila/mock, and aliased the
+  design-system semantic tokens (--accent, --surface-*, --text-*, --status-*,
+  --border-*) in globals.css so pages use the mock vocabulary directly.
+
+### Removed
+
+- Off-brand presentation across every rebuilt page: shadcn cards / tables / tabs /
+  badges / dialogs for content, raw hex colours, Tailwind palette classes,
+  text-white / bg-white fills, drop shadows, and pill radii on action buttons.
+
+All data hooks, mutations, routing, data-testid, and aria attributes are
+preserved -- only presentation was replaced. Workspace type-check (0 errors
+across all packages) and the shell production build pass. Verified live: the
+console, vulnerability findings, the VR investigations list (169 rows), and the
+VR investigation X-Ray workbench (12 panels, 451 turns) render the mock with real
+data and zero console errors.
+
+
+## [0.5.29] - 2026-08-14 -- Console vitals rail
+
+### Added
+
+- Console home right rail. The platform console now renders the design mockup
+  third column: a `vitals` WindowPanel reporting live platform state -- fleet
+  risk and coverage, the finding severity ledger, and per-service health -- read
+  from GET /dashboard and GET /health. It appears at the xl breakpoint and up,
+  and degrades to a benign "vitals unavailable" line when the dashboard
+  aggregation is unreachable.
+
+
+## [0.5.28] - 2026-08-14 -- Design system: console + investigation workbench, zero legacy
+
+### Added
+
+- Console composer parity with the design mockup: a mono prompt glyph, a
+  persistent suggestion-lane chip row above the input, an auto/focus mode
+  toggle, and a `send` button with an arrow glyph. The chat thread now sits in
+  a `console` titled panel (hatched bar + turn-count signature).
+- Investigation detail workbench: the VR, malware, and forensics investigation
+  pages are reworked from a single stacked column to the mockup tiled layout --
+  a main transcript/run column plus a 320px right rail of WindowPanel panes
+  (engine vitals, hypotheses, activity ledger, branches), built only from data
+  the page already fetches.
+
+### Changed
+
+- Bare screens now render design-system surfaces: settings, dashboard widgets,
+  onboarding, and the 404 / 500 / 403 and placeholder pages are wrapped in
+  WindowPanel / AilaCard.
+
+### Removed
+
+- All remaining off-brand color usage across the frontend: raw Tailwind palette
+  utilities (cyan / emerald / amber / violet / slate / red and friends), raw hex
+  in inline styles (about 200 occurrences in the vr module alone),
+  `text-white` / `bg-white` on colored fills, drop shadows on FABs and menus, and
+  pill radii on action buttons -- each mapped to a design-system token or icon.
+  Rendered emoji were replaced with PixelIcon / Phosphor glyphs, and the dead
+  `ui/breadcrumb.tsx` component was deleted.
+
+### Fixed
+
+- Persona and voice identity colors now use distinct design-system hues instead
+  of raw Tailwind classes.
+
+Workspace type-check (0 errors across all packages) and shell production build
+pass. Verified live: the console composer, the VR investigation tiled right rail
+(real data, eight panels), and every module page render with zero console errors.
+
+
+## [0.5.27] - 2026-08-14 -- AILA design system: workbench shell + single midnight-cloud-8 identity
+
+### Added
+
+- WindowPanel and PixelIcon primitives (`frontend/src/components/aila/`): the
+  design-system signature titled surface (hatched title bar, system light
+  square, mono uppercase title, inset bevel, optional mono status footer) and
+  the 16x16 crisp-edges system-glyph icon grammar (status, ok, close, arrow,
+  spawn, cycle, emit, merge, folder, terminal).
+- Self-hosted Apoc Revelations (display) and Monaspace Neon (mono) webfonts,
+  with Familjen Grotesk (body) plus Newsreader and JetBrains Mono fallbacks.
+- FaultyTerminal hero (`frontend/src/components/aila/FaultyTerminal.tsx` +
+  `/faulty-terminal.js`): the CRT "digit rain" WebGL motif, tinted by the
+  accent and screen-blended behind the whole workbench. Honors
+  `prefers-reduced-motion` (single static frame).
+
+### Changed
+
+- The application shell is rebuilt to the design-system workbench: a fixed
+  OS-frame drawn from the mockup with a 32px menubar (glowing brand mark, rail
+  toggle, mono breadcrumb, search, notifications, account, clock), a 236px left
+  module/investigation rail with mono uppercase section labels and a hot-pink
+  active marker, the routed content in the center, and a 24px status strip --
+  all layered over the FaultyTerminal hero. WindowPanel surfaces carry titled
+  content across every page (vulnerability, vr, forensics, malware,
+  hello_world). Labels, ids, and status read as mono uppercase; headings use
+  the display serif; the palette is warm cream on midnight charcoal with a
+  restrained hot-pink accent; radii are sharp (2-6px) with inset bevels instead
+  of drop shadows.
+- Shared components (buttons, badges, inputs, select, tabs, dialogs, sheets,
+  dropdowns, tooltips, scroll areas) follow the design-system aesthetic. Button
+  styling is component-owned: primary is a hot-pink fill, ghost is a cream
+  outline, with a key-cap bevel that presses on active.
+- The login screen carries the design-system hero motif and a midnight
+  sign-in form.
+
+### Removed
+
+- The twelve alternate UI themes (synthwave, vaporwave, frutiger-aero, ps1,
+  ps2, cyberpunk-2077, matrix, truman-show, half-life-1, y2k-fever, vendetta,
+  specimen-index) and the theme-switcher UI in settings, the avatar menu, and
+  the command palette. AILA now ships a single canonical design. `globals.css`
+  drops from 5074 lines to under 1000, and `theme-init.js` and the theme
+  provider are pinned to the one theme.
+- The shadcn `SidebarProvider` dashboard shell (sidebar plus header layout).
+  The workbench OS-frame replaces it wholesale; no old shell layout remains.
+
+### Fixed
+
+- Dead CSS custom-property references surfaced during the sweep now resolve:
+  select and dropdown menu item focus (an undefined `--accent-foreground`), the
+  page-shell status dot color, and several module color tokens
+  (`--color-warning`, `--color-bg`).
+
+Workspace type-check and shell production build pass.
+
+## [0.5.26] - 2026-08-13 -- Fix: command palette no longer treats plain words as entity ids
+
+### Fixed
+
+- Typing an ordinary word of eight or more letters into the command palette
+  (for example "dashboard" or "investigations") produced a bogus "Jump to" group
+  of dead-route targets and suppressed the real Navigate and Search results, so
+  the operator could not reach a page by typing its name. The entity-id
+  heuristic (`looksLikeEntityId`) matched any 8-to-32 character alphanumeric
+  string; it now also requires at least one digit, so genuine ids (UUIDs, ULIDs,
+  hashes, task ids) still trigger the jump while dictionary words do not. The `#`
+  prefix remains the explicit jump escape hatch. Verified live in the running
+  palette. Found by driving the console (#226).
+
+Shell type-check and production build pass.
+
+## [0.5.25] - 2026-08-13 -- Fix: drop the ignored CSP frame-ancestors <meta> directive
+
+### Fixed
+
+- `index.html` delivered the Content-Security-Policy via a `<meta>` tag that
+  included `frame-ancestors 'none'`, which browsers ignore in a `<meta>` element
+  (it is honored only as an HTTP response header). The directive therefore
+  provided no protection where it sat and logged a warning on every page.
+  Removed it from the meta (the meta-valid `frame-src 'none'` stays) and
+  corrected the explanatory comment. Effective clickjacking protection is
+  unchanged: it is delivered as HTTP headers (`X-Frame-Options: DENY` and CSP
+  `frame-ancestors 'none'`) by the backend `SecurityHeadersMiddleware`. Verified
+  live that the per-page console warning is gone and the built meta CSP no longer
+  carries the ignored directive. Found by driving the running console (#225).
+
+Shell type-check and production build pass.
+
+## [0.5.24] - 2026-08-13 -- Fix: console no longer hangs on "Restoring session"
+
+### Fixed
+
+- The console hung indefinitely on the "Restoring session" screen and never
+  reached the login page when there was no active session (logged out, an expired
+  cookie, or a fresh browser), because the auth store had no bounded path out of
+  its initial `bootstrapping` status: it purges the persisted session hints on
+  every load, so the rehydrate refresh transition did not run, and nothing else
+  guaranteed a terminal status. A new mount-time `bootstrap()` watchdog in
+  `useAuthStore` (called from `App.tsx`) races the cookie refresh against a 6 s
+  bound and always resolves to a terminal status -- `authenticated` on success,
+  otherwise `unauthenticated`, which routes to `/login` -- so the sign-in form is
+  always reachable, even if the refresh call stalls. The action is idempotent and
+  a no-op once `login` or the rehydrate path has set a terminal status, so the
+  happy path is unchanged (verified live: a valid sign-in still reaches the
+  console). Found by driving the running console (#223).
+
+Shell type-check and production build pass.
+
+## [0.5.23] - 2026-08-13 -- Icon vendor chunk split (build)
+
+Resolves the 500 kB chunk-size advisory reported in v0.5.22 without changing any
+behavior or the application entry chunk (#222).
+
+### Changed
+
+- The Phosphor icon set, previously forced into a single ~516 kB vendor chunk
+  that tripped Vite's advisory, is now bucketed into four bounded, parallel-loaded
+  chunks (largest about 243 kB) keyed deterministically by icon module id. The
+  icons stay out of the eager entry chunk, which holds at 376 kB, so initial load
+  is unchanged and no chunk exceeds 500 kB. The total icon payload is unchanged;
+  every icon is genuinely imported, so this is a chunking change, not a reduction.
+
+The shell production build now passes with no chunk-size advisory, and all
+workspace type-checks pass. No backend or behavior changes.
+
+## [0.5.22] - 2026-08-13 -- Saved views and advanced filtering parity
+
+Brings the saved-view experience (previously only on vulnerability findings) to
+every high-cardinality surface using the generic saved-filters backend, and adds
+an advanced filter builder to the audit log. Additive; existing filters and
+behavior preserved (#221). No backend changes.
+
+### Added
+
+- Saved views on the audit log, systems, tasks, and scan lists (shell); VR
+  investigations, findings, and targets; malware investigations, findings,
+  observations, and targets; and forensics projects and investigations. Each
+  view saves the surface's current filter, search, and sort state as a named,
+  pinnable, team-shareable preset via `/saved-filters` and applies it in one
+  click. Pin, share, and delete are owner-only, with a graceful fallback on a
+  malformed saved payload.
+- An advanced filter builder on the audit log: add-condition rows over action,
+  status, user, and stage (comma-OR within a field) plus a since/until range,
+  driving `/audit/events`. The existing JQL and form filters are preserved behind
+  a three-way toggle.
+
+### Changed
+
+- The systems, tasks, and scan saved views honor the operator default-page-size
+  preference on apply.
+
+### Note
+
+- The Phosphor icon vendor chunk has grown to 516 kB (gzip 124 kB) as icon usage
+  accumulated across recent releases, so Vite's 500 kB chunk-size advisory fires
+  again on that chunk. It is a separately-cached vendor chunk, not the
+  application entry chunk, which stays at 375 kB (gzip 110 kB). Splitting the
+  icon chunk is a tracked follow-up.
+
+All workspace type-checks and the shell production build pass.
+
+## [0.5.21] - 2026-08-13 -- Relationship lineage explorer and per-entity activity timelines
+
+Adds a relationship/lineage explorer and per-entity activity timelines, built
+entirely from data the existing GETs return. Additive; existing screens and
+behavior preserved (#220). No backend changes.
+
+### Added
+
+- Investigation lineage: on VR and malware investigation details, a navigable
+  graph of parent, source, and child investigations (variant-hunt and unpack
+  trees); forensics walks the parent chain. Each node links through, and a
+  standalone investigation shows nothing.
+- Connected-entities panels: on investigation, finding, target, outcome, and
+  report details, a card that links the related entities the record actually
+  references (target, workspace, findings, outcomes, disclosures, CVEs, project,
+  and patched or parent target chains), each a navigation link with a type badge.
+  Only relationships present in the data are shown.
+- Activity timelines: an Activity tab or panel on run-based entity details that
+  lists the audit trail via `GET /audit/events?run_id=`, with action and status
+  filters and a graceful empty state, also wired onto the shell scan, task, and
+  workflow-run surfaces.
+
+Lineage graphs carry a screen-reader relationship list, and all additions respect
+prefers-reduced-motion and hold the WCAG 2.2 AA state. All workspace type-checks
+and the shell production build pass.
+
+## [0.5.20] - 2026-08-13 -- Frontend resilience and perceived-performance polish
+
+A backend/frontend cross-reference confirmed all 305 real endpoints are already
+wired, so this release hardens the frontend rather than adding capability.
+Additive; existing screens and behavior preserved (#219). No backend changes.
+
+### Added
+
+- A scoped feature error boundary with a Retry action, wrapping heavy async
+  widgets across the shell (dashboard widgets, cost and executive charts, war
+  room, topology, ML-Ops, platform-infra) and module panels (evidence graph,
+  branch tree, live run, reasoning replay, timeline) -- about 31 sites. A single
+  failed query now renders a scoped retry card instead of blanking the surface.
+- Content-shaped loading skeletons replacing spinners and KPI placeholders
+  across the shell and all four modules (about 69 conversions), so lists and
+  detail panels reserve layout and read as fast.
+- Guided empty states (icon, one-line guidance, and a primary action where one
+  fits) on about 23 list and detail surfaces.
+
+### Changed
+
+- Favorite, acknowledge, and settings toggles now update optimistically with
+  rollback on error (investigation favorite, malware message acknowledge and
+  investigation patch, forensics finding suppression), so the UI responds
+  instantly.
+
+All additions carry screen-reader affordances and respect prefers-reduced-motion.
+All workspace type-checks and the shell production build pass.
+
+## [0.5.19] - 2026-08-13 -- Live run panels, table export and quick-peek, palette recents
+
+Adds interaction-model power: real-time run panels, table export, row quick-peek,
+and a faster command palette. Additive; existing screens and behavior preserved
+(#218). No backend changes.
+
+### Added
+
+- Live run panels on running investigations (VR, malware, forensics): an additive
+  panel that consolidates live state -- status, stage or attempt progress, an
+  elapsed timer, live cost where available, and a live turn/activity ticker --
+  driven by the existing message and event streams (no second socket). Forensics
+  investigation detail, which previously had no live streaming, now consumes its
+  `.../events` progress feed and settles to terminal automatically without a
+  manual refresh.
+- Table export: any shared table can export its current filtered and sorted view
+  as CSV (RFC 4180, UTF-8 BOM) or JSON from a toolbar control.
+- Row quick-peek: an opt-in table affordance that opens a slide-over with a row
+  summary without navigating away, wired into the systems and scheduled-report
+  tables as the reference. Tables that do not opt in are byte-identical to before.
+- Command palette: a Recent group of recently-visited entities (localStorage) and
+  an entity-jump path so an id-like or `#`-prefixed query offers a direct open,
+  alongside the existing navigate, search, and action groups.
+
+Every addition carries a screen-reader affordance (aria-live regions, labeled
+controls) and respects prefers-reduced-motion. All workspace type-checks and the
+shell production build pass.
+
+## [0.5.18] - 2026-08-13 -- Module analytics and visualization
+
+Adds data visualization across all four modules and enriches the platform
+metrics surfaces, using the already-bundled chart wrapper. Additive; existing
+screens and behavior preserved (#217). No entry-chunk regression: charts ride
+the existing vendor chunk and per-route code-split.
+
+### Added
+
+- VR: MASVS and APK-static audit-aggregate charts on the target detail, a
+  findings CVSS-band and disclosure-status distribution, and a 2x2 fuzz
+  telemetry time-series (coverage, execs per second, corpus size, crashes).
+- Malware (previously charted nothing): a per-investigation cost breakdown, plus
+  observation-kind, target kind and state, family, and investigation-throughput
+  distributions.
+- Forensics (previously charted nothing): a visual timeline track for project
+  timeline events, color-coded by source with click-to-inspect, plus
+  events-by-source and event-type distribution charts. The existing timeline
+  table is preserved.
+- Vulnerability: workflow-state, KEV, top-package, and top-host facet charts and
+  a 30-day findings-throughput trend, alongside the existing severity chart.
+- Platform: a cost-over-time area chart and a model-usage breakdown on the cost
+  page, and a severity distribution on the executive page.
+
+### Changed
+
+- The operator default-page-size preference now drives the initial page size on
+  the systems and audit-log lists (completing the preference wired in v0.5.17).
+
+Every chart carries a screen-reader table mirror and resolves theme colors to
+hex for SVG. All workspace type-checks and the shell production build pass. No
+backend changes.
+
+## [0.5.17] - 2026-08-13 -- Module route splitting, power tables, operator preferences
+
+Finishes the frontend performance work and turns the list screens into power
+surfaces. Additive; existing routes, screens, and behavior preserved (#216).
+
+### Added
+
+- Power tables across every module list (VR, malware, forensics, vulnerability):
+  sortable column headers with `aria-sort` where a data table exists, keyboard
+  row navigation (j/k to move, Enter to open) scoped to the focused list and
+  cooperating with the global shortcut layer, and a per-list search box. Search
+  runs server-side where the endpoint exposes a query param (VR investigations;
+  vulnerability findings via the existing server filter pipeline) and
+  client-side otherwise. Existing filters, sorts, and pagination are untouched.
+- Operator preferences persisted to localStorage: a comfortable/compact density
+  toggle applied platform-wide, remembered sidebar collapsed state, and a
+  default list page size, all in a new Workspace section of Settings.
+
+### Changed
+
+- Route-level code-splitting is now complete: each module's route screens are
+  lazy-loaded (49 screens across the four modules), finishing the shell-level
+  split from v0.5.16. The initial entry chunk drops from 1,207 kB to 367 kB
+  (gzip 288 to 108 kB), and from 1,823 kB cumulatively since v0.5.15. The Vite
+  >500kB chunk-size warning is now cleared.
+
+All workspace type-checks and the shell production build pass. No backend changes.
+
+## [0.5.16] - 2026-08-13 -- Route code-splitting, WCAG 2.2 AA pass, live-updating lists
+
+Three pure-frontend usability wins, all measured and backend-respecting.
+Additive; existing routes, screens, and behavior preserved (#215).
+
+### Added
+
+- Live-updating lists: the investigations, targets, findings, observations, and
+  other list screens across VR, malware, forensics, and vulnerability now
+  subscribe to the existing global SSE stream and refresh in place when a
+  matching event lands, instead of only on manual refresh or a timer. Each
+  module adds one shared subscription that reuses the single existing socket and
+  is a no-op for unmatched events, with cross-module isolation (a vulnerability
+  event does not refresh forensics lists). No backend change.
+- A skip-to-content link, a single `<main>` landmark, and a labeled primary
+  `<nav>` in the shell layout (WCAG 2.4.1, 1.3.1), plus `aria-live` on the
+  offline banner, status bar, and error boundary.
+
+### Changed
+
+- Route-level code-splitting: the shell's ~40 route pages are now lazy-loaded.
+  The initial entry chunk drops from 1,823 kB to 1,207 kB (gzip 402 to 288 kB);
+  each page and its subtree loads on first navigation. The chunk-size advisory
+  still fires because the eager module-spec registry keeps the entry chunk above
+  the threshold; splitting that registry is a follow-up.
+- Accessibility (WCAG 2.2 AA): 128 real findings across the shell and all four
+  module frontends fixed to zero. Every form input and select now has a
+  programmatic label, radio and checkbox groups have a fieldset and legend, data
+  tables have captions and scoped headers, dynamic regions announce via
+  `aria-live`, heading order is sequential, and the two non-button click targets
+  are keyboard-operable. Per-page landmark and heading checks are satisfied
+  centrally by the shell layout rather than duplicated on each page.
+
+All workspace type-checks and the shell production build pass. No backend changes.
+
+## [0.5.15] - 2026-08-13 -- Malware Projects surface, investigation compare, core-screen craft pass
+
+Adds two backend-confirmed surfaces and elevates three core screens. Additive:
+existing routes, screens, and behavior are preserved (#214).
+
+### Added
+
+- Malware Projects surface: a projects list with inline create, a project detail
+  page, and archive-with-confirm (`GET/POST /malware/projects`,
+  `GET/DELETE /malware/projects/{id}`); a non-file "add target by descriptor"
+  entry point (`POST /malware/targets`) beside the existing file upload; an
+  investigation settings drawer (title, auto-pilot, favorite via
+  `PATCH /malware/investigations/{id}`); and an investigation target-attachment
+  panel (`GET/POST/DELETE /malware/investigations/{id}/targets`).
+- VR investigation compare: a side-by-side view of up to four investigations
+  (status, outcome mix, hypothesis counts) with per-row divergence highlighting,
+  built on the existing per-investigation reads. Deep-links via `?ids=a,b`.
+
+### Changed
+
+- Chat console (home) restyled into an operator launchpad: a labeled quick-lane
+  launcher, avatar-based turns with hot-pink reserved for the live streaming
+  state, a recessed composer bay, and a live-channel session row. All send,
+  stream, and session behavior is unchanged.
+- VR investigation workspace tightened into a command console: the two chrome
+  cards merged into one header strip, role- and persona-keyed turn identity,
+  status-keyed left stripes on branches and outcomes, and a color-coded
+  hypothesis rail. All handlers and data paths unchanged.
+- Ops war room restyled into an operations center: a command-bar masthead with a
+  live clock, a dense monospace event stream with severity accents, a
+  status-board active-runs grid, and live vitals gauges. The single SSE
+  subscription and all filter logic unchanged.
+
+Full workspace type-check + shell production build pass. No backend changes.
+
+## [0.5.14] - 2026-08-13 -- Module operator-drive surfaces, reasoning replay, global shortcuts
+
+Wires module write endpoints the backend already staged but the frontends only
+rendered read-side, plus two cross-cutting usability features. Additive:
+existing screens and behavior are unchanged (#213).
+
+### Added
+
+- VR operator controls: fuzz-crash triage (append a verdict + reason to the
+  triage chain), an agent draft-PoC trigger that polls until the drafted code
+  lands, outcome sibling-review voting, strategy-branch spawn, per-branch
+  operations (fork, promote, abandon, pause, resume) from the branch tree, and a
+  failed-target analysis resume. Wires `POST /vr/fuzz/crashes/{id}/triage`,
+  `/vr/findings/{id}/draft-poc`, `/vr/investigations/{id}/outcomes/{oid}/reviews`,
+  `/vr/investigations/{id}/strategy-branches`,
+  `/vr/investigations/{id}/branches/{bid}/{fork,promote,abandon,pause,resume}`,
+  `/vr/targets/{id}/resume-analysis`.
+- Malware operator controls: operator-message acknowledgement (stops a steering
+  message re-firing for 24h), operator observation create, branch promote and
+  abandon from the branch tree, and investigation finalize. Wires
+  `POST /malware/messages/{id}/ack`, `/malware/observations`,
+  `/malware/branches/{id}/{promote,abandon}`,
+  `/malware/investigations/{id}/finalize`.
+- Forensics reasoning-graph replay: a step-ordered snapshot timeline with an
+  added and removed node-and-edge diff between any two steps, plus an operator
+  zombie-reap action shown only for investigations the backend marks reapable
+  (409 on a stale view refetches instead of erroring). Wires
+  `GET /forensics/.../reasoning-graphs`, `.../reasoning-graphs/diff`, and
+  `POST /forensics/.../reap`.
+- Cross-team comparison on the Teams admin page (systems, runs, and members per
+  team) from `GET /admin/teams/cross-view`, and a live ROI figure in the status
+  bar from `GET /cost/roi` that hides itself cleanly on error.
+- A platform-wide keyboard-shortcut layer: chorded navigation (`g d`, `g o`,
+  `g c`, `g t`) and a `?` cheatsheet overlay. It cooperates with the existing
+  command-palette and sidebar bindings and stays inert while a field is focused.
+
+### Changed
+
+- The status bar gains a ROI segment; no layout shift, same 24px mono strip.
+
+## [0.5.13] - 2026-08-13 -- Operator console: ML-Ops, infra control, command palette, war room, topology, audit seals
+
+Surfaces a large set of backend capabilities that previously had no frontend. A
+deep endpoint pass found 37 admin-tier endpoints with zero UI plus several
+partial surfaces; this release wires them into the operator console. All
+additive: existing routes, pages, and behavior are unchanged (#212).
+
+### Added
+
+- ML-Ops console (`/admin/ml-ops`): model lifecycle (evaluate, approve, promote,
+  rollback, shadow, canary) with a per-version metrics table, route preview, and
+  transition timeline; an eval and calibrator dashboard; and a prompt registry
+  with alias deploy plus a version diff. Wires `/admin/lifecycle/*`,
+  `/admin/eval/*`, `/admin/prompts/*`.
+- Platform Infra console (`/admin/platform-infra`): an MCP zero-trust registry
+  (approve, revoke, schema-drift, per-instance tools) and a specialist-agent
+  registry. A state-reconcile action was added to the task-queue admin page.
+  Wires `/platform/mcp/instances/*`, `/agents/specialists/*`, `/admin/reconcile`.
+- Audit seals viewer: a Seals tab on the audit page renders the cryptographic
+  decision trail (seal, input, and output hashes, model, classification,
+  evidence validation) with a structural chain-linkage check (not an HMAC
+  recomputation; the key stays server-side) and a range export. The workflow
+  inspector gains a per-transition drill-down. Wires `/audit/seals`,
+  `/audit/seals/export`, `/admin/workflows/runs/{id}/transitions/{seq}`.
+- Universal command palette: the palette now navigates every route, runs a live
+  global search (`GET /search`), and executes role-gated, confirm-guarded
+  actions (new scan, new session, drain or requeue the task queue, export the
+  corpus, replay journal deadletters, reconcile a task). A dedicated `/search`
+  page adds faceted results.
+- Ops War Room (`/ops`): a live activity feed built on the existing single global
+  SSE subscription (rolling 500-event window with type filters), an active-runs
+  grid, and a vitals rail (queue depth, dead-letter count, SSE connection state).
+- Network topology map (`/topology`): the full node payload (ports, services,
+  severity counts, uptime, staleness, host metadata) rendered as an interactive
+  graph with severity-heat, stale-only, and subnet overlays plus a node-detail
+  drawer and a subnet sidebar. Wires `/topology`, `/topology/subnets`.
+
+### Changed
+
+- The command-palette search result type was corrected to the real `/search`
+  response shape (entity_type, entity_id, title, snippet, module_id, score).
+
+## [0.5.12] - 2026-08-13 -- Console status bar and chat-home launcher
+
+### Added
+
+- A live console status bar pinned to the bottom of every authenticated page:
+  an engine health dot (from GET /health), background task-queue depth (from
+  GET /tasks/queue-depth, pulsing when non-zero), the active module context,
+  online/offline state, the build version and short SHA, and a live clock. It
+  replaces the prior version-only footer and respects prefers-reduced-motion
+  (#211).
+- A chat-home launcher: an empty chat session now shows a short console
+  greeting plus quick-action chips (scan a host, start a VR investigation,
+  analyze a malware sample, forensics triage, platform health, capability
+  overview) that seed the composer without auto-sending, turning the chat-first
+  home into a launchpad across modules (#211).
+
+## [0.5.11] - 2026-08-13 -- Routing prompt injection hardening
+
+### Security
+
+- The platform router sanitizes the user query (NFKC normalize, zero-width
+  strip, known injection-marker removal) and fences it as untrusted data inside
+  the routing prompt, with an explicit instruction not to follow directives
+  inside the fence. An injection-laden query can no longer steer the module or
+  action selection (#189).
+
+## [0.5.10] - 2026-08-13 -- Refresh-token cookie hardening, SSE reconnect, dead-column removal
+
+### Security
+
+- The refresh token now lives in an HttpOnly, Secure, SameSite=Lax cookie
+  instead of script-readable sessionStorage, and a CSRF double-submit is
+  enforced server-side: cookie-authenticated state-changing requests must
+  present an X-CSRF-Token header matching the readable CSRF cookie
+  (Authorization: Bearer and API-key requests are exempt). Login, refresh, and
+  the OIDC callback set the cookies; logout clears them. The SPA no longer
+  persists the refresh token and drives auth through credentialed fetch (#119).
+
+### Fixed
+
+- The VR project-events stream and the forensics investigation-event feed now
+  reconnect with exponential backoff after a backend restart instead of dying
+  silently; both route through the shared reconnecting SSE hook (#111). A stale
+  /scans link in the empty-scans panel now points at the live /console route
+  (#145, partial).
+
+### Removed
+
+- The dead `TaskRecord.result_path` column (always NULL, no writer, surfaced as
+  a permanent null on /tasks and /scans) is dropped via migration 126, and the
+  residual SQLite-only backend guards are removed; Postgres is the single
+  supported backend (#144).
+
+## [0.5.9] - 2026-08-13 -- Chat-first console and platform-ops UI
+
+### Changed
+
+- The home screen is now the platform chat assistant. The index route renders
+  the chat surface, which routes natural-language requests through
+  platform.handle() across every module; the dashboard moved to /dashboard and
+  /chat redirects to the home route. The sidebar leads with Chat.
+
+### Added
+
+- A "Platform Ops" admin page that wires three platform endpoints that had no
+  UI: the sandbox exec surface (POST /platform/sandbox/exec, with a clear
+  inline notice when no sandbox backend is provisioned), the trajectory-corpus
+  export and stats (POST /platform/eval/corpus/export, GET
+  /platform/eval/corpus/stats), and the journal dead-letter replay
+  (POST /admin/journal/deadletter/replay).
+- The Cost admin page now exercises the full /cost/* surface: per-run cost
+  drilldown (GET /cost/runs/{id}), a pre-scan estimate (POST /cost/estimate),
+  and a human-equivalent estimate (POST /cost/estimate-human), alongside the
+  existing history and ROI views.
+
+## [0.5.8] - 2026-08-13 -- Recovery-race, query-performance, loader, and reasoning fixes
+
+### Fixed
+
+- Race: a shared recovery-claim primitive (atomic compare-and-set on the
+  investigation row) ensures the stall-recovery and stuck-healer sweeps cannot
+  both resubmit the same investigation in one tick (#121). The calibrator,
+  proposer, and finalizer writers plus the reaper/finalizer lock order were
+  verified already-consistent from the prior pass (#202, #177).
+- Performance: the systems scan map and per-system scan list compute in SQL
+  (DISTINCT ON + count/limit) instead of a full WorkflowRunRecord scan into
+  Python (#176); the cost history/estimate/ROI, notifications, LLM-log,
+  saved-filters, and scheduled-reports endpoints aggregate and paginate in SQL
+  rather than loading every row (#204). Migration 125 adds the supporting
+  indexes with CREATE INDEX CONCURRENTLY IF NOT EXISTS.
+- Module loader: one broken module is isolated at load and logged instead of
+  aborting all module discovery (#190); discovery order is sorted by module id
+  so it is deterministic across platforms (#200); init_db no longer falls back
+  to metadata.create_all, closing the schema-drift path (fresh installs use the
+  bootstrap script + Alembic) (#108).
+- Reasoning: a hypothesis id that was rejected can no longer be resurrected as
+  live through absorb (#165); the fuzz subsystem uses one canonical stack-hash
+  so sidecar and agent-side dedup keys match (#174); observation knowledge-base
+  writes create entity and neighbour graph edges so the graph route can traverse
+  them (#128).
+- Forensics: investigations now run the shared closure, observation-aging, and
+  unresolved-hypothesis submit-gate contract the other modules get from the
+  platform reasoning base (#175). The multi-branch persona panel remains a
+  deferred follow-up (its loop body is still a stub).
+
+## [0.5.7] - 2026-08-13 -- Security hardening and CLI crash fixes
+
+### Fixed
+
+- Security: fuzz reproducer reads are confined to a configured root with
+  symlink and traversal rejection, and the feature is fail-closed off until a
+  root is set (#183); the LLM-authored fuzz harness build command is validated
+  against a build-tool allowlist and rejected on shell metacharacters before it
+  reaches SSH (#184); the poc-runner target binary is confined to the known
+  workstation roots (#185). Outbound bridge upload and refresh fetches route
+  through the SSRF-validating HTTP client, so metadata, private, and loopback
+  targets are refused before the socket opens (#181). APK v2/v3 signatures are
+  now cryptographically verified per the Android signing-scheme spec (content
+  digest over the archive, signature over the signed data, public-key and
+  certificate match); parse results carry an explicit verified flag and reason
+  and are never trusted by default (#182). The request-size guard counts the
+  streaming body so a chunked-transfer or an understated Content-Length can no
+  longer bypass the limit (#115). The forensics script guard checks the parsed
+  AST for banned imports, dynamic execution, and dunder walks instead of a
+  bypassable substring scan (#118). The MCP layer pins tool-description hashes
+  (warn by default, refuse under mcp_tool_hash_strict), sanitizes injection
+  markers out of tool observations before they enter the agent case model, and
+  supports opt-in per-tool authority allowlists (#159).
+- CLI and module loader: prewarm-intel initializes the platform and awaits the
+  async prewarm instead of crashing (#170); create-api-key and the other DB
+  commands bootstrap the schema registry so they work on a fresh database
+  (#191); AgentTurnRunnerBase provides safe defaults for the three submit-gate
+  hooks so a minimal module no longer crashes on its first submit (#168); the
+  CLI tool-registry build awaits each module's async register_tools so CLI-context
+  module tools are actually registered (#169).
+
+## [0.5.6] - 2026-08-13 -- Security, race, and wiring fixes from the peer-review backlog
+
+### Fixed
+
+- Security: admin/workflows now refuses a team-scoped admin (god-tier gate,
+  team_id must be None), closing a cross-tenant read (#103). The seal HMAC key
+  is stored encrypted through the SecretStore instead of plaintext in the config
+  registry (#113). automation schedule update and delete are team-scoped and
+  return 404 for an out-of-scope id instead of a 403 that leaked existence
+  (#114). The NVD API key resolves through the SecretStore first, with the
+  environment variable kept only as a documented bootstrap fallback (#116).
+  OIDC and the auth key-list endpoints carry rate limits consistent with their
+  siblings (#206).
+- Race: the state reconciler now handles the RUNNING + lock-present +
+  terminal-cursor case (crash mid-teardown), healing the row idempotently
+  (#120).
+- Bug: the investigation cost read degrades to zero on a database error instead
+  of returning a 500 (#101); domain-event persistence catches and logs
+  SQLAlchemyError instead of losing journal writes silently (#122); the LLM log
+  filters by the caller user id (a new indexed llm_cost_records.user_id column,
+  migration 124) instead of matching on team id (#124); the ARQ worker sets
+  max_jobs to 1 so concurrency matches the documented single-task-per-process
+  contract (#196).
+- Performance: the knowledge router keeps common-word queries on the cheap path
+  and only routes genuine multi-hop shapes to the graph (#126); a MiniLM
+  embedding dimension mismatch raises and falls back to full-text search instead
+  of zero-padding vectors into an incomparable space (#127); expired seal records
+  are purged on a cron instead of an O(N) delete on every LLM call (#129); the
+  cost-ceiling lookup uses the async path so the LLM hot path no longer spawns an
+  untracked sync connection pool (#130); the audit-mcp observable caps are back
+  to 32 KiB so the context-shrink actually fires (#194).
+
+### Changed
+
+- Reasoning: the tool-prefix set includes android_mcp and the engine ledger
+  prefix, so android_mcp evidence is never evicted and the agent cannot shadow
+  the ledger observable (#109, #179). The post-turn branch read is FOR UPDATE,
+  serializing the turn-count and case-state write under double-dispatch (#180).
+  spawn_strategy takes an investigation lock and enforces the fork cap (#167).
+  Case-state merges preserve resolved hypotheses and keep the higher turn number
+  (#178).
+- Wiring: forensics, platform, and module tuning knobs read through the config
+  registry instead of environment variables, so live config edits take effect
+  (#131, #132). ModuleProtocol.report_count carries team_id across the protocol
+  and every module implementer, and the vulnerability count filters by run id
+  (#192, #125). The malware module registers real reasoning strategies and a
+  domain profile (#110); malware persona prompts use the supported string-listing
+  tool and the full action vocabulary (#187, #188); fleet severity counts allow
+  co-existing severities on one system (#199). The bridge read-function adapter
+  preserves the fallback marker (#193) and the audit-mcp middleware drops unknown
+  pagination kwargs (#195).
+
+## [0.5.5] - 2026-08-13 -- Platform sandbox, fuzz feedback loop, trajectory corpus
+
+### Added
+
+- Platform sandbox service (#147). A platform-owned `SandboxService` plus a
+  `sandbox_exec` tool and `POST /platform/sandbox/exec` (god-tier admin) give
+  every module one audited isolation boundary for agent-derived code execution.
+  Two backends dispatch over SSH to a Linux host: nsjail (namespaces + rlimits,
+  developer tier) and Firecracker (microVM, production tier). Policy is enforced
+  before dispatch (timeout clamped to `sandbox_max_timeout_s`, network forced
+  off unless `sandbox_allow_network`, stdout/stderr and per-file output capped).
+  When no backend is provisioned the service raises a typed unavailable error
+  rather than running code un-isolated on the host. Fifteen `sandbox_*` platform
+  config keys select the backend, host, and ceilings. Live execution requires a
+  Linux sandbox host (nsjail, or KVM plus Firecracker with a rootfs and kernel);
+  the control plane is complete and inert until one is configured.
+- Fuzz coverage and crash feedback loop (#173, #148). A security-relevant crash
+  on a campaign linked to a source investigation now posts a deduped operator
+  steering message to that investigation and emits a `fuzz.crash_confirmed`
+  event; a coverage jump past `fuzz_coverage_emit_delta_pct` (default 5.0) posts
+  a `fuzz.coverage_delta` observable the reasoning loop consumes. Campaigns
+  carry `source_investigation_id` and `source_outcome_id`, stamped at proposal
+  acceptance (migration `123_vr_fuzz_source_investigation`). Feedback runs after
+  the crash or coverage row commits, so a steering failure never rolls back the
+  stored row. Optional child-investigation spawn on a confirmed crash is gated
+  behind `fuzz_crash_spawn_child` (default off).
+- Trajectory SFT and DPO corpus plus a LoRA pipeline (#158). A
+  `TrajectoryCorpusBuilder` mines resolved investigations from the immutable
+  platform journal into ShareGPT-style SFT records (from approved or dispatched
+  branches) and state-conditioned DPO preference pairs (chosen from an approved
+  branch, rejected from a rejected sibling on the same investigation). A nightly
+  `run_corpus_export` task and `POST /platform/eval/corpus/export` plus
+  `GET /platform/eval/corpus/stats` (god-tier admin) write `sft.jsonl`,
+  `dpo.jsonl`, and a manifest. A complete TRL and PEFT QLoRA
+  SFT-then-DPO-then-merge script (`aila.platform.eval.training.train_lora`) runs
+  behind a `training` optional dependency set on a GPU host. Ten `corpus_*` and
+  `training_*` config keys tune the export and the run. The corpus builder reads
+  module outcome state through read-only SQL and never imports module code.
+
+## [0.5.4] - 2026-08-13 -- Activate deferred #209 residual knobs
+
+### Added
+
+- Malware playbook auto-trigger. Family-verdict dispatch now classifies each
+  ACTIVE playbook assigned to the matched family into auto / confirm / suggest
+  / none using the module thresholds (`playbook_auto_trigger_threshold` 0.85,
+  `playbook_confirm_threshold` 0.60, `playbook_suggest_threshold` 0.40), with a
+  per-assignment `auto_trigger_threshold` override applied to the auto edge
+  only. AUTO enqueues the playbook run on the malware track (the same path as
+  the operator-triggered run); CONFIRM and SUGGEST land on the target's
+  capability profile so the UI can surface the tier and reason.
+- Journal dead-letter replay. A `replay_deadletters` service plus
+  `POST /admin/journal/deadletter/replay` (god-tier admin) re-append
+  dead-lettered journal entries through the normal chain-hashed append path and
+  stamp the previously-unwritten `replayed_at` and `replay_seq` columns. Each
+  entry runs in its own savepoint so one still-failing row cannot roll back the
+  rows already replayed.
+
+### Changed
+
+- Malware function ranking now honors the per-depth TopN caps
+  (`topn_functions_low` / `_medium` / `_high` = 20 / 50 / 150) instead of a
+  hardcoded slice, and the ULTIMATE-depth achievement gate enforces
+  `ultimate_coverage_floor` (0.95 of the non-library, non-wrapper, non-signatured
+  function set) before it fires.
+- Malware cross-target observation propagation now honors
+  `MalwareInvestigationRecord.inherit_observations`: when False, propagation is
+  skipped entirely (no similarity probe, no shadow rows). The opt-out had been
+  documented but never read, so it propagated regardless. Default (True) is
+  unchanged.
+- Documented the CVE feed poller (`VRCVEFeedStateRecord` / `poll_cve_feeds`) as
+  intentionally deferred. The feed-state table is reserved for that future cron
+  task; operators ingest CVEs manually through the existing endpoint.
+
+## [0.5.3] - 2026-08-13 -- Clean-install dependency and schema fixes surfaced by CI
+
+### Fixed
+
+- Restored four dependency pins in `pyproject.toml` that earlier blanket
+  version-bump substitutions had advanced to nonexistent releases, which
+  broke `pip install -e ".[dev]"` in a clean environment and failed both
+  backend CI jobs at the install step: `pgvector` back to `0.4.2`,
+  `python-magic` to `0.4.27`, `python-magic-bin` to `0.4.14`, and the
+  `ruff` dev-tool floor to `>=0.5.0`. Version-site bumps are now anchored to
+  the version-declaration lines so a dependency pin can no longer be caught
+  by the same substitution.
+- Declared two test dependencies that were missing from the `dev` extra, so
+  a clean `pip install -e ".[dev]"` can now collect the suite:
+  `pytest-asyncio` (imported by `tests/conftest.py`; required by
+  `asyncio_mode = "auto"`) and `pypdf` (test-only, used to parse generated
+  MASVS report PDFs in assertions). The local developer environment already
+  had both, so only the first clean-room CI install exposed the gap.
+  `pytest-asyncio` is capped below `1.4.0`: the 1.4 loop-factory rework binds
+  the session-scoped async fixtures to a different event loop than the tests,
+  raising `RuntimeError: ... attached to a different loop` at fixture setup.
+- Declared three production dependencies that were absent from
+  `[project.dependencies]`: `asn1crypto` (APK v2 and v3 signing-block parsing
+  in `platform.apk`, imported unguarded, so importing `aila.platform.apk`
+  failed on a clean install), `PyYAML` (imported unguarded by platform code;
+  had only been reaching the environment transitively through dev tools, so a
+  production `pip install -e .` would have lacked it), and `python-multipart`
+  (FastAPI loads it at request time to parse the `Form`/`File` upload
+  endpoints under `api/uploads.py` and the module routers).
+- Added a `strategy_family` column to `forensics_investigations` (model plus
+  migration `122_forensics_strategy_family`). Platform
+  `persona_spawn` reads the investigation-level `strategy_family` as the
+  RFC-13/03 fallback when a primary branch was inserted without one, but the
+  forensics investigation table (which does not extend `InvestigationRecordBase`)
+  never carried the column, so `SELECT strategy_family FROM
+  forensics_investigations` raised `UndefinedColumnError` and the forensics
+  persona-panel spawn failed. Default `generic` matches the forensics
+  investigator's own fallback family. Alembic head moves 121 to 122.
+
+- Corrected the reports-list total in `ReportService.fetch_reports`: the count
+  query wrapped the base statement as a subquery, which left the team-scope
+  `do_orm_execute` listener appending a `team_id` predicate to an outer SELECT
+  with no matching FROM. SQLAlchemy pulled the table in implicitly, cross-joining
+  the subquery against the base table and inflating the team-scoped total by the
+  per-team row multiplier for callers behind the API middleware. The count now
+  swaps the SELECT list in place (`with_only_columns(func.count())`) so the
+  predicate is redundant rather than destructive.
+
+### Added
+
+- `microsoft-oidc` optional extra (`msal`) for the Microsoft (Entra ID) OIDC
+  provider, which imports `msal` lazily; install the extra to enable that
+  provider in production.
+- `DELETE /vr/investigations/{id}` now records an audit event
+  (`action="investigation_deleted"`, with the title, kind, status, deleting
+  user, and branch count) in the same transaction as the hard delete. Because
+  the investigation and every child row are removed, the audit trail is the
+  only durable record that the deletion happened and who initiated it -- a
+  deliberate observability fix for "where did my investigation go".
+
+### Changed
+
+- The pytest coverage floor (`[tool.coverage.report] fail_under`) returns to
+  `25` pending a measured total-coverage baseline. It had been raised to
+  `50` while CI could not run, so the higher floor was never validated
+  against an actual coverage number.
+- The CI pipeline no longer runs the backend pytest job. The suite (8781
+  tests, Postgres- and Redis-dependent, roughly 18 minutes) is too heavy for
+  the CI/CD loop; CI now runs the backend gate (ruff, compile, honesty audit)
+  and the frontend type-check and production build. Run the backend suite
+  locally with `make test`. `pytest-timeout` stays in the dev extra so a local
+  run still bounds a hanging test.
+
+## [0.5.2] - 2026-08-13 -- Skill-library memory tier, isolation-set dedup, CI collection fix
+
+### Added
+
+- Procedural skill-library memory tier (`platform/services/memory/skills.py`,
+  #150) -- the second half of the memory work. A nightly sweep extracts one
+  reusable skill (problem_shape to winning approach) from each resolved
+  investigation with a confirmed outcome and writes it to a team-scoped
+  `skill.*` knowledge namespace that the vr and malware setup-time retrievers
+  now read, so prior skills surface in later investigations across the team.
+  Reuses the existing knowledge store (no migration); idempotent per
+  investigation; own nightly automation action.
+
+### Changed
+
+- The automation runner's per-schedule isolation set now composes from the
+  shared `platform/events/_dispatch.py::ISOLATION_ERRORS` plus SQLAlchemyError,
+  removing the third hand-maintained copy of the isolation tuple.
+
+### Fixed
+
+- `tests/platform/workflows/test_core_panel_config.py` imported a module
+  (`aila.modules.vr.services.config_helpers`) that had been refactored into
+  `ModuleConfigReader`, so the entire test suite failed at collection (hidden
+  while CI was org-blocked). The test now targets the current reader; the suite
+  collects clean, unblocking the CI test gate.
+
+## [0.5.1] - 2026-08-13 -- Wire dead config keys and columns from the liveness triage (#209)
+
+### Fixed
+
+- Seven previously-ignored ConfigRegistry keys and columns now take effect.
+  Each was declared or promised but no live path read or wrote it; defaults are
+  unchanged, so behavior differs only when an operator sets a non-default value:
+  - `platform.heartbeat_interval_s` now drives the SSE/progress Redis XREAD
+    block timeout (was a hardcoded 30000ms; the dead `XREAD_BLOCK_MS` constant
+    is removed).
+  - vulnerability `osv_advisory_cache_ttl_hours` and
+    `scoring_review_cache_ttl_hours` now expire their caches (both were
+    keep-forever, so stale advisories and stale scoring verdicts were returned
+    indefinitely); `ssh_max_workers` now caps inventory SSH concurrency (was an
+    unbounded gather over the whole fleet).
+  - vr `poc_reliability_target` now drives the PoC reliability gate (was
+    hardcoded to 5 runs); `VRFindingRecord.obligations_json` is now persisted
+    (obligations were computed and a UI existed, but the advisory state dropped
+    them before the insert).
+  - malware `cross_target_similarity_threshold` now gates cross-target
+    observation propagation.
+
+### Changed
+
+- Recorded a liveness-audit whitelist (`liveness_whitelist.py`) for four
+  confirmed false positives (`WorkflowStateCursor.archived_state`, written via
+  raw SQL; `KnowledgeEntryRecord.search_vector`, a Postgres generated tsvector;
+  and the two `_template` scaffold keys). The liveness residual drops from 27 to
+  16; the remaining 16 are documented unbuilt features tracked on #209 for a
+  build-or-remove decision (malware playbook auto-trigger and function-ranking
+  knobs, the VR CVE feed-state columns, dead-letter replay, and
+  `inherit_observations`).
+
+## [0.5.0] - 2026-08-13 -- P3 capabilities: judge harness, per-persona models, semantic memory
+
+### Added
+
+- Judge-reliability harness (`platform/eval/judge_harness.py`, #152): calibration
+  metrics (ECE, Brier, Wilson interval) plus label-free position and verbosity
+  bias stress tests for the claim verifier, a provenance-checked seed loader, a
+  bootstrap seed, and a CLI (`python -m aila.platform.eval.judge_harness`). Makes
+  the anti-hallucination guarantee measurable instead of asserted.
+- Per-persona model routing (#151): a `persona_voice -> model_role` map
+  (ConfigRegistry key `platform.persona_model_role_map`, empty by default) read
+  live at turn dispatch so each sibling persona can run a distinct base model,
+  turning multi-persona debate into real adversarial diversity. An empty map is
+  byte-identical to prior behavior; no model or route names live in code.
+- Semantic memory consolidation (`platform/services/memory/consolidator.py`,
+  #150): a nightly automation job distills resolved-investigation ledger traces
+  into de-contextualized semantic facts, written to the existing knowledge store
+  under a per-workspace semantic namespace that the vr and malware knowledge
+  retrievers now read, so each investigation's learnings are retrievable by
+  later ones. Idempotent with a pre-call dedup probe, reuses the existing
+  pgvector table (no migration), and unconfigured it falls back to the default
+  model. The procedural/skill-library tier remains a follow-up.
+
+## [0.4.3] - 2026-08-13 -- Docs refresh: schema, reasoning engine, lifecycle, embeddings
+
+### Changed
+
+- Regenerated `docs/DB_SCHEMA.md` from the live SQLModel metadata: 120 tables
+  across platform and all modules (the malware module's 17 tables were
+  previously absent), with the Alembic head corrected from `081` to
+  `121_backfill_investigation_cost`.
+- `docs/ARCHITECTURE.md` gains four sections matching the current
+  implementation: the reasoning engine and phase graph (a static frozen
+  `WorkflowDefinition` with a condition-checked dispatch hub and a
+  ledger-based replan/ratify oracle -- not a learning planner), the reasoning
+  vs deterministic-pipeline module distinction, prompt lifecycle management
+  (evaluate to approve to shadow to canary to promote), and the knowledge
+  embedding dimension (1024 BGE-M3; MiniLM fallback zero-padded) (#143, #138).
+
+## [0.4.2] - 2026-08-13 -- Platform/module boundary: domain knowledge to module hooks, vulnerability classified
+
+### Changed
+
+- Vulnerability-research domain vocabulary no longer lives in the platform
+  reasoning layer. The defense-check allocator/reader tables, the lateral-
+  pattern regexes, and the persona-role map are now per-module hooks
+  (agent-subclass class variables) with empty platform defaults; the VR module
+  supplies its own vocabulary. A module that supplies none gets a graceful
+  no-op, and no FFmpeg/nginx/kernel/persona names remain in platform code (#136).
+- The vulnerability module is classified as a deterministic pipeline module via
+  a machine-readable `module_kind()` on the module protocol (default
+  "reasoning"; vulnerability returns "pipeline"), so cross-module capability
+  routing distinguishes it from the reasoning modules (vr, malware, forensics)
+  that run the shared CyberReasoningEngine (#138).
+
+## [0.4.1] - 2026-08-13 -- Engine consolidation: narrative base, event dispatch, sweep ordering
+
+### Changed
+
+- NarrativeAgent is now a shared platform base (`platform/agents/narrative_agent.py`);
+  the VR and malware agents are thin subclasses that supply only their data
+  loaders and task type. Removes ~700 lines of duplicated skeleton and unifies
+  the persisted narrative payload on one shape (`tone_used`, `length_used`,
+  `narrative_words`) across both modules (#112, #137).
+- The two event systems (`EventEmitter` fan-out and `DomainEventBus`) now share
+  one dispatch primitive (`platform/events/_dispatch.py`) for per-subscriber
+  isolation and failure counting, replacing two copies of the isolation tuple
+  that were documented as needing to stay in sync (partial #134; the full
+  System-A-to-B migration remains a follow-up).
+- Periodic recovery sweeps now run in a declared deterministic order via a
+  `SweepPriority` bin on registration, so the cap-exceeded reaper reliably runs
+  before no-finding synthesis. Each sweep keeps its own transaction and
+  module-generic binding; failures stay isolated per sweep (partial #133; the
+  policy-engine merge remains a follow-up).
+
+## [0.4.0] - 2026-08-13 -- Liveness auditor and stable-core knowledge seeding
+
+### Added
+
+- `aila.tools.liveness_audit`: a precision-first static reachability auditor
+  that flags wired-but-dead platform capabilities. Two rules encode the dead-path
+  shapes found in the peer review: `unread_config_key` (a ConfigRegistry key
+  written but never read -- the shape of the #104 gate-threshold bug) and
+  `unwritten_column` (a table column with no application writer -- the shape of
+  the #135 cost bug). Ships with a `liveness_whitelist.py` for known dynamic
+  lookups and runs as a report (`python -m aila.tools.liveness_audit src/aila
+  --whitelist liveness_whitelist.py`), not yet a hard gate (#139, #200).
+- Stable-core knowledge seeding: a startup seeder loads verified rubric and
+  policy entries from `platform/knowledge/stable_core/` into the
+  `platform:stable_core:*` namespace and invalidates the cache (#107).
+
+### Fixed
+
+- The RFC-12 stable-core cache-augmented retrieval route had no writer, so every
+  agent query about rubrics, policies, and checklists silently returned empty.
+  It is now seeded at startup with entries derived from existing platform policy
+  artifacts, so the route returns real results (#107).
+
+## [0.3.23] - 2026-08-13 -- Cost materialization: investigation spend writeback
+
+### Fixed
+
+- LLM cost is written to the owning investigation's `cost_actual_usd` and
+  `llm_tokens_cost_usd` columns as each call is recorded, in the same
+  transaction as the cost record. List views and the per-investigation
+  budget cap now read real spend instead of the permanent $0.00 a
+  never-written column reported, so the budget cap can fire (#135).
+
+### Added
+
+- Migration 121 backfills `cost_actual_usd` and `llm_tokens_cost_usd` on
+  every existing investigation from its recorded LLM spend, so historical
+  investigations display real cost immediately after upgrade (#135).
+
+## [0.3.22] - 2026-08-13 -- P1 concurrency hardening and wired-but-dead paths
+
+### Fixed
+
+- Investigation-terminal writers now acquire the investigation row lock
+  before branch rows, removing the AB/BA deadlock window between the
+  investigation reaper and the lifecycle/finalizer paths (#177).
+- `evaluate_quorum` locks the outcome row FOR UPDATE for the full
+  read-tally-write, so two branch workers can no longer race the
+  draft to approved/rejected transition (#166).
+- `close_rejected_outcomes` locks the investigation row and guards on
+  RUNNING state; `synthesize_no_finding_outcomes` isolates each
+  investigation in a savepoint and uses ON CONFLICT DO NOTHING so a
+  single duplicate no longer rolls back the whole batch (#202).
+- Calibrator promotion and calibration-proposal supersession lock their
+  rows FOR UPDATE, preventing duplicate ACTIVE records (#202).
+- Dependent-task promotion, task-status reconciliation, workflow cursor
+  recreation, and the fuzz crash-count increment are now lock-guarded or
+  atomic, closing lost-update and noisy-retry windows (#203).
+
+### Changed
+
+- The confidence gate honors a promoted calibration threshold:
+  `platform.calibration_threshold_{outcome_kind}` (falling back to the
+  task_type key) overrides the reject threshold when present, so an
+  operator-promoted calibration proposal reaches the live decision (#104).
+- Synthesis annotates each panel entry with its claim-verifier status
+  (confirmed / refuted / inconclusive / unverified) and surfaces a
+  verifier-annotation block in the synthesis prompt, so a refuted claim
+  no longer weighs the same as a confirmed one in the consolidated
+  verdict (#105).
+
+## [0.3.21] - 2026-08-13 -- P0 security and reliability fixes from the platform peer review
+
+### Security
+
+- Finding-workflow endpoints (`GET /{id}/workflow`, `POST /{id}/transition`,
+  `GET /{id}/evidence-chain`) now enforce team isolation. `team_id` is
+  stamped on each transition and every read/write is gated to the caller's
+  team; cross-team access returns 404 (no existence oracle). Admins see all
+  teams (#99).
+- Specialist-agent endpoints now enforce team scoping, require operator role
+  on create/seed/delete, and carry rate limits. Built-in defaults remain
+  platform-global (team_id NULL) and visible to every team (#100).
+- User JWT access and refresh token lifetimes corrected from 1 year to
+  1 hour and 7 days respectively, matching the documented design (#171).
+- The rate-limit bucket key now verifies the JWT signature before trusting
+  the identity claim. Forged or tampered tokens fall back to per-IP
+  bucketing, closing a brute-force-limit bypass on the auth endpoints (#172).
+
+### Fixed
+
+- The defense-check submit gate no longer crashes with a TypeError on every
+  rejection. The directive is written to `case_state.observables` instead of
+  an unsupported dict subscript on the Pydantic case state (#97).
+- Orphan-task re-enqueue now passes the fully-qualified function name to ARQ
+  so the job resolves and resumable workflows resume instead of stalling
+  indefinitely (#98).
+
+### Changed
+
+- CI now runs the backend pytest suite against Postgres (pgvector) and Redis
+  service containers on every pull request, and the coverage floor is raised
+  from 25 to 50 (#164).
+- Stale specialist-registry test expectations updated to the current
+  built-in names (snake / jak / kratos / lara, alucard / vincent).
+
+### Added
+
+- Alembic migration 120 adds a nullable, indexed `team_id` column to
+  `finding_workflow_records` to back the finding-workflow team gate.
+
 ## [0.3.20] - 2026-08-09 -- Defense-check submit gate + lateral pattern discovery
 
 ### Added

@@ -29,9 +29,14 @@ async def test_bulk_update_operator(
         headers={"Authorization": f"Bearer {operator_token}"},
     )
     assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "updated"
-    assert data["count"] == len(ids)
+    # PATCH /vulnerability/findings/bulk returns
+    # ``DataEnvelope[BulkUpdateResponse]``; the operator-facing payload
+    # lives under ``data``. The endpoint wrapper landed with D-27 and the
+    # bulk handler was updated to return ``DataEnvelope(data=...)`` in
+    # aila.modules.vulnerability.api_router.bulk_update_findings.
+    body = response.json()
+    assert body["data"]["status"] == "updated"
+    assert body["data"]["count"] == len(ids)
 
 
 @pytest.mark.asyncio
@@ -112,9 +117,12 @@ async def test_explain_cached(
         headers={"Authorization": f"Bearer {operator_token}"},
     )
     assert response.status_code == 200
-    data = response.json()
-    assert "content" in data
-    assert "CVE-2023-0001" in data["content"]
+    # GET /vulnerability/reports/{run_id}/explain returns
+    # ``DataEnvelope[ExplainCachedResponse]`` on cache hit; the cached
+    # ``content`` string lives under ``data``.
+    body = response.json()
+    assert "content" in body["data"]
+    assert "CVE-2023-0001" in body["data"]["content"]
 
 
 @pytest.mark.asyncio

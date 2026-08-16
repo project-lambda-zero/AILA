@@ -16,7 +16,8 @@ from __future__ import annotations
 import difflib
 import json
 import logging
-from typing import Any
+import re
+from typing import Any, ClassVar
 from uuid import uuid4
 
 import httpx
@@ -44,6 +45,11 @@ from aila.platform.mcp.factory import make_bridge, middleware_family
 from aila.platform.mcp.instance_catalog import (
     McpInstanceCatalog,
     decode_capability_tags,
+)
+from aila.platform.mcp.observation_sanitize import sanitize_observables_delta
+from aila.platform.mcp.tool_authority import (
+    authorized_tools_snapshot,
+    is_tool_authorized,
 )
 from aila.platform.runtime.tool_router import (
     ToolInfraError,
@@ -106,6 +112,17 @@ class ToolExecutorHelpersBase:
     # (unit-test doubles, narrow harnesses) whose dispatch stays on
     # the direct :meth:`bridge.forward` path.
     _bridge_module_id: str | None = None
+
+    # Module-supplied vocabulary for the auto-steering lateral-pattern
+    # discovery pass (issue #95, Wave 1) that ``maybe_post_auto_steering``
+    # runs against every audit_mcp source-surfacing tool result. Each
+    # entry is ``(compiled regex, pattern_id)``. Empty on the platform
+    # base so a module that publishes no lateral vocabulary (malware,
+    # forensics, hello_world) skips the scan entirely. VR overrides
+    # this with the FFmpeg-shaped tells (protocol passthrough, unchecked
+    # int multiply, memop variable length, truncating dimension shift,
+    # input-to-allocation flow).
+    lateral_patterns: ClassVar[list[tuple[re.Pattern[str], str]]] = []
 
     # Fallback cap on observables dict size (directives + recall pins
     # always kept). Production paths resolve the live value via
@@ -1051,6 +1068,41 @@ class ToolExecutorHelpersBase:
                 message_id=msg_id, success=False, error=err,
             )
 
+        # #159 part 3 -- per-tool authority scoping. The module's server
+        # allowlist above (``_AGENT_ALLOWED_SERVERS``) is coarse: a
+        # compromised or attacker-added tool on an approved server would
+        # otherwise inherit agent access automatically. Modules that
+        # want tighter control declare an explicit ``(server_id,
+        # tool_name)`` allowlist via
+        # :func:`aila.platform.mcp.tool_authority.declare_tool_authority`
+        # at ``create_module()`` time; modules that omit the declaration
+        # keep the pre-#159 behaviour ("any tool on an allowed server").
+        module_scope = getattr(self, "_bridge_module_id", "") or ""
+        if module_scope and not is_tool_authorized(
+            module_scope, server_id, tool_name,
+        ):
+            declared = authorized_tools_snapshot(module_scope, server_id)
+            err = (
+                f"Tool {server_id}.{tool_name} is NOT in this module's "
+                f"per-tool allowlist. Declared allowlist for "
+                f"{server_id!r}: {sorted(declared) if declared else '<empty>'}."
+                f" Any other tool name -- even one advertised by the MCP "
+                f"server's live catalog -- is refused at dispatch."
+            )
+            msg_id = await self._write_error_message(
+                investigation_id, branch_id, err, at_turn,
+            )
+            _log.warning(
+                "tool_executor authority REFUSE %s: %s.%s not in "
+                "allowlist %s",
+                module_scope, server_id, tool_name,
+                sorted(declared) if declared else [],
+            )
+            return ToolExecutionResult(
+                server_id=server_id, tool_name=tool_name,
+                message_id=msg_id, success=False, error=err,
+            )
+
         adapter = get_adapter(server_id, tool_name)
         if adapter is None:
             err = (
@@ -1366,6 +1418,19 @@ class ToolExecutorHelpersBase:
                     "_directive.pivot": "",
                 }
 
+        # #159 part 2 -- sanitize the observables delta before it merges
+        # into case_state. Raw MCP output can carry
+        # ``ignore previous instructions``, role fences, or Unicode
+        # direction-override runs that would otherwise ride into the
+        # next turn's rendered prompt verbatim. Reserved-key
+        # observations (``_directive.*``, ``_recall.*``, ``_ledger.*``)
+        # are platform-authored and pass through untouched.
+        sanitized_delta = sanitize_observables_delta(
+            adapter_result.observables_delta or {},
+            server_id=server_id,
+            tool_name=tool_name,
+        )
+
         # fix §203 -- single UoW write: tool result message AND the
         # observables delta land atomically so a concurrent reader
         # cannot observe one half without the other.
@@ -1373,7 +1438,7 @@ class ToolExecutorHelpersBase:
             investigation_id, branch_id,
             payload_kind=adapter_result.payload_kind,
             payload=adapter_result.payload,
-            observables_delta=adapter_result.observables_delta or {},
+            observables_delta=sanitized_delta,
             at_turn=at_turn,
         )
 
@@ -1444,6 +1509,7 @@ class ToolExecutorHelpersBase:
                     bridge_base_url=bridge_base_url,
                     message_model=self._message_model,
                     branch_model=self._branch_model,
+                    lateral_patterns=self.lateral_patterns,
                 )
                 if posted_id:
                     _log.info(

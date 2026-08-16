@@ -110,8 +110,9 @@ class TestTaskRecord:
             user_id="user-uuid-1",
             group_id="operator",
         )
-        # INFRA-06: result_path stores file path, not blob
-        assert record.result_path is None
+        # #144: ``result_path`` dropped by migration 126; the model has no
+        # such attribute.
+        assert not hasattr(record, "result_path")
         # Phase 179: legacy cursor column dropped; state lives in
         # workflow_state_cursor (migration 023).
         assert record.error is None

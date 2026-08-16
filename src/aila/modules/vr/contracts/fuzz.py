@@ -126,6 +126,30 @@ class VRFuzzCampaignCreate(BaseModel):
             "no launcher will SSH into a rig."
         ),
     )
+    # #173: back-reference to the investigation whose outcome proposed
+    # this campaign. The proposal-accept flow plumbs both through so
+    # register_crash + patch_campaign can close the feedback loop.
+    # None for operator-initiated campaigns (no source investigation).
+    source_investigation_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        description=(
+            "VRInvestigation.id whose outcome proposed this campaign. "
+            "Populated by the proposal-accept flow; None for operator- "
+            "initiated campaigns."
+        ),
+    )
+    source_outcome_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=64,
+        description=(
+            "VRInvestigationOutcome.id that originated the fuzz proposal. "
+            "Audit trail only -- the feedback path routes by "
+            "source_investigation_id."
+        ),
+    )
     notes: str = ""
 
 
@@ -174,6 +198,9 @@ class VRFuzzCampaignSummary(BaseModel):
     stopped_at: datetime | None = None
     last_progress_at: datetime | None = None
     notes: str = ""
+    source_investigation_id: str | None = None
+    source_outcome_id: str | None = None
+    last_coverage_emitted_pct: float | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

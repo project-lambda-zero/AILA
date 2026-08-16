@@ -13,9 +13,11 @@ deployment can scale the pool without a code change (#45). Env-only, not
 ConfigRegistry, because the engine is built before the registry exists on some
 paths (test fixtures, early bootstrap).
 
-Platform tables (storage/db_models.py) are always created via SQLModel.metadata.
-Module-owned tables are registered with SchemaRegistry and created only when
-a SchemaRegistry is passed to init_db().
+Platform and module tables are created exclusively via the SchemaRegistry
+passed into init_db(); the fresh-database bootstrap lives in
+scripts/db_init.py (invoked by ``make db-init``) and every subsequent schema
+change ships as an Alembic revision. init_db() no longer has a
+``SQLModel.metadata.create_all`` fallback (#108, INFRA-08).
 """
 
 from __future__ import annotations
@@ -27,12 +29,12 @@ import threading
 from contextlib import asynccontextmanager, contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from sqlalchemy import create_engine as _create_sync_engine
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import sessionmaker as _sync_sessionmaker
-from sqlmodel import Session, SQLModel
+from sqlmodel import Session
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from ..config import get_settings
@@ -44,8 +46,10 @@ if TYPE_CHECKING:
     from .registry import SchemaRegistry
 
 _ASYNC_ENGINES: dict[str, object] = {}
-# _ENGINES is a sync engine cache used by SQLite test fixtures via session_scope().
-# Production code always uses _ASYNC_ENGINES via async_session_scope().
+# _ENGINES is a sync psycopg engine cache used by session_scope() -- CLI
+# utilities and the small number of production call sites that need a
+# synchronous session. Test fixtures pre-populate this dict directly to
+# swap in an isolated engine.
 _ENGINES: dict[str, object] = {}
 _ENGINE_LOCK = threading.RLock()
 _INITIALIZED_URLS: set[str] = set()
@@ -190,29 +194,46 @@ async def init_db(
     Fast-path: if the database URL is already in _INITIALIZED_URLS, this
     function returns immediately without touching the DB.
 
-    Schema creation:
-    1. If schema_registry is provided, calls registry.create_all_with_connection()
-       inside an async connection's run_sync.
-    2. Otherwise falls back to SQLModel.metadata.create_all for platform-only
-       tables (storage/db_models.py).
+    Schema creation is contractually gated (#108, INFRA-08): a
+    ``schema_registry`` MUST be supplied by every production caller so the
+    exact set of module-owned tables is known. When ``schema_registry`` is
+    ``None`` this function is a no-op -- it does NOT fall back to
+    ``SQLModel.metadata.create_all``. Fresh-database bootstrap is the job of
+    ``scripts/db_init.py`` (via ``make db-init``) and Alembic. Test fixtures
+    bootstrap their own schema through ``tests/_db_bootstrap.py``.
 
     Args:
         settings: Optional settings object.  Falls back to get_settings().
-        schema_registry: Optional SchemaRegistry populated by module
-            register_tools() calls.  Pass None for platform-only init.
+        schema_registry: SchemaRegistry populated by module
+            ``register_tools()`` calls. Required in production. ``None`` is
+            accepted for legacy call sites and results in a no-op with a
+            single warning per URL.
     """
     active_settings = settings or get_settings()
     database_url = active_settings.database_url
     if database_url in _INITIALIZED_URLS:
         return
+    if schema_registry is None:
+        # #108: no create_all fallback in normal operation. Bootstrapping
+        # happens through make db-init / Alembic / test fixtures. Log once
+        # per URL so unmigrated call sites are visible without a hard crash.
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "init_db(%s) called without a schema_registry -- skipping schema "
+            "bootstrap. Production callers must route through _cli_bootstrap "
+            "or the platform runtime builder; test fixtures should bootstrap "
+            "their own schema.",
+            database_url,
+        )
+        with _ENGINE_LOCK:
+            _INITIALIZED_URLS.add(database_url)
+        return
     engine = get_async_engine(active_settings)
     async with engine.begin() as conn:
-        if schema_registry is not None:
-            await conn.run_sync(
-                lambda sync_conn: schema_registry.create_all_with_connection(sync_conn)
-            )
-        else:
-            await conn.run_sync(SQLModel.metadata.create_all)
+        await conn.run_sync(
+            lambda sync_conn: schema_registry.create_all_with_connection(sync_conn)
+        )
     with _ENGINE_LOCK:
         _INITIALIZED_URLS.add(database_url)
 
@@ -331,12 +352,16 @@ async def restore_database(
 def session_scope(settings: DatabaseSettings | None = None):  # type: ignore[return]
     """Sync context manager yielding a SQLModel Session bound to the sync engine.
 
-    Used exclusively by SQLite test fixtures (conftest.py) for seeding test data.
-    Production code always uses async_session_scope().
+    Used by CLI utilities and the small number of production call sites
+    that need a synchronous session (see
+    ``aila.platform.llm.client.LLMClient``,
+    ``aila.platform.services.replay``). Request handlers always use
+    ``async_session_scope``.
 
     The sync engine is keyed on the DB URL in _ENGINES (mirroring the async
     engine cache in _ASYNC_ENGINES).  If no sync engine is cached for the URL,
-    one is created from the current database_url setting.
+    one is created from the current database_url setting. Test fixtures that
+    need to swap in an isolated engine pre-populate ``_ENGINES`` directly.
 
     Args:
         settings: Optional settings object.  Falls back to get_settings().
@@ -360,15 +385,7 @@ def session_scope(settings: DatabaseSettings | None = None):  # type: ignore[ret
     with _ENGINE_LOCK:
         engine = _ENGINES.get(sync_url)
         if engine is None:
-            # ``check_same_thread`` is a SQLite-only kwarg. Asyncpg /
-            # psycopg drivers reject unknown connect_args with a
-            # ``TypeError: connect() got an unexpected keyword argument``
-            # (observed on test_db runs against Postgres). Gate by URL
-            # scheme so Postgres URLs get a clean connect_args={}.
-            connect_args: dict[str, Any] = {}
-            if sync_url.startswith(("sqlite://", "sqlite+")):
-                connect_args["check_same_thread"] = False
-            engine = _create_sync_engine(sync_url, connect_args=connect_args)
+            engine = _create_sync_engine(sync_url)
             _ENGINES[sync_url] = engine
         factory = _SYNC_SESSION_FACTORIES.get(url)
         if factory is None:

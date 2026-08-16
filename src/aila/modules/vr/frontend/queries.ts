@@ -3,6 +3,7 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import { authorizedRequestJson } from "@platform/api/http";
 
 import type {
+  ApkStaticAuditAggregate,
   DisclosureTrackInfo,
   Envelope,
   InvestigationStatus,
@@ -977,6 +978,33 @@ export function useMasvsAuditAggregate(targetId: string, auditId: string | null)
       const params = new URLSearchParams({ audit_id: auditId ?? "" });
       const res = await authorizedRequestJson<Envelope<MasvsAuditAggregate>>(
         `/vr/targets/${encodeURIComponent(targetId)}/masvs-audit-aggregate?${params.toString()}`,
+      );
+      return res.data;
+    },
+    enabled: !!targetId && !!auditId,
+    refetchInterval: 8000,
+  });
+}
+
+/** APK static-analysis audit aggregate (per-check verdicts + summary
+ *  counts). Sibling of `useMasvsAuditAggregate` -- same shape, same
+ *  poll cadence, same `enabled` contract. Fetches `GET
+ *  /vr/targets/{targetId}/apk-static-audit-aggregate?audit_id=<auditId>`
+ *  and returns the unwrapped :class:`ApkStaticAuditAggregate`. Kept
+ *  disabled until BOTH ids are truthy so mounts that haven't yet
+ *  resolved the active parent skip the fetch. */
+export function useApkStaticAuditAggregate(
+  targetId: string,
+  auditId: string | null,
+) {
+  return useQuery({
+    queryKey: ["vr", "apk-static-audit-aggregate", targetId, auditId],
+    queryFn: async () => {
+      const params = new URLSearchParams({ audit_id: auditId ?? "" });
+      const res = await authorizedRequestJson<
+        Envelope<ApkStaticAuditAggregate>
+      >(
+        `/vr/targets/${encodeURIComponent(targetId)}/apk-static-audit-aggregate?${params.toString()}`,
       );
       return res.data;
     },

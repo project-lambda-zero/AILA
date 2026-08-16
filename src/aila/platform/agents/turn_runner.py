@@ -55,6 +55,7 @@ from aila.platform.llm.idempotency_cache import (
     make_request_key,
     store_response,
 )
+from aila.platform.routing.persona_model import resolve_effective_task_type
 from aila.platform.services.ledger import LedgerPermissionError, LedgerService
 from aila.platform.services.oracle import Oracle, OracleError
 from aila.platform.uow import UnitOfWork
@@ -108,6 +109,17 @@ class AgentTurnRunnerBase:
         Callable[..., Awaitable[None]] | None
     ] = None
     _result_cls: ClassVar[type[AgentTurnResult]] = AgentTurnResult
+
+    # Module-supplied vocabulary consulted by the defense-check submit
+    # gate (:func:`aila.platform.agents.submit_gates.check_defense_verification`).
+    # Empty on the platform base so a module whose findings are never
+    # overflow-shaped (malware, forensics) skips the allocator / reader
+    # checks gracefully; the reachability (``callers_of``) check still
+    # runs. VR overrides these with the FFmpeg / libc / nginx / kernel
+    # / OpenSSL / GLib names it recognises. See RFC #94 + issue #136.
+    known_allocators: ClassVar[frozenset[str]] = frozenset()
+    known_input_readers: ClassVar[frozenset[str]] = frozenset()
+
     _EMPTY_TOOLRUN_DIRECTIVE: ClassVar[str] = (
         "*** EMPTY tool_run COERCED TO reasoning ***\n\n"
         "Your prior turn emitted action='tool_run' but command "
@@ -372,6 +384,53 @@ class AgentTurnRunnerBase:
         del inv, case_state, turn_number
         return decision
 
+    async def _maybe_reject_submit_when_draft_pending(
+        self, *, decision: Any, case_state: Any, turn_number: int,
+    ) -> Any:
+        """Gate a terminal submit while a sibling draft outcome is pending review.
+
+        Default: allow. VR and malware override to inject a
+        ``_directive.vote_before_submit`` observable and downgrade the
+        submit when another branch holds a draft this branch has not
+        yet voted on. Async because subclasses need a session to look
+        up the pending draft; the default takes no I/O.
+
+        Issue #168: keeps a minimal (``_template``) module from crashing
+        with AttributeError on the first submit action.
+        """
+        del case_state, turn_number
+        return decision
+
+    async def _maybe_reject_revote_when_already_voted(
+        self, *, decision: Any, case_state: Any, turn_number: int,
+    ) -> Any:
+        """Gate a repeat ``submit_outcome_review`` on the same outcome.
+
+        Default: allow. VR and malware override to steer the agent back
+        to investigation work when it re-emits a vote for an outcome
+        this branch already voted on (the DB UNIQUE constraint would
+        drop the row anyway, but the agent burns its turn budget). Async
+        because subclasses issue a query; the default is a no-op.
+
+        Issue #168.
+        """
+        del case_state, turn_number
+        return decision
+
+    def _maybe_reject_submit_with_unresolved_hypotheses(
+        self, *, decision: Any, case_state: Any, turn_number: int,
+    ) -> Any:
+        """Gate a terminal submit while this branch has live hypotheses.
+
+        Default: allow. VR and malware override to force each live
+        hypothesis to be explicitly rejected or folded into the
+        answer's supported evidence before the branch may submit.
+
+        Issue #168.
+        """
+        del case_state, turn_number
+        return decision
+
     def _maybe_reject_no_finding_while_sibling_open_hyp(
         self,
         *,
@@ -506,6 +565,17 @@ class AgentTurnRunnerBase:
         # Resolved BEFORE the prompt load so an RFC-09 model-family prompt
         # variant can be selected for the model this turn routes to.
         task_type = self._resolve_task_type(branch.persona_voice) if branch.persona_voice else effective_strategy_family
+        # #151 persona -> model_role override: when the operator has
+        # populated ``platform.persona_model_role_map`` with an entry
+        # for this branch's persona, the mapped model_role replaces
+        # the base task_type before it reaches the LLM client, so
+        # distinct personas run distinct base models. Empty map (the
+        # default) leaves task_type untouched -- byte-identical to
+        # pre-#151. Read on the live spawn path so no dead map can
+        # accumulate.
+        task_type = await resolve_effective_task_type(
+            task_type, branch.persona_voice,
+        )
         # RFC-09: pick the coarse model family this turn will run on so a
         # family-specific prompt variant wins when one exists (falls back to
         # the default variant then the file). Best effort -- a resolve fault
@@ -791,6 +861,8 @@ class AgentTurnRunnerBase:
                     branch_id=self.branch_id,
                     claim_class=_claim_class,
                     message_table=self._message_model.__tablename__,
+                    known_allocators=self.known_allocators,
+                    known_input_readers=self.known_input_readers,
                 )
             if not _ok:
                 _log.info(
@@ -803,7 +875,7 @@ class AgentTurnRunnerBase:
                     "action": "reasoning",
                     "reasoning": _reject,
                 })
-                case_state["_directive.defense_check_rejected"] = _reject
+                case_state.observables["_directive.defense_check_rejected"] = _reject
 
         decision = self._maybe_reject_fanout_submit(
             decision=decision,
@@ -935,10 +1007,20 @@ class AgentTurnRunnerBase:
             )
             uow.session.add(msg)
 
+            # fix #180 -- lock the branch row for the duration of this
+            # UoW so a double-dispatch race (two turn runners on the
+            # same branch, reachable via #121) serializes on the
+            # read-modify-write of ``turn_count`` / ``case_state_json``.
+            # Without FOR UPDATE both readers see the same turn_count,
+            # both bump it, and the last committer overwrites the
+            # first -- one full turn of reasoning silently lost.
+            # Mirrors the FOR UPDATE pattern in
+            # ``services/outcome_review.evaluate_quorum`` and
+            # ``BranchPool.fork`` / ``BranchPool._load_branch``.
             branch_row = (await uow.session.exec(
                 _select(self._branch_model).where(
                     self._branch_model.id == self.branch_id,
-                )
+                ).with_for_update()
             )).first()
             if branch_row is None:
                 raise self._error_cls(

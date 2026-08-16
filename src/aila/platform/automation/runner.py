@@ -44,7 +44,7 @@ from aila.platform.automation.models import (
     AutomationScheduleRecord,
 )
 from aila.platform.automation.registry import AutomationRegistry
-from aila.platform.exceptions import AILAError
+from aila.platform.events._dispatch import ISOLATION_ERRORS
 from aila.platform.tasks.queue import TaskQueue
 from aila.storage.database import async_session_scope
 
@@ -66,29 +66,16 @@ _SCHEDULE_PARSE_ERRORS: tuple[type[BaseException], ...] = (
 _log = logging.getLogger(__name__)
 
 
-# Finding 46-4: per-schedule isolation tuple. Mirrors the emitter's
-# _DESTINATION_ISOLATION_ERRORS (platform/events/emitter.py): any
-# subclass of Exception a schedule handler / submit path might
-# reasonably raise is caught so later schedules in the same tick are
-# still processed. BaseException-only subclasses (KeyboardInterrupt,
-# SystemExit, asyncio.CancelledError) intentionally propagate -- the
-# process is going down and the tick must not swallow that.
+# Finding 46-4: per-schedule isolation tuple. Reuses the shared fan-out
+# isolation set (platform/events/_dispatch.py::ISOLATION_ERRORS, which
+# already includes AILAError) plus the DB error a schedule handler / submit
+# path may raise, so one schedule's failure is caught and later schedules in
+# the same tick still run. BaseException-only subclasses (KeyboardInterrupt,
+# SystemExit, asyncio.CancelledError) intentionally propagate -- the process
+# is going down and the tick must not swallow that.
 _SCHEDULE_ISOLATION_ERRORS: tuple[type[BaseException], ...] = (
-    AILAError,
+    *ISOLATION_ERRORS,
     sqlalchemy.exc.SQLAlchemyError,
-    RuntimeError,
-    OSError,
-    TimeoutError,
-    ValueError,
-    TypeError,
-    AttributeError,
-    KeyError,
-    IndexError,
-    LookupError,
-    ArithmeticError,
-    ImportError,
-    AssertionError,
-    ReferenceError,
 )
 
 

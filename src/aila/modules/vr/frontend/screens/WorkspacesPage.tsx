@@ -1,13 +1,18 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import {
+  DataGrid,
+  MonoBadge,
+  SectionHeader,
+} from "@/components/aila/mock";
 
 import { DeleteButton } from "../components/DeleteButton";
 import { useCreateWorkspace, useDeleteWorkspace } from "../mutations";
 import { useWorkspaces } from "../queries";
-import type { WorkspaceTheme } from "../types";
+import { useVRListInvalidation } from "../hooks/useVRListInvalidation";
+import type { VRWorkspaceSummary, WorkspaceTheme } from "../types";
 
 const THEMES: { value: WorkspaceTheme; label: string }[] = [
   { value: "browser_engines", label: "Browser engines" },
@@ -17,6 +22,20 @@ const THEMES: { value: WorkspaceTheme; label: string }[] = [
   { value: "mobile_baseband", label: "Mobile baseband" },
   { value: "custom", label: "Custom" },
 ];
+
+// Mock chrome for raw form controls.
+const CTRL: React.CSSProperties = {
+  height: 26,
+  fontSize: 10.5,
+  padding: "0 8px",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  color: "var(--text-primary)",
+  borderRadius: 3,
+  letterSpacing: "0.04em",
+  outline: "none",
+  fontFamily: "var(--font-mono)",
+};
 
 function formatDate(value?: string | null): string {
   if (!value) return "--";
@@ -28,6 +47,7 @@ function formatDate(value?: string | null): string {
 }
 
 export function WorkspacesPage() {
+  useVRListInvalidation("workspaces");
   const { data: result, isLoading, isError } = useWorkspaces();
   const createMut = useCreateWorkspace();
   const deleteMut = useDeleteWorkspace();
@@ -38,175 +58,350 @@ export function WorkspacesPage() {
   const [formDescription, setFormDescription] = useState("");
   const [formTheme, setFormTheme] = useState<WorkspaceTheme>("custom");
 
+  // Client-side quick filter: /vr/workspaces has no `q` param, so
+  // filter the loaded page inline. Matches name / slug / theme
+  // case-insensitively.
+  const [query, setQuery] = useState("");
+
   const workspaces = result?.data ?? [];
 
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <button
-          type="button"
-          onClick={() => setShowForm((v) => !v)}
-          className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors"
-        >
-          {showForm ? "Cancel" : "New Workspace"}
-        </button>
-      </div>
+  const filteredWorkspaces = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return workspaces;
+    return workspaces.filter((ws) => {
+      return (
+        ws.name.toLowerCase().includes(needle) ||
+        ws.slug.toLowerCase().includes(needle) ||
+        ws.theme.toLowerCase().includes(needle) ||
+        (ws.description ?? "").toLowerCase().includes(needle)
+      );
+    });
+  }, [workspaces, query]);
 
-      {showForm && (
-        <AilaCard  techBorder glow><h2 className="text-sm font-semibold text-foreground mb-2">
-          Create workspace
-        </h2>
-        <div className="space-y-2">
-          <input
-            type="text"
-            value={formName}
-            onChange={(e) => setFormName(e.target.value)}
-            placeholder="Name (e.g. 'Browser engines')"
-            aria-label="Workspace name"
-            className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
-          />
-          <input
-            type="text"
-            value={formSlug}
-            onChange={(e) =>
-              setFormSlug(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "-"))
-            }
-            placeholder="Slug (URL-safe, e.g. 'browser-engines')"
-            pattern="[a-z0-9][a-z0-9_-]*"
-            aria-label="Workspace slug"
-            className="w-full px-3 py-2 text-sm font-mono rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
-          />
-          <textarea
-            value={formDescription}
-            onChange={(e) => setFormDescription(e.target.value)}
-            placeholder="Description (optional)"
-            rows={2}
-            aria-label="Workspace description"
-            className="w-full px-3 py-2 text-sm rounded-md bg-surface border border-border-default focus:border-accent focus:outline-none"
-          />
-          <div className="flex gap-2 items-center">
-            <label htmlFor="ws-theme" className="text-sm text-text-muted">Theme:</label>
-            <select
-              id="ws-theme"
-              value={formTheme}
-              onChange={(e) => setFormTheme(e.target.value as WorkspaceTheme)}
-              className="px-3 py-2 text-sm rounded-md bg-surface border border-border-default"
-            >
-              {THEMES.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
-            <button
-              type="button"
-              disabled={
-                !formName.trim() || !formSlug.trim() || createMut.isPending
-              }
-              onClick={() => {
-                createMut.mutate(
-                  {
-                    name: formName.trim(),
-                    slug: formSlug.trim(),
-                    description: formDescription.trim() || undefined,
-                    theme: formTheme,
-                  },
-                  {
-                    onSuccess: () => {
-                      setShowForm(false);
-                      setFormName("");
-                      setFormSlug("");
-                      setFormDescription("");
-                      setFormTheme("custom");
-                    },
-                  },
-                );
-              }}
-              className="ml-auto px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 transition-colors disabled:opacity-50"
-            >
-              {createMut.isPending ? "Creating…" : "Create"}
-            </button>
-          </div>
-        </div></AilaCard>
-      )}
+  // ─── Header actions: + new ───
+  const headerActions = (
+    <button
+      type="button"
+      onClick={() => setShowForm((v) => !v)}
+      className="font-mono uppercase"
+      style={{
+        height: 28,
+        padding: "0 12px",
+        fontSize: 10,
+        letterSpacing: "0.08em",
+        background: showForm ? "var(--surface-sunk)" : "var(--accent)",
+        border:
+          "1px solid " +
+          (showForm ? "var(--border-soft)" : "var(--accent)"),
+        color: showForm ? "var(--text-primary)" : "var(--text-on-accent)",
+        borderRadius: 3,
+        cursor: "pointer",
+      }}
+    >
+      {showForm ? "cancel" : "+ new workspace"}
+    </button>
+  );
 
-      {isLoading && <LoadingSkeleton size="lg" width="full" />}
-
-      {isError && (
-        <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load workspaces.</p></AilaCard>
-      )}
-
-      {!isLoading && !isError && workspaces.length === 0 && (
-        <AilaCard  techBorder glow><div className="text-center py-8">
-          <p className="text-text-muted">No workspaces yet.</p>
-          <p className="text-text-muted text-xs mt-2">
-            Create one above. Workspace is the precondition for creating
-            targets and investigations.
-          </p>
-        </div></AilaCard>
-      )}
-
-      {!isLoading && !isError && workspaces.length > 0 && (
-        <AilaCard className="overflow-x-auto p-0" techBorder glow><table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
-              <th className="px-4 py-2 font-semibold">Name</th>
-              <th className="px-4 py-2 font-semibold">Slug</th>
-              <th className="px-4 py-2 font-semibold">Theme</th>
-              <th className="px-4 py-2 font-semibold">Status</th>
-              <th className="px-4 py-2 font-semibold text-right">Targets</th>
-              <th className="px-4 py-2 font-semibold text-right">
-                Active investigations
-              </th>
-              <th className="px-4 py-2 font-semibold">Created</th>
-              <th className="px-2 py-2"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {workspaces.map((ws) => (
-              <tr
-                key={ws.id}
-                className="border-b border-border-default last:border-b-0"
-              >
-                <td className="px-4 py-2 font-semibold text-foreground">
-                  {ws.name}
-                </td>
-                <td className="px-4 py-2 font-mono text-xs text-text-muted">
-                  {ws.slug}
-                </td>
-                <td className="px-4 py-2 font-mono text-xs text-text-muted">
-                  {ws.theme}
-                </td>
-                <td className="px-4 py-2">
-                  <AilaBadge
-                    severity={ws.status === "active" ? "low" : "info"}
-                    size="sm"
-                  >
-                    {ws.status}
-                  </AilaBadge>
-                </td>
-                <td className="px-4 py-2 font-mono text-right text-foreground">
-                  {ws.target_count}
-                </td>
-                <td className="px-4 py-2 font-mono text-right text-foreground">
-                  {ws.active_investigation_count}
-                </td>
-                <td className="px-4 py-2 font-mono text-xs text-text-muted">
-                  {formatDate(ws.created_at)}
-                </td>
-                <td className="px-2 py-2 text-right">
-                  <DeleteButton
-                    id={ws.id}
-                    label={`workspace "${ws.name}"`}
-                    mutation={deleteMut}
-                    compact
-                  />
-                </td>
-              </tr>
+  // ─── Create form ───
+  const createFormPanel = showForm ? (
+    <WindowPanel title="new workspace" tone="accent">
+      <div className="flex flex-col" style={{ gap: 10 }}>
+        <input
+          type="text"
+          value={formName}
+          onChange={(e) => setFormName(e.target.value)}
+          placeholder="name (e.g. 'Browser engines')"
+          aria-label="Workspace name"
+          className="font-mono w-full"
+          style={{ ...CTRL, height: 30, fontSize: 11 }}
+        />
+        <input
+          type="text"
+          value={formSlug}
+          onChange={(e) =>
+            setFormSlug(
+              e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, "-"),
+            )
+          }
+          placeholder="slug (URL-safe, e.g. 'browser-engines')"
+          pattern="[a-z0-9][a-z0-9_-]*"
+          aria-label="Workspace slug"
+          className="font-mono w-full"
+          style={{ ...CTRL, height: 30, fontSize: 11 }}
+        />
+        <textarea
+          value={formDescription}
+          onChange={(e) => setFormDescription(e.target.value)}
+          placeholder="description (optional)"
+          rows={2}
+          aria-label="Workspace description"
+          className="font-mono w-full"
+          style={{
+            ...CTRL,
+            height: "auto",
+            padding: "8px 10px",
+            fontSize: 11,
+            resize: "vertical",
+          }}
+        />
+        <div className="flex flex-wrap items-center" style={{ gap: 8 }}>
+          <label
+            htmlFor="ws-theme"
+            className="font-mono uppercase"
+            style={{
+              fontSize: 10,
+              letterSpacing: "0.08em",
+              color: "var(--text-muted)",
+            }}
+          >
+            theme:
+          </label>
+          <select
+            id="ws-theme"
+            value={formTheme}
+            onChange={(e) => setFormTheme(e.target.value as WorkspaceTheme)}
+            className="font-mono uppercase"
+            style={CTRL}
+          >
+            {THEMES.map((t) => (
+              <option key={t.value} value={t.value}>
+                {t.label}
+              </option>
             ))}
-          </tbody>
-        </table></AilaCard>
-      )}
+          </select>
+          <button
+            type="button"
+            disabled={
+              !formName.trim() || !formSlug.trim() || createMut.isPending
+            }
+            onClick={() => {
+              createMut.mutate(
+                {
+                  name: formName.trim(),
+                  slug: formSlug.trim(),
+                  description: formDescription.trim() || undefined,
+                  theme: formTheme,
+                },
+                {
+                  onSuccess: () => {
+                    setShowForm(false);
+                    setFormName("");
+                    setFormSlug("");
+                    setFormDescription("");
+                    setFormTheme("custom");
+                  },
+                },
+              );
+            }}
+            className="font-mono uppercase"
+            style={{
+              marginLeft: "auto",
+              height: 28,
+              padding: "0 14px",
+              fontSize: 10,
+              letterSpacing: "0.08em",
+              background: "var(--accent)",
+              border: "1px solid var(--accent)",
+              color: "var(--text-on-accent)",
+              borderRadius: 3,
+              cursor: createMut.isPending ? "wait" : "pointer",
+              opacity: createMut.isPending ? 0.7 : 1,
+            }}
+          >
+            {createMut.isPending ? "creating…" : "create"}
+          </button>
+        </div>
+      </div>
+    </WindowPanel>
+  ) : null;
+
+  // ─── Filter shelf ───
+  const filterShelf = (
+    <WindowPanel title="filters" tone="muted">
+      <div className="flex flex-wrap items-center" style={{ gap: 8 }}>
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="filter (name / slug / theme)…"
+          aria-label="Filter workspaces"
+          className="font-mono"
+          style={{ ...CTRL, width: 260 }}
+        />
+        <span style={{ flex: 1 }} />
+        <span
+          className="font-mono"
+          style={{
+            fontSize: 10,
+            color: "var(--text-faint)",
+            letterSpacing: "0.06em",
+          }}
+        >
+          {query.trim()
+            ? `${filteredWorkspaces.length} of ${workspaces.length}`
+            : `${workspaces.length}`}
+          {" "}workspace{workspaces.length === 1 ? "" : "s"}
+        </span>
+      </div>
+    </WindowPanel>
+  );
+
+  // ─── Table ───
+  const columns: {
+    label: string;
+    width: string;
+    align?: "left" | "right" | "center";
+  }[] = [
+    { label: "name", width: "1fr" },
+    { label: "slug", width: "180px" },
+    { label: "theme", width: "160px" },
+    { label: "status", width: "90px" },
+    { label: "targets", width: "80px", align: "right" },
+    { label: "active inv.", width: "100px", align: "right" },
+    { label: "created", width: "150px" },
+    { label: "", width: "40px", align: "center" },
+  ];
+
+  function renderCells(ws: VRWorkspaceSummary): React.ReactNode[] {
+    return [
+      <span
+        className="font-mono"
+        title={ws.name}
+        style={{
+          fontSize: 11.5,
+          color: "var(--text-primary)",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          display: "block",
+        }}
+      >
+        {ws.name}
+      </span>,
+      <span
+        className="font-mono"
+        style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+      >
+        {ws.slug}
+      </span>,
+      <span
+        className="font-mono"
+        style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+      >
+        {ws.theme}
+      </span>,
+      <MonoBadge tone={ws.status === "active" ? "ok" : "info"}>
+        {ws.status}
+      </MonoBadge>,
+      <span
+        className="font-mono"
+        style={{ fontSize: 11, color: "var(--text-primary)" }}
+      >
+        {ws.target_count}
+      </span>,
+      <span
+        className="font-mono"
+        style={{ fontSize: 11, color: "var(--text-primary)" }}
+      >
+        {ws.active_investigation_count}
+      </span>,
+      <span
+        className="font-mono"
+        style={{ fontSize: 10, color: "var(--text-faint)" }}
+      >
+        {formatDate(ws.created_at)}
+      </span>,
+      <span onClick={(e) => e.stopPropagation()}>
+        <DeleteButton
+          id={ws.id}
+          label={`workspace "${ws.name}"`}
+          mutation={deleteMut}
+          compact
+        />
+      </span>,
+    ];
+  }
+
+  const tableActions = (
+    <span
+      className="font-mono"
+      style={{
+        fontSize: 10,
+        letterSpacing: "0.06em",
+        color: "var(--text-faint)",
+      }}
+    >
+      {filteredWorkspaces.length}
+      <span style={{ opacity: 0.5 }}> / {workspaces.length}</span>
+    </span>
+  );
+
+  let tableBody: React.ReactNode;
+  if (isLoading) {
+    tableBody = (
+      <div style={{ padding: 12 }}>
+        <LoadingSkeleton size="lg" width="full" />
+      </div>
+    );
+  } else if (isError) {
+    tableBody = (
+      <div
+        className="font-mono"
+        style={{
+          padding: 24,
+          textAlign: "center",
+          color: "var(--accent)",
+          fontSize: 11,
+          letterSpacing: "0.06em",
+        }}
+      >
+        failed to load workspaces.
+      </div>
+    );
+  } else {
+    tableBody = (
+      <DataGrid
+        columns={columns}
+        rows={filteredWorkspaces}
+        renderCells={renderCells}
+        getKey={(ws) => ws.id}
+        empty={
+          <div
+            className="font-mono"
+            style={{
+              padding: 34,
+              textAlign: "center",
+              fontSize: 11.5,
+              color: "var(--text-muted)",
+              letterSpacing: "0.04em",
+            }}
+          >
+            {query.trim()
+              ? "no workspaces match the current filter."
+              : "no workspaces yet -- create one from the header."}
+          </div>
+        }
+      />
+    );
+  }
+
+  return (
+    <div className="flex flex-col" style={{ gap: 14 }}>
+      <SectionHeader
+        icon="◈"
+        title="Workspaces"
+        actions={headerActions}
+      />
+      {createFormPanel}
+      {filterShelf}
+      <WindowPanel
+        title="results"
+        tone="accent"
+        actions={tableActions}
+        flush
+      >
+        {tableBody}
+      </WindowPanel>
     </div>
   );
 }

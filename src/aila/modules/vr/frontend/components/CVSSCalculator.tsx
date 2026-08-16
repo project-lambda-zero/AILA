@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
+import { MonoBadge } from "@/components/aila/mock";
 
 import {
   CVSS_METRICS,
@@ -36,15 +36,38 @@ export function CVSSCalculator({
   function pick(metricId: string, valueId: string) {
     setValues((prev) => ({ ...prev, [metricId]: valueId }));
   }
+
   if (version === "v4.0") {
     return (
-      <div className="space-y-3">
+      <div className="flex flex-col" style={{ gap: 12 }}>
         <VersionTabs version={version} setVersion={setVersion} />
-        <div className="border border-dashed border-border-default rounded p-3 bg-surface/40">
-          <p className="text-xs text-text-muted">
+        <div
+          style={{
+            padding: 12,
+            border: "1px dashed var(--border-soft)",
+            borderRadius: 3,
+            background: "var(--surface-sunk)",
+          }}
+        >
+          <p
+            className="font-mono uppercase"
+            style={{
+              fontSize: 10,
+              letterSpacing: "0.06em",
+              color: "var(--text-primary)",
+            }}
+          >
             <strong>CVSS v4.0 calculator -- backend pending.</strong>
           </p>
-          <p className="text-3xs text-text-muted mt-2">
+          <p
+            style={{
+              marginTop: 8,
+              fontFamily: "var(--font-display)",
+              fontSize: 11,
+              color: "var(--text-muted)",
+              lineHeight: 1.5,
+            }}
+          >
             v4.0 introduces 11 base metrics + threat + environmental +
             supplemental groups + a fundamentally different score
             formula. The spec calls for both v3.1 + v4.0 because some
@@ -53,7 +76,15 @@ export function CVSSCalculator({
             specification-document §7 computation; tracked as a
             v0.6 follow-up.
           </p>
-          <p className="text-3xs text-text-muted mt-2 font-mono">
+          <p
+            className="font-mono"
+            style={{
+              marginTop: 8,
+              fontSize: 10,
+              color: "var(--text-faint)",
+              letterSpacing: "0.04em",
+            }}
+          >
             Use v3.1 above to produce a vector now.
           </p>
         </div>
@@ -62,15 +93,23 @@ export function CVSSCalculator({
   }
 
   return (
-    <div className="space-y-3">
+    <div className="flex flex-col" style={{ gap: 12 }}>
       <VersionTabs version={version} setVersion={setVersion} />
       {CVSS_METRICS.map((m) => (
         <div key={m.id}>
-          <div className="text-xs font-mono text-text-muted mb-1">
+          <div
+            className="font-mono uppercase"
+            style={{
+              marginBottom: 4,
+              fontSize: 10,
+              letterSpacing: "0.08em",
+              color: "var(--text-muted)",
+            }}
+          >
             {m.label}{" "}
-            <span className="opacity-70">({m.id})</span>
+            <span style={{ opacity: 0.7 }}>({m.id})</span>
           </div>
-          <div className="flex flex-wrap gap-1">
+          <div className="flex flex-wrap" style={{ gap: 4 }}>
             {m.values.map((v) => {
               const active = values[m.id] === v.id;
               return (
@@ -79,12 +118,22 @@ export function CVSSCalculator({
                   type="button"
                   onClick={() => pick(m.id, v.id)}
                   title={v.description}
-                  className={
-                    "px-2 py-1 text-xs font-mono rounded border transition-colors " +
-                    (active
-                      ? "bg-accent text-white border-accent"
-                      : "bg-surface text-foreground border-border-default hover:bg-surface-hover")
-                  }
+                  className="font-mono uppercase"
+                  style={{
+                    height: 26,
+                    padding: "0 10px",
+                    fontSize: 10,
+                    letterSpacing: "0.06em",
+                    borderRadius: 3,
+                    cursor: "pointer",
+                    color: active
+                      ? "var(--text-on-accent)"
+                      : "var(--text-primary)",
+                    border: `1px solid ${active ? "var(--accent)" : "var(--border-soft)"}`,
+                    background: active
+                      ? "var(--accent)"
+                      : "var(--surface-sunk)",
+                  }}
                 >
                   {v.label} ({v.id})
                 </button>
@@ -94,14 +143,28 @@ export function CVSSCalculator({
         </div>
       ))}
 
-      <div className="pt-3 border-t border-border-default flex items-center gap-2 flex-wrap">
+      <div
+        className="flex items-center flex-wrap"
+        style={{
+          gap: 8,
+          paddingTop: 10,
+          borderTop: "1px solid var(--border-soft)",
+        }}
+      >
         <CVSSBadge score={score} vector={vector} />
-        <code className="text-3xs font-mono text-text-muted break-all">
-          {vector || "fill all 8 metrics →"}
+        <code
+          className="font-mono"
+          style={{
+            fontSize: 10,
+            color: "var(--text-muted)",
+            wordBreak: "break-all",
+          }}
+        >
+          {vector || "fill all 8 metrics \u2192"}
         </code>
-        <AilaBadge severity="info" size="sm">
+        <MonoBadge tone="info">
           {severityFromScore(score).toUpperCase()}
-        </AilaBadge>
+        </MonoBadge>
       </div>
     </div>
   );
@@ -179,22 +242,40 @@ function VersionTabs({
   setVersion: (v: "v3.1" | "v4.0") => void;
 }) {
   return (
-    <div className="flex gap-1 text-xs font-mono border-b border-border-default pb-1">
-      {(["v3.1", "v4.0"] as const).map((v) => (
-        <button
-          key={v}
-          type="button"
-          onClick={() => setVersion(v)}
-          className={
-            "px-2 py-1 rounded " +
-            (version === v
-              ? "bg-accent text-white"
-              : "text-text-muted hover:text-foreground hover:bg-surface-hover")
-          }
-        >
-          CVSS {v}
-        </button>
-      ))}
+    <div
+      className="flex"
+      style={{
+        gap: 4,
+        paddingBottom: 4,
+        borderBottom: "1px solid var(--border-soft)",
+      }}
+    >
+      {(["v3.1", "v4.0"] as const).map((v) => {
+        const active = version === v;
+        return (
+          <button
+            key={v}
+            type="button"
+            onClick={() => setVersion(v)}
+            className="font-mono uppercase"
+            style={{
+              height: 26,
+              padding: "0 10px",
+              fontSize: 10,
+              letterSpacing: "0.08em",
+              borderRadius: 3,
+              cursor: "pointer",
+              color: active
+                ? "var(--text-on-accent)"
+                : "var(--text-muted)",
+              border: `1px solid ${active ? "var(--accent)" : "transparent"}`,
+              background: active ? "var(--accent)" : "transparent",
+            }}
+          >
+            CVSS {v}
+          </button>
+        );
+      })}
     </div>
   );
 }

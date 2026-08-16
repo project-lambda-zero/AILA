@@ -1,17 +1,12 @@
-/** Tri-state SSE connection indicator from 08_FRONTEND_UX.md §2.1.
- *  Green = connected, amber = reconnecting, red = disconnected. */
+/** Tri-state SSE connection indicator, rendered as a mock chip.
+ *  connected → LIVE (mint); reconnecting → RECONNECTING (amber, pulsing);
+ *  disconnected → OFFLINE (accent). */
 export type LiveStatus = "connected" | "reconnecting" | "disconnected";
 
-const TONE: Record<LiveStatus, { color: string; pulse: boolean }> = {
-  connected:    { color: "#22c55e", pulse: false }, // green-500
-  reconnecting: { color: "#f59e0b", pulse: true },  // amber-500
-  disconnected: { color: "#ef4444", pulse: false }, // red-500
-};
-
-const LABEL: Record<LiveStatus, string> = {
-  connected: "live",
-  reconnecting: "reconnecting",
-  disconnected: "offline",
+const TONE: Record<LiveStatus, { color: string; label: string; pulse: boolean }> = {
+  connected: { color: "var(--status-ok)", label: "LIVE", pulse: false },
+  reconnecting: { color: "var(--status-warn)", label: "RECONNECTING", pulse: true },
+  disconnected: { color: "var(--accent)", label: "OFFLINE", pulse: false },
 };
 
 export function LiveDot({
@@ -23,17 +18,30 @@ export function LiveDot({
 }) {
   const tone = TONE[status];
   return (
-    <span className="inline-flex items-center gap-1.5 text-3xs font-mono uppercase tracking-wide">
+    <span
+      className="inline-flex items-center font-mono uppercase"
+      style={{
+        gap: 5,
+        padding: "0 6px",
+        height: 18,
+        border: `1px solid ${tone.color}`,
+        background: `color-mix(in srgb, ${tone.color} 12%, transparent)`,
+        color: tone.color,
+        fontSize: 8.5,
+        letterSpacing: "0.14em",
+      }}
+      aria-label={`SSE ${tone.label.toLowerCase()}`}
+    >
       <span
-        className={`w-1.5 h-1.5 rounded-full ${tone.pulse ? "animate-pulse" : ""}`}
+        aria-hidden
         style={{
-          backgroundColor: tone.color,
-          boxShadow: `0 0 4px ${tone.color}80`,
+          width: 5,
+          height: 5,
+          background: tone.color,
+          animation: tone.pulse ? "severity-pulse 1.4s ease-in-out infinite" : undefined,
         }}
       />
-      {showLabel && (
-        <span className="text-text-muted">{LABEL[status]}</span>
-      )}
+      {showLabel && <span>{tone.label}</span>}
     </span>
   );
 }

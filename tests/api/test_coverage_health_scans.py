@@ -406,4 +406,5 @@ async def test_get_scan_status_running(
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "running"
-    assert data["result_path"] is None  # Not done yet
+    # #144: result_path was dropped from the response entirely.
+    assert "result_path" not in data

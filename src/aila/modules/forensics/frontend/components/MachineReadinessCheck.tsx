@@ -1,6 +1,6 @@
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { DataGrid, MonoBadge } from "@/components/aila/mock";
 
 import type { MachineReadinessResult } from "../types";
 
@@ -11,101 +11,169 @@ interface Props {
   onContinue: () => void;
 }
 
-const statusIcon: Record<string, string> = {
+const STATUS_ICON: Record<string, string> = {
   installed: "\u2714",
   missing: "\u2718",
   install_failed: "\u26A0",
   installing: "\u23F3",
 };
 
-const statusSeverity: Record<string, "low" | "critical" | "high" | "medium" | "info"> = {
-  installed: "low",
+const STATUS_TONE: Record<string, string> = {
+  installed: "ok",
   missing: "critical",
   install_failed: "high",
   installing: "medium",
 };
 
-export function MachineReadinessCheck({ readinessResult, isLoading, onRetry, onContinue }: Props) {
+const CHROME_BTN: React.CSSProperties = {
+  height: 28,
+  padding: "0 14px",
+  fontSize: 10,
+  letterSpacing: "0.08em",
+  color: "var(--text-muted)",
+  background: "transparent",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  cursor: "pointer",
+};
+
+const ACCENT_BTN: React.CSSProperties = {
+  height: 28,
+  padding: "0 14px",
+  fontSize: 10,
+  letterSpacing: "0.08em",
+  color: "var(--text-on-accent)",
+  background: "var(--accent)",
+  border: "1px solid var(--accent)",
+  borderRadius: 3,
+  cursor: "pointer",
+  boxShadow: "var(--bevel-key)",
+};
+
+type ToolRow = MachineReadinessResult["tools"][number];
+
+export function MachineReadinessCheck({
+  readinessResult,
+  isLoading,
+  onRetry,
+  onContinue,
+}: Props) {
   if (isLoading) {
     return (
-      <AilaCard  techBorder glow>
+      <WindowPanel title="machine readiness" status="readiness ; checking tools">
         <div className="space-y-3">
-          <h2 className="text-lg font-semibold font-mono text-foreground">Checking Readiness...</h2>
           <LoadingSkeleton size="md" width="full" />
-          <p className="text-sm text-text-muted">
+          <p
+            className="font-mono"
+            style={{ fontSize: 11, color: "var(--text-muted)" }}
+          >
             Connecting to analyzer machine and checking installed tools.
           </p>
         </div>
-      </AilaCard>
+      </WindowPanel>
     );
   }
 
   if (!readinessResult) {
     return (
-      <AilaCard  techBorder glow>
-        <p className="text-sm text-text-muted">No readiness check result available.</p>
-      </AilaCard>
+      <WindowPanel
+        title="machine readiness"
+        tone="muted"
+        status="readiness ; no result"
+      >
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--text-muted)" }}
+        >
+          No readiness check result available.
+        </p>
+      </WindowPanel>
     );
   }
 
   return (
-    <AilaCard  techBorder glow>
+    <WindowPanel
+      title="machine readiness"
+      tone={readinessResult.ready ? "ok" : "warn"}
+      actions={
+        <MonoBadge tone={readinessResult.ready ? "ok" : "high"}>
+          {readinessResult.ready ? "ready" : "not ready"}
+        </MonoBadge>
+      }
+    >
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold font-mono text-foreground">Machine Readiness</h2>
-          <AilaBadge severity={readinessResult.ready ? "low" : "high"} size="sm">
-            {readinessResult.ready ? "Ready" : "Not Ready"}
-          </AilaBadge>
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--text-muted)", lineHeight: 1.55 }}
+        >
+          {readinessResult.message}
+        </p>
+
+        <div aria-label="Machine readiness checks">
+          <DataGrid<ToolRow>
+            columns={[
+              { label: "tool", width: "minmax(0, 1.4fr)" },
+              { label: "required", width: "100px" },
+              { label: "status", width: "160px" },
+              { label: "version", width: "minmax(0, 1.6fr)" },
+            ]}
+            rows={readinessResult.tools}
+            getKey={(t) => t.tool_name}
+            renderCells={(t) => [
+              <span
+                key="n"
+                className="font-mono"
+                style={{ fontSize: 11, color: "var(--text-primary)" }}
+              >
+                {t.tool_name}
+              </span>,
+              <span
+                key="r"
+                className="font-mono"
+                style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+              >
+                {t.required ? "Yes" : "No"}
+              </span>,
+              <MonoBadge key="s" tone={STATUS_TONE[t.status] ?? "info"}>
+                {STATUS_ICON[t.status] ?? ""} {t.status}
+              </MonoBadge>,
+              <span
+                key="v"
+                className="font-mono"
+                style={{
+                  fontSize: 10.5,
+                  color: "var(--text-faint)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+                title={t.version ?? t.message ?? undefined}
+              >
+                {t.version ?? t.message ?? "--"}
+              </span>,
+            ]}
+          />
         </div>
-    
-        <p className="text-sm text-text-muted">{readinessResult.message}</p>
-    
-        <div className="border border-border rounded-md bg-surface text-foreground overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-surface-secondary">
-              <tr>
-                <th className="text-left px-3 py-2 text-text-muted font-medium">Tool</th>
-                <th className="text-left px-3 py-2 text-text-muted font-medium">Required</th>
-                <th className="text-left px-3 py-2 text-text-muted font-medium">Status</th>
-                <th className="text-left px-3 py-2 text-text-muted font-medium">Version</th>
-              </tr>
-            </thead>
-            <tbody>
-              {readinessResult.tools.map((tool) => (
-                <tr key={tool.tool_name} className="border-t border-border">
-                  <td className="px-3 py-2 font-mono text-foreground">{tool.tool_name}</td>
-                  <td className="px-3 py-2 text-text-muted">{tool.required ? "Yes" : "No"}</td>
-                  <td className="px-3 py-2">
-                    <AilaBadge severity={statusSeverity[tool.status] ?? "info"} size="sm">
-                      {statusIcon[tool.status] ?? ""} {tool.status}
-                    </AilaBadge>
-                  </td>
-                  <td className="px-3 py-2 text-text-muted text-xs font-mono">
-                    {tool.version ?? tool.message ?? "--"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-    
-        <div className="flex justify-end gap-2">
+
+        <div className="flex justify-end" style={{ gap: 8 }}>
           <button
             type="button"
             onClick={onRetry}
-            className="px-4 py-2 text-sm rounded-md border border-border text-foreground hover:bg-surface-secondary"
+            className="font-mono uppercase"
+            style={CHROME_BTN}
           >
-            Retry Check
+            retry check
           </button>
           <button
             type="button"
             onClick={onContinue}
-            className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90"
+            className="font-mono uppercase"
+            style={ACCENT_BTN}
           >
-            Continue
+            continue
           </button>
         </div>
       </div>
-    </AilaCard>
+    </WindowPanel>
   );
 }

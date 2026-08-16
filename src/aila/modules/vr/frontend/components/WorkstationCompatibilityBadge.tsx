@@ -1,9 +1,9 @@
 import type { RegisteredSystem, TargetClass } from "../types";
-import { AilaBadge } from "@/components/aila/AilaBadge";
+import { MonoBadge } from "@/components/aila/mock";
 
 /**
  * Heuristic compatibility hint between a chosen workstation and a
- * target class (08_FRONTEND_UX.md §1.2). Renders a small badge:
+ * target class (08_FRONTEND_UX.md §1.2). Renders a small MonoBadge:
  *
  *  - ok      -- workstation looks compatible
  *  - warn    -- likely but unconfirmed (e.g. wrong OS family)
@@ -14,7 +14,6 @@ import { AilaBadge } from "@/components/aila/AilaBadge";
  * analysis pipeline runs.
  */
 type Verdict = "ok" | "warn" | "error";
-type BadgeSeverity = "low" | "medium" | "high";
 
 function judge(system: RegisteredSystem, kind: TargetClass): {
   verdict: Verdict;
@@ -50,6 +49,22 @@ function judge(system: RegisteredSystem, kind: TargetClass): {
   return { verdict: "ok", reason: "no known constraints for this class" };
 }
 
+// Verdict -> MonoBadge tone (see wave-2 brief severity mapping):
+//   ok    -> ok       (status-ok, "compatible")
+//   warn  -> medium   (status-info, "check")
+//   error -> high     (status-warn, "incompatible")
+const VERDICT_TONE: Record<Verdict, string> = {
+  ok: "ok",
+  warn: "medium",
+  error: "high",
+};
+
+const VERDICT_LABEL: Record<Verdict, string> = {
+  ok: "compatible",
+  warn: "check",
+  error: "incompatible",
+};
+
 export function WorkstationCompatibilityBadge({
   system,
   kind,
@@ -58,23 +73,9 @@ export function WorkstationCompatibilityBadge({
   kind: TargetClass;
 }) {
   const { verdict, reason } = judge(system, kind);
-  // Map verdict to AilaBadge severity tokens (the design system has
-  // no "warning" -- we use "medium" for caution, "high" for error,
-  // "low" for ok).
-  const severity: BadgeSeverity =
-    verdict === "ok" ? "low" : verdict === "warn" ? "medium" : "high";
   return (
-    <span
-      className="inline-flex items-center gap-1"
-      title={reason}
-    >
-      <AilaBadge severity={severity} size="sm">
-        {verdict === "ok"
-          ? "compatible"
-          : verdict === "warn"
-            ? "check"
-            : "incompatible"}
-      </AilaBadge>
-    </span>
+    <MonoBadge tone={VERDICT_TONE[verdict]} title={reason}>
+      {VERDICT_LABEL[verdict]}
+    </MonoBadge>
   );
 }

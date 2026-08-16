@@ -30,10 +30,10 @@ def _seed_task(
     group_id: str = "reader",
     user_id: str = "user-test-001",
     track: str = "vuln",
-    result_path: str | None = None,
 ) -> TaskRecord:
     """Seed a TaskRecord directly into the test DB. Returns the created record."""
-    # Phase 179: legacy cursor column dropped; parameter removed.
+    # Phase 179: legacy cursor column dropped.
+    # #144: ``result_path`` dropped by migration 126.
     record = TaskRecord(
         track=track,
         fn_path="test.fn",
@@ -41,7 +41,6 @@ def _seed_task(
         status=status,
         user_id=user_id,
         group_id=group_id,
-        result_path=result_path,
     )
     with session_scope() as session:
         session.add(record)

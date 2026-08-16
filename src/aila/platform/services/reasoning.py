@@ -55,8 +55,10 @@ __all__ = [
 _TOOL_PREFIXES: tuple[str, ...] = (
     "audit_mcp:", "audit_mcp.",
     "ida_headless:", "ida_headless.",
+    "android_mcp:", "android_mcp.",
     "_directive.",
     "_recall.",
+    "_ledger.",
 )
 
 # Fallback hard cap on agent-self-set observable keys across all turns
@@ -508,8 +510,26 @@ class CyberReasoningEngine:
         rejected.extend(rejected_by_id.values())
         newly_rejected_ids = {item.id for item in decision.rejected if item.id}
 
+        # #165: rejection is permanent. Any id present in the rejected
+        # set (either from a prior turn or this turn's decision) or in
+        # the resolved set is refused resurrection when the agent
+        # re-proposes it under decision.hypotheses. Without this guard
+        # the same id could sit in both ``rejected`` and ``hypotheses``
+        # simultaneously, silently undoing an earlier close-out and
+        # letting stale-hypothesis / sibling-consensus directives
+        # re-fire on a branch the model already resolved.
+        resolved_ids = {item.id for item in case_state.resolved if item.id}
+        # rejected_by_id already fully accounts for prior + new rejections.
+        forbidden_ids = set(rejected_by_id.keys()) | resolved_ids
+
+        # Also drop any live entry whose id is already in the sticky
+        # rejected/resolved sets. A well-formed prior state never has
+        # this overlap, but legacy rows written before #165 landed may
+        # -- this normalises them on absorb so a resurrected id does
+        # not survive the migration boundary.
         merged_live = [
-            h for h in case_state.hypotheses if h.id not in newly_rejected_ids
+            h for h in case_state.hypotheses
+            if h.id not in newly_rejected_ids and h.id not in forbidden_ids
         ]
         for new_h in decision.hypotheses or []:
             if not new_h.id:
@@ -517,6 +537,20 @@ class CyberReasoningEngine:
                 if new_h.opened_at_turn == 0 and turn_number > 0:
                     new_h = new_h.model_copy(update={"opened_at_turn": turn_number})
                 merged_live.append(new_h)
+                continue
+            if new_h.id in forbidden_ids:
+                # Resurrection attempt: the agent is re-emitting an id
+                # that was already rejected or resolved. Drop it and
+                # log at WARNING so the operator sees the attempt.
+                # Keeping ``rejected`` as the sticky source of truth
+                # matches the "Rejected (do not re-propose)" render
+                # directive in render_case_model.
+                verdict = "rejected" if new_h.id in rejected_by_id else "resolved"
+                _log.warning(
+                    "absorb: refusing to resurrect %s hypothesis id=%r "
+                    "(claim=%r); rejection is permanent",
+                    verdict, new_h.id, (new_h.claim or "")[:200],
+                )
                 continue
             for i, existing in enumerate(merged_live):
                 if existing.id == new_h.id:

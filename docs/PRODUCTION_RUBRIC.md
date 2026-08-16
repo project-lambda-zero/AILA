@@ -84,7 +84,7 @@ Test conduct:
 | HTTP responses | Success bodies wrap in `DataEnvelope`. Errors raise typed exceptions or `HTTPException`; see `docs/API_ERRORS.md` for the envelope contract. |
 | LLM calls | Route through `AilaLLMClient` (`platform.llm.client`) with a routing `task_type`. Modules never instantiate `openai.AsyncOpenAI` directly. |
 | Task functions | Decorated with `@platform_task`. All kwargs JSON-serializable (Pydantic models pass `.model_dump(mode="json")`). |
-| Task results | Surface results through the module's own result table (`vr_findings`, `scan_findings`, …). `TaskRecord.result_path` is a retired legacy column -- do not populate it (INFRA-06 retirement). |
+| Task results | Surface results through the module's own result table (`vr_findings`, `scan_findings`, …). The historical `TaskRecord.result_path` column was dropped by migration 126 (#144); the file-path pattern is retired. |
 | Frontend imports | Every bare import declared in the module's `package.json`. Shared deps reference `pnpm-workspace.yaml` catalogs (`catalog:react19`, `catalog:router`, …), never literal versions for shared packages. |
 | Frontend router | Import from `react-router` only. `react-router-dom` is gone -- v7 unified the package. |
 | Frontend Tailwind | If the module ships UI, add `@source "../../../src/aila/modules/<id>/frontend/**/*.{ts,tsx}";` to `frontend/src/styles/globals.css`. Tailwind v4 scans relative to that file and won't pick up classes in module dirs otherwise. |
@@ -132,7 +132,6 @@ Test conduct:
 [ ] LLMCostRecord pricing configured for any new model_id
 [ ] No new os.getenv in module code (search src/aila/modules/<name>/)
 [ ] No new bare except Exception in module code
-[ ] No write to TaskRecord.result_path (INFRA-06 retired)
 [ ] No import of react-router-dom (use react-router only)
 [ ] Tailwind @source line present in frontend/src/styles/globals.css for any new module UI
 [ ] No new direct DB-driver imports (asyncpg / psycopg / sqlite3 / create_engine)

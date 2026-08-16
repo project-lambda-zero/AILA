@@ -259,6 +259,28 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except (OSError, TimeoutError, RuntimeError, ValueError, LookupError) as exc:
         _log.warning("Default automation schedule seeding skipped: %s", exc)
 
+    # RFC-12 criterion 5 activation: seed the platform:stable_core:*
+    # knowledge rows (rubrics, accept-bar policies, checklists) from the
+    # versioned .md files under src/aila/platform/knowledge/stable_core/.
+    # The CAG router serves stable-core queries from an in-memory cache
+    # of these rows; before this seeder shipped the namespace was empty
+    # and every stable-core retrieval returned zero hits. Idempotent per
+    # file (dedup_key = file stem), no-op when the directory is empty,
+    # and best-effort: a seed fault must not abort startup because the
+    # CAG cache is an optimisation over the hybrid retrieval path.
+    try:
+        from aila.platform.services.knowledge_stable_core_seed import (
+            seed_stable_core_knowledge,
+        )
+
+        _seeded_stable_core = await seed_stable_core_knowledge()
+        if _seeded_stable_core:
+            _log.info(
+                "Seeded %d stable-core knowledge entries", _seeded_stable_core,
+            )
+    except (OSError, TimeoutError, RuntimeError, ValueError, LookupError) as exc:
+        _log.warning("Stable-core knowledge seeding skipped: %s", exc)
+
     # Start the supervised background automation tick loop (60s base interval,
     # exponential backoff on repeated failure). Wires the AutomationRunner that
     # was previously instantiated but never invoked (AUDIT-01 fix). The
@@ -466,6 +488,13 @@ def create_app() -> FastAPI:
     from aila.api.middleware import SecurityHeadersMiddleware
     application.add_middleware(SecurityHeadersMiddleware)
 
+    # #119: enforce the CSRF double-submit contract on cookie-authenticated
+    # mutating requests. Requests carrying an Authorization: Bearer header
+    # are exempt (not cookie-auth, not CSRF-susceptible). See
+    # aila.api.middleware.csrf for the full rule set.
+    from aila.api.middleware import CSRFMiddleware
+    application.add_middleware(CSRFMiddleware)
+
     # #53: bind the caller's TeamContext to the ambient ContextVar for the
     # duration of the request so bare ``UnitOfWork()`` / ``async_session_scope()``
     # sites inherit tenant scope. Decode is silent -- the real auth layer
@@ -522,38 +551,34 @@ def create_app() -> FastAPI:
                 content={"detail": "Internal server error", "code": None, "errors": None},
             )
 
-    # STRESS-12: Reject oversized request bodies before they reach application code.
-    # Default 200 MB (covers the largest realistic APK; APKs are 30-150 MB typical).
-    # Operator can tune via `AILA_MAX_REQUEST_BYTES` env var when forensics dumps,
-    # binary uploads, or LLM transcripts need a different ceiling.
-    # Returns 413 with ErrorResponse envelope. Registered after
-    # _catch_unhandled_exceptions so it runs before it (Starlette middleware
-    # stack is LIFO -- last registered runs first).
+    # STRESS-12 / issue #115: Reject oversized request bodies before they reach
+    # application code. Default 200 MB (covers the largest realistic APK; APKs
+    # are 30-150 MB typical). Operator can tune via `AILA_MAX_REQUEST_BYTES`
+    # env var when forensics dumps, binary uploads, or LLM transcripts need a
+    # different ceiling.
+    #
+    # This is BodySizeLimitMiddleware -- a pure-ASGI guard that both
+    # fast-rejects a truthful oversized Content-Length AND counts real bytes
+    # off the ASGI receive channel so a chunked-transfer body that omits (or
+    # lies about) Content-Length is still stopped after `cap + one chunk`.
+    # Returns 413 with the ErrorEnvelope shape.
+    #
+    # Registered after _catch_unhandled_exceptions so it runs OUTSIDE it
+    # (Starlette middleware stack is LIFO -- last registered runs first);
+    # rejection happens before any downstream middleware or router runs.
     import os as _os
+
+    from aila.api.middleware import BodySizeLimitMiddleware
     _default_max_body = 200 * 1024 * 1024  # 200 MB
     try:
-        _max_body_bytes = int(_os.environ.get("AILA_MAX_REQUEST_BYTES", str(_default_max_body)))
+        _max_body_bytes = int(
+            _os.environ.get("AILA_MAX_REQUEST_BYTES", str(_default_max_body))
+        )
     except ValueError:
         _max_body_bytes = _default_max_body
-    _max_body_mb = _max_body_bytes // (1024 * 1024)
-
-    @application.middleware("http")
-    async def _reject_oversized_requests(request: Request, call_next):  # type: ignore[misc]
-        content_length = request.headers.get("content-length")
-        if content_length is not None:
-            try:
-                if int(content_length) > _max_body_bytes:
-                    return JSONResponse(
-                        status_code=413,
-                        content={
-                            "detail": f"Request body too large (max {_max_body_mb}MB)",
-                            "code": "PAYLOAD_TOO_LARGE",
-                            "errors": None,
-                        },
-                    )
-            except ValueError:
-                pass  # Non-numeric content-length will be caught by ASGI server
-        return await call_next(request)
+    if _max_body_bytes <= 0:
+        _max_body_bytes = _default_max_body
+    application.add_middleware(BodySizeLimitMiddleware, max_bytes=_max_body_bytes)
 
     # OBS-01: Prometheus request instrumentation middleware.
     # Registered last among HTTP middlewares so it runs outermost (LIFO),
@@ -601,6 +626,14 @@ def create_app() -> FastAPI:
     from aila.api.routers.admin_workflows import router as admin_workflows_router
     application.include_router(admin_workflows_router)
 
+    # #209: Admin journal dead-letter replay router (god-tier admin -- drains
+    # platform_journal_deadletter back into the hash-chained journal, stamping
+    # replayed_at + replay_seq so a second call is idempotent).
+    from aila.api.routers.admin_journal_replay import (
+        router as admin_journal_replay_router,
+    )
+    application.include_router(admin_journal_replay_router)
+
     # RFC-09: Admin prompt-version router (god-tier admin -- deploy/rollback prompts)
     from aila.api.routers.admin_prompts import router as admin_prompts_router
     application.include_router(admin_prompts_router)
@@ -612,6 +645,16 @@ def create_app() -> FastAPI:
     # RFC-08: Admin eval-harness router (god-tier admin -- score candidate + gate promotion)
     from aila.api.routers.admin_eval import router as admin_eval_router
     application.include_router(admin_eval_router)
+
+    # Issue #158: trajectory-mined SFT/DPO corpus export + stats (god-tier admin).
+    from aila.api.routers.platform_corpus import router as platform_corpus_router
+    application.include_router(platform_corpus_router)
+
+    # RAG knowledge-store admin surface (god-tier admin): stats + entry pager
+    # + routed retrieval against KnowledgeService.retrieve_routed. No new
+    # tables -- reads KnowledgeEntryRecord + KnowledgeEntryEdge in place.
+    from aila.api.routers.knowledge import router as knowledge_router
+    application.include_router(knowledge_router)
 
     # RFC-10: Admin agent-lifecycle router (god-tier admin -- evaluate/promote/rollback + journal)
     from aila.api.routers.admin_lifecycle import router as admin_lifecycle_router
@@ -637,6 +680,12 @@ def create_app() -> FastAPI:
 
     from aila.api.routers.tools import router as tools_router
     application.include_router(tools_router)
+
+    # Issue #147: platform sandbox exec (god-tier admin, rate-limited).
+    # Drives SandboxService directly for operator ops -- module callers
+    # reach the sandbox through the ``sandbox_exec`` tool instead.
+    from aila.api.routers.platform_sandbox import router as platform_sandbox_router
+    application.include_router(platform_sandbox_router)
 
     # Platform tasks router: /tasks (Phase 54 plan 05 -- task queue API surface)
     from aila.api.routers.tasks import router as tasks_router

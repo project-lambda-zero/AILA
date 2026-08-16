@@ -193,12 +193,12 @@ async def test_wrapper_invokes_body_when_definition_is_none(
     @platform_task(track="vulnerability", module_id="vulnerability")
     async def body(ctx: TaskContext, **kwargs: Any) -> dict[str, Any]:
         calls.append(ctx)
-        return {"echo": kwargs.get("x", None), "result_path": None}
+        return {"echo": kwargs.get("x", None), "summary": None}
 
     arq_ctx = {"job_id": seeded_task, "job_try": 1}
     result = await body(arq_ctx, x=42)  # type: ignore[arg-type]
 
-    assert result == {"echo": 42, "result_path": None}
+    assert result == {"echo": 42, "summary": None}
     assert len(calls) == 1
     assert calls[0].task_id == seeded_task
     assert calls[0].job_try == 1
@@ -275,7 +275,7 @@ async def test_wrapper_delegates_to_engine_when_definition_is_set(
 async def test_wrapper_stashes_success_outcome(seeded_task: str) -> None:
     @platform_task(track="vulnerability", module_id="vulnerability")
     async def ok(ctx: TaskContext, **kwargs: Any) -> dict[str, Any]:
-        return {"result_path": "/tmp/out"}
+        return {"summary": "ok", "findings_written": 3}
 
     arq_ctx = {"job_id": seeded_task, "job_try": 1}
     await ok(arq_ctx)  # type: ignore[arg-type]
@@ -283,7 +283,7 @@ async def test_wrapper_stashes_success_outcome(seeded_task: str) -> None:
     outcome = _pop_outcome(seeded_task, 1)
     assert outcome is not None
     assert outcome.kind == "success"
-    assert outcome.result == {"result_path": "/tmp/out"}
+    assert outcome.result == {"summary": "ok", "findings_written": 3}
 
 
 @pytest.mark.asyncio

@@ -141,9 +141,27 @@ async def _flip_branches_and_inv_to_completed(
     branch_model: Any,
     investigation_model: Any,
 ) -> None:
-    """Atomic two-update cascade shared by sweep + per-id paths."""
+    """Atomic two-update cascade shared by sweep + per-id paths.
+
+    Lock-order invariant (issue #177): the investigation row is
+    locked BEFORE any branch write. Every investigation-terminal
+    writer in the platform (finalizer, lifecycle pause/reopen,
+    synthesis runner) acquires locks in the same order --
+    ``investigation`` first, then ``branches``. Reversing the two
+    UPDATEs used to deadlock a reaper tick against a concurrent
+    finalize/pause that had already locked the inv row and was
+    waiting on a branch row this cascade would try to lock.
+    """
     BR = branch_model
     INV = investigation_model
+    # 1. Acquire the row lock on the investigation FIRST. The result
+    #    is unused; the SELECT ... FOR UPDATE is the whole point.
+    await uow.session.exec(
+        select(INV.id)
+        .where(INV.id == inv_id)
+        .with_for_update(),
+    )
+    # 2. Now safe to write the branch cascade.
     await uow.session.exec(
         update(BR)
         .where(
@@ -158,6 +176,7 @@ async def _flip_branches_and_inv_to_completed(
         )
         .execution_options(synchronize_session=False),
     )
+    # 3. Guarded UPDATE on the already-locked investigation row.
     await uow.session.exec(
         update(INV)
         .where(and_(INV.id == inv_id, INV.status == InvestigationStatus.RUNNING.value))

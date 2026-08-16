@@ -81,6 +81,26 @@ class ForensicsConfigSchema(ModuleConfigBase):
     )
 
 
+    # --- Reasoning closure pressure (issue #175 parity) -----------------
+    unresolved_hyp_reject_cap: int = Field(
+        default=3,
+        ge=0,
+        le=20,
+        description=(
+            "Cap on consecutive submit rejections by the unresolved-"
+            "hypothesis gate on the same investigation. When the agent "
+            "emits a terminal answer while live hypotheses remain "
+            "unresolved, the gate converts the submit to a reasoning "
+            "turn and injects a steering directive so the agent must "
+            "explicitly reject each live hypothesis or fold it into the "
+            "answer. After this many consecutive rejections the submit "
+            "is forced through with an "
+            "``unresolved_hypotheses_at_submit_advisory`` marker on the "
+            "answer provenance so the operator can audit. A value of 0 "
+            "disables the gate. Mirrors ``vr/unresolved_hyp_reject_cap``."
+        ),
+    )
+
     # --- RFC-07 #31 stuck-investigation healer ---------------------------
     stuck_healer_idle_grace_s: int = Field(
         default=600,

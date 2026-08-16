@@ -183,6 +183,73 @@ Synchronous reads and short writes go directly through the service
 layer. Long-running work is enqueued onto ARQ; clients follow progress
 through SSE streams sourced from `platform.events`.
 
+## Reasoning Engine and the Phase Graph
+
+Three modules -- `vr`, `malware`, and `forensics` -- run the shared
+`CyberReasoningEngine` (`platform/services/reasoning.py`). They are
+**reasoning modules**: an investigation spawns persona branches that raise
+hypotheses, gather evidence through tools, and converge through
+outcome-review quorum plus a claim verifier. The `vulnerability` module is a
+**deterministic pipeline module**: it aggregates live NVD/EPSS/KEV feeds
+through a weighted scoring pipeline (`RiskScoringAgent` + `SynthesisAgent`)
+and does not run the reasoning engine. The distinction is machine-readable:
+`ModuleProtocol.module_kind()` returns `"reasoning"` by default and
+`"pipeline"` for vulnerability, so cross-module capability routing can tell
+the two execution models apart.
+
+The phase graph (RFC-13) is a **static, frozen `WorkflowDefinition`**, not a
+learned or self-modifying plan: its states are fixed at module-load time
+(`WorkflowDefinition` is a frozen dataclass). Progress is driven by a
+**condition-checked dispatch hub**: on each visit the hub evaluates per-phase
+ledger conditions (`make_discovery_condition`, `make_evidence_condition` in
+`platform/services/ledger.py`) and activates the next phase only when the
+shared investigation ledger carries the evidence that phase gates on, honoring
+a confirmed-trust tier.
+
+The **planner oracle** (`platform/services/oracle.py`) is a thin request
+router over that ledger, not a learning planner -- in its own words, the
+oracle routes requests, it does not plan. A branch files a `request` entry on
+the ledger (for example `{"intent": "replan"}` or a specialist-spawn
+request); a distinct sibling branch must ratify it (the same distinct-approver
+rule as outcome-review quorum); the oracle then applies only the request's
+declared mechanical effect and never invents an objective, a phase, or a
+discovery. A ratified replan relaxes confirmed trust for one hub pass. If a
+replan request stays unratified longer than
+`platform.dispatch_replan_timeout_s` (default 1800s), the hub emits
+`hub_stalled_timeout` and the investigation moves to `STALLED` with an
+operator escalation instead of looping.
+
+## Prompt Lifecycle Management
+
+Prompt and agent versions move through an explicit stage machine owned by
+`AgentLifecycleController` (`platform/lifecycle/controller.py`, RFC-10),
+exposed over the `admin_lifecycle` router. The stages:
+
+1. **evaluate** -- score a candidate version against a dataset via
+   `EvalRunner`.
+2. **approve** -- mark an evaluated version eligible for rollout.
+3. **shadow** -- run the candidate alongside the current production version
+   without affecting results, to compare behavior (`shadow` / `run_shadow`).
+4. **canary** -- route a deterministic cohort of investigations to the
+   candidate (`canary`; `resolve_version_for_investigation` buckets each
+   investigation 0..99 by a stable hash of its id). `record_canary_signal`
+   feeds drift and cost samples in so a regressing canary is held.
+5. **promote** -- flip the `production` prompt alias to the candidate
+   (`promote_from_canary` / `promote`); `rollback` reverts a promotion.
+
+Every transition is journaled (`list_transitions`), so the rollout history of
+each prompt key is auditable.
+
+## Knowledge and Embeddings
+
+Semantic knowledge (cross-investigation memory and the stable-core cache) is
+stored in a 1024-dimension `pgvector` column. The default embedding provider
+is BGE-M3 (`BAAI/bge-m3`, 1024-dim, local/CPU); the `all-MiniLM-L6-v2`
+fallback (384-dim) is zero-padded to 1024 by `KnowledgeService.embed` so both
+providers write the same column width (a longer vector is truncated). The
+provider is selected once per process via the `knowledge_embedding_model`
+config key.
+
 ## Extension Points
 
 Modules extend the platform through declarative specs, never by
@@ -241,20 +308,18 @@ per-system, not global.
 Task results are surfaced through the module's own result tables --
 `vr_findings`, `vr_investigation_outcomes`, `scan_findings`,
 `forensics_*`, and so on -- not as file-system artifacts referenced by
-a path column. The historical `TaskRecord.result_path` column survives
-for wire-shape compatibility (the column is nullable and currently
-populated by no task in `src/aila/`); every consumer reads the result
-from the module table or its dedicated API endpoint (e.g.
-`GET /vr/investigations/{id}`, `GET /scans/{id}/findings`).
+a path column. Every consumer reads the result from the module table
+or its dedicated API endpoint (e.g. `GET /vr/investigations/{id}`,
+`GET /scans/{id}/findings`).
 
-The earlier file-path pattern existed to keep SQLite row sizes
-bounded under the single-writer model. PostgreSQL handles large rows
-without contention, the on-disk artifact directory introduced an
-orthogonal lifecycle problem (cleanup, permissions, backup), and
-modules already needed structured per-result tables anyway. The
-pattern was retired; `result_path` should not be populated by new
-code and will be dropped in a future migration once the schema
-column can be cleanly removed from every TaskResponse consumer.
+The earlier file-path pattern (a `TaskRecord.result_path` column)
+existed to keep SQLite row sizes bounded under the single-writer
+model. PostgreSQL handles large rows without contention, the on-disk
+artifact directory introduced an orthogonal lifecycle problem
+(cleanup, permissions, backup), and modules already needed structured
+per-result tables anyway. The column was dropped by migration 126
+(#144); it survived as a permanent NULL for months because no task in
+`src/aila/` ever populated it.
 
 ### INFRA-07: No Module Cross-Imports
 

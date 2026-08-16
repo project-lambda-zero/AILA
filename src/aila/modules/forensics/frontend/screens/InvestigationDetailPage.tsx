@@ -1,44 +1,148 @@
 import { useState } from "react";
 import { useNavigate, useParams } from "react-router";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
-import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import { Detective } from "@phosphor-icons/react/dist/csr/Detective";
+import { GitBranch } from "@phosphor-icons/react/dist/csr/GitBranch";
 
+import { EmptyState } from "@/components/aila/EmptyState";
+import { PixelIcon } from "@/components/aila/PixelIcon";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import {
+  MonoBadge,
+  SectionHeader,
+  Segmented,
+  toneColor,
+} from "@/components/aila/mock";
+import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
+
+import {
+  InvestigationDetailSkeleton,
+  InvestigationRowSkeletonList,
+} from "../components/skeletons";
+import { ActivityPanel } from "../components/ActivityPanel";
 import { AnalystDirectivesPanel } from "../components/AnalystDirectivesPanel";
+import { ConnectedPanel } from "../components/ConnectedPanel";
+import { LiveRunPanel } from "../components/LiveRunPanel";
+import { PanelBoundary } from "../components/PanelBoundary";
 import { RetrieveFilePanel } from "../components/RetrieveFilePanel";
+import { useForensicsInvestigationEvents } from "../hooks/useForensicsInvestigationEvents";
 import {
   useCancelInvestigation,
+  useReapInvestigation,
   useRerunInvestigation,
   useTagInvestigation,
 } from "../mutations";
-import { useInvestigationAnswers, useInvestigationDetail, useInvestigationEventFeed } from "../queries";
+import { useInvestigationAnswers, useInvestigationDetail } from "../queries";
 import type { AgentStep, AnswerCandidate, TagVerdict } from "../types";
-import { useUpdatePageHeader } from "@/components/aila/PageHeaderContext";
 
-type TabId = "steps" | "answers" | "live";
+// ---------------------------------------------------------------------------
+// Type / tone tables (preserved verbatim from the prior presentation layer).
+// ---------------------------------------------------------------------------
 
-const STATUS_SEVERITY: Record<string, "info" | "low" | "medium" | "high" | "critical"> = {
+type TabId = "steps" | "answers" | "live" | "connected" | "activity";
+
+// Status -> mock badge tone. Mirrors the STATUS_SEVERITY table one-for-one
+// on the mock's semantic tone keys so `MonoBadge tone={STATUS_TONE[status]}`
+// picks up the right --status-* token.
+const STATUS_TONE: Record<string, string> = {
   created: "info",
   queued: "info",
-  running: "medium",
+  ready: "low",
   analyzing: "medium",
+  running: "medium",
+  pending: "info",
   completed: "low",
   failed: "critical",
   exhausted: "high",
   cancelled: "high",
+  abandoned: "muted",
+  stalled: "muted",
 };
 
-const CONFIDENCE_SEVERITY: Record<string, "info" | "low" | "medium" | "high" | "critical"> = {
+// Answer-confidence -> mock badge tone. Same policy as CONFIDENCE_SEVERITY
+// (high confidence reads reassuring; low reads alarming).
+const CONFIDENCE_TONE: Record<string, string> = {
   high: "low",
   medium: "medium",
   low: "high",
   unknown: "info",
 };
 
-// ----- Case-model panel (contract / hypotheses / observables / provenance) -----
+// Confidence -> WindowPanel tone (a strict subset of the shared kit tones).
+const CONFIDENCE_PANEL_TONE: Record<string, "ok" | "warn" | "info" | "accent" | "muted"> = {
+  high: "ok",
+  medium: "info",
+  low: "warn",
+  unknown: "muted",
+};
+
+// "pending" is the status freshly-submitted investigations sit at until the
+// freeflow agent flips them to "running". The earlier states (intake /
+// collection / deep_analysis) emit progress while the row is still "pending",
+// so we must treat it as running for SSE subscription purposes or the live
+// feed silently never subscribes.
+const RUNNING_STATUSES: Record<string, true> = {
+  pending: true,
+  queued: true,
+  running: true,
+  analyzing: true,
+};
+
+// ---------------------------------------------------------------------------
+// Shared raw-button primitives (no `@/components/ui/button` -- all mock).
+// ---------------------------------------------------------------------------
+
+type BtnTone = "accent" | "warn" | "critical" | "muted" | "ok";
+
+function baseBtnStyle(
+  tone: BtnTone,
+  disabled?: boolean,
+): React.CSSProperties {
+  const c = toneColor(tone === "critical" ? "critical" : tone);
+  const filled = tone === "critical" || tone === "accent" || tone === "ok";
+  return {
+    height: 28,
+    padding: "0 12px",
+    fontSize: 10,
+    letterSpacing: "0.08em",
+    borderRadius: 3,
+    cursor: disabled ? "not-allowed" : "pointer",
+    color: filled ? "var(--text-on-accent)" : c,
+    background: filled ? c : "transparent",
+    border: filled
+      ? `1px solid ${c}`
+      : `1px solid color-mix(in srgb, ${c} 55%, var(--border-soft))`,
+    opacity: disabled ? 0.55 : 1,
+  };
+}
+
+interface MockButtonProps {
+  tone: BtnTone;
+  onClick?: () => void;
+  disabled?: boolean;
+  title?: string;
+  children: React.ReactNode;
+}
+
+function MockButton({ tone, onClick, disabled, title, children }: MockButtonProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className="font-mono uppercase"
+      style={baseBtnStyle(tone, disabled)}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Case-model panel (contract / hypotheses / observables / provenance).
+// Presentation only -- content-derivation logic is verbatim from the prior file.
+// ---------------------------------------------------------------------------
 function CaseModelPanel({ step }: { step: AgentStep }) {
   const contract = step.contract;
   const hypotheses = step.hypotheses ?? [];
@@ -56,12 +160,26 @@ function CaseModelPanel({ step }: { step: AgentStep }) {
 
   if (!hasAnything) return null;
 
+  const label: React.CSSProperties = {
+    fontSize: 9,
+    letterSpacing: "0.08em",
+    color: "var(--text-muted)",
+    textTransform: "uppercase",
+  };
+
   return (
-    <div className="border-t border-border px-4 py-2 space-y-2 bg-surface-secondary/40">
+    <div
+      className="space-y-2"
+      style={{
+        borderTop: "1px solid var(--border-soft)",
+        padding: "8px 14px",
+        background: "var(--surface-sunk)",
+      }}
+    >
       {contract && (
-        <div className="text-xs">
-          <span className="font-mono text-text-muted">contract:</span>{" "}
-          <span className="font-mono text-foreground">
+        <div className="font-mono" style={{ fontSize: 11 }}>
+          <span style={label}>contract</span>{" "}
+          <span style={{ color: "var(--text-primary)" }}>
             {contract.answer_type && `type=${contract.answer_type} `}
             {contract.answer_format && `format="${contract.answer_format}" `}
             {contract.evidence_domain && `evidence=${contract.evidence_domain}`}
@@ -69,21 +187,24 @@ function CaseModelPanel({ step }: { step: AgentStep }) {
         </div>
       )}
       {step.expected_observation && (
-        <div className="text-xs">
-          <span className="font-mono text-text-muted">expected:</span>{" "}
-          <span className="text-foreground">{step.expected_observation}</span>
+        <div className="font-mono" style={{ fontSize: 11 }}>
+          <span style={label}>expected</span>{" "}
+          <span style={{ color: "var(--text-primary)" }}>{step.expected_observation}</span>
         </div>
       )}
       {hypotheses.length > 0 && (
-        <div className="text-xs">
-          <div className="font-mono text-text-muted mb-1">hypotheses:</div>
-          <ul className="pl-3 space-y-0.5">
+        <div className="font-mono" style={{ fontSize: 11 }}>
+          <div style={label}>hypotheses</div>
+          <ul className="pl-3" style={{ marginTop: 2 }}>
             {hypotheses.map((h, i) => (
-              <li key={i} className="text-foreground">
-                <span className="font-mono text-text-muted">{h.id ?? `H${i + 1}`}:</span>{" "}
+              <li key={i} style={{ color: "var(--text-primary)" }}>
+                <span style={{ color: "var(--text-muted)" }}>{h.id ?? `H${i + 1}`}:</span>{" "}
                 {h.claim}
                 {h.kill_criterion && (
-                  <span className="text-text-muted italic"> -- kill: {h.kill_criterion}</span>
+                  <span style={{ color: "var(--text-faint)", fontStyle: "italic" }}>
+                    {" "}
+                    -- kill: {h.kill_criterion}
+                  </span>
                 )}
               </li>
             ))}
@@ -91,26 +212,41 @@ function CaseModelPanel({ step }: { step: AgentStep }) {
         </div>
       )}
       {rejected.length > 0 && (
-        <div className="text-xs">
-          <div className="font-mono text-text-muted mb-1">rejected ({rejected.length}):</div>
-          <ul className="pl-3 space-y-0.5">
+        <div className="font-mono" style={{ fontSize: 11 }}>
+          <div style={label}>rejected ({rejected.length})</div>
+          <ul className="pl-3" style={{ marginTop: 2 }}>
             {rejected.slice(0, 5).map((r, i) => (
-              <li key={i} className="text-text-muted line-through">
-                {r.id ?? "?"}: {r.claim}{" "}
-                {r.reason && <span className="italic no-underline">({r.reason})</span>}
+              <li
+                key={i}
+                style={{ color: "var(--text-faint)", textDecoration: "line-through" }}
+              >
+                {r.id ?? "?"}: {r.claim}
+                {r.reason && (
+                  <span style={{ fontStyle: "italic", textDecoration: "none" }}>
+                    {" "}
+                    ({r.reason})
+                  </span>
+                )}
               </li>
             ))}
           </ul>
         </div>
       )}
       {observables && Object.keys(observables).length > 0 && (
-        <div className="text-xs">
-          <div className="font-mono text-text-muted mb-1">observables:</div>
-          <div className="flex flex-wrap gap-1 pl-3">
+        <div className="font-mono" style={{ fontSize: 11 }}>
+          <div style={label}>observables</div>
+          <div className="flex flex-wrap gap-1 pl-3" style={{ marginTop: 2 }}>
             {Object.entries(observables).slice(0, 24).map(([k, v]) => (
               <code
                 key={k}
-                className="px-1.5 py-0.5 bg-surface rounded text-text-muted font-mono"
+                style={{
+                  padding: "1px 6px",
+                  fontSize: 10,
+                  background: "var(--surface-card)",
+                  border: "1px solid var(--border-soft)",
+                  borderRadius: 2,
+                  color: "var(--text-muted)",
+                }}
               >
                 {k}={String(v).slice(0, 120)}
               </code>
@@ -119,18 +255,21 @@ function CaseModelPanel({ step }: { step: AgentStep }) {
         </div>
       )}
       {provenance && (provenance.primary_artifact || (provenance.corroboration?.length ?? 0) > 0) && (
-        <div className="text-xs">
-          <div className="font-mono text-text-muted mb-1">provenance:</div>
+        <div className="font-mono" style={{ fontSize: 11 }}>
+          <div style={label}>provenance</div>
           {provenance.primary_artifact && (
-            <div className="pl-3 text-foreground">
-              primary: <code className="font-mono">{provenance.primary_artifact}</code>
+            <div className="pl-3" style={{ color: "var(--text-primary)" }}>
+              primary:{" "}
+              <code style={{ color: "var(--text-primary)" }}>{provenance.primary_artifact}</code>
             </div>
           )}
           {(provenance.corroboration?.length ?? 0) > 0 && (
-            <div className="pl-3 text-text-muted">
+            <div className="pl-3" style={{ color: "var(--text-muted)" }}>
               corroboration:{" "}
               {(provenance.corroboration ?? []).map((c, i) => (
-                <code key={i} className="ml-1 font-mono">{c}</code>
+                <code key={i} style={{ marginLeft: 4, color: "var(--text-muted)" }}>
+                  {c}
+                </code>
               ))}
             </div>
           )}
@@ -140,56 +279,121 @@ function CaseModelPanel({ step }: { step: AgentStep }) {
   );
 }
 
-// ----- Step card -----
-function StepCard({ step }: { step: AgentStep }) {
-  const [stdoutOpen, setStdoutOpen] = useState(false);
-  const [stderrOpen, setStderrOpen] = useState(false);
-  const [scriptOpen, setScriptOpen] = useState(false);
+// ---------------------------------------------------------------------------
+// Collapsible <details> block styled to the mock.
+// ---------------------------------------------------------------------------
+function CollapsibleBlock({
+  label,
+  tone,
+  children,
+  defaultOpen = false,
+}: {
+  label: React.ReactNode;
+  tone: "ok" | "warn" | "critical" | "muted";
+  children: React.ReactNode;
+  defaultOpen?: boolean;
+}) {
+  const c = toneColor(tone);
+  return (
+    <details
+      style={{
+        borderTop: "1px solid var(--border-soft)",
+      }}
+      open={defaultOpen}
+    >
+      <summary
+        className="font-mono uppercase"
+        style={{
+          cursor: "pointer",
+          listStyle: "none",
+          padding: "6px 14px",
+          fontSize: 10,
+          letterSpacing: "0.08em",
+          color: c,
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          userSelect: "none",
+        }}
+      >
+        <span aria-hidden="true">{"\u25b8"}</span>
+        <span>{label}</span>
+      </summary>
+      <div style={{ padding: "0 14px 10px" }}>{children}</div>
+    </details>
+  );
+}
 
+// ---------------------------------------------------------------------------
+// StepCard -- bordered mono panel + step number square + action + exit badge.
+// ---------------------------------------------------------------------------
+function StepCard({ step }: { step: AgentStep }) {
   const failed = step.exit_code !== null && step.exit_code !== 0;
   const hasStdout = !!step.stdout?.trim();
   const hasStderr = !!step.stderr?.trim();
   const hasScript = !!step.script_content?.trim();
+  const accent = failed ? "var(--accent)" : "var(--border-soft)";
 
   return (
     <div
-      className={`rounded-md border bg-surface transition-colors ${
-        failed ? "border-border-danger bg-red-950/10" : "border-border"
-      }`}
+      style={{
+        background: "var(--surface-card)",
+        border: `1px solid ${accent}`,
+        borderRadius: 3,
+      }}
     >
-      {/* Header row */}
-      <div className="flex items-start gap-3 px-4 py-3">
+      <div className="flex items-start gap-3" style={{ padding: "10px 14px" }}>
         <span
-          className={`shrink-0 w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold font-mono ${
-            failed
-              ? "bg-red-900/40 text-red-400"
-              : "bg-surface-secondary text-text-muted"
-          }`}
+          className="font-mono"
+          aria-hidden="true"
+          style={{
+            flex: "0 0 auto",
+            width: 26,
+            height: 26,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            fontSize: 11,
+            fontWeight: 700,
+            background: failed
+              ? "color-mix(in srgb, var(--accent) 18%, transparent)"
+              : "var(--surface-sunk)",
+            color: failed ? "var(--accent)" : "var(--text-muted)",
+            border: `1px solid ${failed ? "color-mix(in srgb, var(--accent) 45%, transparent)" : "var(--border-soft)"}`,
+            borderRadius: 3,
+          }}
         >
           {step.step_number}
         </span>
-        <div className="flex-1 min-w-0 space-y-1">
+        <div className="min-w-0 flex-1 space-y-1">
           <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-medium text-foreground font-mono">
+            <span
+              className="font-mono"
+              style={{ fontSize: 12, color: "var(--text-primary)" }}
+            >
               {step.action}
             </span>
             {step.exit_code !== null && (
-              <span
-                className={`px-1.5 py-0.5 rounded text-xs font-mono ${
-                  failed
-                    ? "bg-red-900/40 text-red-400"
-                    : "bg-green-900/30 text-green-400"
-                }`}
-              >
+              <MonoBadge tone={failed ? "critical" : "ok"}>
                 exit {step.exit_code}
-              </span>
+              </MonoBadge>
             )}
           </div>
           {step.reasoning && (
-            <p className="text-xs text-text-muted">{step.reasoning}</p>
+            <p style={{ fontSize: 11, color: "var(--text-muted)" }}>{step.reasoning}</p>
           )}
           {step.command && (
-            <code className="block text-xs font-mono text-text-muted bg-surface-secondary px-2 py-1 rounded truncate">
+            <code
+              className="block font-mono truncate"
+              style={{
+                fontSize: 11,
+                color: "var(--text-muted)",
+                background: "var(--surface-sunk)",
+                border: "1px solid var(--border-soft)",
+                padding: "3px 8px",
+                borderRadius: 2,
+              }}
+            >
               {step.command}
             </code>
           )}
@@ -198,115 +402,134 @@ function StepCard({ step }: { step: AgentStep }) {
 
       <CaseModelPanel step={step} />
 
-      {/* Expandable script */}
       {hasScript && (
-        <div className="border-t border-border">
-          <button
-            type="button"
-            onClick={() => setScriptOpen((v) => !v)}
-            className="w-full flex items-center justify-between px-4 py-2 text-xs text-text-muted hover:text-foreground hover:bg-surface-secondary transition-colors"
+        <CollapsibleBlock label={`script content (${step.script_content!.length} chars)`} tone="warn">
+          <pre
+            className="font-mono"
+            style={{
+              margin: 0,
+              padding: "6px 8px",
+              fontSize: 11,
+              color: "var(--status-warn)",
+              background: "var(--surface-sunk)",
+              border: "1px solid color-mix(in srgb, var(--status-warn) 30%, transparent)",
+              borderRadius: 2,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-all",
+              overflowX: "auto",
+            }}
           >
-            <span className="font-mono">script content</span>
-            <span>{scriptOpen ? "▲" : "▼"}</span>
-          </button>
-          {scriptOpen && (
-            <pre className="px-4 pb-3 text-xs font-mono text-foreground bg-surface-secondary overflow-x-auto whitespace-pre-wrap">
-              {step.script_content}
-            </pre>
-          )}
-        </div>
+            {step.script_content}
+          </pre>
+        </CollapsibleBlock>
       )}
 
-      {/* Expandable stdout */}
       {hasStdout && (
-        <div className="border-t border-border">
-          <button
-            type="button"
-            onClick={() => setStdoutOpen((v) => !v)}
-            className="w-full flex items-center justify-between px-4 py-2 text-xs text-text-muted hover:text-foreground hover:bg-surface-secondary transition-colors"
+        <CollapsibleBlock label={`stdout (${step.stdout!.length.toLocaleString()} bytes)`} tone="ok">
+          <pre
+            className="font-mono"
+            style={{
+              margin: 0,
+              padding: "6px 8px",
+              fontSize: 11,
+              color: "var(--status-ok)",
+              background: "var(--surface-sunk)",
+              border: "1px solid color-mix(in srgb, var(--status-ok) 30%, transparent)",
+              borderRadius: 2,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-all",
+              maxHeight: 320,
+              overflow: "auto",
+            }}
           >
-            <span className="font-mono">stdout</span>
-            <span>{stdoutOpen ? "▲" : "▼"}</span>
-          </button>
-          {stdoutOpen && (
-            <pre className="px-4 pb-3 text-xs font-mono text-foreground bg-surface-secondary overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap">
-              {step.stdout}
-            </pre>
-          )}
-        </div>
+            {step.stdout}
+          </pre>
+        </CollapsibleBlock>
       )}
 
-      {/* Expandable stderr */}
       {hasStderr && (
-        <div className={`border-t ${failed ? "border-border-danger" : "border-border"}`}>
-          <button
-            type="button"
-            onClick={() => setStderrOpen((v) => !v)}
-            className={`w-full flex items-center justify-between px-4 py-2 text-xs transition-colors hover:bg-surface-secondary ${
-              failed ? "text-red-400 hover:text-red-300" : "text-text-muted hover:text-foreground"
-            }`}
+        <CollapsibleBlock label="stderr" tone={failed ? "critical" : "muted"}>
+          <pre
+            className="font-mono"
+            style={{
+              margin: 0,
+              padding: "6px 8px",
+              fontSize: 11,
+              color: failed ? "var(--accent)" : "var(--text-muted)",
+              background: "var(--surface-sunk)",
+              border: `1px solid ${failed ? "color-mix(in srgb, var(--accent) 40%, transparent)" : "var(--border-soft)"}`,
+              borderRadius: 2,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-all",
+              maxHeight: 320,
+              overflow: "auto",
+            }}
           >
-            <span className="font-mono">stderr</span>
-            <span>{stderrOpen ? "▲" : "▼"}</span>
-          </button>
-          {stderrOpen && (
-            <pre
-              className={`px-4 pb-3 text-xs font-mono overflow-x-auto max-h-64 overflow-y-auto whitespace-pre-wrap bg-surface-secondary ${
-                failed ? "text-red-300" : "text-foreground"
-              }`}
-            >
-              {step.stderr}
-            </pre>
-          )}
-        </div>
+            {step.stderr}
+          </pre>
+        </CollapsibleBlock>
       )}
     </div>
   );
 }
 
-// ----- Answer candidate card -----
+// ---------------------------------------------------------------------------
+// AnswerCard -- one WindowPanel per candidate.
+// ---------------------------------------------------------------------------
 function AnswerCard({ answer }: { answer: AnswerCandidate }) {
+  const tone = CONFIDENCE_PANEL_TONE[answer.confidence] ?? "muted";
+  const truncatedQ =
+    answer.question_text.length > 80
+      ? `${answer.question_text.slice(0, 80)}\u2026`
+      : answer.question_text;
   return (
-    <AilaCard  techBorder glow><div className="space-y-2">
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-sm font-medium text-foreground">{answer.question_text}</p>
-        <AilaBadge
-          severity={CONFIDENCE_SEVERITY[answer.confidence] ?? "info"}
-          size="sm"
-        >
-          {answer.confidence}
-        </AilaBadge>
-      </div>
-      <p className="text-sm text-text-muted">{answer.answer_text}</p>
-      {answer.corroboration.length > 0 && (
-        <div className="flex flex-wrap gap-1 pt-1">
-          <span className="text-xs text-text-muted mr-1">Corroborated by:</span>
-          {answer.corroboration.map((c, i) => (
+    <WindowPanel
+      title={truncatedQ}
+      tone={tone}
+      status={`confidence ; ${answer.confidence}`}
+    >
+      <div className="space-y-2">
+        <p style={{ fontSize: 12, color: "var(--text-primary)" }}>{answer.answer_text}</p>
+        {answer.corroboration.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1">
             <span
-              key={i}
-              className="px-1.5 py-0.5 text-xs bg-surface-secondary rounded font-mono text-text-muted"
+              className="font-mono uppercase"
+              style={{
+                fontSize: 9,
+                letterSpacing: "0.08em",
+                color: "var(--text-muted)",
+                marginRight: 4,
+              }}
             >
-              {c}
+              corroborated by
             </span>
-          ))}
-        </div>
-      )}
-      {answer.created_at && (
-        <p className="text-xs text-text-muted">
-          {new Date(answer.created_at).toLocaleString()}
-        </p>
-      )}
-    </div></AilaCard>
+            {answer.corroboration.map((c, i) => (
+              <MonoBadge key={i} tone="muted">
+                {c}
+              </MonoBadge>
+            ))}
+          </div>
+        )}
+        {answer.created_at && (
+          <p
+            className="font-mono uppercase"
+            style={{
+              fontSize: 9,
+              letterSpacing: "0.08em",
+              color: "var(--text-faint)",
+            }}
+          >
+            {new Date(answer.created_at).toLocaleString()}
+          </p>
+        )}
+      </div>
+    </WindowPanel>
   );
 }
 
-// "pending" is the status freshly-submitted investigations sit at until the
-// freeflow agent flips them to "running". The earlier states (intake /
-// collection / deep_analysis) emit progress while the row is still "pending",
-// so we must treat it as running for SSE subscription purposes or the live
-// feed silently never subscribes.
-const RUNNING_STATUSES = new Set(["pending", "queued", "running", "analyzing"]);
-
+// ---------------------------------------------------------------------------
+// Investigation controls -- Stop / Rerun / Tag row + tag form panel.
+// ---------------------------------------------------------------------------
 interface InvestigationControlsProps {
   projectId: string;
   investigationId: string;
@@ -367,136 +590,471 @@ function InvestigationControls({
     );
   };
 
+  const inputStyle: React.CSSProperties = {
+    height: 28,
+    padding: "0 10px",
+    fontSize: 11,
+    background: "var(--surface-sunk)",
+    border: "1px solid var(--border-soft)",
+    color: "var(--text-primary)",
+    borderRadius: 3,
+    width: "100%",
+  };
+  const textareaStyle: React.CSSProperties = {
+    ...inputStyle,
+    height: "auto",
+    padding: "6px 10px",
+    minHeight: 56,
+    resize: "vertical",
+  };
+  const labelStyle: React.CSSProperties = {
+    fontSize: 9,
+    letterSpacing: "0.08em",
+    color: "var(--text-muted)",
+    textTransform: "uppercase",
+  };
+
   return (
-    <div className="flex flex-col items-end gap-2">
-      <div className="flex gap-2 flex-wrap justify-end">
+    <div className="flex flex-col items-stretch gap-2" style={{ minWidth: 240 }}>
+      <div className="flex flex-wrap justify-end gap-2">
         {isRunning && (
-          <Button
-            variant="destructive"
-            size="sm"
+          <MockButton
+            tone="critical"
             onClick={handleCancel}
             disabled={cancel.isPending}
           >
-            {cancel.isPending ? "Stopping…" : "Stop investigation"}
-          </Button>
+            {cancel.isPending ? "stopping\u2026" : "stop"}
+          </MockButton>
         )}
         {!isRunning && (
-          <Button
-            variant="outline"
-            size="sm"
+          <MockButton
+            tone="muted"
             onClick={() => rerun.mutate({ investigationId })}
             disabled={rerun.isPending}
             title="Start a new investigation that carries this attempt's findings forward"
           >
-            {rerun.isPending ? "Restarting…" : "Rerun (enriched)"}
-          </Button>
+            {rerun.isPending ? "restarting\u2026" : "rerun (enriched)"}
+          </MockButton>
         )}
         {canTag && (
           <>
-            <Button
-              size="sm"
-              variant="default"
-              className="bg-emerald-600 hover:bg-emerald-700 text-white"
+            <MockButton
+              tone="ok"
               onClick={() => openTagForm("true")}
               disabled={isDisabledTag || tag.isPending}
               title={isDisabledTag ? "Only completed investigations can be tagged" : undefined}
             >
-              Tag as TRUE finding
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              className="border-amber-600 text-amber-500 hover:bg-amber-950/20"
+              tag as true finding
+            </MockButton>
+            <MockButton
+              tone="warn"
               onClick={() => openTagForm("false")}
               disabled={isDisabledTag || tag.isPending}
               title={isDisabledTag ? "Only completed investigations can be tagged" : undefined}
             >
-              Tag as FALSE finding
-            </Button>
+              tag as false finding
+            </MockButton>
           </>
         )}
       </div>
       {tagForm && (
-        <AilaCard className="w-full max-w-md border-border" techBorder glow><div className="space-y-2">
-          <p className="text-sm font-medium text-foreground">
-            Tag as{" "}
-            <span
-              className={
-                tagForm === "true" ? "text-emerald-400" : "text-amber-400"
-              }
-            >
-              {tagForm === "true" ? "TRUE" : "FALSE"}
-            </span>{" "}
-            finding
-          </p>
-          <p className="text-xs text-text-muted">
-            Saved to the Solid Evidence tab and injected into every future
-            investigation's prompt as a{" "}
-            {tagForm === "true" ? "confirmed fact" : "disproved hypothesis"}.
-          </p>
-          {answerCandidates.length > 1 && (
-            <div className="space-y-1">
-              <label htmlFor="tag-answer-select" className="text-xs font-mono text-text-muted">
-                Which answer?
-              </label>
-              <select
-                id="tag-answer-select"
-                className="w-full bg-surface border border-border rounded px-2 py-1 text-sm text-foreground"
-                value={selectedAnswerId}
-                onChange={(e) => setSelectedAnswerId(e.target.value)}
+        <WindowPanel
+          title="tag finding"
+          tone={tagForm === "true" ? "ok" : "warn"}
+          status={`verdict ; ${tagForm}`}
+        >
+          <div className="space-y-3">
+            <p style={{ fontSize: 12, color: "var(--text-primary)" }}>
+              Tag as{" "}
+              <span
+                className="font-mono uppercase"
+                style={{
+                  color: tagForm === "true" ? "var(--status-ok)" : "var(--status-warn)",
+                  letterSpacing: "0.08em",
+                }}
               >
-                <option value="">(use investigation's final_answer)</option>
-                {answerCandidates.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    [{a.confidence}] {a.answer_text.slice(0, 80)}
-                    {a.answer_text.length > 80 ? "…" : ""}
-                  </option>
-                ))}
-              </select>
+                {tagForm}
+              </span>{" "}
+              finding.
+            </p>
+            <p style={{ fontSize: 11, color: "var(--text-muted)" }}>
+              Saved to the Solid Evidence tab and injected into every future
+              investigation's prompt as a{" "}
+              {tagForm === "true" ? "confirmed fact" : "disproved hypothesis"}.
+            </p>
+            {answerCandidates.length > 1 && (
+              <div className="space-y-1">
+                <label htmlFor="tag-answer-select" className="font-mono" style={labelStyle}>
+                  which answer?
+                </label>
+                <select
+                  id="tag-answer-select"
+                  className="font-mono"
+                  style={inputStyle}
+                  value={selectedAnswerId}
+                  onChange={(e) => setSelectedAnswerId(e.target.value)}
+                >
+                  <option value="">(use investigation's final_answer)</option>
+                  {answerCandidates.map((a) => (
+                    <option key={a.id} value={a.id}>
+                      [{a.confidence}] {a.answer_text.slice(0, 80)}
+                      {a.answer_text.length > 80 ? "\u2026" : ""}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div className="space-y-1">
+              <label htmlFor="tag-notes" className="font-mono" style={labelStyle}>
+                notes (optional)
+              </label>
+              <textarea
+                id="tag-notes"
+                rows={2}
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder="Why? Any caveats?"
+                className="font-mono"
+                style={textareaStyle}
+              />
             </div>
-          )}
-          <div className="space-y-1">
-            <label htmlFor="tag-notes" className="text-xs font-mono text-text-muted">
-              Notes (optional)
-            </label>
-            <Textarea
-              id="tag-notes"
-              rows={2}
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              placeholder="Why? Any caveats?"
-              className="text-sm"
-            />
+            <div className="flex justify-end gap-2 pt-1">
+              <MockButton
+                tone="muted"
+                onClick={() => setTagForm(null)}
+                disabled={tag.isPending}
+              >
+                cancel
+              </MockButton>
+              <MockButton
+                tone={tagForm === "true" ? "ok" : "warn"}
+                onClick={submitTag}
+                disabled={tag.isPending}
+              >
+                {tag.isPending ? "saving\u2026" : "confirm"}
+              </MockButton>
+            </div>
           </div>
-          <div className="flex gap-2 justify-end pt-1">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setTagForm(null)}
-              disabled={tag.isPending}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              onClick={submitTag}
-              disabled={tag.isPending}
-              className={
-                tagForm === "true"
-                  ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-                  : "bg-amber-600 hover:bg-amber-700 text-white"
-              }
-            >
-              {tag.isPending ? "Saving…" : "Confirm"}
-            </Button>
-          </div>
-        </div></AilaCard>
+        </WindowPanel>
       )}
     </div>
   );
 }
 
-// ----- Main page -----
+// ---------------------------------------------------------------------------
+// Zombie-reap banner (§49). Presentation swap only; behavior identical.
+// ---------------------------------------------------------------------------
+interface ZombieReapBannerProps {
+  projectId: string;
+  investigationId: string;
+  reason: string | null;
+}
+
+/**
+ * Operator affordance for §49 zombie reap. The backend's GET handlers
+ * mark a row ``needs_reap=true`` when the task is dead but the row's
+ * ``status`` never got flipped; the POST re-checks the same predicate
+ * and only then transitions to ``failed``. 409 means the row is no
+ * longer stuck (someone else reaped, or the task recovered) -- the
+ * mutation handles that as a benign refetch.
+ */
+function ZombieReapBanner({ projectId, investigationId, reason }: ZombieReapBannerProps) {
+  const reap = useReapInvestigation(projectId);
+  const handleReap = () => {
+    const ok = window.confirm(
+      "Force-fail this zombie investigation? This flips its status to `failed` and writes an audit note. Use only when the task is confirmed dead.",
+    );
+    if (!ok) return;
+    reap.mutate(investigationId);
+  };
+  return (
+    <WindowPanel title="zombie investigation detected" tone="warn" status="investigation ; needs reap">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-1 flex-1" style={{ minWidth: "16rem" }}>
+          <p style={{ fontSize: 12, color: "var(--text-primary)" }}>
+            The backing task has settled but this row was never flipped to a
+            terminal status. Reaping records an audit-friendly failure so
+            downstream views stop treating it as live.
+          </p>
+          {reason && (
+            <p className="font-mono break-all" style={{ fontSize: 11, color: "var(--text-muted)" }}>
+              reason: {reason}
+            </p>
+          )}
+        </div>
+        <MockButton
+          tone="critical"
+          onClick={handleReap}
+          disabled={reap.isPending}
+        >
+          {reap.isPending ? "reaping\u2026" : "reap (force-fail zombie)"}
+        </MockButton>
+      </div>
+    </WindowPanel>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Live-event row -- streamed frame rendering, colour rules swapped to mock.
+// ---------------------------------------------------------------------------
+interface LiveEventRowProps {
+  stage: string;
+  message: string;
+  percent: number | null | undefined;
+  payload: Record<string, unknown>;
+}
+
+function stageColor(stage: string): string {
+  if (stage.includes("error") || stage.includes("failed")) return "var(--accent)";
+  if (stage.includes("done") || stage === "completed" || stage.includes("detected"))
+    return "var(--status-ok)";
+  if (stage.includes("start") || stage.includes("begin")) return "var(--status-warn)";
+  if (stage === "artifact_added") return "var(--status-info)";
+  if (stage === "heartbeat") return "var(--text-muted)";
+  return "var(--accent)";
+}
+
+function LiveEventRow({ stage, message, percent, payload }: LiveEventRowProps) {
+  const color = stageColor(stage);
+  const lane = typeof payload.lane === "string" ? payload.lane : undefined;
+  const path = typeof payload.path === "string" ? payload.path : undefined;
+  const err = typeof payload.error === "string" ? payload.error : undefined;
+  const inner = payload.query ?? payload.plugin ?? payload.tier;
+
+  // Freeflow-specific payload fields: the actual script / shell command
+  // being executed on the analyzer and the last chunk of its output.
+  // Prefer full fields (script, reasoning) over the legacy *_preview ones
+  // so the analyst sees the whole thing instead of a clipped headline.
+  const script =
+    typeof payload.script === "string"
+      ? payload.script
+      : typeof payload.script_preview === "string"
+        ? payload.script_preview
+        : undefined;
+  const command = typeof payload.command === "string" ? payload.command : undefined;
+  const stdout =
+    typeof payload.stdout === "string"
+      ? payload.stdout
+      : typeof payload.stdout_tail === "string"
+        ? payload.stdout_tail
+        : undefined;
+  const stderr =
+    typeof payload.stderr === "string"
+      ? payload.stderr
+      : typeof payload.stderr_tail === "string"
+        ? payload.stderr_tail
+        : undefined;
+  const stdoutBytes =
+    typeof payload.stdout_bytes === "number" ? payload.stdout_bytes : undefined;
+  const reasoning =
+    typeof payload.reasoning === "string"
+      ? payload.reasoning
+      : typeof payload.reasoning_preview === "string"
+        ? payload.reasoning_preview
+        : undefined;
+  const exitCode = typeof payload.exit_code === "number" ? payload.exit_code : undefined;
+
+  const detailsSummary: React.CSSProperties = {
+    cursor: "pointer",
+    listStyle: "none",
+    fontSize: 10,
+    letterSpacing: "0.06em",
+    color: "var(--status-warn)",
+    userSelect: "none",
+  };
+
+  return (
+    <div style={{ padding: "2px 0" }}>
+      <div className="flex gap-2">
+        {percent !== null && percent !== undefined && percent > 0 && (
+          <span
+            className="font-mono shrink-0 text-right"
+            style={{ width: 36, color: "var(--text-muted)" }}
+          >
+            {percent}%
+          </span>
+        )}
+        <span
+          className="font-mono shrink-0"
+          style={{ color, fontWeight: 600 }}
+        >
+          [{stage}]
+        </span>
+        {lane && (
+          <span className="font-mono shrink-0" style={{ color: "var(--text-muted)" }}>
+            {lane}
+          </span>
+        )}
+        {typeof inner === "string" && inner && (
+          <span className="font-mono shrink-0" style={{ color: "var(--text-muted)" }}>
+            {inner}
+          </span>
+        )}
+        <span className="break-all" style={{ color: "var(--text-primary)" }}>
+          {message}
+        </span>
+      </div>
+      {path && (
+        <div
+          className="font-mono break-all"
+          style={{ paddingLeft: 56, fontSize: 10, color: "var(--text-muted)" }}
+        >
+          {"\u21b3 "}
+          {path}
+        </div>
+      )}
+      {err && (
+        <div
+          className="flex gap-1 break-all"
+          style={{
+            paddingLeft: 56,
+            fontSize: 10,
+            color: "var(--accent)",
+            whiteSpace: "pre-wrap",
+          }}
+        >
+          <PixelIcon name="close" size={11} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span>{err}</span>
+        </div>
+      )}
+      {reasoning && (
+        <details style={{ paddingLeft: 56, marginTop: 2 }} open>
+          <summary
+            style={{
+              ...detailsSummary,
+              color: "var(--text-muted)",
+            }}
+          >
+            reasoning ({reasoning.length} chars)
+          </summary>
+          <div
+            className="font-mono"
+            style={{
+              marginTop: 4,
+              padding: "3px 8px",
+              fontSize: 10,
+              color: "var(--text-muted)",
+              fontStyle: "italic",
+              background: "var(--surface-sunk)",
+              border: "1px solid var(--border-soft)",
+              borderRadius: 2,
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {reasoning}
+          </div>
+        </details>
+      )}
+      {command && (
+        <details style={{ paddingLeft: 56, marginTop: 4 }}>
+          <summary style={detailsSummary}>
+            shell command ({command.length} chars) -- click to expand
+          </summary>
+          <pre
+            className="font-mono"
+            style={{
+              marginTop: 4,
+              padding: "3px 8px",
+              fontSize: 10,
+              color: "var(--status-warn)",
+              background: "var(--surface-sunk)",
+              border: "1px solid color-mix(in srgb, var(--status-warn) 30%, transparent)",
+              borderRadius: 2,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-all",
+            }}
+          >
+            {command}
+          </pre>
+        </details>
+      )}
+      {script && (
+        <details style={{ paddingLeft: 56, marginTop: 4 }}>
+          <summary style={detailsSummary}>
+            python script ({script.length} chars) -- click to expand
+          </summary>
+          <pre
+            className="font-mono"
+            style={{
+              marginTop: 4,
+              padding: "3px 8px",
+              fontSize: 10,
+              color: "var(--status-warn)",
+              background: "var(--surface-sunk)",
+              border: "1px solid color-mix(in srgb, var(--status-warn) 30%, transparent)",
+              borderRadius: 2,
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-all",
+            }}
+          >
+            {script}
+          </pre>
+        </details>
+      )}
+      {(stdout || stderr) && (
+        <details style={{ paddingLeft: 56, marginTop: 4 }} open>
+          <summary
+            style={{
+              ...detailsSummary,
+              color: "var(--status-ok)",
+            }}
+          >
+            output {exitCode !== undefined ? `(exit=${exitCode})` : ""}
+            {stdoutBytes !== undefined && stdout && stdoutBytes > stdout.length
+              ? ` -- showing last ${stdout.length.toLocaleString()} of ${stdoutBytes.toLocaleString()} bytes`
+              : stdout
+                ? ` -- ${stdout.length.toLocaleString()} bytes`
+                : ""}
+          </summary>
+          {stdout && (
+            <pre
+              className="font-mono"
+              style={{
+                marginTop: 4,
+                padding: "3px 8px",
+                fontSize: 10,
+                color: "var(--status-ok)",
+                background: "var(--surface-sunk)",
+                border: "1px solid color-mix(in srgb, var(--status-ok) 30%, transparent)",
+                borderRadius: 2,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-all",
+                maxHeight: 512,
+                overflow: "auto",
+              }}
+            >
+              {stdout}
+            </pre>
+          )}
+          {stderr && (
+            <pre
+              className="font-mono"
+              style={{
+                marginTop: 4,
+                padding: "3px 8px",
+                fontSize: 10,
+                color: "var(--accent)",
+                background: "var(--surface-sunk)",
+                border: "1px solid color-mix(in srgb, var(--accent) 30%, transparent)",
+                borderRadius: 2,
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-all",
+                maxHeight: 320,
+                overflow: "auto",
+              }}
+            >
+              {stderr}
+            </pre>
+          )}
+        </details>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main page.
+// ---------------------------------------------------------------------------
 export function InvestigationDetailPage() {
   const { projectId, investigationId } = useParams<{
     projectId: string;
@@ -504,9 +1062,8 @@ export function InvestigationDetailPage() {
   }>();
   const navigate = useNavigate();
 
-  // hook moved below the useInvestigationDetail destructure so `investigation` is in scope
-  // Default to "live" when the investigation is still running so the user sees
-  // progress immediately instead of landing on an empty "Steps" tab.
+  // Default to "live" when the investigation is still running so the user
+  // sees progress immediately instead of landing on an empty "Steps" tab.
   const [activeTab, setActiveTab] = useState<TabId>("live");
 
   const {
@@ -516,33 +1073,51 @@ export function InvestigationDetailPage() {
   } = useInvestigationDetail(projectId ?? "", investigationId ?? "");
 
   useUpdatePageHeader({
-    title: investigation ? `Investigation ${investigationId?.slice(0, 8) ?? ''}` : 'Investigation',
+    title: investigation
+      ? `Investigation ${investigationId?.slice(0, 8) ?? ""}`
+      : "Investigation",
     subtitle: investigation?.status ?? undefined,
-    status: investigation?.status === 'running' ? 'live' : investigation?.status === 'failed' ? 'error' : investigation?.status === 'completed' ? 'ready' : null,
+    status:
+      investigation?.status === "running"
+        ? "live"
+        : investigation?.status === "failed"
+          ? "error"
+          : investigation?.status === "completed"
+            ? "ready"
+            : null,
   });
 
-  const {
-    data: answers,
-    isLoading: answersLoading,
-  } = useInvestigationAnswers(projectId ?? "", investigationId ?? "");
-
-  const isRunning = investigation ? RUNNING_STATUSES.has(investigation.status) : false;
-  const { events: liveEvents, feedStatus } = useInvestigationEventFeed(
-    isRunning ? (projectId ?? "") : "",
-    isRunning ? (investigationId ?? "") : "",
+  const { data: answers, isLoading: answersLoading } = useInvestigationAnswers(
+    projectId ?? "",
+    investigationId ?? "",
   );
+
+  const isRunning = investigation ? RUNNING_STATUSES[investigation.status] === true : false;
+  const {
+    events: liveEvents,
+    feedStatus,
+    latestStage,
+  } = useForensicsInvestigationEvents({
+    projectId: projectId ?? "",
+    investigationId: investigationId ?? "",
+    isRunning,
+  });
 
   if (!projectId || !investigationId) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Invalid investigation URL.</p></AilaCard>
+      <WindowPanel title="investigation" tone="warn" status="forensics ; invalid investigation url">
+        <p style={{ fontSize: 12, color: "var(--accent)" }}>Invalid investigation URL.</p>
+      </WindowPanel>
     );
   }
 
-  if (isLoading) return <LoadingSkeleton size="lg" width="full" />;
+  if (isLoading) return <InvestigationDetailSkeleton />;
 
   if (isError || !investigation) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load investigation.</p></AilaCard>
+      <WindowPanel title="investigation" tone="warn" status="forensics ; investigation unavailable">
+        <p style={{ fontSize: 12, color: "var(--accent)" }}>Failed to load investigation.</p>
+      </WindowPanel>
     );
   }
 
@@ -550,288 +1125,548 @@ export function InvestigationDetailPage() {
     ...(isRunning ? [{ id: "live" as TabId, label: "Live", count: liveEvents.length }] : []),
     { id: "steps", label: "Steps", count: investigation.steps.length },
     { id: "answers", label: "Answers", count: answers?.length },
+    { id: "connected", label: "Connected" },
+    { id: "activity", label: "Activity" },
   ];
+
+  // Right-rail engine-vitals tone: mirrors the row's terminal / running
+  // state so the panel light square colour reads at a glance.
+  const vitalsTone: "ok" | "warn" | "info" | "accent" =
+    investigation.status === "completed"
+      ? "ok"
+      : investigation.status === "failed" ||
+          investigation.status === "exhausted" ||
+          investigation.status === "cancelled"
+        ? "warn"
+        : isRunning
+          ? "info"
+          : "accent";
+
+  const vitalsRows: Array<{ k: string; v: string | number }> = [
+    { k: "status", v: investigation.status },
+    {
+      k: "attempts",
+      v: `${investigation.attempts_used}${investigation.max_attempts ? `/${investigation.max_attempts}` : ""}`,
+    },
+    ...(investigation.confidence ? [{ k: "confidence", v: investigation.confidence }] : []),
+    ...(isRunning ? [{ k: "feed", v: feedStatus }] : []),
+    ...(isRunning && latestStage ? [{ k: "stage", v: latestStage }] : []),
+    { k: "steps", v: investigation.steps.length },
+    { k: "answers", v: answers?.length ?? 0 },
+    { k: "resolved", v: investigation.final_answer ? "yes" : "no" },
+  ];
+
+  // Aggregate hypotheses across every recorded step; a later `rejected`
+  // entry supersedes a live one carrying the same id/claim.
+  const railHypotheses: Array<{ key: string; claim: string; state: "live" | "rejected" }> = (() => {
+    const m = new Map<string, { key: string; claim: string; state: "live" | "rejected" }>();
+    for (const step of investigation.steps) {
+      for (const h of step.hypotheses ?? []) {
+        const key = h.id || h.claim || "";
+        if (!key) continue;
+        m.set(key, { key, claim: h.claim || h.id || key, state: "live" });
+      }
+      for (const r of step.rejected ?? []) {
+        const key = r.id || r.claim || "";
+        if (!key) continue;
+        m.set(key, { key, claim: r.claim || r.id || key, state: "rejected" });
+      }
+    }
+    return [...m.values()];
+  })();
+
+  // Append-only activity ticker: the live stream while running, else the
+  // durable reasoning-step ledger.
+  const railLedger: Array<{ key: string; kind: string; payload: string; color: string }> =
+    isRunning && liveEvents.length > 0
+      ? liveEvents.map((ev, i) => {
+          const s = ev.stage ?? "";
+          return {
+            key: `ev-${i}`,
+            kind: ev.stage ?? "event",
+            payload: ev.message ?? "",
+            color:
+              s.includes("error") || s.includes("failed")
+                ? "var(--accent)"
+                : s.includes("done") || s === "completed"
+                  ? "var(--status-ok)"
+                  : "var(--status-info)",
+          };
+        })
+      : investigation.steps
+          .slice()
+          .sort((a, b) => a.step_number - b.step_number)
+          .map((s) => ({
+            key: s.id,
+            kind: s.action || `#${s.step_number}`,
+            payload: s.reasoning || s.command || "",
+            color:
+              s.exit_code !== null && s.exit_code !== 0
+                ? "var(--accent)"
+                : "var(--status-ok)",
+          }));
+
+  const metaRow: React.CSSProperties = {
+    fontSize: 10,
+    letterSpacing: "0.08em",
+    color: "var(--text-muted)",
+    textTransform: "uppercase",
+  };
+
+  const parentInvestigationId = investigation.parent_investigation_id ?? null;
+
+  const feedDotColor =
+    feedStatus === "live"
+      ? "var(--status-warn)"
+      : feedStatus === "connecting"
+        ? "var(--status-info)"
+        : "var(--surface-hover)";
 
   return (
     <div className="space-y-4">
-      {/* Back link */}
-      <button
-        type="button"
-        onClick={() => navigate(`/forensics/projects/${projectId}`)}
-        className="flex items-center gap-1 text-xs text-text-muted hover:text-foreground transition-colors"
-      >
-        ← Back to project
-      </button>
-
-      {/* Previous-attempt banner (enriched rerun) */}
-      {investigation.parent_investigation_id && (
-        <AilaCard className="border-blue-700/40 bg-blue-950/20" techBorder glow><div className="flex items-center justify-between gap-3 flex-wrap">
-          <div className="space-y-0.5">
-            <p className="text-xs font-mono text-blue-300">
-              ENRICHED RERUN
-            </p>
-            <p className="text-sm text-foreground">
-              This investigation carries findings forward from a prior
-              attempt. Confirmed observables are pre-loaded into the
-              agent's working memory; the prior answer is treated as a
-              hypothesis to verify.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() =>
-              navigate(
-                `/forensics/projects/${projectId}/investigations/${investigation.parent_investigation_id}`,
-              )
-            }
-            className="text-xs px-2 py-1 rounded border border-blue-600 text-blue-300 hover:bg-blue-700 hover:text-white transition-colors shrink-0"
-          >
-            View parent ({investigation.parent_investigation_id.slice(0, 8)}) →
-          </button>
-        </div></AilaCard>
-      )}
-
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div className="space-y-1 flex-1" style={{ minWidth: "16rem" }}>
-          <p className="text-sm text-text-muted font-mono">{investigation.question}</p>
-          <div className="flex gap-4 text-xs text-text-muted">
-            <span>
-              {investigation.attempts_used}
-              {investigation.max_attempts ? `/${investigation.max_attempts}` : ""} attempts
-            </span>
-            {investigation.confidence && (
-              <span>Confidence: {investigation.confidence}</span>
-            )}
-          </div>
-        </div>
-        <InvestigationControls
-          projectId={projectId}
-          investigationId={investigationId}
-          status={investigation.status}
-          isRunning={isRunning}
-          hasFinalAnswer={!!investigation.final_answer}
-          answerCandidates={answers ?? []}
-        />
-      </div>
-
-      {/* Final answer banner */}
-      {investigation.final_answer && (
-        <AilaCard className="border-border-accent bg-accent/5" techBorder glow><div className="space-y-1">
-          <p className="text-xs font-medium text-text-muted uppercase tracking-wide">
-            Final Answer
-          </p>
-          <p className="text-sm text-foreground">{investigation.final_answer}</p>
-        </div></AilaCard>
-      )}
-
-      {/* Analyst directives -- readable on every turn by AILA */}
-      <AnalystDirectivesPanel
-        projectId={projectId}
-        investigationId={investigationId}
+      {/* Case header row with icon badge + Apoc title + right-aligned controls. */}
+      <SectionHeader
+        icon={<PixelIcon name="terminal" />}
+        title={`case ${investigationId.slice(0, 8)}`}
+        actions={
+          <InvestigationControls
+            projectId={projectId}
+            investigationId={investigationId}
+            status={investigation.status}
+            isRunning={isRunning}
+            hasFinalAnswer={!!investigation.final_answer}
+            answerCandidates={answers ?? []}
+          />
+        }
       />
 
-      {/* Retrieve-File -- pull any artefact out of the disk image */}
-      <RetrieveFilePanel projectId={projectId} />
-
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-border">
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 text-sm font-medium rounded-t-md transition-colors ${
-              activeTab === tab.id
-                ? "bg-surface border border-b-0 border-border text-foreground"
-                : "text-text-muted hover:text-foreground hover:bg-surface-secondary"
-            }`}
-          >
-            {tab.label}
-            {tab.count !== undefined && (
-              <span className="ml-1.5 px-1.5 py-0.5 text-xs rounded-full bg-surface-secondary">
-                {tab.count}
-              </span>
-            )}
-          </button>
-        ))}
+      {/* Metadata strip -- mono uppercase key ; value pairs + back link. */}
+      <div className="flex flex-wrap items-center gap-4 font-mono" style={metaRow}>
+        <span>
+          case <span style={{ color: "var(--text-faint)" }}>;</span>{" "}
+          <span style={{ color: "var(--text-primary)" }}>{investigationId.slice(0, 8)}</span>
+        </span>
+        <span>
+          attempts <span style={{ color: "var(--text-faint)" }}>;</span>{" "}
+          <span style={{ color: "var(--text-primary)" }}>
+            {investigation.attempts_used}
+            {investigation.max_attempts ? `/${investigation.max_attempts}` : ""}
+          </span>
+        </span>
+        {investigation.confidence && (
+          <span>
+            confidence <span style={{ color: "var(--text-faint)" }}>;</span>{" "}
+            <span style={{ color: "var(--text-primary)" }}>{investigation.confidence}</span>
+          </span>
+        )}
+        <MonoBadge tone={STATUS_TONE[investigation.status] ?? "muted"}>
+          {investigation.status}
+        </MonoBadge>
+        <span style={{ flex: 1 }} />
+        <button
+          type="button"
+          onClick={() => navigate(`/forensics/projects/${projectId}`)}
+          className="font-mono uppercase"
+          style={{
+            ...metaRow,
+            cursor: "pointer",
+            background: "transparent",
+            border: "1px solid var(--border-soft)",
+            padding: "4px 8px",
+            borderRadius: 2,
+            color: "var(--text-muted)",
+          }}
+        >
+          {"\u2039 back to project"}
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            navigate(
+              `/forensics/projects/${projectId}/investigations/${investigationId}/reasoning-replay`,
+            )
+          }
+          className="font-mono uppercase"
+          style={{
+            ...metaRow,
+            cursor: "pointer",
+            background: "transparent",
+            border: "1px solid var(--border-soft)",
+            padding: "4px 8px",
+            borderRadius: 2,
+            color: "var(--text-muted)",
+          }}
+          title="Step through the reasoning-graph snapshots this investigation recorded"
+        >
+          reasoning replay
+        </button>
       </div>
 
-      {/* Tab content */}
-      <div className="pt-1">
-        {activeTab === "live" && (
-          <div className="space-y-2">
-            <div className="flex items-center gap-2 text-xs text-text-muted">
-              <span
-                className={`inline-block w-2 h-2 rounded-full ${
-                  feedStatus === "live" ? "bg-amber-400 animate-pulse" :
-                  feedStatus === "connecting" ? "bg-blue-400 animate-pulse" :
-                  "bg-surface-secondary"
-                }`}
-              />
-              <span className="font-mono">{feedStatus}</span>
-            </div>
-            <div
-              className="rounded-md border border-border bg-surface font-mono text-xs overflow-y-auto p-3 space-y-1"
-              style={{ maxHeight: "28rem" }}
+      {/* Investigation question -- displayed as a mono body block. */}
+      <p
+        className="font-mono"
+        style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}
+      >
+        {investigation.question}
+      </p>
+
+      {/* Enriched-rerun banner -- prior-attempt lineage. */}
+      {parentInvestigationId && (
+        <WindowPanel title="enriched rerun" tone="info" status="lineage ; carries findings forward">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p style={{ fontSize: 12, color: "var(--text-primary)" }}>
+              This investigation carries findings forward from a prior attempt.
+              Confirmed observables are pre-loaded into the agent's working
+              memory; the prior answer is treated as a hypothesis to verify.
+            </p>
+            <MockButton
+              tone="accent"
+              onClick={() =>
+                navigate(
+                  `/forensics/projects/${projectId}/investigations/${parentInvestigationId}`,
+                )
+              }
             >
-              {liveEvents.length === 0 && (
-                <p className="text-text-muted">Waiting for events…</p>
+              view parent ({parentInvestigationId.slice(0, 8)})
+            </MockButton>
+          </div>
+        </WindowPanel>
+      )}
+
+      {/* Zombie-reap banner (§49) -- POST /reap flips status to failed. */}
+      {investigation.needs_reap && (
+        <ZombieReapBanner
+          projectId={projectId}
+          investigationId={investigationId}
+          reason={investigation.needs_reap_reason ?? null}
+        />
+      )}
+
+      {/* Final answer banner. */}
+      {investigation.final_answer && (
+        <WindowPanel title="final answer" tone="accent" status="investigation ; resolved">
+          <p style={{ fontSize: 12, color: "var(--text-primary)" }}>
+            {investigation.final_answer}
+          </p>
+        </WindowPanel>
+      )}
+
+      {/* Tiled workbench -- main reasoning column + right rail overview. */}
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-start">
+        <div className="min-w-0 flex-1 space-y-4">
+          {/* Live run panel -- mounted only while running. */}
+          {isRunning && (
+            <PanelBoundary label="Live run panel">
+              <LiveRunPanel
+                status={investigation.status}
+                attemptsUsed={investigation.attempts_used}
+                maxAttempts={investigation.max_attempts}
+                events={liveEvents}
+                feedStatus={feedStatus}
+                latestStage={latestStage}
+              />
+            </PanelBoundary>
+          )}
+
+          {/* Analyst directives -- readable on every turn by AILA. */}
+          <AnalystDirectivesPanel
+            projectId={projectId}
+            investigationId={investigationId}
+          />
+
+          {/* Retrieve-File -- pull any artefact out of the disk image. */}
+          <RetrieveFilePanel projectId={projectId} />
+
+          {/* Tab bar -- Segmented with inline [N] counts. */}
+          <Segmented<TabId>
+            options={TABS.map((tab) => ({
+              value: tab.id,
+              label: (
+                <span>
+                  {tab.label.toUpperCase()}
+                  {tab.count !== undefined && (
+                    <span style={{ marginLeft: 6, color: "var(--text-faint)" }}>
+                      [{tab.count}]
+                    </span>
+                  )}
+                </span>
+              ),
+            }))}
+            value={activeTab}
+            onChange={setActiveTab}
+          />
+
+          {/* Tab content -- one WindowPanel per active tab. */}
+          {activeTab === "live" && (
+            <WindowPanel
+              title="live"
+              tone="info"
+              status={`feed ; ${feedStatus}${latestStage ? ` :: ${latestStage}` : ""}`}
+              flush
+            >
+              <div className="space-y-2" style={{ padding: 12 }}>
+                <div className="flex items-center gap-2 font-mono uppercase" style={metaRow}>
+                  <span
+                    aria-hidden="true"
+                    className={
+                      feedStatus === "live" || feedStatus === "connecting"
+                        ? "motion-safe:animate-pulse"
+                        : ""
+                    }
+                    style={{
+                      display: "inline-block",
+                      width: 8,
+                      height: 8,
+                      borderRadius: 999,
+                      background: feedDotColor,
+                    }}
+                  />
+                  <span>{feedStatus}</span>
+                  {latestStage && (
+                    <>
+                      <span style={{ color: "var(--text-faint)" }}>;</span>
+                      <span style={{ color: "var(--text-primary)" }}>{latestStage}</span>
+                    </>
+                  )}
+                </div>
+                <div
+                  className="font-mono space-y-1 overflow-y-auto"
+                  style={{
+                    background: "var(--surface-sunk)",
+                    border: "1px solid var(--border-soft)",
+                    borderRadius: 3,
+                    padding: 10,
+                    fontSize: 11,
+                    maxHeight: 448,
+                  }}
+                >
+                  {liveEvents.length === 0 && (
+                    <p style={{ color: "var(--text-muted)" }}>{"Waiting for events\u2026"}</p>
+                  )}
+                  {liveEvents.map((ev, i) => {
+                    const stage = ev.stage ?? "--";
+                    let payload: Record<string, unknown> = {};
+                    if (ev.data_json) {
+                      try {
+                        payload = JSON.parse(ev.data_json);
+                      } catch {
+                        // ignore -- render raw message only
+                      }
+                    }
+                    return (
+                      <LiveEventRow
+                        key={i}
+                        stage={stage}
+                        message={ev.message ?? ""}
+                        percent={ev.percent}
+                        payload={payload}
+                      />
+                    );
+                  })}
+                </div>
+              </div>
+            </WindowPanel>
+          )}
+
+          {activeTab === "steps" && (
+            <WindowPanel title="steps" tone="accent" status={`recorded ; ${investigation.steps.length}`}>
+              <PanelBoundary label="Reasoning steps">
+                <div className="space-y-3">
+                  {investigation.steps.length === 0 ? (
+                    <EmptyState
+                      icon={<GitBranch className="h-10 w-10" />}
+                      title="No steps recorded yet."
+                      description={
+                        isRunning
+                          ? "The reasoning engine will emit step frames as soon as it lands the first turn -- watch the Live tab meanwhile."
+                          : "Rerun (enriched) will re-drive the investigation and record fresh reasoning steps."
+                      }
+                    />
+                  ) : (
+                    investigation.steps
+                      .slice()
+                      .sort((a, b) => a.step_number - b.step_number)
+                      .map((step) => <StepCard key={step.id} step={step} />)
+                  )}
+                </div>
+              </PanelBoundary>
+            </WindowPanel>
+          )}
+
+          {activeTab === "answers" && (
+            <div className="space-y-3">
+              {answersLoading && <InvestigationRowSkeletonList count={2} />}
+              {!answersLoading && (answers ?? []).length === 0 && (
+                <WindowPanel title="answers" tone="muted" status="candidates ; 0">
+                  <EmptyState
+                    icon={<Detective className="h-10 w-10" />}
+                    title="No answer candidates yet."
+                    description={
+                      isRunning
+                        ? "AILA is still collecting evidence. Candidates surface as soon as the first hypothesis crosses a confidence threshold."
+                        : "Rerun (enriched) will re-drive this question and record fresh answer candidates."
+                    }
+                  />
+                </WindowPanel>
               )}
-              {liveEvents.map((ev, i) => {
-                const stage = ev.stage ?? "--";
-                let payload: Record<string, unknown> = {};
-                if (ev.data_json) {
-                  try {
-                    payload = JSON.parse(ev.data_json);
-                  } catch {
-                    // ignore -- render raw message only
-                  }
-                }
-                const color =
-                  stage.includes("error") || stage.includes("failed") ? "text-red-400" :
-                  stage.includes("done") || stage === "completed" || stage.includes("detected") ? "text-green-400" :
-                  stage.includes("start") || stage.includes("begin") ? "text-amber-400" :
-                  stage === "artifact_added" ? "text-blue-400" :
-                  stage === "heartbeat" ? "text-text-muted" :
-                  "text-accent";
-                const lane = typeof payload.lane === "string" ? payload.lane : undefined;
-                const path = typeof payload.path === "string" ? payload.path : undefined;
-                const err = typeof payload.error === "string" ? payload.error : undefined;
-                const inner = payload.query ?? payload.plugin ?? payload.tier;
-
-                // Freeflow-specific payload fields: the actual script / shell
-                // command being executed on the analyzer and the last chunk
-                // of its output. Prefer full fields (script, reasoning) over
-                // the legacy *_preview ones so the analyst sees the whole
-                // thing instead of a clipped headline.
-                const script =
-                  typeof payload.script === "string" ? payload.script :
-                  typeof payload.script_preview === "string" ? payload.script_preview :
-                  undefined;
-                const command = typeof payload.command === "string" ? payload.command : undefined;
-                const stdout =
-                  typeof payload.stdout === "string" ? payload.stdout :
-                  typeof payload.stdout_tail === "string" ? payload.stdout_tail :
-                  undefined;
-                const stderr =
-                  typeof payload.stderr === "string" ? payload.stderr :
-                  typeof payload.stderr_tail === "string" ? payload.stderr_tail :
-                  undefined;
-                const stdoutBytes = typeof payload.stdout_bytes === "number" ? payload.stdout_bytes : undefined;
-                const reasoning =
-                  typeof payload.reasoning === "string" ? payload.reasoning :
-                  typeof payload.reasoning_preview === "string" ? payload.reasoning_preview :
-                  undefined;
-                const exitCode = typeof payload.exit_code === "number" ? payload.exit_code : undefined;
-
-                return (
-                  <div key={i} className="py-0.5">
-                    <div className="flex gap-2">
-                      {ev.percent !== null && ev.percent !== undefined && ev.percent > 0 && (
-                        <span className="shrink-0 text-text-muted w-9 text-right">{ev.percent}%</span>
-                      )}
-                      <span className={`shrink-0 font-semibold ${color}`}>[{stage}]</span>
-                      {lane && <span className="shrink-0 text-text-muted">{lane}</span>}
-                      {typeof inner === "string" && inner && (
-                        <span className="shrink-0 text-text-muted">{inner as string}</span>
-                      )}
-                      <span className="text-foreground break-all">{ev.message ?? ""}</span>
-                    </div>
-                    {path && (
-                      <div className="pl-14 text-3xs text-text-muted break-all">↳ {path}</div>
-                    )}
-                    {err && (
-                      <div className="pl-14 text-3xs text-red-300/80 break-all whitespace-pre-wrap">✗ {err}</div>
-                    )}
-                    {reasoning && (
-                      <details className="pl-14 mt-0.5" open>
-                        <summary className="cursor-pointer text-3xs text-text-muted/80 hover:text-foreground">
-                          reasoning ({reasoning.length} chars)
-                        </summary>
-                        <div className="mt-1 text-2xs text-text-muted whitespace-pre-wrap italic bg-black/20 border border-border rounded px-2 py-1">
-                          {reasoning}
-                        </div>
-                      </details>
-                    )}
-                    {command && (
-                      <details className="pl-14 mt-1">
-                        <summary className="cursor-pointer text-3xs text-amber-400/80 hover:text-amber-300">
-                          shell command ({command.length} chars) -- click to expand
-                        </summary>
-                        <pre className="mt-1 text-2xs bg-black/40 border border-amber-900/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-amber-200">
-                          {command}
-                        </pre>
-                      </details>
-                    )}
-                    {script && (
-                      <details className="pl-14 mt-1">
-                        <summary className="cursor-pointer text-3xs text-amber-400/80 hover:text-amber-300">
-                          python script ({script.length} chars) -- click to expand
-                        </summary>
-                        <pre className="mt-1 text-2xs bg-black/40 border border-amber-900/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-amber-200">
-                          {script}
-                        </pre>
-                      </details>
-                    )}
-                    {(stdout || stderr) && (
-                      <details className="pl-14 mt-1" open>
-                        <summary className="cursor-pointer text-3xs text-green-400/80 hover:text-green-300">
-                          output {exitCode !== undefined ? `(exit=${exitCode})` : ""}
-                          {stdoutBytes !== undefined && stdout && stdoutBytes > stdout.length
-                            ? ` -- showing last ${stdout.length.toLocaleString()} of ${stdoutBytes.toLocaleString()} bytes`
-                            : stdout ? ` -- ${stdout.length.toLocaleString()} bytes` : ""}
-                        </summary>
-                        {stdout && (
-                          <pre
-                            className="mt-1 text-2xs bg-black/40 border border-green-900/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-green-200 overflow-auto"
-                            style={{ maxHeight: "32rem" }}
-                          >
-                            {stdout}
-                          </pre>
-                        )}
-                        {stderr && (
-                          <pre className="mt-1 text-2xs bg-black/40 border border-red-900/30 rounded px-2 py-1 whitespace-pre-wrap break-all text-red-200 max-h-80 overflow-auto">
-                            {stderr}
-                          </pre>
-                        )}
-                      </details>
-                    )}
-                  </div>
-                );
-              })}
+              {(answers ?? []).map((a) => (
+                <AnswerCard key={a.id} answer={a} />
+              ))}
             </div>
-          </div>
-        )}
+          )}
 
-        {activeTab === "steps" && (
-          <div className="space-y-3">
-            {investigation.steps.length === 0 ? (
-              <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-6">
-                No steps recorded yet.
-              </p></AilaCard>
+          {activeTab === "connected" && (
+            <WindowPanel title="connected" tone="info" status="entity graph">
+              <PanelBoundary label="Connected panel">
+                <ConnectedPanel projectId={projectId} investigation={investigation} />
+              </PanelBoundary>
+            </WindowPanel>
+          )}
+
+          {activeTab === "activity" && (
+            <WindowPanel title="activity" tone="muted" status={`run ; ${(investigation.task_id ?? investigationId).slice(0, 8)}`}>
+              <PanelBoundary label="Activity panel">
+                <ActivityPanel runId={investigation.task_id ?? investigationId} />
+              </PanelBoundary>
+            </WindowPanel>
+          )}
+        </div>
+
+        <aside
+          className="w-full space-y-4 xl:w-80 xl:flex-none"
+          aria-label="Investigation overview"
+        >
+          <WindowPanel
+            title="engine vitals"
+            tone={vitalsTone}
+            status={`investigation ; ${investigation.status}`}
+          >
+            <dl className="flex flex-col">
+              {vitalsRows.map((r) => (
+                <div
+                  key={r.k}
+                  className="flex items-baseline justify-between gap-3"
+                  style={{
+                    padding: "6px 0",
+                    borderBottom: "1px solid var(--border-soft)",
+                  }}
+                >
+                  <dt
+                    className="font-mono uppercase shrink-0"
+                    style={{
+                      fontSize: 10,
+                      letterSpacing: "0.08em",
+                      color: "var(--text-muted)",
+                    }}
+                  >
+                    {r.k}
+                  </dt>
+                  <dd
+                    className="font-mono truncate min-w-0 flex-1 text-right"
+                    style={{ fontSize: 11, color: "var(--text-primary)" }}
+                    title={String(r.v)}
+                  >
+                    {r.v}
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </WindowPanel>
+
+          <WindowPanel
+            title="hypotheses"
+            tone="info"
+            status={`${railHypotheses.length} tracked`}
+            flush
+          >
+            {railHypotheses.length === 0 ? (
+              <p
+                style={{
+                  padding: 14,
+                  fontSize: 11,
+                  color: "var(--text-muted)",
+                }}
+              >
+                No hypotheses recorded yet.
+              </p>
             ) : (
-              investigation.steps
-                .slice()
-                .sort((a, b) => a.step_number - b.step_number)
-                .map((step) => <StepCard key={step.id} step={step} />)
+              <ul style={{ maxHeight: 320, overflowY: "auto", margin: 0, padding: 0 }}>
+                {railHypotheses.map((h) => (
+                  <li
+                    key={h.key}
+                    className="flex items-center gap-2"
+                    style={{
+                      padding: "6px 12px",
+                      borderBottom: "1px solid var(--border-soft)",
+                      listStyle: "none",
+                    }}
+                  >
+                    <MonoBadge tone={h.state === "rejected" ? "muted" : "info"}>
+                      {h.state}
+                    </MonoBadge>
+                    <span
+                      className="min-w-0 flex-1 truncate"
+                      style={{
+                        fontSize: 11,
+                        color:
+                          h.state === "rejected"
+                            ? "var(--text-faint)"
+                            : "var(--text-primary)",
+                        textDecoration: h.state === "rejected" ? "line-through" : "none",
+                      }}
+                      title={h.claim}
+                    >
+                      {h.claim}
+                    </span>
+                  </li>
+                ))}
+              </ul>
             )}
-          </div>
-        )}
+          </WindowPanel>
 
-        {activeTab === "answers" && (
-          <div className="space-y-3">
-            {answersLoading && <LoadingSkeleton size="md" width="full" />}
-            {!answersLoading && (answers ?? []).length === 0 && (
-              <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-6">
-                No answer candidates for this investigation yet.
-              </p></AilaCard>
+          <WindowPanel title="ledger" tone="muted" status="append-only" flush>
+            {railLedger.length === 0 ? (
+              <p
+                style={{
+                  padding: 14,
+                  fontSize: 11,
+                  color: "var(--text-muted)",
+                }}
+              >
+                {isRunning
+                  ? "Waiting for the first activity frame\u2026"
+                  : "No reasoning steps recorded yet."}
+              </p>
+            ) : (
+              <ol
+                className="font-mono"
+                style={{ maxHeight: 384, overflowY: "auto", margin: 0, padding: 0 }}
+              >
+                {railLedger.map((e) => (
+                  <li
+                    key={e.key}
+                    style={{
+                      padding: "6px 12px",
+                      fontSize: 10,
+                      borderBottom: "1px solid var(--border-soft)",
+                      listStyle: "none",
+                    }}
+                  >
+                    <span style={{ color: e.color, fontWeight: 600 }}>[{e.kind}]</span>
+                    {e.payload && (
+                      <span
+                        className="break-all"
+                        style={{ marginLeft: 8, color: "var(--text-muted)" }}
+                      >
+                        {e.payload}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ol>
             )}
-            {(answers ?? []).map((a) => (
-              <AnswerCard key={a.id} answer={a} />
-            ))}
-          </div>
-        )}
+          </WindowPanel>
+        </aside>
       </div>
     </div>
   );

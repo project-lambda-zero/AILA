@@ -1,7 +1,15 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 
-import { AilaCard } from "@/components/aila/AilaCard";
+import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import {
+  BigStat,
+  DataGrid,
+  MonoBadge,
+  Segmented,
+  type GridColumn,
+} from "@/components/aila/mock";
 
 import { useNetworkAnalysis } from "../queries";
 import type { NetworkAnalysis, NetworkCommentary } from "../types";
@@ -81,44 +89,39 @@ const fmtSec = (v: unknown): string => {
 const ipFlag = (ip: unknown, isInternal: unknown): React.ReactNode => {
   const txt = String(ip ?? "");
   const label = isInternal ? "internal" : "external";
-  const cls = isInternal ? "text-emerald-700" : "text-blue-700";
+  const color = isInternal ? "var(--status-ok)" : "var(--status-info)";
   return (
     <span>
       <span className="font-mono">{txt}</span>
-      <span className={`ml-2 text-3xs uppercase tracking-wide ${cls}`}>{label}</span>
+      <span
+        className="ml-2 uppercase"
+        style={{ fontSize: 9, letterSpacing: "0.08em", color }}
+      >
+        {label}
+      </span>
     </span>
   );
 };
 
 const classificationBadge = (v: unknown): React.ReactNode => {
   const k = String(v ?? "common");
-  const map: Record<string, string> = {
-    common: "bg-slate-100 text-slate-700 border-slate-300",
-    suspicious: "bg-amber-50 text-amber-800 border-amber-300",
-    dga_shape: "bg-rose-50 text-rose-700 border-rose-300",
-    empty: "bg-slate-50 text-slate-500 border-slate-200",
+  const toneMap: Record<string, string> = {
+    common: "muted",
+    suspicious: "high",
+    dga_shape: "critical",
+    empty: "muted",
   };
-  const cls = map[k] ?? map.common;
-  return (
-    <span className={`inline-block px-2 py-0.5 text-3xs font-semibold uppercase rounded border ${cls}`}>
-      {k}
-    </span>
-  );
+  return <MonoBadge tone={toneMap[k] ?? "muted"}>{k}</MonoBadge>;
 };
 
 const severityBadge = (s: string): React.ReactNode => {
-  const map: Record<string, string> = {
-    info: "bg-slate-100 text-slate-700 border-slate-300",
-    low: "bg-sky-50 text-sky-700 border-sky-300",
-    medium: "bg-amber-50 text-amber-800 border-amber-300",
-    high: "bg-rose-50 text-rose-700 border-rose-300",
+  const toneMap: Record<string, string> = {
+    info: "info",
+    low: "low",
+    medium: "medium",
+    high: "high",
   };
-  const cls = map[s] ?? map.info;
-  return (
-    <span className={`inline-block px-2 py-0.5 text-3xs font-semibold uppercase rounded border ${cls}`}>
-      {s}
-    </span>
-  );
+  return <MonoBadge tone={toneMap[s] ?? "info"}>{s}</MonoBadge>;
 };
 
 // --- column definitions -----------------------------------------------------
@@ -145,7 +148,17 @@ const COLS_SESSIONS: ColumnDef[] = [
   {
     key: "is_long_lived",
     header: "Flag",
-    render: (r) => (r.is_long_lived ? <span className="text-amber-700 text-3xs font-semibold uppercase">long-lived</span> : ""),
+    render: (r) =>
+      r.is_long_lived ? (
+        <span
+          className="uppercase"
+          style={{ fontSize: 9, color: "var(--status-warn)", letterSpacing: "0.08em" }}
+        >
+          long-lived
+        </span>
+      ) : (
+        ""
+      ),
   },
 ];
 
@@ -174,7 +187,11 @@ const COLS_HTTP_REQ: ColumnDef[] = [
       const ua = String(r.user_agent ?? "");
       return (
         <span className="truncate inline-block" style={{ maxWidth: 360 }} title={ua}>
-          {ua || <span className="text-text-muted italic">(empty)</span>}
+          {ua || (
+            <span style={{ color: "var(--text-muted)", fontStyle: "italic" }}>
+              (empty)
+            </span>
+          )}
         </span>
       );
     },
@@ -184,7 +201,12 @@ const COLS_HTTP_REQ: ColumnDef[] = [
     header: "UA flag",
     render: (r) =>
       r.is_suspicious_ua ? (
-        <span className="text-rose-700 text-3xs font-semibold uppercase">{String(r.ua_tag ?? "sus")}</span>
+        <span
+          className="uppercase"
+          style={{ color: "var(--accent)", fontSize: 9, letterSpacing: "0.08em" }}
+        >
+          {String(r.ua_tag ?? "sus")}
+        </span>
       ) : (
         ""
       ),
@@ -199,8 +221,8 @@ const COLS_HTTP_RESP: ColumnDef[] = [
     header: "Status",
     render: (r) => {
       const s = Number(r.status) || 0;
-      const cls = s >= 500 ? "text-rose-700" : s >= 400 ? "text-amber-700" : "text-emerald-700";
-      return <span className={`font-mono font-semibold ${cls}`}>{s || "?"}</span>;
+      const color = s >= 500 ? "var(--accent)" : s >= 400 ? "var(--status-warn)" : "var(--status-ok)";
+      return <span className="font-mono font-semibold" style={{ color }}>{s || "?"}</span>;
     },
   },
   { key: "content_type", header: "Type", mono: true },
@@ -222,7 +244,17 @@ const COLS_UA: ColumnDef[] = [
   {
     key: "is_suspicious",
     header: "Flag",
-    render: (r) => (r.is_suspicious ? <span className="text-rose-700 text-3xs font-semibold uppercase">{String(r.tag ?? "sus")}</span> : ""),
+    render: (r) =>
+      r.is_suspicious ? (
+        <span
+          className="uppercase"
+          style={{ color: "var(--accent)", fontSize: 9, letterSpacing: "0.08em" }}
+        >
+          {String(r.tag ?? "sus")}
+        </span>
+      ) : (
+        ""
+      ),
   },
 ];
 
@@ -260,14 +292,24 @@ const COLS_BEACONS: ColumnDef[] = [
     align: "right",
     render: (r) => {
       const v = Number(r.regularity ?? 0);
-      const cls = v >= 0.9 ? "text-rose-700" : v >= 0.75 ? "text-amber-700" : "text-slate-600";
-      return <span className={`font-mono font-semibold ${cls}`}>{v.toFixed(3)}</span>;
+      const color = v >= 0.9 ? "var(--accent)" : v >= 0.75 ? "var(--status-warn)" : "var(--text-muted)";
+      return <span className="font-mono font-semibold" style={{ color }}>{v.toFixed(3)}</span>;
     },
   },
   {
     key: "constant_size",
     header: "Const size",
-    render: (r) => (r.constant_size ? <span className="text-rose-700 text-3xs font-semibold uppercase">yes</span> : ""),
+    render: (r) =>
+      r.constant_size ? (
+        <span
+          className="uppercase"
+          style={{ color: "var(--accent)", fontSize: 9, letterSpacing: "0.08em" }}
+        >
+          yes
+        </span>
+      ) : (
+        ""
+      ),
   },
 ];
 
@@ -409,22 +451,45 @@ const SUB_TABS: SubTabDef[] = [
   },
 ];
 
-// --- components ------------------------------------------------------------
+// --- sub-components --------------------------------------------------------
 
-function StatsBar({ stats }: { stats: NetworkAnalysis["stats"] }) {
-  const items = [
-    { label: "Packets", value: fmtInt(stats.packet_count ?? 0) },
-    { label: "Bytes", value: fmtBytes(stats.byte_count ?? 0) },
-    { label: "Duration", value: stats.duration_s ? fmtSec(stats.duration_s) : "--" },
-  ];
+function StatsBar({ analysis }: { analysis: NetworkAnalysis }) {
+  const stats = analysis.stats;
+  const packets = Number(stats.packet_count ?? 0);
+  const bytes = Number(stats.byte_count ?? 0);
+  const sessions = analysis.sessions.length;
+  const dnsCount = analysis.dns.length;
+  const susDns = analysis.suspicious_dns.length;
+  const httpReq = analysis.http_requests.length;
+  const httpResp = analysis.http_responses.length;
   return (
-    <div className="flex gap-6 border border-border rounded-md px-4 py-3 bg-surface-secondary/40 mb-3">
-      {items.map((it) => (
-        <div key={it.label}>
-          <div className="text-3xs uppercase tracking-wide text-text-muted font-medium">{it.label}</div>
-          <div className="font-mono text-sm font-semibold text-foreground">{it.value}</div>
+    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+      <WindowPanel title="packets" tone="info">
+        <div className="flex items-center justify-between">
+          <BigStat value={fmtInt(packets)} sub={fmtBytes(bytes)} />
+          <MonoBadge tone="info">PCAP</MonoBadge>
         </div>
-      ))}
+      </WindowPanel>
+      <WindowPanel title="sessions" tone="info">
+        <div className="flex items-center justify-between">
+          <BigStat value={fmtInt(sessions)} sub="flows" />
+          <MonoBadge tone="muted">TCP/UDP</MonoBadge>
+        </div>
+      </WindowPanel>
+      <WindowPanel title="dns" tone="info">
+        <div className="flex items-center justify-between">
+          <BigStat value={fmtInt(dnsCount)} sub={`${susDns} suspicious`} />
+          <MonoBadge tone={susDns > 0 ? "high" : "muted"}>
+            {susDns > 0 ? "SUS" : "OK"}
+          </MonoBadge>
+        </div>
+      </WindowPanel>
+      <WindowPanel title="http" tone="info">
+        <div className="flex items-center justify-between">
+          <BigStat value={fmtInt(httpReq + httpResp)} sub={`${httpReq} req / ${httpResp} resp`} />
+          <MonoBadge tone="muted">L7</MonoBadge>
+        </div>
+      </WindowPanel>
     </div>
   );
 }
@@ -432,11 +497,15 @@ function StatsBar({ stats }: { stats: NetworkAnalysis["stats"] }) {
 function CommentaryPanel({ items }: { items: NetworkCommentary[] }) {
   if (!items || items.length === 0) {
     return (
-      <div className="py-12 text-center">
-        <p className="text-sm text-text-muted">
-          No AI commentary was generated for this capture. Either the LLM is disabled or the capture had nothing notable to narrate.
+      <WindowPanel title="commentary" tone="muted" status="capture ; nothing notable narrated">
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--text-muted)", padding: "18px 4px", textAlign: "center" }}
+        >
+          No AI commentary was generated for this capture. Either the LLM is
+          disabled or the capture had nothing notable to narrate.
         </p>
-      </div>
+      </WindowPanel>
     );
   }
   const order = ["overall", "hosts", "dns", "http", "tls", "beacons", "anomalies"];
@@ -444,146 +513,133 @@ function CommentaryPanel({ items }: { items: NetworkCommentary[] }) {
     (a, b) => order.indexOf(a.subject) - order.indexOf(b.subject),
   );
   return (
-    <div className="divide-y divide-border">
-      {sorted.map((c, i) => (
-        <div key={`${c.subject}-${i}`} className="px-4 py-4">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-sm font-semibold text-foreground uppercase tracking-wide">
-              {c.subject}
-            </span>
-            {severityBadge(String(c.severity))}
+    <WindowPanel title="commentary" tone="info" status={`${items.length} narratives`}>
+      <div className="space-y-2">
+        {sorted.map((c, i) => (
+          <div
+            key={`${c.subject}-${i}`}
+            style={{
+              padding: "10px 12px",
+              border: "1px solid var(--border-faint)",
+              background: "var(--surface-sunk)",
+              borderRadius: 3,
+            }}
+          >
+            <div className="flex items-center gap-2" style={{ marginBottom: 6 }}>
+              <MonoBadge tone={severityToTone(String(c.severity))}>
+                {String(c.severity)}
+              </MonoBadge>
+              <span
+                className="font-mono uppercase"
+                style={{
+                  fontSize: 10,
+                  letterSpacing: "0.1em",
+                  color: "var(--text-primary)",
+                }}
+              >
+                {c.subject}
+              </span>
+            </div>
+            <p
+              className="whitespace-pre-wrap"
+              style={{ fontSize: 12, lineHeight: 1.55, color: "var(--text-primary)" }}
+            >
+              {c.narrative}
+            </p>
           </div>
-          <p className="text-sm leading-relaxed text-foreground whitespace-pre-wrap">
-            {c.narrative}
-          </p>
-        </div>
-      ))}
-    </div>
+        ))}
+      </div>
+    </WindowPanel>
   );
 }
 
-function DataTable({
-  rows,
-  columns,
-  emptyHint,
+function severityToTone(s: string): string {
+  switch (s) {
+    case "high":
+      return "high";
+    case "medium":
+      return "medium";
+    case "low":
+      return "low";
+    default:
+      return "info";
+  }
+}
+
+// Known "identifier"-ish columns get a bit more room; everything else stretches.
+const WIDE_KEYS: Record<string, true> = {
+  src: true,
+  dst: true,
+  qname: true,
+  host: true,
+  uri: true,
+  user_agent: true,
+  sni: true,
+  ja3: true,
+  detail: true,
+};
+
+function columnWidth(c: ColumnDef): string {
+  if (c.width) return c.width;
+  if (c.align === "right") return "110px";
+  if (WIDE_KEYS[c.key]) return "minmax(140px, 1.6fr)";
+  return "minmax(90px, 1fr)";
+}
+
+function GridForTab({
+  tab,
+  analysis,
 }: {
-  rows: Record<string, unknown>[];
-  columns: ColumnDef[];
-  emptyHint: string;
+  tab: SubTabDef;
+  analysis: NetworkAnalysis;
 }) {
-  const [sortCol, setSortCol] = useState<string | null>(null);
-  const [sortAsc, setSortAsc] = useState(false);
-  const [filterText, setFilterText] = useState("");
-
-  const filtered = useMemo(() => {
-    if (!filterText) return rows;
-    const needle = filterText.toLowerCase();
-    return rows.filter((row) =>
-      columns.some((col) => {
-        const v = row[col.key];
-        return String(v ?? "").toLowerCase().includes(needle);
-      }),
-    );
-  }, [rows, columns, filterText]);
-
-  const sorted = useMemo(() => {
-    if (!sortCol) return filtered;
-    return [...filtered].sort((a, b) => {
-      const va = a[sortCol];
-      const vb = b[sortCol];
-      const na = Number(va);
-      const nb = Number(vb);
-      if (Number.isFinite(na) && Number.isFinite(nb)) {
-        return sortAsc ? na - nb : nb - na;
-      }
-      const sa = String(va ?? "");
-      const sb = String(vb ?? "");
-      return sortAsc ? sa.localeCompare(sb) : sb.localeCompare(sa);
-    });
-  }, [filtered, sortCol, sortAsc]);
-
+  const rows = tab.rowsOf(analysis).slice(0, 1000);
   if (rows.length === 0) {
     return (
-      <div className="py-12 text-center">
-        <p className="text-sm text-text-muted">{emptyHint}</p>
-      </div>
+      <WindowPanel tone="muted" status={`${tab.label.toLowerCase()} ; no rows`}>
+        <p
+          className="font-mono"
+          style={{ fontSize: 11, color: "var(--text-muted)", padding: "18px 4px", textAlign: "center" }}
+        >
+          {tab.emptyHint}
+        </p>
+      </WindowPanel>
     );
   }
-
-  const handleSort = (col: string) => {
-    if (sortCol === col) setSortAsc(!sortAsc);
-    else {
-      setSortCol(col);
-      setSortAsc(false);
-    }
-  };
-
+  const columns: GridColumn[] = tab.columns.map((c) => ({
+    label: c.header.toUpperCase(),
+    width: columnWidth(c),
+    align: c.align,
+  }));
+  const renderCells = (row: Record<string, unknown>) =>
+    tab.columns.map((c) => {
+      const raw = row[c.key];
+      const rendered: React.ReactNode = c.render
+        ? c.render(row)
+        : raw === undefined || raw === null
+          ? ""
+          : String(raw);
+      const isEmpty =
+        rendered === "" || rendered === undefined || rendered === null;
+      if (isEmpty) {
+        return <span style={{ color: "var(--text-faint)" }}>--</span>;
+      }
+      if (c.mono && typeof rendered === "string") {
+        return (
+          <span className="font-mono truncate" title={rendered}>
+            {rendered}
+          </span>
+        );
+      }
+      return rendered;
+    });
   return (
-    <div>
-      <div className="px-3 py-2 border-b border-border bg-surface-secondary/50 flex items-center gap-3">
-        <input
-          aria-label="Filter network rows"
-          type="text"
-          placeholder="Filter rows..."
-          value={filterText}
-          onChange={(e) => setFilterText(e.target.value)}
-          className="w-full max-w-xs px-2.5 py-1 text-xs rounded border border-border bg-surface text-foreground placeholder:text-text-muted focus:outline-none focus:border-primary"
-        />
-        <span className="text-3xs text-text-muted">
-          {sorted.length} of {rows.length} rows
-        </span>
-      </div>
-      <div className="overflow-x-auto overflow-y-auto" style={{ maxHeight: 600 }}>
-        <table className="w-full text-xs">
-          <thead className="bg-surface-secondary sticky top-0 z-10">
-            <tr>
-              <th className="text-left px-3 py-2 text-text-muted font-medium w-8">#</th>
-              {columns.map((c) => (
-                <th
-                  key={c.key}
-                  onClick={() => handleSort(c.key)}
-                  className={`px-3 py-2 text-text-muted font-medium whitespace-nowrap cursor-pointer hover:text-foreground select-none ${c.align === "right" ? "text-right" : "text-left"}`}
-                  style={c.width ? { width: c.width } : undefined}
-                >
-                  {c.header}
-                  {sortCol === c.key && <span className="ml-1">{sortAsc ? "▲" : "▼"}</span>}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {sorted.slice(0, 1000).map((row, i) => (
-              <tr key={i} className="border-t border-border hover:bg-surface-secondary/30">
-                <td className="px-3 py-1.5 text-text-muted font-mono">{i + 1}</td>
-                {columns.map((c) => {
-                  const raw = row[c.key];
-                  const rendered: React.ReactNode = c.render
-                    ? c.render(row)
-                    : raw === undefined || raw === null
-                      ? ""
-                      : String(raw);
-                  const isEmpty =
-                    rendered === "" || rendered === undefined || rendered === null;
-                  return (
-                    <td
-                      key={c.key}
-                      className={`px-3 py-1.5 text-foreground whitespace-nowrap ${c.mono ? "font-mono" : ""} ${c.align === "right" ? "text-right" : ""}`}
-                    >
-                      {isEmpty ? <span className="text-text-muted">--</span> : rendered}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {sorted.length > 1000 && (
-        <div className="px-3 py-2 text-3xs text-text-muted border-t border-border bg-surface-secondary/50">
-          Showing 1000 of {sorted.length} rows. Filter to narrow.
-        </div>
-      )}
-    </div>
+    <DataGrid
+      columns={columns}
+      rows={rows}
+      renderCells={renderCells}
+      getKey={(_r, i) => i}
+    />
   );
 }
 
@@ -591,12 +647,16 @@ function DataTable({
 
 export function NetworkAnalysisPanel({ projectId }: { projectId: string }) {
   const { data: analysis, isLoading, isError } = useNetworkAnalysis(projectId);
-  const [activeSubTab, setActiveSubTab] = useState<SubTab>("commentary");
+  const [sub, setSub] = useState<SubTab>("commentary");
 
   if (isLoading) return <LoadingSkeleton size="lg" width="full" />;
   if (isError) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load network analysis.</p></AilaCard>
+      <WindowPanel title="load error" tone="warn" status="network analysis ; unavailable">
+        <p className="font-mono" style={{ fontSize: 12, color: "var(--accent)" }}>
+          Failed to load network analysis.
+        </p>
+      </WindowPanel>
     );
   }
   if (!analysis) return null;
@@ -616,55 +676,38 @@ export function NetworkAnalysisPanel({ projectId }: { projectId: string }) {
 
   if (!hasAnyData) {
     return (
-      <AilaCard  techBorder glow><p className="text-sm text-text-muted text-center py-8">
-        No network analysis data available. This project may not contain PCAP evidence.
-      </p></AilaCard>
+      <EmptyState
+        title="No network analysis"
+        description="This project may not contain PCAP evidence."
+      />
     );
   }
 
-  const active = SUB_TABS.find((t) => t.id === activeSubTab) ?? SUB_TABS[0];
+  const stats = analysis.stats;
+  const packets = Number(stats.packet_count ?? 0);
+  const sessions = analysis.sessions.length;
+
+  const active = SUB_TABS.find((t) => t.id === sub) ?? SUB_TABS[0];
 
   return (
-    <div className="space-y-0">
-      <StatsBar stats={analysis.stats} />
-
-      <div className="flex flex-wrap gap-0.5 bg-surface-secondary rounded-t-lg p-1 border border-b-0 border-border">
-        {SUB_TABS.map((tab) => {
-          const count = tab.countOf(analysis);
-          const isActive = activeSubTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              onClick={() => setActiveSubTab(tab.id)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
-                isActive
-                  ? "bg-surface text-foreground shadow-sm border border-border"
-                  : "text-text-muted hover:text-foreground hover:bg-surface/50"
-              }`}
-            >
-              <span>{tab.label}</span>
-              {count > 0 && (
-                <span
-                  className={`ml-1 px-1.5 py-0.5 rounded-full text-3xs font-bold ${
-                    isActive ? "bg-primary/10 text-primary" : "bg-surface-secondary text-text-muted"
-                  }`}
-                >
-                  {count}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
-
-      <div className="border border-border rounded-b-lg bg-surface">
+    <WindowPanel
+      title="network analysis"
+      tone="accent"
+      status={`${fmtInt(packets)} packets ; ${fmtInt(sessions)} sessions`}
+    >
+      <div className="space-y-3">
+        <Segmented<SubTab>
+          options={SUB_TABS.map((t) => ({ value: t.id, label: t.label.toUpperCase() }))}
+          value={sub}
+          onChange={setSub}
+        />
+        <StatsBar analysis={analysis} />
         {active.id === "commentary" ? (
           <CommentaryPanel items={analysis.commentary} />
         ) : (
-          <DataTable rows={active.rowsOf(analysis)} columns={active.columns} emptyHint={active.emptyHint} />
+          <GridForTab tab={active} analysis={analysis} />
         )}
       </div>
-    </div>
+    </WindowPanel>
   );
 }

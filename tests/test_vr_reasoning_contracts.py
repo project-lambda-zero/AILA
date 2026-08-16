@@ -43,8 +43,11 @@ class TestInvestigationEnums:
         }
 
     def test_status_values(self) -> None:
+        # ``stalled`` joined the set when RFC-13 escalation added a distinct
+        # terminal state for investigations that stopped making progress
+        # (see aila.platform.contracts.enums.InvestigationStatus).
         assert {m.value for m in InvestigationStatus} == {
-            "created", "running", "paused", "completed", "failed", "abandoned",
+            "created", "running", "paused", "completed", "failed", "abandoned", "stalled",
         }
 
     def test_pause_reason_values(self) -> None:

@@ -1,21 +1,27 @@
-import React from "react";
-import ReactDOM from "react-dom/client";
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import "@/styles/globals.css";
-import { App } from "@app/App";
+import App from "./App";
+import { loadTheme } from "./theme";
+import "./styles/globals.css";
 
-// Register service worker for offline GET cache (UX-07)
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch((err) => {
-      // SW registration failure is non-fatal -- app still works online
-      console.warn("[SW] Registration failed:", err);
-    });
-  });
+// Apply the persisted theme before first paint so the console loads styled.
+loadTheme();
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: { retry: 1, refetchOnWindowFocus: false, staleTime: 5000 },
+  },
+});
+
+const root = document.getElementById("root");
+if (root) {
+  createRoot(root).render(
+    <StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <App />
+      </QueryClientProvider>
+    </StrictMode>,
+  );
 }
-
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-);

@@ -40,6 +40,10 @@ class LLMCostRecord(TeamScopedMixin, SQLModel, table=True):
     __table_args__ = (
         Index("ix_llmcostrecord_run_id_model_id", "run_id", "model_id"),
         Index("ix_llmcostrecord_team_created", "team_id", "created_at"),
+        # #204: admin god-tier cost/history/roi queries filter by
+        # ``created_at`` alone (no team_id predicate), so the compound
+        # ``(team_id, created_at)`` index above cannot serve them.
+        Index("ix_llmcostrecord_created_at", "created_at"),
     )
 
     id: str = Field(
@@ -47,6 +51,14 @@ class LLMCostRecord(TeamScopedMixin, SQLModel, table=True):
         primary_key=True,
     )
     run_id: str = Field(default="_no_run", index=True)
+    # #124 user attribution: the user whose auth context drove this LLM
+    # call. Nullable -- worker-triggered calls (agent turns, background
+    # scans, scheduled reports) have no live user session and leave this
+    # unset. Written by :func:`persist_cost_record` from the
+    # ``current_user_id()`` ContextVar populated by ``require_user_or_api_key``
+    # (API path) or by callers that opt in via ``user_id_scope``. Indexed
+    # so the admin /llm-log ``user=`` filter is a direct index scan.
+    user_id: str | None = Field(default=None, index=True)
     # #39 observability join keys: correlate a cost record back to the
     # investigation, branch, and turn that produced it. Nullable -- calls
     # outside an agent turn (scoring, report generation) leave them unset.

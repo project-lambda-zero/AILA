@@ -1,5 +1,17 @@
 """PoC runner -- uploads, compiles, and executes vulnerability PoCs over SSH.
 
+Follow-up (issue #147): the platform now owns a real sandbox primitive at
+``aila.platform.services.sandbox`` (nsjail / Firecracker over SSH, exposed
+as the ``sandbox_exec`` platform tool). Once an operator provisions a
+sandbox host for a given deployment, the module MUST migrate this file
+to route every ``firejail`` / ``unshare`` invocation through
+``SandboxService.run``, deleting the local isolator resolver + wrapper
+plumbing below. The migration is deliberately deferred here because the
+sandbox has no configured host on the current deployment, and removing
+the local firejail/unshare fallback before that would leave VR PoC
+execution un-isolated -- exactly the failure mode the new primitive is
+supposed to prevent. See ``docs/CLAUDE.md`` follow-ups section.
+
 Sandbox model (fix #51):
 
 1. ``poc_path`` is confined to :data:`_REMOTE_DIR` -- any request whose
@@ -63,6 +75,7 @@ __all__ = [
     "build_run_wrapper",
     "build_workspace_prune_cmd",
     "confine_remote_poc_path",
+    "confine_remote_target_binary",
     "new_run_dir",
     "run_dir_of",
 ]
@@ -70,6 +83,18 @@ __all__ = [
 _log = logging.getLogger(__name__)
 
 _REMOTE_DIR = "/tmp/aila_vr"
+# Issue #185 -- the vulnerable target lands on the workstation via
+# ``TargetIngestionService`` under this fixed staging root. ``target_binary``
+# is bound to argv[1] of the PoC so a caller-supplied absolute path (e.g.
+# ``/etc/shadow``) would otherwise be read as data by the PoC under the SSH
+# user's privileges. Confinement mirrors the poc-path pattern and permits
+# both the ingest root AND the shared PoC workspace (patched binaries the
+# PoC state emits sit under ``/tmp/aila_vr/run_<hex>/``).
+_WORKSTATION_TARGET_DIR = "/tmp/aila_vr_targets"
+_TARGET_BINARY_ALLOWED_ROOTS: tuple[str, ...] = (
+    _WORKSTATION_TARGET_DIR,
+    _REMOTE_DIR,
+)
 _RUN_DIR_PREFIX = "run_"
 _EXIT_MARKER = "__AILA_POC_EXIT__:"
 _OUT_BEGIN = "__AILA_POC_OUT_BEGIN__"
@@ -220,6 +245,50 @@ def confine_remote_poc_path(poc_path: str | None) -> str | None:
     if candidate == root or not candidate.is_relative_to(root):
         return f"poc_path {poc_path!r} escapes sandbox root {_REMOTE_DIR}"
     return None
+
+
+def confine_remote_target_binary(target_binary: str | None) -> str | None:
+    """Validate that ``target_binary`` sits under an allowed workstation root (issue #185).
+
+    ``target_binary`` becomes argv[1] of the PoC. ``shlex.quote`` blocks
+    argument injection but does NOT block path selection: a PoC authored
+    by the agent from untrusted source can point ``target_binary`` at
+    any readable file on the analyzer workstation and observe its
+    contents through the PoC's own stdout/stderr. This confines the
+    path to the two roots that legitimately hold targets:
+
+    - :data:`_WORKSTATION_TARGET_DIR` (``/tmp/aila_vr_targets``) --
+      where :class:`TargetIngestionService` uploads uploaded / cloned /
+      downloaded targets.
+    - :data:`_REMOTE_DIR` (``/tmp/aila_vr``) -- where the workflow's
+      patched-binary emission lives (``patched_path`` inside a per-run
+      ``run_<hex>`` subdirectory).
+
+    Path resolution happens locally (POSIX lexical) so we cannot follow
+    workstation-side symlinks; the fresh unshare mount namespace does
+    not restrict filesystem access, so this LOCAL check is the last
+    line of defense before the shell wrapper is built. Returns
+    ``None`` when the path is safe, else a human-readable error the
+    caller should surface via :func:`_err`.
+    """
+    if not target_binary or not isinstance(target_binary, str):
+        return "target_binary is required"
+    candidate = PurePosixPath(target_binary)
+    if not candidate.is_absolute():
+        return (
+            f"target_binary must be an absolute path under one of "
+            f"{list(_TARGET_BINARY_ALLOWED_ROOTS)}"
+        )
+    if ".." in candidate.parts:
+        return "target_binary must not contain '..' segments"
+    for root_str in _TARGET_BINARY_ALLOWED_ROOTS:
+        root = PurePosixPath(root_str)
+        if candidate != root and candidate.is_relative_to(root):
+            return None
+    return (
+        f"target_binary {target_binary!r} escapes allowed roots "
+        f"{list(_TARGET_BINARY_ALLOWED_ROOTS)}"
+    )
 
 
 def apply_isolator(invoke: str, isolator: str) -> str:
@@ -596,8 +665,18 @@ class PoCRunnerTool(Tool):
         confinement_error = confine_remote_poc_path(poc_path)
         if confinement_error:
             return _err(confinement_error)
-        if not isinstance(target_binary, str) or not target_binary:
-            return _err("target_binary is required")
+        # Issue #185 -- confine target_binary to the workstation roots
+        # BEFORE it lands as argv[1] of the PoC. shlex.quote (below)
+        # only blocks argument injection; the fresh unshare mount
+        # namespace does NOT restrict host-filesystem reads, so a
+        # tampered compile response or a PoC authored from untrusted
+        # source could point target_binary at /etc/shadow (or any
+        # readable file) and observe its bytes through the PoC's own
+        # output. This is the last line of defense before shell.
+        target_error = confine_remote_target_binary(target_binary)
+        if target_error:
+            _log.warning("poc_runner: %s", target_error)
+            return _err(target_error)
         try:
             timeout = float(timeout_seconds)
             mem_kb = max(int(memory_limit_mb), 256) * 1024

@@ -5,11 +5,15 @@ import pytest
 
 from aila.modules.vr.agents.persona_router import (
     PersonaRole,
+    PersonaRouter,
     default_task_type,
-    persona_to_role,
     resolve_task_type,
 )
 from aila.modules.vr.contracts import PersonaVoice
+
+# Issue #136: persona_to_role is now a classmethod on the module's
+# PersonaRouter subclass (each module supplies its own persona_role_map).
+persona_to_role = PersonaRouter.persona_to_role
 
 
 class TestPersonaToRole:

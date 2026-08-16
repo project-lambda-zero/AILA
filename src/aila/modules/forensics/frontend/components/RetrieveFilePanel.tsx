@@ -1,8 +1,6 @@
 import { useMemo, useState } from "react";
 
-import { AilaCard } from "@/components/aila/AilaCard";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { WindowPanel } from "@/components/aila/WindowPanel";
 
 import { useProjectEvidence } from "../queries";
 import { useRetrieveFile } from "../mutations";
@@ -13,6 +11,41 @@ interface Props {
   /** Compact mode for the dashboard (smaller heading, tighter form). */
   compact?: boolean;
 }
+
+const INPUT_STYLE: React.CSSProperties = {
+  width: "100%",
+  height: 30,
+  padding: "0 10px",
+  fontSize: 11,
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  color: "var(--text-primary)",
+  borderRadius: 3,
+};
+
+const SELECT_STYLE: React.CSSProperties = {
+  width: "100%",
+  height: 28,
+  padding: "0 10px",
+  fontSize: 11,
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  color: "var(--text-primary)",
+  borderRadius: 3,
+};
+
+const ACCENT_BTN: React.CSSProperties = {
+  height: 26,
+  padding: "0 12px",
+  fontSize: 10,
+  letterSpacing: "0.08em",
+  color: "var(--text-on-accent)",
+  background: "var(--accent)",
+  border: "1px solid var(--accent)",
+  borderRadius: 3,
+  cursor: "pointer",
+  boxShadow: "var(--bevel-key)",
+};
 
 /**
  * Retrieve-File panel -- pulls an arbitrary artefact out of the
@@ -27,8 +60,7 @@ export function RetrieveFilePanel({ projectId, compact = false }: Props) {
   const retrieveMut = useRetrieveFile(projectId);
 
   const diskImages: EvidenceItem[] = useMemo(
-    () =>
-      (evidenceQ.data ?? []).filter((e) => e.evidence_type === "disk_image"),
+    () => (evidenceQ.data ?? []).filter((e) => e.evidence_type === "disk_image"),
     [evidenceQ.data],
   );
 
@@ -50,68 +82,97 @@ export function RetrieveFilePanel({ projectId, compact = false }: Props) {
     });
   };
 
-  const heading = compact ? "Retrieve File" : "Retrieve File from Image";
+  const title = compact ? "retrieve file" : "retrieve file from image";
 
   return (
-    <AilaCard  techBorder glow><div className="flex items-center justify-between mb-3">
-      <h3 className="text-sm font-semibold text-foreground">{heading}</h3>
-      <span className="text-xs text-text-muted">
-        {diskImages.length} disk image{diskImages.length === 1 ? "" : "s"}
-      </span>
-    </div>
-    
-    <form onSubmit={onSubmit} className="space-y-2">
-      <Input
-        aria-label="Virtual file path"
-        type="text"
-        value={virtualPath}
-        onChange={(e) => setVirtualPath(e.target.value)}
-        placeholder="Full in-image path (file or directory)"
-        disabled={retrieveMut.isPending}
-        className="text-sm font-mono"
-        spellCheck={false}
-        autoComplete="off"
-      />
-    
-      {diskImages.length > 1 && (
-        <select
-          aria-label="Select disk image"
-          value={evidenceId}
-          onChange={(e) => setEvidenceId(e.target.value)}
+    <WindowPanel
+      title={title}
+      status={`image ; ${diskImages.length} disk image${diskImages.length === 1 ? "" : "s"}`}
+    >
+      <form onSubmit={onSubmit} className="space-y-2">
+        <input
+          aria-label="Virtual file path"
+          type="text"
+          value={virtualPath}
+          onChange={(e) => setVirtualPath(e.target.value)}
+          placeholder="Full in-image path (file or directory)"
           disabled={retrieveMut.isPending}
-          className="w-full text-xs border border-border rounded px-2 py-1 bg-background"
+          className="font-mono"
+          spellCheck={false}
+          autoComplete="off"
+          style={INPUT_STYLE}
+        />
+
+        {diskImages.length > 1 && (
+          <select
+            aria-label="Select disk image"
+            value={evidenceId}
+            onChange={(e) => setEvidenceId(e.target.value)}
+            disabled={retrieveMut.isPending}
+            className="font-mono"
+            style={SELECT_STYLE}
+          >
+            <option value="">-- pick a disk image --</option>
+            {diskImages.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.file_path}
+              </option>
+            ))}
+          </select>
+        )}
+
+        <div className="flex items-center justify-between" style={{ gap: 8 }}>
+          <p
+            className="font-mono"
+            style={{ fontSize: 10, color: "var(--text-faint)", lineHeight: 1.5 }}
+          >
+            Paste the full in-image path -- file or directory. Directories are
+            zipped on the analyzer and shipped as{" "}
+            <code
+              className="font-mono"
+              style={{
+                padding: "1px 4px",
+                background: "var(--surface-sunk)",
+                border: "1px solid var(--border-faint)",
+                borderRadius: 2,
+                color: "var(--text-primary)",
+              }}
+            >
+              &lt;name&gt;.zip
+            </code>
+            . Windows and POSIX path styles are both accepted.
+          </p>
+          <button
+            type="submit"
+            disabled={!canSubmit}
+            className="font-mono uppercase"
+            style={{
+              ...ACCENT_BTN,
+              opacity: canSubmit ? 1 : 0.5,
+              cursor: canSubmit ? "pointer" : "not-allowed",
+            }}
+          >
+            {retrieveMut.isPending ? "retrieving\u2026" : "retrieve"}
+          </button>
+        </div>
+      </form>
+
+      {evidenceQ.isError && (
+        <p
+          className="font-mono"
+          style={{ fontSize: 10.5, color: "var(--accent)", marginTop: 8 }}
         >
-          <option value="">-- pick a disk image --</option>
-          {diskImages.map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.file_path}
-            </option>
-          ))}
-        </select>
-      )}
-    
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-2xs text-text-muted">
-          Paste the full in-image path -- file or directory. Directories
-          are zipped on the analyzer and shipped as
-          <code className="font-mono mx-1">&lt;name&gt;.zip</code>.
-          Windows and POSIX path styles are both accepted.
+          Failed to load evidence list.
         </p>
-        <Button type="submit" size="sm" disabled={!canSubmit}>
-          {retrieveMut.isPending ? "Retrieving…" : "Retrieve"}
-        </Button>
-      </div>
-    </form>
-    
-    {evidenceQ.isError && (
-      <p className="text-xs text-status-critical mt-2">
-        Failed to load evidence list.
-      </p>
-    )}
-    {!evidenceQ.isLoading && diskImages.length === 0 && (
-      <p className="text-xs text-text-muted mt-2">
-        No disk images on this project -- run intake first.
-      </p>
-    )}</AilaCard>
+      )}
+      {!evidenceQ.isLoading && diskImages.length === 0 && (
+        <p
+          className="font-mono"
+          style={{ fontSize: 10.5, color: "var(--text-faint)", marginTop: 8 }}
+        >
+          No disk images on this project -- run intake first.
+        </p>
+      )}
+    </WindowPanel>
   );
 }

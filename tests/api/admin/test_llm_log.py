@@ -17,6 +17,9 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 
+from aila.platform.llm.cost_record import LLMCostRecord
+from aila.storage.database import async_session_scope
+
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
@@ -25,9 +28,6 @@ def _utc_now() -> datetime:
 @pytest_asyncio.fixture(scope="function")
 async def seeded_llm_log(test_db):
     """Seed 5 LLMCostRecord rows spanning different models, tasks, and costs."""
-    from aila.platform.llm.cost_record import LLMCostRecord
-    from aila.storage.database import async_session_scope
-
     now = _utc_now()
     records = [
         LLMCostRecord(
@@ -295,3 +295,112 @@ async def test_date_range_filter(
     body = resp.json()
     # rec-4 (-2m) and rec-5 (-1m) are newer than cutoff
     assert body["data"]["total"] == 2
+
+
+@pytest_asyncio.fixture(scope="function")
+async def seeded_llm_log_two_users(test_db):
+    """Seed cost rows attributed to two distinct users for the #124 filter.
+
+    Written after #124 flipped ``LLMCostRecord.user_id`` from unset to a
+    real, indexed attribution column populated at write time. Prior code
+    filtered the ``user=`` query param against ``WorkflowRunRecord.team_id``
+    -- always wrong or empty. This fixture proves the new filter returns
+    exactly one user's rows and never leaks another's.
+    """
+    now = _utc_now()
+    records = [
+        LLMCostRecord(
+            id="user-a-1",
+            run_id="run-A",
+            user_id="user-alice",
+            model_id="gpt-4o",
+            task_type="scoring",
+            team_id=None,
+            prompt_tokens=10,
+            completion_tokens=5,
+            cost_usd=0.01,
+            status="ok",
+            created_at=now - timedelta(minutes=3),
+        ),
+        LLMCostRecord(
+            id="user-a-2",
+            run_id="run-A",
+            user_id="user-alice",
+            model_id="gpt-4o",
+            task_type="summary",
+            team_id=None,
+            prompt_tokens=20,
+            completion_tokens=10,
+            cost_usd=0.02,
+            status="ok",
+            created_at=now - timedelta(minutes=2),
+        ),
+        LLMCostRecord(
+            id="user-b-1",
+            run_id="run-B",
+            user_id="user-bob",
+            model_id="gpt-4o",
+            task_type="scoring",
+            team_id=None,
+            prompt_tokens=30,
+            completion_tokens=15,
+            cost_usd=0.03,
+            status="ok",
+            created_at=now - timedelta(minutes=1),
+        ),
+        # No-attribution row (worker path). Must not match either user filter.
+        LLMCostRecord(
+            id="worker-1",
+            run_id="_no_run",
+            user_id=None,
+            model_id="gpt-4o",
+            task_type="cost_estimation",
+            team_id=None,
+            prompt_tokens=5,
+            completion_tokens=1,
+            cost_usd=0.001,
+            status="ok",
+            created_at=now,
+        ),
+    ]
+
+    async with async_session_scope() as session:
+        for r in records:
+            session.add(r)
+        await session.commit()
+
+    return records
+
+
+@pytest.mark.asyncio
+async def test_user_filter_isolates_caller_rows(
+    async_client: AsyncClient, admin_token: str, seeded_llm_log_two_users,
+) -> None:
+    """#124: ``user=`` must filter on LLMCostRecord.user_id, not team_id.
+
+    Before the fix, ``user=user-alice`` was compared against
+    ``WorkflowRunRecord.team_id`` and always returned zero rows (or
+    wrong rows when a team_id coincidentally matched). After the fix,
+    it must return exactly alice's two rows and never bob's row or the
+    worker-emitted no-attribution row.
+    """
+    resp = await async_client.get(
+        "/admin/llm-log",
+        params={"user": "user-alice"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    ids = {row["id"] for row in body["data"]["items"]}
+    assert ids == {"user-a-1", "user-a-2"}
+    assert body["data"]["total"] == 2
+    # Every returned row's user_id must equal the requested filter.
+    assert all(row["user_id"] == "user-alice" for row in body["data"]["items"])
+    # A non-existent user id must produce zero rows, not fall back to team_id.
+    zero = await async_client.get(
+        "/admin/llm-log",
+        params={"user": "no-such-user"},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert zero.status_code == 200
+    assert zero.json()["data"]["total"] == 0

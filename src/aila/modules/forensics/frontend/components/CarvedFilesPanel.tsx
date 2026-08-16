@@ -1,13 +1,17 @@
 import { useMemo, useState } from "react";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
+import { EmptyState } from "@/components/aila/EmptyState";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
-import { Button } from "@/components/ui/button";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { DataGrid, FilterChip, MonoBadge, toneColor } from "@/components/aila/mock";
 
 import { useProjectArtifacts } from "../queries";
 import { useDownloadCarvedFile } from "../mutations";
 import type { NormalizedArtifact } from "../types";
+
+// ---------------------------------------------------------------------------
+// Types + helpers (preserved verbatim).
+// ---------------------------------------------------------------------------
 
 interface CarvedFile {
   sha256: string;
@@ -78,6 +82,10 @@ function filenameFor(f: CarvedFile): string {
   return `carved_${f.sha256.slice(0, 12)}${ext}`;
 }
 
+// ---------------------------------------------------------------------------
+// Panel
+// ---------------------------------------------------------------------------
+
 export function CarvedFilesPanel({ projectId }: { projectId: string }) {
   const filesQuery = useProjectArtifacts(projectId, {
     family: "network",
@@ -117,9 +125,11 @@ export function CarvedFilesPanel({ projectId }: { projectId: string }) {
       return out;
     }
     // Derive client-side if the summary artifact is missing.
-    const m = new Map<string, number>();
-    for (const f of files) m.set(f.mime_type, (m.get(f.mime_type) ?? 0) + 1);
-    return [...m.entries()]
+    const derived = new Map<string, number>();
+    for (const f of files) {
+      derived.set(f.mime_type, (derived.get(f.mime_type) ?? 0) + 1);
+    }
+    return [...derived.entries()]
       .map(([mime_type, count]) => ({ mime_type, count }))
       .sort((a, b) => b.count - a.count);
   }, [typesQuery.data, files]);
@@ -146,163 +156,183 @@ export function CarvedFilesPanel({ projectId }: { projectId: string }) {
 
   if (files.length === 0) {
     return (
-      <AilaCard  techBorder glow>
-        <h3 className="text-sm font-semibold text-foreground mb-1">
-          Files carved from PCAP
-        </h3>
-        <p className="text-xs text-text-muted">
-          No files were carved. This typically means the pcap carried no
-          reconstructible file transfers, or Zeek is not installed on the
-          analyzer -- check the worker log for a <code>zeek_skipped</code> event.
-        </p>
-      </AilaCard>
+      <WindowPanel title="carved files" tone="muted" status="no carved files yet">
+        <EmptyState
+          title="No files were carved."
+          description="This typically means the pcap carried no reconstructible file transfers, or Zeek is not installed on the analyzer -- check the worker log for a zeek_skipped event."
+        />
+      </WindowPanel>
     );
   }
 
-  return (
-    <div className="space-y-3">
-      <div>
-        <h3 className="text-sm font-semibold text-foreground">
-          Files carved from PCAP
-          <span className="ml-2 text-xs font-normal text-text-muted">
-            {filtered.length} of {files.length} file
-            {files.length === 1 ? "" : "s"}
-          </span>
-        </h3>
-      </div>
+  const totalBytes = formatBytes(files.reduce((s, f) => s + f.size_bytes, 0));
 
-      {/* Most common file types */}
-      {mimeCounts.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="text-2xs text-text-muted mr-1">
-            Most common types:
-          </span>
-          <button
-            type="button"
+  return (
+    <WindowPanel
+      title="carved files"
+      tone="accent"
+      status={`${files.length} carved ; ${totalBytes} total`}
+    >
+      <div className="space-y-3">
+        {/* Mime distribution row + search input (aria-label preserved) */}
+        <div className="flex flex-wrap items-center" style={{ gap: 6 }}>
+          <FilterChip
+            active={mimeFilter === null}
+            color={toneColor("accent")}
             onClick={() => setMimeFilter(null)}
-            className={`px-2 py-0.5 text-2xs rounded-full font-medium ${
-              mimeFilter === null
-                ? "bg-primary text-white"
-                : "bg-surface-secondary text-text-muted hover:text-foreground"
-            }`}
           >
-            All ({files.length})
-          </button>
+            {`All (${files.length})`}
+          </FilterChip>
           {mimeCounts.slice(0, 10).map((mc) => (
-            <button
+            <FilterChip
               key={mc.mime_type}
-              type="button"
+              active={mimeFilter === mc.mime_type}
+              color={toneColor("info")}
               onClick={() =>
                 setMimeFilter((curr) =>
                   curr === mc.mime_type ? null : mc.mime_type,
                 )
               }
-              className={`px-2 py-0.5 text-2xs rounded-full font-mono ${
-                mimeFilter === mc.mime_type
-                  ? "bg-primary text-white"
-                  : "bg-surface-secondary text-text-muted hover:text-foreground"
-              }`}
-              title={mc.mime_type}
             >
-              {mc.mime_type} <span className="opacity-70">({mc.count})</span>
-            </button>
+              {`${mc.mime_type} (${mc.count})`}
+            </FilterChip>
           ))}
+          <span style={{ flex: 1 }} />
+          <input
+            aria-label="Search carved files"
+            type="search"
+            value={filterText}
+            onChange={(e) => setFilterText(e.target.value)}
+            placeholder="filename, sha256, host, mime\u2026"
+            className="font-mono"
+            style={{
+              height: 26,
+              width: 240,
+              padding: "0 10px",
+              fontSize: 11,
+              background: "var(--surface-sunk)",
+              border: "1px solid var(--border-soft)",
+              color: "var(--text-primary)",
+              borderRadius: 3,
+            }}
+          />
         </div>
-      )}
 
-      {/* Filter */}
-      <input
-        aria-label="Search carved files"
-        type="search"
-        value={filterText}
-        onChange={(e) => setFilterText(e.target.value)}
-        placeholder="Filter by filename, sha256, host, mime…"
-        className="h-8 w-80 max-w-full rounded border border-border bg-background px-2 text-xs"
-      />
-
-      {/* Table */}
-      <div className="border border-border rounded-lg bg-surface text-foreground overflow-hidden">
-        <div className="overflow-y-auto" style={{ maxHeight: 500 }}>
-          <table className="w-full text-xs">
-            <thead className="bg-surface-secondary sticky top-0 z-10">
-              <tr>
-                <th className="text-left px-3 py-2 text-text-muted font-medium w-72">
-                  Filename
-                </th>
-                <th className="text-left px-3 py-2 text-text-muted font-medium w-48">
-                  MIME
-                </th>
-                <th className="text-right px-3 py-2 text-text-muted font-medium w-24">
-                  Size
-                </th>
-                <th className="text-left px-3 py-2 text-text-muted font-medium w-48">
-                  Source
-                </th>
-                <th className="text-left px-3 py-2 text-text-muted font-medium">
-                  sha256
-                </th>
-                <th className="text-right px-3 py-2 text-text-muted font-medium w-24">
-                  &nbsp;
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.slice(0, 1000).map((f) => {
-                const fname = filenameFor(f);
-                const source =
-                  f.tx_hosts.length && f.rx_hosts.length
-                    ? `${f.tx_hosts[0]} → ${f.rx_hosts[0]}`
-                    : f.protocol || "?";
-                return (
-                  <tr
-                    key={f.sha256}
-                    className="border-t border-border hover:bg-surface-secondary/30"
-                  >
-                    <td
-                      className="px-3 py-1.5 text-foreground truncate max-w-xs"
-                      title={fname}
-                    >
-                      {fname}
-                    </td>
-                    <td className="px-3 py-1.5 font-mono text-text-muted">
-                      <AilaBadge severity="info" size="sm">
-                        {f.mime_type}
-                      </AilaBadge>
-                    </td>
-                    <td className="px-3 py-1.5 font-mono text-text-muted text-right">
-                      {formatBytes(f.size_bytes)}
-                    </td>
-                    <td
-                      className="px-3 py-1.5 font-mono text-text-muted truncate max-w-xs"
-                      title={source}
-                    >
-                      {source}
-                    </td>
-                    <td className="px-3 py-1.5 font-mono text-text-muted">
-                      {f.sha256.slice(0, 16)}…
-                    </td>
-                    <td className="px-3 py-1.5 text-right">
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() =>
-                          download.mutate({
-                            sha256: f.sha256,
-                            filename: fname,
-                          })
-                        }
-                        disabled={download.isPending}
-                      >
-                        ⬇
-                      </Button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div
+          className="font-mono"
+          style={{ fontSize: 10, color: "var(--text-faint)", letterSpacing: "0.08em" }}
+        >
+          {`Showing ${filtered.length} of ${files.length} file${files.length === 1 ? "" : "s"}`}
         </div>
+
+        <DataGrid<CarvedFile>
+          columns={[
+            { label: "SHA256", width: "110px" },
+            { label: "FILENAME", width: "1fr" },
+            { label: "MIME", width: "160px" },
+            { label: "SIZE", width: "110px", align: "right" },
+            { label: "PROTO", width: "80px" },
+            { label: "HOSTS", width: "2fr" },
+            { label: "DOWNLOAD", width: "120px", align: "right" },
+          ]}
+          rows={filtered.slice(0, 1000)}
+          getKey={(f) => f.sha256}
+          renderCells={(f) => {
+            const fname = filenameFor(f);
+            const hosts =
+              f.tx_hosts.length && f.rx_hosts.length
+                ? `${f.tx_hosts[0]} \u2192 ${f.rx_hosts[0]}`
+                : f.tx_hosts[0] || f.rx_hosts[0] || (f.protocol ?? "?");
+            return [
+              <span
+                key="sha"
+                title={f.sha256}
+                style={{ fontSize: 10, color: "var(--text-faint)" }}
+              >
+                {f.sha256.slice(0, 8)}
+              </span>,
+              <span
+                key="fn"
+                title={fname}
+                className="truncate"
+                style={{
+                  fontSize: 11,
+                  color: "var(--text-primary)",
+                  display: "block",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {fname}
+              </span>,
+              <MonoBadge key="mime" tone="muted" title={f.mime_type}>
+                {f.mime_type}
+              </MonoBadge>,
+              <span
+                key="size"
+                style={{ fontSize: 11, color: "var(--text-muted)" }}
+              >
+                {formatBytes(f.size_bytes)}
+              </span>,
+              f.protocol ? (
+                <MonoBadge key="proto" tone="info">
+                  {f.protocol}
+                </MonoBadge>
+              ) : (
+                <span
+                  key="proto"
+                  style={{ fontSize: 10, color: "var(--text-faint)" }}
+                >
+                  --
+                </span>
+              ),
+              <span
+                key="hosts"
+                title={hosts}
+                className="truncate"
+                style={{
+                  fontSize: 10,
+                  color: "var(--text-muted)",
+                  display: "block",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {hosts}
+              </span>,
+              <button
+                key="dl"
+                type="button"
+                aria-label={`Download ${fname}`}
+                disabled={download.isPending}
+                onClick={() =>
+                  download.mutate({
+                    sha256: f.sha256,
+                    filename: fname,
+                  })
+                }
+                className="font-mono uppercase"
+                style={{
+                  height: 22,
+                  padding: "0 10px",
+                  fontSize: 9,
+                  letterSpacing: "0.1em",
+                  color: "var(--text-on-accent)",
+                  background: "var(--accent)",
+                  border: "1px solid var(--accent)",
+                  borderRadius: 3,
+                  cursor: download.isPending ? "wait" : "pointer",
+                  opacity: download.isPending ? 0.6 : 1,
+                }}
+              >
+                Download
+              </button>,
+            ];
+          }}
+        />
       </div>
-    </div>
+    </WindowPanel>
   );
 }

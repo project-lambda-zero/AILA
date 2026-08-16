@@ -30,6 +30,7 @@ Delegation policy:
 """
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import logging
@@ -39,6 +40,8 @@ from typing import Any
 
 from aila.config import Settings
 from aila.modules.forensics.config_schema import ForensicsConfigSchema
+from aila.platform.agents.turn_helpers import auto_resolve_live_on_terminal
+from aila.platform.config_base import ModuleConfigReader
 from aila.platform.contracts.reasoning import (
     Hypothesis,
     ReasoningCaseState,
@@ -46,6 +49,7 @@ from aila.platform.contracts.reasoning import (
     ReasoningOperatorSteering,
     ReasoningPromptContext,
     RejectedHypothesis,
+    ResolvedHypothesis,
 )
 from aila.platform.exceptions import AILAError
 from aila.platform.llm.correlation import (
@@ -63,6 +67,7 @@ from aila.storage.registry import ConfigRegistry
 __all__ = ["HonestInvestigator"]
 
 _log = logging.getLogger(__name__)
+_cfg = ModuleConfigReader("forensics")
 
 
 async def _read_float_config(key: str) -> float:
@@ -232,22 +237,142 @@ async def seed_prompt_versions() -> int:
 
 
 # ---------------------------------------------------------------------------
-# Safety: pattern blocklist for LLM-generated scripts.
+# Safety: AST-level guard for LLM-generated scripts.
+#
+# Substring matching (the earlier approach) is trivially bypassable via
+# aliasing (``im = __import__``), string concatenation
+# (``__import__('so'+'cket')``), ``importlib.import_module('socket')``, or
+# unicode-escaped identifiers. We parse the script and walk it structurally
+# so every one of those bypasses fails. The set of banned capabilities is
+# unchanged: network egress modules, dynamic code execution, FFI escape,
+# and specific destructive filesystem calls.
 # ---------------------------------------------------------------------------
 
-_SCRIPT_BLOCKLIST: tuple[str, ...] = (
-    "import socket", "from socket",
-    "import http", "from http",
-    "import urllib", "from urllib",
-    "import requests", "from requests",
-    "import ftplib", "from ftplib",
-    "import smtplib", "from smtplib",
-    "import paramiko", "from paramiko",
-    "import fabric", "from fabric",
-    "exec(", "eval(", "__import__(",
-    "import ctypes", "from ctypes",
-    "shutil.rmtree(", "os.rmdir(",
-)
+# Top-level module names (matched on the first dotted segment) whose import
+# is denied. ``importlib`` is included so ``importlib.import_module('socket')``
+# fails at the import line rather than requiring per-call string analysis.
+_BANNED_MODULE_ROOTS: frozenset[str] = frozenset({
+    "socket", "http", "urllib", "requests",
+    "ftplib", "smtplib", "paramiko", "fabric",
+    "ctypes", "importlib",
+})
+
+# Bare-name callables that give dynamic code execution or import.
+# Also flagged as Name references (Load context) so ``im = __import__`` +
+# later ``im('os')`` still trips the guard.
+_BANNED_CALL_NAMES: frozenset[str] = frozenset({
+    "exec", "eval", "compile", "__import__",
+})
+
+# Attribute names whose access is a classic sandbox-escape primitive
+# (walking ``()__class__.__mro__[1].__subclasses__()`` and friends).
+_BANNED_DUNDER_ATTRS: frozenset[str] = frozenset({
+    "__class__", "__subclasses__", "__mro__", "__bases__", "__base__",
+    "__globals__", "__builtins__", "__dict__", "__code__",
+    "__init_subclass__", "__import__", "__loader__", "__spec__",
+})
+
+# Attribute-call names that destroy analyzer filesystem state. ``os`` and
+# ``shutil`` themselves are allowed (needed for benign path/listdir work);
+# the specific destructive verbs are blocked.
+_BANNED_ATTR_CALLS: frozenset[str] = frozenset({
+    "rmtree", "rmdir",
+})
+
+
+def _module_is_banned(dotted: str) -> bool:
+    """Return True if the dotted module path's root segment is banned."""
+    if not dotted:
+        return False
+    return dotted.split(".", 1)[0] in _BANNED_MODULE_ROOTS
+
+
+class _ScriptGuard(ast.NodeVisitor):
+    """AST walker that records the first banned construct it observes.
+
+    Once ``reason`` is set the walker short-circuits: no further nodes are
+    inspected, so the caller gets a stable "first offending construct"
+    message rather than an accumulated list.
+    """
+
+    def __init__(self) -> None:
+        self.reason: str | None = None
+
+    def _reject(self, msg: str) -> None:
+        if self.reason is None:
+            self.reason = msg
+
+    def generic_visit(self, node: ast.AST) -> None:
+        if self.reason is not None:
+            return
+        super().generic_visit(node)
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            if _module_is_banned(alias.name):
+                self._reject(f"banned import: {alias.name}")
+                return
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        # Relative imports (``from . import x``) have node.module == None and
+        # can never resolve to a banned top-level. Absolute forms are checked.
+        if node.module and _module_is_banned(node.module):
+            self._reject(f"banned import: from {node.module}")
+            return
+        self.generic_visit(node)
+
+    def visit_Name(self, node: ast.Name) -> None:
+        # Catches aliasing bypasses: ``im = __import__`` on its own is a Load
+        # reference to ``__import__`` and gets rejected here.
+        if isinstance(node.ctx, ast.Load) and node.id in _BANNED_CALL_NAMES:
+            self._reject(f"banned reference: {node.id}")
+            return
+        self.generic_visit(node)
+
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        if node.attr in _BANNED_DUNDER_ATTRS:
+            self._reject(f"banned attribute access: .{node.attr}")
+            return
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr in _BANNED_ATTR_CALLS:
+            self._reject(f"banned call: .{func.attr}(...)")
+            return
+        # getattr(obj, "__dunder__"[, default]) -- classic escape primitive.
+        if (
+            isinstance(func, ast.Name)
+            and func.id == "getattr"
+            and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+            and node.args[1].value.startswith("_")
+        ):
+            self._reject(f"banned call: getattr(..., {node.args[1].value!r})")
+            return
+        self.generic_visit(node)
+
+
+def _script_rejection(script: str) -> str | None:
+    """Reject scripts that use banned imports, calls, or escape attributes.
+
+    Uses AST-level analysis so trivial obfuscations that defeat a substring
+    check -- ``__import__('o'+'s')``, ``importlib.import_module('socket')``,
+    ``im = __import__; im('socket')``, ``getattr(x, '__class__')`` -- all
+    still fail. Fails closed: unparseable scripts are rejected here so the
+    operator sees a security reason rather than a downstream SyntaxError.
+    """
+    try:
+        tree = ast.parse(script)
+    except SyntaxError as exc:
+        return f"blocked: script does not parse (line {exc.lineno}): {exc.msg}"
+    guard = _ScriptGuard()
+    guard.visit(tree)
+    if guard.reason is not None:
+        return f"blocked: {guard.reason}"
+    return None
 
 # Shell-command blocklist for the ``tool_run`` path. Dynamic analysis is
 # strictly prohibited: we never detonate the sample, never fetch remote
@@ -332,17 +457,6 @@ def _sanitize_for_postgres_text(s: str | None) -> str | None:
     return s.replace("\x00", "\ufffd")
 
 
-_SCRIPT_BLOCKLIST_LC: tuple[str, ...] = tuple(n.lower() for n in _SCRIPT_BLOCKLIST)
-
-
-def _script_rejection(script: str) -> str | None:
-    low = script.lower()
-    for needle, original in zip(_SCRIPT_BLOCKLIST_LC, _SCRIPT_BLOCKLIST, strict=True):
-        if needle in low:
-            return f"blocked: script contains disallowed pattern '{original}'"
-    return None
-
-
 class HonestInvestigator:
     """Bounded, closed-loop forensic investigator.
 
@@ -382,7 +496,25 @@ class HonestInvestigator:
         self.contract: dict[str, Any] = {}
         self.hypotheses: list[dict[str, Any]] = []
         self.rejected: list[dict[str, Any]] = []
+        # Hypotheses auto-bucketed at terminal submit when the agent
+        # neither explicitly rejected nor folded them into the answer
+        # (issue #175: parity with vr/malware via
+        # ``platform.agents.turn_helpers.auto_resolve_live_on_terminal``).
+        # Stays empty until the terminal turn; the frontend renders
+        # this list with a neutral badge so operators know to consult
+        # the canonical outcome for the true classification.
+        self.resolved: list[dict[str, Any]] = []
         self.observables: dict[str, Any] = {}
+        # Consecutive rejections by the unresolved-hypothesis submit
+        # gate on THIS investigation (issue #175). Counted per run,
+        # not persisted -- a re-enqueue starts fresh (matches the
+        # per-branch counter behaviour in
+        # ``HonestVulnResearcher._maybe_reject_submit_with_unresolved_hypotheses``).
+        self._unresolved_hyp_gate_rejects: int = 0
+        # Live cap for the gate above. Loaded lazily on first turn
+        # via ConfigRegistry so an operator can widen or disable
+        # (value=0) without a redeploy.
+        self._unresolved_hyp_reject_cap: int | None = None
         # One-shot prompt block describing the parent attempt's outcome,
         # rendered into turn 1's history slot. Cleared after consumption.
         self._parent_summary: str | None = None
@@ -722,6 +854,8 @@ class HonestInvestigator:
             "observables": self.observables,
             "hypotheses": self.hypotheses,
             "rejected": self.rejected,
+            # Auto-resolved-at-terminal hypotheses (issue #175 parity).
+            "resolved": self.resolved,
         }
 
     async def _set_status(self, status_value: str) -> None:
@@ -873,7 +1007,15 @@ class HonestInvestigator:
                 run_id=self.investigation_id,
             )
         elapsed = time.monotonic() - t0
-        case_state = self.reasoning_engine.absorb(case_state, decision)
+        # Pass ``turn_number`` so absorb stamps ``opened_at_turn`` on
+        # newly-live hypotheses and can raise ``_directive.stale_hypotheses``
+        # once a hypothesis crosses ``platform.reasoning_hyp_stale_turns``
+        # (issue #175: aging discipline already lives in the shared engine
+        # -- forensics was simply calling absorb without a turn number,
+        # so the directive never fired).
+        case_state = self.reasoning_engine.absorb(
+            case_state, decision, turn_number=turn,
+        )
         self._apply_case_state(case_state)
 
         action = decision.action
@@ -912,6 +1054,7 @@ class HonestInvestigator:
             "contract": dict(self.contract),
             "hypotheses": list(self.hypotheses),
             "rejected": list(self.rejected),
+            "resolved": list(self.resolved),
             "observables": dict(self.observables),
             "evidence_graph": evidence_graph.model_dump(mode="json"),
             "answer": None,
@@ -1025,10 +1168,70 @@ class HonestInvestigator:
                 result["action"] = "reasoning"
                 result["reasoning"] = f"[answer_gate_rejected] {gate_error} | original_reasoning: {reasoning}"
                 return result
+
+            # Issue #175 closure-pressure gate. A submit whose live
+            # hypotheses aren't either rejected this turn or folded
+            # into the answer leaves the operator unable to tell which
+            # claims the finding actually settles. Mirrors
+            # ``HonestVulnResearcher._maybe_reject_submit_with_unresolved_hypotheses``
+            # in shape: reject up to ``unresolved_hyp_reject_cap`` times
+            # with a steering directive; on the (cap+1)th attempt force
+            # through with an advisory marker on the provenance.
+            gate_reject = await self._maybe_reject_submit_with_unresolved_hypotheses(
+                decision=decision,
+                case_state=case_state,
+                answer=ans,
+                turn=turn,
+            )
+            if gate_reject is not None:
+                result["action"] = "reasoning"
+                result["reasoning"] = (
+                    f"[unresolved_hyp_gate_rejected] {gate_reject} | "
+                    f"original_reasoning: {reasoning}"
+                )
+                # Persist the directive the gate stamped onto observables
+                # so the next turn's prompt renders it.
+                self._apply_case_state(case_state)
+                result["observables"] = dict(self.observables)
+                return result
+
+            # Accepted terminal submit: auto-resolve every still-live
+            # hypothesis before the case_state is persisted so the
+            # frontend / write-up sees an accurate closure picture instead
+            # of live claims sitting under a completed investigation.
+            # Uses the platform helper vr and malware share; the resolved
+            # note points readers at the terminal outcome for the actual
+            # confirmed / rejected classification.
+            outcome_kind_for_resolve = (
+                str(self.contract.get("answer_type") or "answer")
+            )
+            auto_resolve_live_on_terminal(
+                case_state,
+                turn=turn,
+                outcome_kind=outcome_kind_for_resolve,
+            )
+            self._apply_case_state(case_state)
+
+            # If the gate was rejected earlier on this run and this
+            # submit is a force-through, stamp the advisory on the
+            # provenance so downstream audit rows retain the trail.
+            if self._unresolved_hyp_gate_rejects > int(
+                self._unresolved_hyp_reject_cap or 0,
+            ) > 0:
+                prov = dict(prov)
+                prov["unresolved_hypotheses_at_submit_advisory"] = {
+                    "gate_rejects_before_force_through": (
+                        self._unresolved_hyp_gate_rejects - 1
+                    ),
+                    "reject_cap": int(self._unresolved_hyp_reject_cap or 0),
+                }
+
             result["answer"] = str(ans)
             result["confidence"] = (decision.confidence or "medium").strip().lower() or "medium"
             result["submitted"] = True
             result["provenance"] = prov
+            result["resolved"] = list(self.resolved)
+            result["hypotheses"] = list(self.hypotheses)
             return result
 
         # default: reasoning-only turn, nothing else to do.
@@ -1046,10 +1249,12 @@ class HonestInvestigator:
         )
         hypotheses = [Hypothesis.model_validate(item) for item in self.hypotheses]
         rejected = [RejectedHypothesis.model_validate(item) for item in self.rejected]
+        resolved = [ResolvedHypothesis.model_validate(item) for item in self.resolved]
         return ReasoningCaseState(
             contract=contract,
             hypotheses=hypotheses,
             rejected=rejected,
+            resolved=resolved,
             observables=dict(self.observables),
         )
 
@@ -1063,7 +1268,139 @@ class HonestInvestigator:
         }
         self.hypotheses = [item.model_dump(mode="json") for item in case_state.hypotheses]
         self.rejected = [item.model_dump(mode="json") for item in case_state.rejected]
+        self.resolved = [item.model_dump(mode="json") for item in case_state.resolved]
         self.observables = dict(case_state.observables)
+
+    async def _maybe_reject_submit_with_unresolved_hypotheses(
+        self,
+        *,
+        decision: Any,
+        case_state: ReasoningCaseState,
+        answer: object,
+        turn: int,
+    ) -> str | None:
+        """Closure-pressure submit gate for the free-flow forensics loop.
+
+        Parity with :meth:`aila.modules.vr.agents.vuln_researcher.HonestVulnResearcher._maybe_reject_submit_with_unresolved_hypotheses`
+        (issue #175). A hypothesis is considered "resolved" this turn when
+        it appears in ``decision.rejected[]`` OR when its id is cited
+        verbatim in the answer text. Anything in
+        ``case_state.hypotheses`` still live after those two escape hatches
+        is an unresolved claim the operator can't tell the finding
+        addresses -- the gate rejects, mutates ``case_state.observables``
+        to inject a steering directive the next turn's prompt renders,
+        and returns a short rejection reason so the caller can attach it
+        to the persisted step. Returns ``None`` when the submit passes.
+
+        After ``self._unresolved_hyp_reject_cap`` rejections on the same
+        run the submit is force-through; the caller stamps
+        ``unresolved_hypotheses_at_submit_advisory`` on the provenance
+        so operators can audit. A cap of 0 disables the gate entirely
+        (returns ``None`` immediately).
+
+        Async because ``ConfigRegistry.get`` is async; the actual check
+        is pure.
+        """
+        if self._unresolved_hyp_reject_cap is None:
+            self._unresolved_hyp_reject_cap = await _cfg.get_int(
+                "unresolved_hyp_reject_cap",
+            )
+        cap = int(self._unresolved_hyp_reject_cap or 0)
+        if cap <= 0:
+            return None
+
+        live_ids = [h.id for h in case_state.hypotheses if h.id]
+        if not live_ids:
+            # Nothing live -- clear any stale directive.
+            case_state.observables.pop(
+                "_directive.unresolved_hyp_submit_rejected", None,
+            )
+            return None
+
+        answer_text = str(answer or "")
+        newly_rejected_ids = {r.id for r in decision.rejected if r.id}
+        unresolved = [
+            hid for hid in live_ids
+            if hid not in newly_rejected_ids and hid not in answer_text
+        ]
+
+        if not unresolved:
+            case_state.observables.pop(
+                "_directive.unresolved_hyp_submit_rejected", None,
+            )
+            return None
+
+        self._unresolved_hyp_gate_rejects += 1
+        rejects_so_far = self._unresolved_hyp_gate_rejects
+
+        # Compact rendering of the offending ids for the directive.
+        hyp_by_id = {h.id: h for h in case_state.hypotheses if h.id}
+        listing_lines: list[str] = []
+        for hid in unresolved[:10]:
+            h = hyp_by_id.get(hid)
+            claim = (h.claim if h else "")[:140]
+            listing_lines.append(f"  - {hid}: {claim}")
+        if len(unresolved) > 10:
+            listing_lines.append(f"  ... and {len(unresolved) - 10} more")
+        listing_block = "\n".join(listing_lines)
+
+        if rejects_so_far > cap:
+            # Force-through path -- log and let the caller stamp the
+            # advisory on the provenance. Clear the directive so the
+            # next turn's prompt doesn't scold about a closure that
+            # just landed.
+            _log.warning(
+                "forensics unresolved_hyp submit FORCED THROUGH after %d "
+                "rejections inv=%s turn=%d -- %d unresolved: %s",
+                rejects_so_far - 1, self.investigation_id, turn,
+                len(unresolved), ",".join(unresolved[:20]),
+            )
+            case_state.observables.pop(
+                "_directive.unresolved_hyp_submit_rejected", None,
+            )
+            return None
+
+        _log.info(
+            "forensics unresolved_hyp submit REJECTED inv=%s turn=%d "
+            "rejects=%d/%d -- %d live hypotheses unresolved",
+            self.investigation_id, turn,
+            rejects_so_far, cap, len(unresolved),
+        )
+        case_state.observables["_directive.unresolved_hyp_submit_rejected"] = (
+            "*** SUBMIT REJECTED - UNRESOLVED LIVE HYPOTHESES ***\n"
+            f"Rejection {rejects_so_far}/{cap} on this investigation.\n"
+            "\n"
+            f"You attempted action: submit while {len(unresolved)} live "
+            "hypotheses are unresolved. Submitting now leaves the operator "
+            "unable to tell which hypotheses your answer actually settles.\n"
+            "\n"
+            "UNRESOLVED LIVE HYPOTHESES:\n"
+            f"{listing_block}\n"
+            "\n"
+            "REQUIRED for your next decision: for EACH unresolved id above,\n"
+            "EITHER\n"
+            "  (a) add it to `rejected[]` with a `reason` that cites the\n"
+            "      concrete evidence (artefact id, file:offset, tool-run\n"
+            "      stdout you produced) that disproves the claim.\n"
+            "  (b) name the id verbatim in your `answer` text so the reader\n"
+            "      can see the finding confirms it. Include a supporting\n"
+            "      artefact under `provenance.corroboration`.\n"
+            "\n"
+            "Then re-emit action=submit with the cleaned state. ALL live\n"
+            "hypotheses must be reachable from (a) OR (b) on the same turn\n"
+            "as the submit.\n"
+            "\n"
+            f"After {cap} rejections on this investigation the submit is\n"
+            "FORCED THROUGH with an\n"
+            "``unresolved_hypotheses_at_submit_advisory`` marker on the\n"
+            "provenance so the operator can audit. Don't burn through the\n"
+            "safety budget when the fix is mechanical."
+        )
+        return (
+            f"{len(unresolved)} live hypothesis(es) unresolved at submit: "
+            f"{','.join(unresolved[:5])}"
+            + ("..." if len(unresolved) > 5 else "")
+        )
 
     def _render_previous(self, prev: list[dict[str, Any]]) -> str:
         if not prev:
@@ -1128,6 +1465,10 @@ class HonestInvestigator:
             "contract": turn.get("contract", {}),
             "hypotheses": turn.get("hypotheses", []),
             "rejected": turn.get("rejected", []),
+            # Auto-bucketed hypotheses at terminal submit (issue #175).
+            # Empty on non-terminal turns; consumers must not treat
+            # ``resolved`` as an alternative to ``rejected``.
+            "resolved": turn.get("resolved", []),
             "observables": turn.get("observables", {}),
             "evidence_graph": turn.get("evidence_graph", {}),
             "provenance": turn.get("provenance", {}),

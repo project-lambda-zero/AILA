@@ -10,8 +10,10 @@ Per D-31: slowapi rate limiting.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from sqlalchemy import func
 from sqlmodel import or_, select
 
 from aila.api.auth import AuthContext, require_user_or_api_key
@@ -71,23 +73,34 @@ async def list_saved_filters(
         # (auth.team_id is None) skip the join and see every shared filter.
         own = SavedFilterRecord.user_id == auth.user_id
         if auth.team_id is None:
-            shared = SavedFilterRecord.shared_with_team == True
-            stmt = select(SavedFilterRecord).where(or_(own, shared))
+            shared = SavedFilterRecord.shared_with_team.is_(True)
+            visibility = or_(own, shared)
         else:
             team_member_ids = select(UserRecord.id).where(
                 UserRecord.team_id == auth.team_id
             )
-            shared = (SavedFilterRecord.shared_with_team == True) & (
+            shared = SavedFilterRecord.shared_with_team.is_(True) & (
                 SavedFilterRecord.user_id.in_(team_member_ids)  # type: ignore[attr-defined]
             )
-            stmt = select(SavedFilterRecord).where(or_(own, shared))
-        if entity_type:
-            stmt = stmt.where(SavedFilterRecord.entity_type == entity_type)
-        stmt = stmt.order_by(SavedFilterRecord.updated_at.desc())  # type: ignore[attr-defined]
-        all_rows = (await session.exec(stmt)).all()
+            visibility = or_(own, shared)
 
-    total = len(all_rows)
-    page_rows = all_rows[offset : offset + limit]
+        filters: list[Any] = [visibility]
+        if entity_type:
+            filters.append(SavedFilterRecord.entity_type == entity_type)
+
+        # #204: SQL count + LIMIT/OFFSET instead of loading every visible row.
+        count_stmt = select(func.count(SavedFilterRecord.id)).where(*filters)
+        total = int((await session.exec(count_stmt)).one())
+
+        stmt = (
+            select(SavedFilterRecord)
+            .where(*filters)
+            .order_by(SavedFilterRecord.updated_at.desc())  # type: ignore[attr-defined]
+            .offset(offset)
+            .limit(limit)
+        )
+        page_rows = (await session.exec(stmt)).all()
+
     meta = PaginatedMeta(total=total, offset=offset, limit=limit).model_dump()
     return DataEnvelope(data=[_record_to_response(r) for r in page_rows], meta=meta)
 

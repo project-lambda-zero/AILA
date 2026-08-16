@@ -38,6 +38,15 @@ class VREventType(StrEnum):
     CAMPAIGN_CRASH_FOUND = "campaign.crash_found"
     CAMPAIGN_PROGRESS = "campaign.progress"
 
+    # Fuzz -> source-investigation feedback loop (#173/#148 feedback
+    # half). FUZZ_CRASH_CONFIRMED fires only for triage_verdict ==
+    # SECURITY_RELEVANT AND campaign.source_investigation_id set;
+    # FUZZ_COVERAGE_DELTA fires when patch_campaign observes a
+    # coverage_pct jump crossing the operator-tunable threshold
+    # (VRConfigSchema.fuzz_coverage_emit_delta_pct).
+    FUZZ_CRASH_CONFIRMED = "fuzz.crash_confirmed"
+    FUZZ_COVERAGE_DELTA = "fuzz.coverage_delta"
+
     # Obligation / disclosure events
     OBLIGATION_CHANGED = "obligation.changed"
     DISCLOSURE_STATE_CHANGED = "disclosure.state_changed"

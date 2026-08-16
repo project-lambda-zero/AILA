@@ -143,7 +143,7 @@ def session_scope(settings=None):
         loop.run_until_complete(ctx.__aexit__(None, None, None))
         loop.close()
 from .storage.db_models import AuditEventRecord, ManagedSystemRecord, ReportArtifactRecord
-from .storage.registry import ConfigRegistry
+from .storage.registry import ConfigRegistry, SchemaRegistry
 from .storage.report_repository import ReportRepository
 
 app = typer.Typer(add_completion=False)
@@ -205,12 +205,20 @@ def _build_config_registry() -> ConfigRegistry:
     return _run_async(_init_registry())
 
 
-def _build_tool_registry() -> ToolRegistry:
-    """Create a ToolRegistry with all platform and module tools.
-    Lightweight bootstrap: init_db + register tools -- no AILAPlatform, no LLM key required."""
-    app_settings = get_settings()
+async def _cli_bootstrap(
+    app_settings,
+) -> tuple[ToolRegistry, ConfigRegistry, SchemaRegistry]:
+    """Register platform + module tools, config schemas, and DB tables.
+
+    Single async bootstrap that both:
+      * awaits each module's ``async register_tools(...)`` (issue #169)
+      * populates a :class:`SchemaRegistry` and calls ``init_db`` with it so
+        module-owned tables exist on a fresh DB (issue #191).
+
+    Returns the fully populated registries; callers that only need the DB
+    to be initialised may discard them.
+    """
     platform_settings = build_platform_settings(app_settings)
-    _run_async(init_db(platform_settings))
     tool_registry = ToolRegistry()
     for key, tool in (
         ("registry.systems", SystemRegistryTool(platform_settings)),
@@ -227,8 +235,31 @@ def _build_tool_registry() -> ToolRegistry:
         ("knowledge.retrieve", KnowledgeRetrieveTool(namespace="platform", settings=platform_settings)),
     ):
         tool_registry.register(key, tool)
+    config_registry = ConfigRegistry()
+    await config_registry.register("platform", PlatformConfigSchema)
+    schema_registry = SchemaRegistry()
     for module in load_builtin_modules():
-        module.register_tools(tool_registry, app_settings)
+        await module.register_tools(
+            tool_registry, app_settings, config_registry, schema_registry
+        )
+    await init_db(app_settings, schema_registry)
+    return tool_registry, config_registry, schema_registry
+
+
+def _cli_init_full_db() -> None:
+    """Ensure the DB schema (platform + every module) exists.
+
+    Use in CLI commands that touch module-owned tables (cache clear,
+    create-api-key, report queries, etc.) so a fresh install does not
+    crash with ``relation "..." does not exist``.
+    """
+    _run_async(_cli_bootstrap(get_settings()))
+
+
+def _build_tool_registry() -> ToolRegistry:
+    """Create a ToolRegistry with all platform and module tools.
+    Lightweight bootstrap: init_db + register tools -- no AILAPlatform, no LLM key required."""
+    tool_registry, _, _ = _run_async(_cli_bootstrap(get_settings()))
     return tool_registry
 
 
@@ -403,7 +434,8 @@ def report_pdf(
     from aila.modules.vulnerability.reporting.pdf import PDFReportRenderer
     repository = ReportRepository()
     app_settings = get_settings()
-    _run_async(init_db(build_platform_settings(app_settings)))
+    # #191: report queries touch LatestFindingRecord (module table). Full init.
+    _cli_init_full_db()
     try:
         with session_scope(app_settings) as session:
             rows_result = repository.latest_report_rows(
@@ -439,7 +471,8 @@ def report_findings(
     from aila.modules.vulnerability.reporting.compliance import tag_finding
     repository = ReportRepository()
     app_settings = get_settings()
-    _run_async(init_db(build_platform_settings(app_settings)))
+    # #191: latest_report_rows queries LatestFindingRecord (module table). Full init.
+    _cli_init_full_db()
     try:
         with session_scope(app_settings) as session:
             rows_result = repository.latest_report_rows(
@@ -496,7 +529,8 @@ def health() -> None:
     failures: list[str] = []
     app_settings = get_settings()
     platform_settings = build_platform_settings(app_settings)
-    _run_async(init_db(platform_settings))
+    # #108: schema-registry bootstrap only; no create_all fallback.
+    _cli_init_full_db()
 
     # 1. DB connectivity
     try:
@@ -597,9 +631,8 @@ def audit_log(
         stmt = stmt.where(AuditEventRecord.status == status)
     if user_id:
         stmt = stmt.where(AuditEventRecord.user_id == user_id)
-    app_settings = get_settings()
-    platform_settings = build_platform_settings(app_settings)
-    _run_async(init_db(platform_settings))
+    # #108: schema-registry bootstrap only; no create_all fallback.
+    _cli_init_full_db()
     try:
         with session_scope() as _s:
             records = list(_s.exec(stmt))
@@ -628,9 +661,10 @@ def cache_clear(
     """Selectively clear cache entries."""
     if not any([cve, target, all_caches, retention]):
         fail(ValueError("Provide --cve, --target, --all, or --retention."))
-    app_settings = get_settings()
-    platform_settings = build_platform_settings(app_settings)
-    _run_async(init_db(platform_settings))
+    # #191: cache clear touches module-owned tables (CacheRecord,
+    # InventoryArtifactRecord). Bootstrap the full schema so a CLI-first
+    # deployment does not crash with ``relation "cache_records" does not exist``.
+    _cli_init_full_db()
     deleted: dict[str, int] = {}
     try:
         with session_scope() as _s:
@@ -1082,7 +1116,8 @@ def analyze(
     if dry_run:
         app_settings = get_settings()
         platform_settings = build_platform_settings(app_settings)
-        _run_async(init_db(platform_settings))
+        # #191: dry_run may touch module-owned inventory tables. Full init.
+        _cli_init_full_db()
         results = resolve_dry_run_targets(platform_settings, list(target or []))
         failures = [r for r in results if r["status"] == "fail"]
         typer.echo(f"Dry-run: {len(results)} target(s) checked.")
@@ -1171,16 +1206,24 @@ def prewarm_intel(
     cve_id: list[str] = typer.Argument(...),
     refresh_intel: bool = typer.Option(False, "--refresh-intel", help="Bypass cached CVE intelligence and fetch fresh data while prewarming."),
 ) -> None:
-    try:
+    # #170: ``AILAPlatform.runtime`` raises RuntimeError until
+    # ``_ensure_initialized()`` has run, and ``runtime.intel.prewarm`` is
+    # async. Wrap both in a single async helper so the CLI actually
+    # initialises the platform and awaits the coroutine instead of
+    # crashing with a raw RuntimeError / returning a coroutine object.
+    async def _run():
         platform = AILAPlatform(progress_callback=emit_progress)
+        await platform._ensure_initialized()
         runtime = platform.runtime.require_module(VulnerabilityModule.module_id)
         if not isinstance(runtime, VulnerabilityRuntime):
             raise TypeError("Vulnerability runtime is not active.")
-        result = runtime.intel.prewarm(
+        return await runtime.intel.prewarm(
             cve_ids=list(cve_id),
             force_refresh=refresh_intel,
         )
-    except (AILAError, TypeError) as exc:  # pragma: no cover - typer surface
+    try:
+        result = _run_async(_run())
+    except (AILAError, TypeError, RuntimeError) as exc:  # pragma: no cover - typer surface
         fail(exc)
     output = result.model_dump(mode="json") if hasattr(result, "model_dump") else result
     typer.echo(json.dumps(output, indent=2))
@@ -1195,8 +1238,8 @@ def diff(
     from aila.storage.report_store import ReportArtifactStore
 
     app_settings = get_settings()
-    platform_settings = build_platform_settings(app_settings)
-    _run_async(init_db(platform_settings))
+    # #191: diff reads run bundles that reference module-owned rows. Full init.
+    _cli_init_full_db()
 
     artifact_store = ReportArtifactStore()
 
@@ -1673,6 +1716,10 @@ def create_api_key(
     from aila.api.auth import generate_api_key, hash_api_key
     from aila.platform.contracts import utc_now
     from aila.storage.db_models import ApiKeyRecord
+
+    # #191: init the full schema (platform + every module) so a fresh DB does
+    # not crash with ``relation "api_key_records" does not exist``.
+    _cli_init_full_db()
 
     raw_key = generate_api_key()
     hashed = hash_api_key(raw_key)

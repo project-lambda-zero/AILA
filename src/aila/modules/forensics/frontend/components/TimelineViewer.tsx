@@ -1,75 +1,71 @@
-import { useState } from "react";
+import { type CSSProperties, useMemo, useState } from "react";
 
-import { AilaCard } from "@/components/aila/AilaCard";
-import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { Clock } from "@phosphor-icons/react/dist/csr/Clock";
+
+import { EmptyState } from "@/components/aila/EmptyState";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import {
+  DataGrid,
+  MonoBadge,
+  Segmented,
+  toneColor,
+} from "@/components/aila/mock";
 
 import { useOccurrences, useTimeline } from "../queries";
+import type { Occurrence, TimelineEntry } from "../types";
+import { PanelBoundary } from "./PanelBoundary";
+import { TableSkeleton } from "./skeletons";
+import { TimelineDistribution } from "./TimelineDistribution";
+import { TimelineTrack } from "./TimelineTrack";
 
 type Confidence = "low" | "medium" | "high";
 
-const SOURCE_COLORS: Record<string, string> = {
-  dissect: "bg-blue-500/20 text-blue-400",
-  volatility: "bg-purple-500/20 text-purple-400",
-  tshark: "bg-green-500/20 text-green-400",
-  strings: "bg-orange-500/20 text-orange-400",
-  capa: "bg-red-500/20 text-red-400",
-  yara: "bg-yellow-500/20 text-yellow-400",
-  ghidra: "bg-pink-500/20 text-pink-400",
-  script: "bg-cyan-500/20 text-cyan-400",
-  investigator: "bg-emerald-500/20 text-emerald-400",
-  unknown: "bg-gray-500/20 text-gray-400",
+// Source -> mock tone. Remapped from the old palette classes.
+const SOURCE_TONE: Record<string, string> = {
+  dissect: "info",
+  volatility: "medium",
+  tshark: "ok",
+  strings: "warn",
+  capa: "critical",
+  yara: "warn",
+  ghidra: "signal",
+  script: "ok",
+  investigator: "ok",
+  unknown: "muted",
 };
 
+// Confidence -> mock tone for the CONFIDENCE column badge.
+const CONFIDENCE_TONE: Record<string, string> = {
+  high: "critical",
+  medium: "medium",
+  low: "info",
+  confirmed: "critical",
+  suspected: "medium",
+  unknown: "muted",
+};
+
+/**
+ * Preserved verbatim from the previous implementation: mark rows whose
+ * timestamp was mined from a nested observable key so the analyst knows
+ * which time-field the entry represents (e.g. `obs:lnk_modified` vs
+ * `obs:first_seen`). Canonical `data:*` timestamps carry no badge.
+ */
 function timestampOriginLabel(origin?: string): { text: string; tone: string } | null {
   if (!origin) return null;
   if (origin.startsWith("observable:")) {
-    // Mined from a nested observable key -- surface the key name so the
-    // analyst knows which time-field this entry represents
-    // (e.g. `obs:lnk_modified` vs `obs:first_seen`).
     return {
       text: origin.replace("observable:", "obs:"),
-      tone: "bg-blue-500/20 text-blue-300",
+      tone: "info",
     };
   }
-  // data:timestamp / data:time / data:created -- canonical, no badge
   return null;
 }
 
-function ConfidenceSelector({
-  value,
-  onChange,
-}: {
-  value: Confidence;
-  onChange: (c: Confidence) => void;
-}) {
-  return (
-    <div className="flex items-center text-xs border border-border rounded bg-surface text-foreground overflow-hidden">
-      {(["low", "medium", "high"] as Confidence[]).map((c) => (
-        <button
-          key={c}
-          type="button"
-          onClick={() => onChange(c)}
-          className={
-            "px-2 py-1 transition-colors capitalize " +
-            (value === c
-              ? "bg-blue-600 text-white"
-              : "bg-surface text-foreground hover:bg-surface-secondary")
-          }
-          title={
-            c === "low"
-              ? "any row with a real event-time"
-              : c === "medium"
-                ? "typed agent findings + scored collector rows (default)"
-                : "confirmed agent answers + critical collector rows"
-          }
-        >
-          {c}
-        </button>
-      ))}
-    </div>
-  );
-}
-
+/**
+ * Preserved verbatim (behaviour + limits): recursively flatten a nested
+ * object into a flat key/value list, capped at depth 3 and skipping the
+ * `observables` / `raw_output_sample` / `summary_prompt` payload keys.
+ */
 function flattenScalars(
   obj: unknown,
   prefix = "",
@@ -83,8 +79,6 @@ function flattenScalars(
     return out;
   }
   if (Array.isArray(obj)) {
-    // Summarise arrays -- the timeline row already knows the row count,
-    // so we don't dump array contents into the key table.
     out.push({ key: prefix || "items", value: `[${obj.length} item(s)]` });
     return out;
   }
@@ -102,39 +96,106 @@ function flattenScalars(
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// InspectRow -- key/value dl for the currently expanded timeline / occurrence
+// entry. Rendered as an inline WindowPanel(flush, tone="muted") pane.
+// ---------------------------------------------------------------------------
 function InspectRow({
   payload,
 }: {
   payload: Record<string, unknown> | undefined;
 }) {
   const rows = flattenScalars(payload ?? {}).slice(0, 60);
-  if (rows.length === 0) {
-    return (
-      <div className="px-3 py-2 text-2xs text-text-muted">
-        No structured fields available for this entry.
-      </div>
-    );
-  }
   return (
-    <div className="px-3 py-2 bg-black/20 border-t border-border">
-      <table className="w-full text-2xs">
-        <tbody>
+    <WindowPanel tone="muted" flush status={`inspect ; ${rows.length} field${rows.length === 1 ? "" : "s"}`}>
+      {rows.length === 0 ? (
+        <p
+          className="font-mono"
+          style={{ padding: 10, fontSize: 11, color: "var(--text-muted)" }}
+        >
+          No structured fields available for this entry.
+        </p>
+      ) : (
+        <dl
+          className="font-mono"
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(160px, 220px) 1fr",
+            gap: "2px 12px",
+            padding: "8px 12px",
+            fontSize: 10.5,
+            margin: 0,
+          }}
+        >
           {rows.map((r, i) => (
-            <tr key={i} className="align-top">
-              <td
-                className="pr-3 py-0.5 font-mono text-text-muted whitespace-nowrap truncate"
-                style={{ maxWidth: 220 }}
+            <div key={i} className="contents">
+              <dt
+                style={{
+                  color: "var(--text-muted)",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
               >
                 {r.key}
-              </td>
-              <td className="py-0.5 font-mono text-foreground break-all">
+              </dt>
+              <dd
+                style={{
+                  color: "var(--text-primary)",
+                  margin: 0,
+                  wordBreak: "break-all",
+                }}
+              >
                 {r.value}
-              </td>
-            </tr>
+              </dd>
+            </div>
           ))}
-        </tbody>
-      </table>
-    </div>
+        </dl>
+      )}
+    </WindowPanel>
+  );
+}
+
+const CTRL_INPUT: CSSProperties = {
+  height: 26,
+  padding: "0 10px",
+  fontSize: 11,
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  color: "var(--text-primary)",
+  borderRadius: 3,
+};
+
+const MUTED_BTN_BASE: CSSProperties = {
+  height: 26,
+  padding: "0 10px",
+  fontSize: 10,
+  letterSpacing: "0.08em",
+  color: "var(--text-muted)",
+  background: "transparent",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  cursor: "pointer",
+};
+
+// Cell helper: mono monochrome span with column-relevant defaults.
+function textCell(
+  value: React.ReactNode,
+  color = "var(--text-primary)",
+): React.ReactNode {
+  return (
+    <span
+      style={{
+        fontSize: 10.5,
+        color,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+        display: "block",
+      }}
+    >
+      {value}
+    </span>
   );
 }
 
@@ -151,299 +212,353 @@ export function TimelineViewer({ projectId }: { projectId: string }) {
     minConfidence: confidence,
   });
 
-  if (isLoading || occLoading) return <LoadingSkeleton size="lg" width="full" />;
+  if (isLoading || occLoading) {
+    return (
+      <WindowPanel title="timeline" tone="accent" status="loading">
+        <TableSkeleton rows={8} cells={4} />
+      </WindowPanel>
+    );
+  }
 
   if (isError) {
     return (
-      <AilaCard className="border-border-danger" techBorder glow>
-        <p className="text-sm text-text-danger">Failed to load timeline.</p>
-      </AilaCard>
+      <WindowPanel title="timeline" tone="warn" status="forensics ; timeline unavailable">
+        <p style={{ color: "var(--accent)", fontSize: 12 }}>Failed to load timeline.</p>
+      </WindowPanel>
     );
   }
 
   const safeEntries = entries ?? [];
   const safeOcc = occurrences ?? [];
-  const sources = [...new Set([
-    ...safeEntries.map((e) => e.source),
-    ...safeOcc.map((e) => e.source),
-  ])];
 
-  const matchesQuery = (text: string) => {
-    if (!filterText) return true;
-    const q = filterText.toLowerCase();
-    return text.toLowerCase().includes(q);
-  };
+  const sources = useMemo(() => {
+    const s = new Set<string>();
+    for (const e of safeEntries) s.add(e.source);
+    for (const o of safeOcc) s.add(o.source);
+    return Array.from(s).sort();
+  }, [safeEntries, safeOcc]);
 
-  const filteredEntries = safeEntries.filter((e) => {
-    if (sourceFilter && e.source !== sourceFilter) return false;
-    return matchesQuery(
-      `${e.description} ${e.event_type} ${e.timestamp}`,
+  const q = filterText.trim().toLowerCase();
+  const filteredEntries = useMemo(
+    () =>
+      safeEntries.filter((e) => {
+        if (sourceFilter && e.source !== sourceFilter) return false;
+        if (!q) return true;
+        return `${e.description} ${e.event_type} ${e.timestamp}`.toLowerCase().includes(q);
+      }),
+    [safeEntries, sourceFilter, q],
+  );
+  const filteredOcc = useMemo(
+    () =>
+      safeOcc.filter((o) => {
+        if (sourceFilter && o.source !== sourceFilter) return false;
+        if (!q) return true;
+        return `${o.description} ${o.event_type}`.toLowerCase().includes(q);
+      }),
+    [safeOcc, sourceFilter, q],
+  );
+
+  if (safeEntries.length === 0 && safeOcc.length === 0) {
+    return (
+      <WindowPanel
+        title="timeline"
+        tone="accent"
+        status={`0 events ; ${confidence} confidence`}
+      >
+        <EmptyState
+          icon={<Clock className="h-10 w-10" />}
+          title={`No timeline entries at ${confidence} confidence.`}
+          description="Lower the confidence bar, run Full Analysis on the dashboard, or start an investigation -- collector + agent findings both feed the timeline."
+        />
+      </WindowPanel>
     );
-  });
-  const filteredOcc = safeOcc.filter((o) => {
-    if (sourceFilter && o.source !== sourceFilter) return false;
-    return matchesQuery(`${o.description} ${o.event_type}`);
-  });
+  }
+
+  const displayedEntries = filteredEntries.slice(0, 1000);
+  const displayedOcc = filteredOcc.slice(0, 1000);
 
   return (
     <div className="space-y-4">
-      {/* Controls */}
-      <div className="flex flex-wrap items-center gap-3">
-        <input
-          aria-label="Search timeline events and occurrences"
-          type="text"
-          placeholder="Search events & occurrences..."
-          value={filterText}
-          onChange={(e) => setFilterText(e.target.value)}
-          className="w-full max-w-xs px-2.5 py-1.5 text-xs rounded border border-border bg-surface text-foreground placeholder:text-text-muted focus:outline-none focus:border-primary"
-        />
-        <ConfidenceSelector value={confidence} onChange={setConfidence} />
-        <div className="flex gap-1 flex-wrap">
-          <button
-            type="button"
-            onClick={() => setSourceFilter(null)}
-            className={`px-2.5 py-1 text-3xs rounded-full font-medium ${
-              !sourceFilter
-                ? "bg-primary text-white"
-                : "bg-surface-secondary text-text-muted hover:text-foreground"
-            }`}
+      <WindowPanel
+        title="timeline"
+        tone="accent"
+        status={`${safeEntries.length} events ; ${confidence} confidence`}
+      >
+        <div className="space-y-4">
+          {/* Controls */}
+          <div
+            className="flex items-center flex-wrap"
+            style={{ gap: 8 }}
           >
-            All sources
-          </button>
-          {sources.map((src) => (
+            <input
+              aria-label="Search timeline events and occurrences"
+              type="text"
+              placeholder="search events & occurrences..."
+              value={filterText}
+              onChange={(e) => setFilterText(e.target.value)}
+              className="font-mono"
+              style={{ ...CTRL_INPUT, flex: 1, minWidth: 220 }}
+            />
+            <Segmented
+              options={[
+                { value: "low", label: "ALL" },
+                { value: "medium", label: "M+" },
+                { value: "high", label: "H ONLY" },
+              ]}
+              value={confidence}
+              onChange={setConfidence}
+            />
             <button
-              key={src}
               type="button"
-              onClick={() => setSourceFilter(sourceFilter === src ? null : src)}
-              className={`px-2.5 py-1 text-3xs rounded-full font-medium ${
-                sourceFilter === src
-                  ? "bg-primary text-white"
-                  : SOURCE_COLORS[src] || SOURCE_COLORS.unknown
-              }`}
+              onClick={() => setSourceFilter(null)}
+              className="font-mono uppercase"
+              style={{
+                ...MUTED_BTN_BASE,
+                color: !sourceFilter ? "var(--text-primary)" : "var(--text-muted)",
+                borderColor: !sourceFilter ? "var(--accent)" : "var(--border-soft)",
+              }}
             >
-              {src}
+              all sources
             </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Section 1 -- Timeline (event-time correlation) */}
-      <div className="space-y-1">
-        <div className="flex items-baseline justify-between">
-          <h3 className="text-sm font-semibold text-foreground">
-            Timeline
-            <span className="ml-2 text-xs font-normal text-text-muted">
-              when it happened -- {filteredEntries.length} event
-              {filteredEntries.length === 1 ? "" : "s"}
-            </span>
-          </h3>
-        </div>
-        {filteredEntries.length === 0 ? (
-          <AilaCard  techBorder glow>
-            <p className="text-sm text-text-muted text-center py-4">
-              No event-time entries at <code>{confidence}</code> confidence.
-              Try lowering the bar or check the Occurrences table below.
-            </p>
-          </AilaCard>
-        ) : (
-          <div className="border border-border rounded-lg overflow-hidden bg-surface text-foreground">
-            <div className="overflow-y-auto" style={{ maxHeight: 500 }}>
-              <table className="w-full text-xs">
-                <thead className="bg-surface-secondary sticky top-0 z-10">
-                  <tr>
-                    <th className="text-left px-3 py-2 text-text-muted font-medium w-44">Timestamp</th>
-                    <th className="text-left px-3 py-2 text-text-muted font-medium w-32">Source</th>
-                    <th className="text-left px-3 py-2 text-text-muted font-medium w-28">Type</th>
-                    <th className="text-left px-3 py-2 text-text-muted font-medium">Description</th>
-                  </tr>
-                </thead>
-                <tbody className="scroll-virtual-row">
-                  {filteredEntries.slice(0, 1000).map((entry, i) => {
-                    const colorClass =
-                      SOURCE_COLORS[entry.source] || SOURCE_COLORS.unknown;
-                    const originBadge = timestampOriginLabel(entry.timestamp_origin);
-                    const rowKey = `t-${i}`;
-                    const isOpen = inspectIdx === rowKey;
-                    return (
-                      <>
-                        <tr key={rowKey} className="border-t border-border hover:bg-surface-secondary/30">
-                          <td className="px-3 py-1.5 font-mono text-text-muted whitespace-nowrap align-top">
-                            <div className="flex items-center gap-1.5">
-                              <span>{entry.timestamp}</span>
-                              {originBadge && (
-                                <span
-                                  className={`px-1 py-0 rounded text-4xs font-medium ${originBadge.tone}`}
-                                  title={`timestamp source: ${entry.timestamp_origin}`}
-                                >
-                                  {originBadge.text}
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-3 py-1.5 align-top">
-                            <div className="flex items-center gap-1">
-                              <span
-                                className={`px-1.5 py-0.5 rounded text-3xs font-medium ${colorClass}`}
-                              >
-                                {entry.source}
-                              </span>
-                              {entry.source_investigation_id && (
-                                <span
-                                  className="px-1 py-0 rounded text-4xs font-medium bg-emerald-500/20 text-emerald-300"
-                                  title={`from investigation ${entry.source_investigation_id.slice(0, 8)}`}
-                                >
-                                  I
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-3 py-1.5 font-mono text-foreground align-top">
-                            {entry.event_type}
-                          </td>
-                          <td
-                            className="px-3 py-1.5 text-foreground align-top"
-                            title={entry.description}
-                          >
-                            <div className="flex items-start gap-2">
-                              <span className="flex-1 truncate max-w-lg">
-                                {entry.description}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setInspectIdx((curr) =>
-                                    curr === rowKey ? null : rowKey,
-                                  )
-                                }
-                                className="shrink-0 text-3xs text-text-muted hover:text-foreground underline decoration-dotted"
-                                aria-expanded={isOpen}
-                              >
-                                {isOpen ? "hide" : "inspect"}
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                        {isOpen && (
-                          <tr key={`${rowKey}-detail`} className="border-t border-border">
-                            <td colSpan={4} className="p-0">
-                              <InspectRow
-                                payload={entry.data as Record<string, unknown> | undefined}
-                              />
-                            </td>
-                          </tr>
-                        )}
-                      </>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            {sources.map((src) => {
+              const active = sourceFilter === src;
+              const color = toneColor(SOURCE_TONE[src] ?? "muted");
+              return (
+                <button
+                  key={src}
+                  type="button"
+                  onClick={() => setSourceFilter(active ? null : src)}
+                  className="font-mono uppercase"
+                  style={{
+                    ...MUTED_BTN_BASE,
+                    color: active ? color : "var(--text-muted)",
+                    borderColor: active ? color : "var(--border-soft)",
+                    background: active
+                      ? `color-mix(in srgb, ${color} 11%, transparent)`
+                      : "transparent",
+                  }}
+                >
+                  {src}
+                </button>
+              );
+            })}
           </div>
-        )}
-      </div>
 
-      {/* Section 2 -- Occurrences (no event-time) */}
-      <div className="space-y-1">
-        <div className="flex items-baseline justify-between">
-          <h3 className="text-sm font-semibold text-foreground">
-            Occurrences
-            <span className="ml-2 text-xs font-normal text-text-muted">
-              what we found, no event-time -- {filteredOcc.length} finding
-              {filteredOcc.length === 1 ? "" : "s"}
-            </span>
-          </h3>
+          {/* Visual timeline (existing components, restyled shell) */}
+          {safeEntries.length > 0 && (
+            <PanelBoundary label="Visual timeline">
+              <div className="space-y-3">
+                <TimelineTrack
+                  entries={safeEntries}
+                  activeSource={sourceFilter}
+                  onSourceClick={(src) =>
+                    setSourceFilter((cur) => (cur === src ? null : src))
+                  }
+                />
+                <TimelineDistribution entries={safeEntries} />
+              </div>
+            </PanelBoundary>
+          )}
+
+          {/* Timeline event grid */}
+          {filteredEntries.length === 0 ? (
+            <WindowPanel tone="muted" flush status={`timeline ; ${confidence} confidence`}>
+              <p
+                className="font-mono"
+                style={{
+                  padding: "16px 12px",
+                  textAlign: "center",
+                  fontSize: 11,
+                  color: "var(--text-muted)",
+                }}
+              >
+                No event-time entries at <code>{confidence}</code> confidence.
+                Try lowering the bar or check the Occurrences table below.
+              </p>
+            </WindowPanel>
+          ) : (
+            <div>
+              <div
+                aria-label="Timeline events"
+                style={{ maxHeight: 500, overflow: "auto" }}
+              >
+                <DataGrid<TimelineEntry>
+                  columns={[
+                    { label: "TS", width: "190px" },
+                    { label: "SOURCE", width: "140px" },
+                    { label: "EVENT", width: "1fr" },
+                    { label: "CONFIDENCE", width: "110px" },
+                  ]}
+                  rows={displayedEntries}
+                  getKey={(_, i) => `t-${i}`}
+                  onRowClick={(_, i) => {
+                    const key = `t-${i}`;
+                    setInspectIdx((curr) => (curr === key ? null : key));
+                  }}
+                  renderCells={(entry) => {
+                    const originBadge = timestampOriginLabel(entry.timestamp_origin);
+                    const sourceTone = SOURCE_TONE[entry.source] ?? "muted";
+                    const rawConf = entry.data && typeof entry.data === "object"
+                      ? (entry.data as Record<string, unknown>).confidence
+                      : undefined;
+                    const confLabel = typeof rawConf === "string" && rawConf.length > 0
+                      ? rawConf
+                      : confidence;
+                    const confTone = CONFIDENCE_TONE[confLabel.toLowerCase()] ?? "muted";
+                    return [
+                      <span
+                        className="flex items-center"
+                        style={{ gap: 6, fontSize: 10.5, color: "var(--text-muted)" }}
+                      >
+                        <span
+                          style={{
+                            fontFamily: "var(--font-mono)",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {entry.timestamp}
+                        </span>
+                        {originBadge && (
+                          <MonoBadge
+                            tone={originBadge.tone}
+                            title={`timestamp source: ${entry.timestamp_origin}`}
+                          >
+                            {originBadge.text}
+                          </MonoBadge>
+                        )}
+                      </span>,
+                      <span className="flex items-center" style={{ gap: 4 }}>
+                        <MonoBadge tone={sourceTone}>{entry.source}</MonoBadge>
+                        {entry.source_investigation_id && (
+                          <MonoBadge
+                            tone="ok"
+                            title={`from investigation ${entry.source_investigation_id.slice(0, 8)}`}
+                          >
+                            I
+                          </MonoBadge>
+                        )}
+                      </span>,
+                      <span
+                        className="flex items-center"
+                        style={{ gap: 8, minWidth: 0 }}
+                        title={entry.description}
+                      >
+                        <MonoBadge tone="muted">{entry.event_type}</MonoBadge>
+                        <span
+                          style={{
+                            flex: 1,
+                            minWidth: 0,
+                            fontSize: 11,
+                            color: "var(--text-primary)",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {entry.description}
+                        </span>
+                      </span>,
+                      <span style={{ display: "inline-flex", justifyContent: "flex-start" }}>
+                        <MonoBadge tone={confTone}>{confLabel}</MonoBadge>
+                      </span>,
+                    ];
+                  }}
+                />
+              </div>
+              {inspectIdx?.startsWith("t-") &&
+                (() => {
+                  const idx = Number(inspectIdx.slice(2));
+                  const entry = displayedEntries[idx];
+                  if (!entry) return null;
+                  return (
+                    <div style={{ marginTop: 8 }}>
+                      <InspectRow
+                        payload={entry.data as Record<string, unknown> | undefined}
+                      />
+                    </div>
+                  );
+                })()}
+            </div>
+          )}
         </div>
+      </WindowPanel>
+
+      {/* Occurrences */}
+      <WindowPanel
+        title="occurrences"
+        tone="accent"
+        status={`${safeOcc.length} findings ; ${confidence} confidence`}
+      >
         {filteredOcc.length === 0 ? (
-          <AilaCard  techBorder glow>
-            <p className="text-sm text-text-muted text-center py-4">
+          <WindowPanel tone="muted" flush status={`occurrences ; ${confidence} confidence`}>
+            <p
+              className="font-mono"
+              style={{
+                padding: "16px 12px",
+                textAlign: "center",
+                fontSize: 11,
+                color: "var(--text-muted)",
+              }}
+            >
               No untimed findings at <code>{confidence}</code> confidence.
             </p>
-          </AilaCard>
+          </WindowPanel>
         ) : (
-          <div className="border border-border rounded-lg overflow-hidden bg-surface text-foreground">
-            <div className="overflow-y-auto" style={{ maxHeight: 500 }}>
-              <table className="w-full text-xs">
-                <thead className="bg-surface-secondary sticky top-0 z-10">
-                  <tr>
-                    <th className="text-left px-3 py-2 text-text-muted font-medium w-32">Source</th>
-                    <th className="text-left px-3 py-2 text-text-muted font-medium w-28">Type</th>
-                    <th className="text-left px-3 py-2 text-text-muted font-medium">Description</th>
-                    <th className="text-left px-3 py-2 text-text-muted font-medium w-44">Recorded</th>
-                  </tr>
-                </thead>
-                <tbody className="scroll-virtual-row">
-                  {filteredOcc.slice(0, 1000).map((occ, i) => {
-                    const colorClass =
-                      SOURCE_COLORS[occ.source] || SOURCE_COLORS.unknown;
-                    const rowKey = `o-${i}`;
-                    const isOpen = inspectIdx === rowKey;
-                    return (
-                      <>
-                        <tr key={rowKey} className="border-t border-border hover:bg-surface-secondary/30">
-                          <td className="px-3 py-1.5 align-top">
-                            <div className="flex items-center gap-1">
-                              <span
-                                className={`px-1.5 py-0.5 rounded text-3xs font-medium ${colorClass}`}
-                              >
-                                {occ.source}
-                              </span>
-                              {occ.source_investigation_id && (
-                                <span
-                                  className="px-1 py-0 rounded text-4xs font-medium bg-emerald-500/20 text-emerald-300"
-                                  title={`from investigation ${occ.source_investigation_id.slice(0, 8)}`}
-                                >
-                                  I
-                                </span>
-                              )}
-                            </div>
-                          </td>
-                          <td className="px-3 py-1.5 font-mono text-foreground align-top">
-                            {occ.event_type}
-                          </td>
-                          <td
-                            className="px-3 py-1.5 text-foreground align-top"
-                            title={occ.description}
-                          >
-                            <div className="flex items-start gap-2">
-                              <span className="flex-1 truncate max-w-lg">
-                                {occ.description}
-                              </span>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setInspectIdx((curr) =>
-                                    curr === rowKey ? null : rowKey,
-                                  )
-                                }
-                                className="shrink-0 text-3xs text-text-muted hover:text-foreground underline decoration-dotted"
-                                aria-expanded={isOpen}
-                              >
-                                {isOpen ? "hide" : "inspect"}
-                              </button>
-                            </div>
-                          </td>
-                          <td className="px-3 py-1.5 font-mono text-text-muted whitespace-nowrap align-top">
-                            {occ.recorded_at.replace("T", " ").slice(0, 19)}
-                          </td>
-                        </tr>
-                        {isOpen && (
-                          <tr key={`${rowKey}-detail`} className="border-t border-border">
-                            <td colSpan={4} className="p-0">
-                              <InspectRow
-                                payload={occ.data as Record<string, unknown> | undefined}
-                              />
-                            </td>
-                          </tr>
-                        )}
-                      </>
-                    );
-                  })}
-                </tbody>
-              </table>
+          <div>
+            <div
+              aria-label="Occurrences"
+              style={{ maxHeight: 500, overflow: "auto" }}
+            >
+              <DataGrid<Occurrence>
+                columns={[
+                  { label: "SOURCE", width: "140px" },
+                  { label: "EVENT", width: "180px" },
+                  { label: "DESCRIPTION", width: "1fr" },
+                  { label: "RECORDED", width: "190px" },
+                ]}
+                rows={displayedOcc}
+                getKey={(_, i) => `o-${i}`}
+                onRowClick={(_, i) => {
+                  const key = `o-${i}`;
+                  setInspectIdx((curr) => (curr === key ? null : key));
+                }}
+                renderCells={(occ) => {
+                  const sourceTone = SOURCE_TONE[occ.source] ?? "muted";
+                  return [
+                    <span className="flex items-center" style={{ gap: 4 }}>
+                      <MonoBadge tone={sourceTone}>{occ.source}</MonoBadge>
+                      {occ.source_investigation_id && (
+                        <MonoBadge
+                          tone="ok"
+                          title={`from investigation ${occ.source_investigation_id.slice(0, 8)}`}
+                        >
+                          I
+                        </MonoBadge>
+                      )}
+                    </span>,
+                    textCell(occ.event_type),
+                    textCell(occ.description, "var(--text-primary)"),
+                    textCell(occ.recorded_at.replace("T", " ").slice(0, 19), "var(--text-muted)"),
+                  ];
+                }}
+              />
             </div>
+            {inspectIdx?.startsWith("o-") &&
+              (() => {
+                const idx = Number(inspectIdx.slice(2));
+                const occ = displayedOcc[idx];
+                if (!occ) return null;
+                return (
+                  <div style={{ marginTop: 8 }}>
+                    <InspectRow
+                      payload={occ.data as Record<string, unknown> | undefined}
+                    />
+                  </div>
+                );
+              })()}
           </div>
         )}
-      </div>
+      </WindowPanel>
     </div>
   );
 }

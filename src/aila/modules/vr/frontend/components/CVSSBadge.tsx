@@ -1,9 +1,9 @@
-import { AilaBadge } from "@/components/aila/AilaBadge";
+import { MonoBadge } from "@/components/aila/mock";
 
 /** CVSS v3.1 severity badge + breakdown table.
  *
  *  Colour scheme follows NVD (08_FRONTEND_UX.md §Topic 7 Lena's quote).
- *  Critical=dark red, High=red, Medium=orange, Low=yellow, None=gray. */
+ *  Critical=accent, High=warn, Medium=info, Low=ok, None=muted. */
 
 export type CVSSSeverity =
   | "critical"
@@ -20,22 +20,19 @@ export function severityFromScore(score: number | null | undefined): CVSSSeverit
   return "low";
 }
 
-const SEVERITY_TONE: Record<
-  CVSSSeverity,
-  "info" | "low" | "medium" | "high" | "critical"
-> = {
+const SEVERITY_TONE: Record<CVSSSeverity, string> = {
   critical: "critical",
-  high: "critical",
-  medium: "high",
-  low: "medium",
-  none: "info",
+  high: "high",
+  medium: "medium",
+  low: "ok",
+  none: "muted",
 };
 
 export function CVSSBadge({
   score,
   vector,
   source,
-  className = "",
+  className: _className = "",
 }: {
   score: number | null | undefined;
   vector?: string | null;
@@ -50,12 +47,10 @@ export function CVSSBadge({
     .filter(Boolean)
     .join("\n");
   return (
-    <AilaBadge severity={SEVERITY_TONE[sev]} size="sm" title={tip || undefined}>
-      <span className={className}>
-        {score != null ? score.toFixed(1) : "--"}{" "}
-        <span className="opacity-80">{sev.toUpperCase()}</span>
-      </span>
-    </AilaBadge>
+    <MonoBadge tone={SEVERITY_TONE[sev]} title={tip || undefined}>
+      {score != null ? score.toFixed(1) : "--"}
+      <span style={{ marginLeft: 4, opacity: 0.8 }}>{sev.toUpperCase()}</span>
+    </MonoBadge>
   );
 }
 
@@ -152,7 +147,10 @@ export function parseVector(vector: string | null | undefined): Record<string, s
   return out;
 }
 
-/** Render a CVSS vector as an 8-metric table -- read-only display. */
+/** Render a CVSS vector as an 8-metric table -- read-only display.
+ *
+ *  Callers place this INSIDE a WindowPanel body, so no outer chrome.
+ */
 export function CVSSBreakdown({
   vector,
   score,
@@ -165,40 +163,86 @@ export function CVSSBreakdown({
   const parsed = parseVector(vector);
   const sev = severityFromScore(score);
   return (
-    <div className="space-y-2">
-      <div className="flex items-center gap-2 flex-wrap">
+    <div className="flex flex-col" style={{ gap: 10 }}>
+      <div className="flex items-center flex-wrap" style={{ gap: 8 }}>
         <CVSSBadge score={score} vector={vector} source={source} />
-        {vector && (
-          <code className="text-3xs font-mono text-text-muted break-all">
+        {vector ? (
+          <code
+            className="font-mono"
+            style={{
+              fontSize: 10,
+              color: "var(--text-muted)",
+              wordBreak: "break-all",
+            }}
+          >
             {vector}
           </code>
-        )}
-        {source && (
-          <AilaBadge severity="info" size="sm">
-            source: {source}
-          </AilaBadge>
-        )}
+        ) : null}
+        {source ? (
+          <MonoBadge tone="info">source: {source}</MonoBadge>
+        ) : null}
       </div>
-      <table className="w-full text-xs font-mono">
+      <table
+        className="font-mono"
+        style={{
+          width: "100%",
+          fontSize: 11,
+          borderCollapse: "collapse",
+          border: "1px solid var(--border-soft)",
+        }}
+      >
+        <caption className="sr-only">CVSS metric breakdown</caption>
         <tbody>
-          {CVSS_METRICS.map((m) => {
+          {CVSS_METRICS.map((m, idx) => {
             const selected = parsed[m.id];
             const valueSpec = m.values.find((v) => v.id === selected);
+            const isLast = idx === CVSS_METRICS.length - 1;
             return (
-              <tr key={m.id} className="border-b border-border-default last:border-b-0">
-                <td className="px-2 py-1 text-text-muted whitespace-nowrap w-32">
+              <tr key={m.id}>
+                <th
+                  scope="row"
+                  style={{
+                    padding: "6px 10px",
+                    textAlign: "left",
+                    fontWeight: 400,
+                    letterSpacing: "0.04em",
+                    color: "var(--text-muted)",
+                    background: "var(--surface-sunk)",
+                    borderBottom: isLast
+                      ? "none"
+                      : "1px solid var(--border-soft)",
+                    whiteSpace: "nowrap",
+                    width: 160,
+                  }}
+                >
                   {m.label} ({m.id})
-                </td>
-                <td className="px-2 py-1 text-foreground">
+                </th>
+                <td
+                  style={{
+                    padding: "6px 10px",
+                    color: "var(--text-primary)",
+                    borderBottom: isLast
+                      ? "none"
+                      : "1px solid var(--border-soft)",
+                    borderLeft: "1px solid var(--border-soft)",
+                  }}
+                >
                   {valueSpec ? (
                     <span>
-                      <strong>{valueSpec.label}</strong>
-                      <span className="text-text-muted ml-2 font-sans text-3xs">
+                      <strong style={{ fontWeight: 600 }}>{valueSpec.label}</strong>
+                      <span
+                        style={{
+                          marginLeft: 8,
+                          color: "var(--text-faint)",
+                          fontFamily: "var(--font-display)",
+                          fontSize: 10,
+                        }}
+                      >
                         {valueSpec.description}
                       </span>
                     </span>
                   ) : (
-                    <span className="text-text-muted">--</span>
+                    <span style={{ color: "var(--text-faint)" }}>--</span>
                   )}
                 </td>
               </tr>
@@ -206,9 +250,19 @@ export function CVSSBreakdown({
           })}
         </tbody>
       </table>
-      <p className="text-3xs text-text-muted">
-        Severity: <span className="uppercase font-semibold">{sev}</span>
-        {score != null && ` · Score: ${score.toFixed(1)}`}
+      <p
+        className="font-mono uppercase"
+        style={{
+          fontSize: 10,
+          letterSpacing: "0.06em",
+          color: "var(--text-muted)",
+        }}
+      >
+        Severity:{" "}
+        <span style={{ fontWeight: 600, color: "var(--text-primary)" }}>
+          {sev}
+        </span>
+        {score != null ? ` · Score: ${score.toFixed(1)}` : null}
       </p>
     </div>
   );
@@ -225,16 +279,35 @@ export function CWEBadge({
 }) {
   if (!cweId) return null;
   const href = `https://cwe.mitre.org/data/definitions/${cweId.replace(/^CWE-/, "")}.html`;
+  const label = name ? `${cweId} -- ${name}` : `Open ${cweId} on cwe.mitre.org`;
   return (
     <a
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      title={name ?? `Open ${cweId} on cwe.mitre.org`}
-      className="inline-flex items-center gap-1 text-3xs font-mono px-1.5 py-0.5 rounded bg-surface border border-border-default text-foreground hover:bg-surface-hover"
+      title={label}
+      className="inline-flex items-center"
+      style={{ gap: 6, textDecoration: "none" }}
     >
-      {cweId}
-      {name && <span className="text-text-muted truncate" style={{ maxWidth: "18ch" }}>-- {name}</span>}
+      <MonoBadge tone="info">
+        {cweId}
+        {name ? (
+          <span
+            style={{
+              marginLeft: 6,
+              color: "var(--text-muted)",
+              maxWidth: "18ch",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              display: "inline-block",
+              verticalAlign: "bottom",
+            }}
+          >
+            {name}
+          </span>
+        ) : null}
+      </MonoBadge>
     </a>
   );
 }

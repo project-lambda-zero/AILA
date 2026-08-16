@@ -35,6 +35,7 @@ from typing import Any
 
 import pytest
 
+from aila.platform.events._dispatch import ISOLATION_ERRORS
 from aila.platform.events.domain_events import (
     AssessmentCompleted,
     AssessmentCompletedPayload,
@@ -45,11 +46,7 @@ from aila.platform.events.domain_events import (
     SystemRegistered,
     SystemRegisteredPayload,
 )
-from aila.platform.events.emitter import (
-    _DESTINATION_ISOLATION_ERRORS,
-    EventEmitter,
-    ThreadSafeEventEmitter,
-)
+from aila.platform.events.emitter import EventEmitter, ThreadSafeEventEmitter
 from aila.platform.events.event import PlatformEvent
 from aila.platform.llm.correlation import correlation_scope
 from aila.platform.sse.user_fanout import QUEUE_MAXSIZE, UserFanoutRegistry
@@ -133,8 +130,8 @@ class TestPerDestinationIsolation:
             ReferenceError,
         }
         for family in expected_families:
-            assert issubclass(family, _DESTINATION_ISOLATION_ERRORS), (
-                f"{family.__name__} must appear in _DESTINATION_ISOLATION_ERRORS "
+            assert issubclass(family, ISOLATION_ERRORS), (
+                f"{family.__name__} must appear in ISOLATION_ERRORS "
                 "so a destination raising it does not starve fan-out"
             )
 

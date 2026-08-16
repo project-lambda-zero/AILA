@@ -10,12 +10,16 @@ import { Notepad } from "@phosphor-icons/react/dist/csr/Notepad";
 import { Rocket } from "@phosphor-icons/react/dist/csr/Rocket";
 import { MagnifyingGlass } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
 
+import { MonoBadge } from "@/components/aila/mock";
+
 import type { OutcomeKind } from "../types";
+
+type OutcomeSeverity = "info" | "low" | "medium" | "high" | "critical";
 
 interface OutcomeKindMeta {
   icon: ComponentType<IconProps>;
   label: string;
-  severity: "info" | "low" | "medium" | "high" | "critical";
+  severity: OutcomeSeverity;
 }
 
 const OUTCOME_KIND_MAP: Record<OutcomeKind, OutcomeKindMeta> = {
@@ -82,6 +86,15 @@ const FALLBACK: OutcomeKindMeta = {
   severity: "info",
 };
 
+// Severity -> MonoBadge tone mapping (see wave-2 brief).
+const SEVERITY_TONE: Record<OutcomeSeverity, string> = {
+  info: "info",
+  low: "ok",
+  medium: "medium",
+  high: "high",
+  critical: "critical",
+};
+
 interface OutcomeKindBadgeProps {
   kind: OutcomeKind | string;
   /** Show the label text next to the icon. Default true. */
@@ -91,32 +104,30 @@ interface OutcomeKindBadgeProps {
 
 /**
  * Renders an outcome_kind as an icon + human-readable label
- * instead of raw snake_case text.
+ * inside a MonoBadge chip.
  */
 export function OutcomeKindBadge({
   kind,
   showLabel = true,
-  className = "",
+  className: _className = "",
 }: OutcomeKindBadgeProps) {
   const meta = OUTCOME_KIND_MAP[kind as OutcomeKind] ?? FALLBACK;
   const Icon = meta.icon;
   return (
-    <span
-      className={`inline-flex items-center gap-1 ${className}`}
-      title={kind}
-    >
-      <Icon size={14} weight="bold" />
-      {showLabel && (
-        <span className="text-2xs font-medium">{meta.label}</span>
-      )}
-    </span>
+    <MonoBadge tone={SEVERITY_TONE[meta.severity]} title={kind}>
+      <span className="inline-flex items-center" style={{ gap: 4 }}>
+        <Icon size={11} weight="bold" aria-hidden />
+        {showLabel ? <span>{meta.label}</span> : null}
+      </span>
+    </MonoBadge>
   );
 }
 
-/** Expose severity mapping for callers that wrap in AilaBadge. */
+/** Expose severity mapping for callers (accepted values map cleanly to
+ *  MonoBadge tone keys via the wave-2 severity->tone table). */
 export function outcomeKindSeverity(
   kind: OutcomeKind | string,
-): "info" | "low" | "medium" | "high" | "critical" {
+): OutcomeSeverity {
   return (OUTCOME_KIND_MAP[kind as OutcomeKind] ?? FALLBACK).severity;
 }
 

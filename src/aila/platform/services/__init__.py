@@ -12,7 +12,7 @@ from .context_assembler import (
 )
 from .embedding import BGEProvider, EmbeddingProvider, MiniLMProvider, resolve_provider
 from .factory import ServiceFactory
-from .http import build_http_client
+from .http import build_async_http_client, build_http_client
 from .knowledge import KnowledgeService
 from .ledger import LedgerService
 from .oracle import Oracle
@@ -42,6 +42,7 @@ __all__ = [
     "ServiceFactory",
     "StorageService",
     "SystemService",
+    "build_async_http_client",
     "build_http_client",
     "record_audit_event",
     "resolve_provider",

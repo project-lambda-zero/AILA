@@ -1,7 +1,7 @@
 {
   "name": "@aila/shell",
   "private": true,
-  "version": "0.3.20",
+  "version": "0.5.35",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 3000",
@@ -27,6 +27,7 @@
     "@aila/vr-frontend": "workspace:*",
     "@base-ui/react": "catalog:ui",
     "@fontsource-variable/geist": "catalog:ui",
+    "@monaco-editor/react": "catalog:ui",
     "@phosphor-icons/react": "catalog:ui",
     "@tailwindcss/vite": "catalog:vite",
     "@tanstack/react-query": "catalog:query",
@@ -38,6 +39,7 @@
     "html2canvas": "catalog:data",
     "leaflet": "catalog:maps",
     "lucide-react": "catalog:ui",
+    "monaco-editor": "catalog:ui",
     "ogl": "catalog:ui",
     "motion": "catalog:ui",
     "papaparse": "catalog:data",

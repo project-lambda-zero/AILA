@@ -229,6 +229,11 @@ HONESTY_WHITELIST = [
     # returns a typed error response or degrades a single endpoint.
     ("api/app.py", "broad_exception_catch", "catches everything"),
     ("api/middleware/idempotency.py", "broad_exception_catch", "catches everything"),
+    # body_size_limit wraps an arbitrary downstream ASGI app; once the body
+    # is force-disconnected over the limit, the app can raise any type. The
+    # catch re-raises when the request did not overflow, so real faults still
+    # propagate -- only truncation-induced exceptions are suppressed.
+    ("api/middleware/body_size_limit.py", "broad_exception_catch", "catches everything"),
     ("api/routers/dashboard.py", "broad_exception_catch", "catches everything"),
     ("api/routers/executive.py", "broad_exception_catch", "catches everything"),
     ("api/routers/findings_workflow.py", "broad_exception_catch", "catches everything"),
@@ -259,6 +264,7 @@ HONESTY_WHITELIST = [
     ("platform/tasks/hooks.py", "broad_exception_catch", "catches everything"),
     ("platform/tasks/queue.py", "broad_exception_catch", "catches everything"),
     ("platform/tasks/report_tasks.py", "broad_exception_catch", "catches everything"),
+    ("platform/tasks/sweeps.py", "broad_exception_catch", "catches everything"),
     ("platform/tasks/worker.py", "broad_exception_catch", "catches everything"),
     ("platform/workflows/engine.py", "broad_exception_catch", "catches everything"),
     ("platform/workflows/log.py", "broad_exception_catch", "catches everything"),
@@ -343,6 +349,12 @@ HONESTY_WHITELIST = [
     # platform/tools/http: SSRF DNS-fail short-circuit (downstream httpx
     # surfaces the error) and JSON-response decoder (None when not JSON).
     ("platform/tools/http.py", "except_return_default", "silently hides failures"),
+
+    # platform/apk/apk_signing._read_apk_layout: a malformed / zip64 / non-APK
+    # file returns None, which parse_signing surfaces as a fail-closed
+    # signature_verified=False plus a concrete verification_reason. The empty
+    # return is the fail-closed security contract, not a swallow.
+    ("platform/apk/apk_signing.py", "except_return_default", "silently hides failures"),
 
     # storage/report_repository._parse_json_object: malformed report payload
     # → {} so callers see an empty dict instead of crashing.

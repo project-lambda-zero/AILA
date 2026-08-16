@@ -53,6 +53,7 @@ if TYPE_CHECKING:
 # above are fully initialised.
 
 __all__ = [
+    "EmbeddingDimensionMismatchError",
     "KnowledgeService",
     "NAMESPACE_AGENT_PREFIX",
     "NAMESPACE_PLATFORM_PREFIX",
@@ -64,6 +65,31 @@ __all__ = [
     "make_user_namespace",
     "trust_tier_from_namespace",
 ]
+
+
+class EmbeddingDimensionMismatchError(RuntimeError):
+    """Raised when the configured EmbeddingProvider's vector width does
+    not match the ``KnowledgeEntryRecord.embedding`` column width.
+
+    fix §127 -- previously ``KnowledgeService.embed`` silently zero-padded
+    a 384-dim MiniLM vector up to the 1024-dim column so an operator who
+    swapped ``knowledge_embedding_model`` without re-embedding the corpus
+    got zero-diluted cosine scores across mismatched semantic spaces and
+    quietly degraded retrieval. The service now surfaces the mismatch:
+    the query path degrades to FTS-only with a one-time warning and the
+    write path refuses to persist a bogus vector.
+    """
+
+    def __init__(self, *, provider: str, provider_dim: int, db_dim: int) -> None:
+        super().__init__(
+            f"Embedding provider {provider!r} emits {provider_dim}-dim vectors "
+            f"but the KnowledgeEntryRecord.embedding column is {db_dim}-dim. "
+            "Re-embed the corpus with a matching provider before storing "
+            "(fix §127). The retrieve path falls back to FTS-only."
+        )
+        self.provider = provider
+        self.provider_dim = provider_dim
+        self.db_dim = db_dim
 
 # RFC-12 Phase 5 trust tiering. Verified-tier knowledge (findings, audit
 # memos, promoted patterns) is written behind a quorum or an operator
@@ -279,6 +305,33 @@ async def _journal_retrieval(
 _HNSW_EF_SEARCH = 100
 
 _log = logging.getLogger(__name__)
+
+# Per-process dedup for the provider/dim mismatch warning (fix §127).
+# Bounded by the small set of configured embedding providers so the set
+# never grows large; each entry is a ``(provider_name, provider_dim,
+# db_dim)`` tuple so a live provider swap re-fires exactly once at the
+# new coordinates instead of spamming the retrieve hot path.
+_WARNED_PROVIDER_MISMATCH: set[tuple[str, int, int]] = set()
+
+
+def _warn_provider_mismatch_once(exc: EmbeddingDimensionMismatchError) -> None:
+    """Log the provider/dim mismatch banner at most once per coordinate.
+
+    The retrieve path falls back to FTS-only when the active provider's
+    dim does not match the DB column; the caller keeps working with a
+    degraded (but non-lying) ranking. This banner tells the operator to
+    re-embed or revert the config knob so the vector leg comes back.
+    """
+    key = (exc.provider, exc.provider_dim, exc.db_dim)
+    if key in _WARNED_PROVIDER_MISMATCH:
+        return
+    _WARNED_PROVIDER_MISMATCH.add(key)
+    _log.warning(
+        "knowledge.retrieve: provider %s emits %d-dim vectors but the "
+        "embedding column is %d-dim; degrading to FTS-only until the "
+        "corpus is re-embedded (fix §127).",
+        exc.provider, exc.provider_dim, exc.db_dim,
+    )
 
 
 def _advisory_lock_key(namespace: str, dedup_key: str) -> int:
@@ -607,26 +660,32 @@ class KnowledgeService:
         """Current embedding provider."""
         return self._provider
 
-    # DB column dimension (KnowledgeEntryRecord.embedding is Vector(1024)).
-    # BGE-M3 (the default provider) emits 1024-dim vectors that pass through
-    # unchanged; the 384-dim MiniLM fallback is zero-padded up to 1024 so both
-    # providers write the same column width.
+    # DB column dimension (``KnowledgeEntryRecord.embedding`` is
+    # ``Vector(1024)``). BGE-M3 (the default provider) emits 1024-dim
+    # vectors that pass through unchanged. A provider whose native
+    # dimension differs is rejected: silently zero-padding a 384-dim
+    # MiniLM vector to 1024 diluted the cosine score across mismatched
+    # semantic spaces (fix §127 -- the padded 640 zeros collapsed
+    # cross-provider comparisons to noise while appearing to work).
     _db_dim: int | None = 1024
 
     def embed(self, text: str) -> list[float]:
-        """Generate embedding vector using the configured provider.
+        """Generate an embedding vector using the configured provider.
 
-        Returns the provider's native vector. When it is shorter than the DB
-        column width (:data:`_db_dim`) the vector is zero-padded; a longer
-        vector is truncated. BGE-M3 at 1024 dims matches the column exactly, so
-        no adjustment happens on the default path.
+        Returns the provider's native vector unchanged. When the
+        provider's dimensionality does not match the DB column width
+        (:data:`_db_dim`) this raises :class:`EmbeddingDimensionMismatchError`
+        so the caller can degrade to an FTS-only path instead of
+        writing / querying a bogus zero-padded vector (fix §127).
         """
         vec = self._provider.encode(text)
-        if KnowledgeService._db_dim is not None and len(vec) != KnowledgeService._db_dim:
-            if len(vec) < KnowledgeService._db_dim:
-                vec = vec + [0.0] * (KnowledgeService._db_dim - len(vec))
-            else:
-                vec = vec[:KnowledgeService._db_dim]
+        db_dim = KnowledgeService._db_dim
+        if db_dim is not None and len(vec) != db_dim:
+            raise EmbeddingDimensionMismatchError(
+                provider=self._provider.model_name,
+                provider_dim=len(vec),
+                db_dim=db_dim,
+            )
         return vec
 
     async def store(
@@ -1152,7 +1211,17 @@ class KnowledgeService:
         Returns:
             List of dicts with id, content, metadata, score, vec_score, fts_score, source, namespace.
         """
-        query_embedding = self.embed(query)
+        # fix §127 -- the vector leg is only meaningful when the active
+        # provider's dim matches the ``KnowledgeEntryRecord.embedding``
+        # column width. On mismatch (e.g. operator switched to MiniLM
+        # without a re-embed sweep) skip the vector leg entirely and
+        # serve FTS-only with a one-time warning; do not silently
+        # zero-pad a bogus vector into a pgvector cosine query.
+        try:
+            query_embedding: list[float] | None = self.embed(query)
+        except EmbeddingDimensionMismatchError as exc:
+            _warn_provider_mismatch_once(exc)
+            query_embedding = None
         candidate_limit = limit * 10
 
         async with _session_or_new(session, self._team_context) as (sess, owns):
@@ -1160,26 +1229,29 @@ class KnowledgeService:
             # Build namespace filter
             ns_filters = self._build_namespace_filters(namespaces, namespace_patterns)
 
-            # --- Vector leg: pgvector cosine distance ---
-            vec_stmt = (
-                select(
-                    KnowledgeEntryRecord.id,
-                    KnowledgeEntryRecord.content,
-                    KnowledgeEntryRecord.entry_metadata,
-                    KnowledgeEntryRecord.namespace,
-                    KnowledgeEntryRecord.embedding.cosine_distance(query_embedding).label("distance"),
+            # --- Vector leg: pgvector cosine distance (skipped on
+            # provider/dim mismatch -- FTS becomes the only signal).
+            vec_rows: list[Any] = []
+            if query_embedding is not None:
+                vec_stmt = (
+                    select(
+                        KnowledgeEntryRecord.id,
+                        KnowledgeEntryRecord.content,
+                        KnowledgeEntryRecord.entry_metadata,
+                        KnowledgeEntryRecord.namespace,
+                        KnowledgeEntryRecord.embedding.cosine_distance(query_embedding).label("distance"),
+                    )
+                    .where(KnowledgeEntryRecord.embedding.is_not(None))
+                    .order_by(KnowledgeEntryRecord.embedding.cosine_distance(query_embedding))
+                    .limit(candidate_limit)
                 )
-                .where(KnowledgeEntryRecord.embedding.is_not(None))
-                .order_by(KnowledgeEntryRecord.embedding.cosine_distance(query_embedding))
-                .limit(candidate_limit)
-            )
-            if ns_filters is not None:
-                vec_stmt = vec_stmt.where(ns_filters)
-            if source_types:
-                vec_stmt = vec_stmt.where(
-                    KnowledgeEntryRecord.source_type.in_(source_types),
-                )
-            vec_rows = (await sess.exec(vec_stmt)).all()
+                if ns_filters is not None:
+                    vec_stmt = vec_stmt.where(ns_filters)
+                if source_types:
+                    vec_stmt = vec_stmt.where(
+                        KnowledgeEntryRecord.source_type.in_(source_types),
+                    )
+                vec_rows = (await sess.exec(vec_stmt)).all()
 
             # --- FTS leg: PostgreSQL tsvector + plainto_tsquery ---
             ts_query = func.plainto_tsquery("english", query)

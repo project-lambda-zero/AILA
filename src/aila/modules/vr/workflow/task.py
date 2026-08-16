@@ -25,8 +25,8 @@ from aila.modules.vr._task_queue import (
 )
 from aila.modules.vr.agents.claim_verifier import ClaimVerifierAgent
 from aila.modules.vr.agents.narrative_agent import (
-    NarrativeAgent,
     NarrativeOptions,
+    VRNarrativeAgent,
 )
 from aila.modules.vr.agents.outcome_dispatcher import OutcomeDispatcher
 from aila.modules.vr.agents.synthesis_agent import SynthesisAgent
@@ -457,7 +457,7 @@ async def run_vr_narrative(
         for key in ("force", "tone", "length", "operator_focus"):
             if key in options:
                 setattr(opts, key, options[key])
-    agent = NarrativeAgent(investigation_id=investigation_id, options=opts)
+    agent = VRNarrativeAgent(investigation_id=investigation_id, options=opts)
     return await agent.run()
 
 

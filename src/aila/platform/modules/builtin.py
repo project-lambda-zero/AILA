@@ -64,14 +64,35 @@ def _discover_feature_module_factories() -> tuple[Callable[[], ModuleProtocol], 
     leading underscore are skipped. Each discovered package is passed through
     build_module_factory() which validates the module standard layout before
     returning the factory.
+
+    Discovery is deterministic (#200): candidate packages are sorted by their
+    short name before validation so first_with / all_with return the same
+    winner across operating systems regardless of filesystem traversal order.
+
+    Per-module isolation (#190): a validation or import failure in one module
+    logs a WARNING and skips that module rather than aborting the whole
+    platform. The failing module is disabled; every well-formed module still
+    loads.
     """
     modules_package = _import_modules_package()
-    discovered: list[Callable[[], ModuleProtocol]] = []
+    candidates: list[str] = []
     for module_info in pkgutil.iter_modules(modules_package.__path__, modules_package.__name__ + "."):
         short_name = module_info.name.rsplit(".", 1)[-1]
         if not module_info.ispkg or short_name.startswith("_"):
             continue
-        discovered.append(build_module_factory(module_info.name))
+        candidates.append(module_info.name)
+    candidates.sort(key=lambda name: name.rsplit(".", 1)[-1])
+    discovered: list[Callable[[], ModuleProtocol]] = []
+    for package_name in candidates:
+        try:
+            discovered.append(build_module_factory(package_name))
+        except (ValueError, ImportError, AttributeError, TypeError) as exc:
+            _log.warning(
+                "Module package %s failed to load -- disabled: %s",
+                package_name,
+                exc,
+                exc_info=True,
+            )
     return tuple(discovered)
 
 

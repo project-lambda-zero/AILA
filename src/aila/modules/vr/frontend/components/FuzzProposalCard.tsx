@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
-import { EmptyState } from "@/components/aila/EmptyState";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { MonoBadge } from "@/components/aila/mock";
 
 import {
   useAcceptFuzzProposal,
@@ -41,37 +41,168 @@ export function FuzzProposalsPanel({
   const proposals: VRFuzzCampaignProposalSummary[] = data?.data ?? [];
 
   return (
-    <AilaCard  techBorder glow><div className="flex items-center justify-between mb-2 gap-2 flex-wrap">
-      <div>
-        <h2 className="text-sm font-semibold text-foreground">
-          Fuzz proposals
-        </h2>
-        <p className="text-3xs text-text-muted mt-0.5">
-          Agent-authored -- operator decides. Accept ships the harness,
-          builds it on the workstation, and launches the fuzzer.
-        </p>
-      </div>
-      <span className="text-3xs text-text-muted font-mono">
-        {proposals.length} pending
-      </span>
-    </div>
-    {isLoading ? (
-      <p className="text-xs text-text-muted">Loading…</p>
-    ) : proposals.length === 0 ? (
-      <EmptyState
-        title="No pending fuzz proposals"
-        description="The reasoning agent emits these when audit narrows to a question it can only settle with runtime evidence."
-      />
-    ) : (
-      <ul className="space-y-3">
-        {proposals.map((p) => (
-          <li key={p.id}>
-            <FuzzProposalCard proposal={p} />
-          </li>
-        ))}
-      </ul>
-    )}</AilaCard>
+    <WindowPanel
+      title="fuzz proposals"
+      tone="muted"
+      actions={
+        <span
+          className="font-mono uppercase"
+          style={{
+            fontSize: 9,
+            letterSpacing: "0.08em",
+            color: "var(--text-muted)",
+          }}
+        >
+          {proposals.length} pending
+        </span>
+      }
+    >
+      <h2 className="sr-only">Fuzz proposals</h2>
+      <p
+        className="font-mono"
+        style={{
+          fontSize: 10.5,
+          lineHeight: 1.55,
+          color: "var(--text-muted)",
+          marginBottom: 10,
+        }}
+      >
+        Agent-authored -- operator decides. Accept ships the harness,
+        builds it on the workstation, and launches the fuzzer.
+      </p>
+      {isLoading ? (
+        <ul
+          className="flex flex-col"
+          style={{ gap: 10 }}
+          aria-busy="true"
+          aria-label="Loading fuzz proposals"
+        >
+          {[0, 1, 2].map((i) => (
+            <li
+              key={i}
+              className="flex flex-col"
+              style={{
+                gap: 6,
+                padding: 12,
+                border: "1px solid var(--border-soft)",
+                borderRadius: 3,
+                background: "var(--surface-sunk)",
+              }}
+            >
+              <LoadingSkeleton size="sm" width="third" />
+              <LoadingSkeleton size="sm" width="full" />
+              <LoadingSkeleton size="sm" width="half" />
+            </li>
+          ))}
+        </ul>
+      ) : proposals.length === 0 ? (
+        <div
+          className="font-mono"
+          style={{
+            padding: 34,
+            textAlign: "center",
+            fontSize: 11.5,
+            color: "var(--text-muted)",
+            letterSpacing: "0.04em",
+          }}
+        >
+          no pending fuzz proposals -- the researcher emits these when
+          audit narrows to a question only runtime evidence can settle.
+        </div>
+      ) : (
+        <ul className="flex flex-col" style={{ gap: 10 }}>
+          {proposals.map((p) => (
+            <li key={p.id}>
+              <FuzzProposalCard proposal={p} />
+            </li>
+          ))}
+        </ul>
+      )}
+    </WindowPanel>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Shared mock control styles
+// ---------------------------------------------------------------------------
+const CTRL: CSSProperties = {
+  height: 26,
+  padding: "0 8px",
+  fontSize: 10,
+  letterSpacing: "0.06em",
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  border: "1px solid var(--border-soft)",
+  borderRadius: 3,
+  fontFamily: "var(--font-mono)",
+};
+
+interface MonoButtonProps {
+  onClick: () => void;
+  disabled?: boolean;
+  title?: string;
+  variant?: "primary" | "default" | "ghost";
+  children: React.ReactNode;
+  type?: "button" | "submit";
+}
+
+function MonoButton({
+  onClick,
+  disabled,
+  title,
+  variant = "default",
+  children,
+  type = "button",
+}: MonoButtonProps) {
+  const primary = variant === "primary";
+  const ghost = variant === "ghost";
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className="font-mono uppercase"
+      style={{
+        height: 26,
+        padding: "0 11px",
+        fontSize: 10,
+        letterSpacing: "0.08em",
+        background: ghost
+          ? "transparent"
+          : primary
+            ? "var(--accent)"
+            : "var(--surface-sunk)",
+        border: ghost
+          ? "1px solid transparent"
+          : `1px solid ${primary ? "var(--accent)" : "var(--border-soft)"}`,
+        color: primary
+          ? "var(--text-on-accent)"
+          : ghost
+            ? "var(--accent)"
+            : "var(--text-primary)",
+        borderRadius: 3,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.4 : 1,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Confidence -> MonoBadge tone (pass-through map per the mock language).
+//   exact  -> low   -> ok
+//   strong -> info  -> info
+//   medium -> medium -> medium
+//   *      -> high  -> high
+// ---------------------------------------------------------------------------
+function confidenceTone(confidence: string | null | undefined): string {
+  if (confidence === "exact") return "ok";
+  if (confidence === "strong") return "info";
+  if (confidence === "medium") return "medium";
+  return "high";
 }
 
 function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummary }) {
@@ -94,45 +225,73 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
     ?? (proposal.target_descriptor?.["function"] as string | undefined)
     ?? (proposal.target_descriptor?.["function_name"] as string | undefined)
     ?? "--";
-  const confidenceSeverity =
-    proposal.confidence === "exact"
-      ? "low"
-      : proposal.confidence === "strong"
-        ? "info"
-        : proposal.confidence === "medium"
-          ? "medium"
-          : "high";
+
+  const cTone = confidenceTone(proposal.confidence);
 
   return (
-    <div className="border border-border-default rounded p-3 bg-surface/40 space-y-2">
-      <div className="flex items-start justify-between gap-2 flex-wrap">
+    <div
+      className="flex flex-col"
+      style={{
+        gap: 10,
+        padding: 12,
+        border: "1px solid var(--border-soft)",
+        background: "var(--surface-card)",
+        borderRadius: 3,
+      }}
+    >
+      <div
+        className="flex flex-wrap items-start"
+        style={{ gap: 8, justifyContent: "space-between" }}
+      >
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1 flex-wrap mb-1">
-            <span className="font-mono text-sm text-foreground">
+          <div
+            className="flex flex-wrap items-center"
+            style={{ gap: 6, marginBottom: 6 }}
+          >
+            <span
+              className="font-mono"
+              style={{
+                fontSize: 12,
+                color: "var(--text-primary)",
+                letterSpacing: "0.02em",
+              }}
+            >
               {proposal.profile}
             </span>
-            <span className="text-3xs text-text-muted">→</span>
-            <span className="font-mono text-xs text-foreground">
+            <span
+              className="font-mono"
+              style={{ fontSize: 10, color: "var(--text-faint)" }}
+              aria-hidden="true"
+            >
+              →
+            </span>
+            <span
+              className="font-mono"
+              style={{ fontSize: 11, color: "var(--text-primary)" }}
+            >
               {descriptorKey}
             </span>
-            <AilaBadge severity={confidenceSeverity} size="sm">
-              {proposal.confidence}
-            </AilaBadge>
+            <MonoBadge tone={cTone}>{proposal.confidence}</MonoBadge>
             {ready ? (
-              <AilaBadge severity="low" size="sm">
-                ready to launch
-              </AilaBadge>
+              <MonoBadge tone="ok">ready to launch</MonoBadge>
             ) : (
-              <AilaBadge severity="medium" size="sm">
-                missing harness
-              </AilaBadge>
+              <MonoBadge tone="medium">missing harness</MonoBadge>
             )}
           </div>
-          <p className="text-xs text-text-muted">{proposal.rationale || "(no rationale)"}</p>
+          <p
+            style={{
+              fontSize: 12,
+              lineHeight: 1.5,
+              color: "var(--text-muted)",
+              margin: 0,
+            }}
+          >
+            {proposal.rationale || "(no rationale)"}
+          </p>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
+        <div className="flex items-center" style={{ gap: 6 }}>
+          <MonoButton
+            variant="primary"
             disabled={!ready || acceptMut.isPending}
             onClick={() => acceptMut.mutate({ auto_launch: autoLaunch })}
             title={
@@ -140,12 +299,10 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
                 ? "Run the prepared harness build + create campaign + auto-launch"
                 : "Proposal is missing harness_source or harness_build_command -- agent must complete the prep"
             }
-            className="px-3 py-1.5 text-xs font-medium rounded bg-green-600 text-white hover:bg-green-500 disabled:opacity-40"
           >
-            {acceptMut.isPending ? "Accepting…" : "Accept"}
-          </button>
-          <button
-            type="button"
+            {acceptMut.isPending ? "accepting…" : "accept"}
+          </MonoButton>
+          <MonoButton
             disabled={rejectMut.isPending}
             onClick={() => {
               const reason = window.prompt(
@@ -155,78 +312,122 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
               if (!reason) return;
               rejectMut.mutate({ decision_reason: reason });
             }}
-            className="px-3 py-1.5 text-xs font-medium rounded bg-surface border border-border-default hover:bg-surface-hover disabled:opacity-40"
           >
-            Reject
-          </button>
-          <button
-            type="button"
+            reject
+          </MonoButton>
+          <MonoButton
+            variant="ghost"
             onClick={() => setExpanded((v) => !v)}
-            className="text-3xs text-accent hover:underline"
           >
             {expanded ? "▾ collapse" : "▸ overrides"}
-          </button>
+          </MonoButton>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-3xs font-mono text-text-muted">
-        <div>
-          <div className="text-text-muted">engine</div>
-          <div className="text-foreground">{proposal.suggested_engine_id ?? "--"}</div>
-        </div>
-        <div>
-          <div className="text-text-muted">strategy</div>
-          <div className="text-foreground">{proposal.suggested_strategy_id ?? "--"}</div>
-        </div>
-        <div>
-          <div className="text-text-muted">duration</div>
-          <div className="text-foreground">
-            {proposal.suggested_duration_hours
+      <div
+        className="grid font-mono"
+        style={{
+          gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+          gap: 8,
+          fontSize: 10,
+          letterSpacing: "0.04em",
+        }}
+      >
+        <BriefCell label="engine" value={proposal.suggested_engine_id ?? "--"} />
+        <BriefCell
+          label="strategy"
+          value={proposal.suggested_strategy_id ?? "--"}
+        />
+        <BriefCell
+          label="duration"
+          value={
+            proposal.suggested_duration_hours
               ? `${proposal.suggested_duration_hours}h`
-              : "--"}
-          </div>
-        </div>
-        <div>
-          <div className="text-text-muted">seeds / dict</div>
-          <div className="text-foreground">
-            {seedCount} {hasDict ? "+ dict" : ""}
-          </div>
-        </div>
+              : "--"
+          }
+        />
+        <BriefCell
+          label="seeds / dict"
+          value={`${seedCount}${hasDict ? " + dict" : ""}`}
+        />
       </div>
 
       {expanded && (
-        <div className="space-y-2 pt-2 border-t border-border-default">
-          <div className="flex items-center gap-2 flex-wrap text-xs">
-            <label className="flex items-center gap-1">
-              <span className="text-text-muted">engine override:</span>
+        <div
+          className="flex flex-col"
+          style={{
+            gap: 10,
+            paddingTop: 10,
+            borderTop: "1px solid var(--border-soft)",
+          }}
+        >
+          <div
+            className="flex flex-wrap items-center"
+            style={{ gap: 8 }}
+          >
+            <label
+              className="flex items-center font-mono uppercase"
+              style={{
+                gap: 6,
+                fontSize: 10,
+                letterSpacing: "0.06em",
+                color: "var(--text-muted)",
+              }}
+            >
+              <span>engine override</span>
               <input
                 type="text"
                 value={overrideEngine}
                 onChange={(e) => setOverrideEngine(e.target.value)}
                 placeholder={proposal.suggested_engine_id ?? "default"}
-                className="px-2 py-1 rounded bg-surface border border-border-default font-mono w-32"
+                className="font-mono"
+                style={{ ...CTRL, width: 140 }}
               />
             </label>
-            <label className="flex items-center gap-1">
-              <span className="text-text-muted">duration_hours:</span>
+            <label
+              className="flex items-center font-mono uppercase"
+              style={{
+                gap: 6,
+                fontSize: 10,
+                letterSpacing: "0.06em",
+                color: "var(--text-muted)",
+              }}
+            >
+              <span>duration hours</span>
               <input
                 type="number"
                 value={overrideDuration}
                 onChange={(e) => setOverrideDuration(e.target.value)}
                 placeholder={String(proposal.suggested_duration_hours ?? "")}
-                className="px-2 py-1 rounded bg-surface border border-border-default font-mono w-20"
+                className="font-mono"
+                style={{ ...CTRL, width: 80 }}
               />
             </label>
-            <label className="flex items-center gap-1">
-              <input
-                type="checkbox"
-                checked={autoLaunch}
-                onChange={(e) => setAutoLaunch(e.target.checked)}
-              />
-              <span>auto-launch after build</span>
-            </label>
-            <button
-              type="button"
+            <fieldset
+              className="p-0 m-0 min-w-0"
+              style={{ border: 0 }}
+            >
+              <legend className="sr-only">Fuzz proposal overrides</legend>
+              <label
+                className="flex items-center font-mono uppercase"
+                style={{
+                  gap: 6,
+                  fontSize: 10,
+                  letterSpacing: "0.06em",
+                  color: "var(--text-muted)",
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={autoLaunch}
+                  onChange={(e) => setAutoLaunch(e.target.checked)}
+                  style={{ accentColor: "var(--accent)" }}
+                />
+                <span>auto-launch after build</span>
+              </label>
+            </fieldset>
+            <MonoButton
+              variant="primary"
               disabled={!ready || acceptMut.isPending}
               onClick={() =>
                 acceptMut.mutate({
@@ -237,63 +438,93 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
                   auto_launch: autoLaunch,
                 })
               }
-              className="px-2 py-1 text-xs font-medium rounded bg-accent text-white hover:bg-accent/90 disabled:opacity-40"
             >
-              Accept with overrides
-            </button>
+              accept with overrides
+            </MonoButton>
           </div>
-          <button
-            type="button"
+          <MonoButton
+            variant="ghost"
             onClick={() => setShowHarness((v) => !v)}
-            className="text-3xs text-accent hover:underline"
           >
             {showHarness ? "▾ hide harness" : "▸ show harness + build + seeds"}
-          </button>
+          </MonoButton>
           {showHarness && (
-            <div className="space-y-2">
+            <div className="flex flex-col" style={{ gap: 10 }}>
               {hasHarness ? (
-                <div>
-                  <p className="text-3xs text-text-muted mb-1">
-                    Harness ({harnessLang})
-                  </p>
+                <div className="flex flex-col" style={{ gap: 4 }}>
+                  <FieldLabel>harness ({harnessLang})</FieldLabel>
                   <SyntaxHighlighter
                     code={proposal.harness_source ?? ""}
                     language={harnessLang}
                   />
                 </div>
               ) : (
-                <p className="text-3xs text-amber-500 font-mono">
-                  Agent did not author a harness -- proposal cannot be
+                <p
+                  className="font-mono"
+                  style={{
+                    fontSize: 10.5,
+                    color: "var(--status-warn)",
+                    margin: 0,
+                  }}
+                >
+                  agent did not author a harness -- proposal cannot be
                   accepted until harness_source is filled.
                 </p>
               )}
               {hasBuild && (
-                <div>
-                  <p className="text-3xs text-text-muted mb-1">
-                    Build command
-                  </p>
-                  <pre className="text-xs font-mono p-2 rounded bg-surface border border-border-default overflow-x-auto">
+                <div className="flex flex-col" style={{ gap: 4 }}>
+                  <FieldLabel>build command</FieldLabel>
+                  <pre
+                    className="font-mono"
+                    style={{
+                      margin: 0,
+                      padding: 12,
+                      fontSize: 11,
+                      lineHeight: 1.5,
+                      color: "var(--text-primary)",
+                      background: "var(--surface-sunk)",
+                      border: "1px solid var(--border-soft)",
+                      borderRadius: 3,
+                      overflow: "auto",
+                      whiteSpace: "pre",
+                    }}
+                  >
                     {proposal.harness_build_command}
                   </pre>
                 </div>
               )}
               {seedCount > 0 && (
-                <div>
-                  <p className="text-3xs text-text-muted mb-1">
-                    Seed corpus ({seedCount})
-                  </p>
-                  <ul className="text-3xs font-mono space-y-0.5">
+                <div className="flex flex-col" style={{ gap: 4 }}>
+                  <FieldLabel>seed corpus ({seedCount})</FieldLabel>
+                  <ul
+                    className="font-mono flex flex-col"
+                    style={{
+                      gap: 2,
+                      fontSize: 10.5,
+                      padding: "8px 12px",
+                      background: "var(--surface-sunk)",
+                      border: "1px solid var(--border-soft)",
+                      borderRadius: 3,
+                      margin: 0,
+                      listStyle: "none",
+                    }}
+                  >
                     {proposal.seed_corpus.map((s) => (
                       <li
                         key={s.filename}
-                        className="flex items-center gap-2"
+                        className="flex items-center"
+                        style={{ gap: 8 }}
                       >
-                        <span className="text-foreground">{s.filename}</span>
-                        <span className="text-text-muted">
+                        <span style={{ color: "var(--text-primary)" }}>
+                          {s.filename}
+                        </span>
+                        <span style={{ color: "var(--text-muted)" }}>
                           ({Math.round((s.content_base64.length * 3) / 4)} B)
                         </span>
                         {s.notes && (
-                          <span className="text-text-muted">-- {s.notes}</span>
+                          <span style={{ color: "var(--text-muted)" }}>
+                            -- {s.notes}
+                          </span>
                         )}
                       </li>
                     ))}
@@ -301,11 +532,24 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
                 </div>
               )}
               {hasDict && (
-                <div>
-                  <p className="text-3xs text-text-muted mb-1">
-                    Dictionary
-                  </p>
-                  <pre className="text-xs font-mono p-2 rounded bg-surface border border-border-default overflow-x-auto max-h-32">
+                <div className="flex flex-col" style={{ gap: 4 }}>
+                  <FieldLabel>dictionary</FieldLabel>
+                  <pre
+                    className="font-mono"
+                    style={{
+                      margin: 0,
+                      padding: 12,
+                      fontSize: 11,
+                      lineHeight: 1.5,
+                      color: "var(--text-primary)",
+                      background: "var(--surface-sunk)",
+                      border: "1px solid var(--border-soft)",
+                      borderRadius: 3,
+                      overflow: "auto",
+                      maxHeight: 160,
+                      whiteSpace: "pre",
+                    }}
+                  >
                     {proposal.dictionary_content}
                   </pre>
                 </div>
@@ -315,5 +559,46 @@ function FuzzProposalCard({ proposal }: { proposal: VRFuzzCampaignProposalSummar
         </div>
       )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Local presentational helpers
+// ---------------------------------------------------------------------------
+function BriefCell({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex flex-col" style={{ gap: 2 }}>
+      <span
+        className="font-mono uppercase"
+        style={{
+          fontSize: 9,
+          letterSpacing: "0.08em",
+          color: "var(--text-faint)",
+        }}
+      >
+        {label}
+      </span>
+      <span
+        className="font-mono"
+        style={{ fontSize: 11, color: "var(--text-primary)" }}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      className="font-mono uppercase"
+      style={{
+        fontSize: 9,
+        letterSpacing: "0.08em",
+        color: "var(--text-faint)",
+      }}
+    >
+      {children}
+    </span>
   );
 }

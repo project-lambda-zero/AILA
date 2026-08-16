@@ -24,6 +24,7 @@ from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import func as sa_func
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
 from aila.config import get_settings
@@ -43,6 +44,9 @@ from aila.modules.vr.db_models import (
     VRFuzzCampaignRecord,
     VRFuzzCrashRecord,
     VRFuzzTelemetryRecord,
+    VRInvestigationBranchRecord,
+    VRInvestigationMessageRecord,
+    VRInvestigationRecord,
     VRTargetRecord,
     VRWorkspaceRecord,
 )
@@ -51,11 +55,15 @@ from aila.modules.vr.services.fuzz_launcher import (
     build_launch_command,
     serialize_for_log,
 )
+from aila.platform.agents.auto_steering import post_manual_steering
 from aila.platform.config import build_platform_settings
 from aila.platform.contracts import utc_now
+from aila.platform.contracts.enums import SenderKind
+from aila.platform.contracts.mcp_payload import PayloadKind
 from aila.platform.services.ssh import SSHService
 from aila.platform.uow import UnitOfWork
 from aila.storage.db_models import ManagedSystemRecord
+from aila.storage.registry import ConfigRegistry
 
 __all__ = [
     "FuzzServiceError",
@@ -210,6 +218,9 @@ def _campaign_record_to_summary(
         stopped_at=record.stopped_at,
         last_progress_at=record.last_progress_at,
         notes=record.notes or "",
+        source_investigation_id=record.source_investigation_id,
+        source_outcome_id=record.source_outcome_id,
+        last_coverage_emitted_pct=record.last_coverage_emitted_pct,
         created_at=record.created_at,
         updated_at=record.updated_at,
     )
@@ -250,29 +261,133 @@ def _crash_record_to_summary(record: VRFuzzCrashRecord) -> VRFuzzCrashSummary:
 # 256 rows in the HexView, which fills the panel without burning RAM.
 _REPRODUCER_HEAD_LIMIT = 4096
 
+# Issue #183 -- lazy singleton so the per-request head-preview does
+# not pay the registry-construction cost on every call.
+_fuzz_registry: ConfigRegistry | None = None
+
+
+def _get_fuzz_registry() -> ConfigRegistry:
+    global _fuzz_registry
+    if _fuzz_registry is None:
+        _fuzz_registry = ConfigRegistry()
+    return _fuzz_registry
+
+
+def _resolve_reproducer_allowed_root() -> os.PathLike[str] | None:
+    """Return the operator-configured absolute reproducer-preview root, or None.
+
+    Issue #183 -- the head-preview opens files on the AILA host. Without
+    a configured allow-root every authenticated caller who can POST
+    ``/vr/fuzz/crashes`` can steer the open at arbitrary host paths (up
+    to the process's own read privileges). Empty config => preview
+    disabled fail-closed. A relative or non-existent configured root
+    is treated the same way -- the misconfiguration is logged but
+    never falls back to an implicit permissive root.
+    """
+    from pathlib import Path
+
+    try:
+        raw = _get_fuzz_registry().get(
+            "vr", "fuzz_reproducer_local_root",
+        )
+    except (RuntimeError, KeyError, ValueError, SQLAlchemyError) as exc:
+        _log.debug("reproducer preview: config lookup failed: %s", exc)
+        return None
+    if not raw or not isinstance(raw, str):
+        return None
+    candidate = Path(os.path.expanduser(raw))
+    if not candidate.is_absolute():
+        _log.warning(
+            "reproducer preview: configured root %r is not absolute; "
+            "preview disabled",
+            raw,
+        )
+        return None
+    try:
+        real = candidate.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        _log.warning(
+            "reproducer preview: configured root %r does not resolve: %s; "
+            "preview disabled",
+            raw, exc,
+        )
+        return None
+    if not real.is_dir():
+        _log.warning(
+            "reproducer preview: configured root %r is not a directory; "
+            "preview disabled",
+            raw,
+        )
+        return None
+    return real
+
 
 def _read_reproducer_head(
     path: str | None,
 ) -> tuple[str | None, int | None]:
-    """Read up to ``_REPRODUCER_HEAD_LIMIT`` bytes from ``path``.
+    """Read up to ``_REPRODUCER_HEAD_LIMIT`` bytes from ``path``, confined.
 
-    Returns ``(hex_string, bytes_read)``. When the path is missing,
-    unreadable, or empty, returns ``(None, None)``. Workers running
-    on remote workstations write to local AILA storage via the same
-    file-transfer flow that already places ``reproducer_path``; if
-    the file isn't reachable we surface that as missing -- the operator
-    will see "no minimised input bytes available" on the UI.
+    Issue #183 -- ``path`` originates from an authenticated API body
+    (``VRFuzzCrashCreate.reproducer_path``); a caller-crafted absolute
+    path would otherwise steer the local ``open`` at any file the
+    backend process can read (env files, key material). The confinement
+    is fail-closed:
+
+    - When ``fuzz_reproducer_local_root`` is unset (default), the
+      preview is disabled -- ``(None, None)`` is returned and the crash
+      still records without a hex preview.
+    - When configured, ``path`` is resolved via ``Path.resolve()`` so
+      symlink-escapes are followed BEFORE the containment check, and
+      ``..`` traversal is refused pre-resolve.
+    - The resolved real path MUST land inside the resolved real root
+      (``Path.is_relative_to``); anything else is refused and logged.
+
+    Returns ``(hex_string, bytes_read)``. Any refusal, missing file,
+    unreadable file, or empty file returns ``(None, None)`` -- the UI
+    surfaces this as "no minimised input bytes available".
     """
-    if not path:
+    from pathlib import Path
+
+    if not path or not isinstance(path, str):
+        return None, None
+    allowed_root = _resolve_reproducer_allowed_root()
+    if allowed_root is None:
+        # Fail-closed: no configured staging root => no preview.
+        return None, None
+    candidate = Path(os.path.expanduser(path))
+    if not candidate.is_absolute() or ".." in candidate.parts:
+        _log.warning(
+            "reproducer preview: refused non-absolute or traversal path %r",
+            path,
+        )
         return None, None
     try:
-        with open(path, "rb") as fh:
+        real = candidate.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        _log.warning(
+            "reproducer preview: refused unresolvable path %r: %s",
+            path, exc,
+        )
+        return None, None
+    if not real.is_relative_to(allowed_root):
+        _log.warning(
+            "reproducer preview: refused path %r (real=%s) escaping "
+            "allowed root %s",
+            path, real, allowed_root,
+        )
+        return None, None
+    try:
+        with open(real, "rb") as fh:
             data = fh.read(_REPRODUCER_HEAD_LIMIT)
-    except (OSError, PermissionError):
+    except (OSError, PermissionError) as exc:
+        _log.debug("reproducer preview: read failed for %s: %s", real, exc)
         return None, None
     if not data:
         return None, None
-    truncated = os.path.getsize(path) if os.path.exists(path) else len(data)
+    try:
+        truncated = os.path.getsize(real)
+    except OSError:
+        truncated = len(data)
     return data.hex(), int(truncated)
 
 
@@ -301,6 +416,385 @@ def _compose_crash_summary(
     if top:
         return top
     return ""
+
+
+_CFG_NAMESPACE: str = "vr"
+
+# Feedback config keys. Kept beside the fuzz_service so the layered lookup
+# order -- AILA_VR_<KEY> env -> DB row -> VRConfigSchema default -- is
+# resolved live via ConfigRegistry per call (no worker restart needed to
+# roll a threshold or flip the child-spawn knob).
+_CFG_COVERAGE_DELTA: str = "fuzz_coverage_emit_delta_pct"
+_CFG_COVERAGE_DELTA_DEFAULT: float = 5.0
+_CFG_SPAWN_CHILD: str = "fuzz_crash_spawn_child"
+_CFG_SPAWN_CHILD_DEFAULT: bool = False
+
+# Lazy registry singleton shared with the reaper pattern (see
+# aila.modules.vr.services.investigation_reaper._get_registry).
+_registry: ConfigRegistry | None = None
+
+
+def _get_registry() -> ConfigRegistry:
+    global _registry
+    if _registry is None:
+        _registry = ConfigRegistry()
+    return _registry
+
+
+async def _resolve_coverage_delta_threshold() -> float:
+    """Read ``fuzz_coverage_emit_delta_pct`` via ConfigRegistry (namespace=vr).
+
+    Falls back to :data:`_CFG_COVERAGE_DELTA_DEFAULT` when the schema is
+    not yet registered (bootstrap window) or the value is not a valid
+    positive float. Never raises -- the coverage-delta emit is best-effort
+    and must not derail patch_campaign.
+    """
+    reg = _get_registry()
+    try:
+        raw = await reg.get(_CFG_NAMESPACE, _CFG_COVERAGE_DELTA)
+    except (RuntimeError, OSError):
+        return _CFG_COVERAGE_DELTA_DEFAULT
+    if raw is None:
+        return _CFG_COVERAGE_DELTA_DEFAULT
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return _CFG_COVERAGE_DELTA_DEFAULT
+    if value <= 0.0:
+        return _CFG_COVERAGE_DELTA_DEFAULT
+    return value
+
+
+async def _resolve_spawn_child_enabled() -> bool:
+    """Read ``fuzz_crash_spawn_child`` via ConfigRegistry (namespace=vr).
+
+    Same fallback pattern as :func:`_resolve_coverage_delta_threshold`.
+    Default is OFF -- the steering message is the primary loop-closer;
+    the child-investigation spawn is opt-in operator behavior.
+    """
+    reg = _get_registry()
+    try:
+        raw = await reg.get(_CFG_NAMESPACE, _CFG_SPAWN_CHILD)
+    except (RuntimeError, OSError):
+        return _CFG_SPAWN_CHILD_DEFAULT
+    if raw is None:
+        return _CFG_SPAWN_CHILD_DEFAULT
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    try:
+        return bool(int(raw))
+    except (TypeError, ValueError):
+        return _CFG_SPAWN_CHILD_DEFAULT
+
+
+def _compose_crash_steering_text(
+    *,
+    campaign: VRFuzzCampaignRecord,
+    crash: VRFuzzCrashRecord,
+) -> str:
+    """One-shot operator-steering body for a confirmed crash.
+
+    Kept ASCII-only + short: this lands verbatim in the investigation
+    steering channel where the reasoning loop reads it, and the prompt
+    surface is expensive. Include enough to let the agent decide the
+    next hypothesis without another round trip: crash class, severity,
+    reproducer pointer, campaign name, and the stack hash for cross-
+    reference.
+    """
+    parts: list[str] = [
+        f"Fuzz campaign '{campaign.name}' (id={campaign.id}) "
+        f"produced a security-relevant crash.",
+        f"  crash_type: {crash.crash_type or '(unspecified)'}",
+        f"  severity:   {crash.severity}",
+        f"  stack_hash: {crash.stack_hash}",
+    ]
+    if crash.reproducer_path:
+        parts.append(f"  reproducer: {crash.reproducer_path}")
+    if crash.crash_signature:
+        parts.append(f"  signature:  {crash.crash_signature}")
+    parts.append(
+        "Investigate this hit against the current hypothesis set: "
+        "confirm exploitability, extract the primitive, and update the "
+        "outcome chain accordingly.",
+    )
+    return "\n".join(parts)
+
+
+def _compose_coverage_delta_text(
+    *,
+    campaign: VRFuzzCampaignRecord,
+    new_pct: float,
+    prev_pct: float | None,
+) -> str:
+    """One-shot system-observable body for a coverage jump.
+
+    Not a steering directive -- this lands under SenderKind.SYSTEM so
+    the reasoning loop sees it as a passive signal (progress happened,
+    the harness is reaching more code). Kept short so a rapid sequence
+    of coverage jumps doesn't crowd out real hypotheses in the message
+    ledger.
+    """
+    prior = "0.00" if prev_pct is None else f"{prev_pct:.2f}"
+    delta = new_pct if prev_pct is None else new_pct - prev_pct
+    return (
+        f"Fuzz campaign '{campaign.name}' (id={campaign.id}) "
+        f"coverage advanced to {new_pct:.2f}% "
+        f"(prev {prior}%, +{delta:.2f}pp)."
+    )
+
+
+async def _emit_crash_confirmed_feedback(
+    *,
+    campaign_id: str,
+    source_investigation_id: str,
+    crash_summary: VRFuzzCrashSummary,
+) -> None:
+    """Post a deduped operator-steering + optional child-spawn for a
+    SECURITY_RELEVANT crash on a linked campaign.
+
+    Runs OUTSIDE the crash-write UoW: the crash is already durably
+    stored by the time we get here. A failure inside this function
+    (steering post race, spawn enqueue failure) is caught by the
+    caller and logged; the crash row is never touched.
+
+    Dedup on the steering side is delegated to
+    :func:`aila.platform.agents.auto_steering.post_manual_steering`,
+    which uses the ``(investigation_id, auto_steering_key)`` partial-
+    unique index (migration 063). Key shape:
+    ``fuzz_crash:<campaign_id>:<stack_hash>`` -- one steering per
+    unique crash. Retries of the same POST (same stack_hash) collapse
+    to the existing row.
+    """
+    # Fresh UoW just to compose the steering text with the live
+    # campaign name (register_crash's UoW is already closed). Kept
+    # narrow -- one row lookup, no writes here.
+    async with UnitOfWork() as fetch_uow:
+        campaign = (await fetch_uow.session.exec(
+            _select(VRFuzzCampaignRecord).where(
+                VRFuzzCampaignRecord.id == campaign_id,
+            ),
+        )).first()
+    if campaign is None:
+        # Vanishingly rare -- the crash just committed against this
+        # campaign_id. Fall back to a bare id-only body so the
+        # steering still lands.
+        campaign = VRFuzzCampaignRecord(
+            id=campaign_id, target_id="", workspace_id="",
+            name=f"campaign {campaign_id}",
+            engine_id="", strategy_id="",
+        )
+
+    # Synthesize a lightweight crash-shaped record for the text composer
+    # (which reads only presentational fields, so this stays cheap and
+    # avoids a second SELECT for a row we just wrote).
+    crash_stub = VRFuzzCrashRecord(
+        id=crash_summary.id,
+        campaign_id=crash_summary.campaign_id,
+        stack_hash=crash_summary.stack_hash,
+        crash_type=crash_summary.crash_type,
+        crash_signature=crash_summary.crash_signature,
+        severity=crash_summary.severity.value,
+        triage_verdict=crash_summary.triage_verdict.value,
+        reproducer_path=crash_summary.reproducer_path,
+    )
+    text = _compose_crash_steering_text(campaign=campaign, crash=crash_stub)
+    key = f"fuzz_crash:{campaign_id}:{crash_summary.stack_hash}"
+    await post_manual_steering(
+        source_investigation_id,
+        None,
+        text,
+        key,
+        message_model=VRInvestigationMessageRecord,
+        branch_model=VRInvestigationBranchRecord,
+    )
+
+    # Optional child-spawn: opt-in via VRConfigSchema.fuzz_crash_spawn_child.
+    # OFF by default -- the steering message is the primary loop-closer;
+    # the child spawn multiplies investigation fan-out and only makes
+    # sense once the operator wants each confirmed crash auto-hunted.
+    if not await _resolve_spawn_child_enabled():
+        return
+    try:
+        await _spawn_child_investigation_for_crash(
+            source_investigation_id=source_investigation_id,
+            campaign_id=campaign_id,
+            crash_summary=crash_summary,
+        )
+    except (SQLAlchemyError, OSError, RuntimeError) as exc:
+        # Steering already landed; the child spawn is best-effort on top.
+        _log.warning(
+            "fuzz_campaign FEEDBACK child_spawn failed "
+            "campaign_id=%s inv=%s crash=%s err=%s",
+            campaign_id, source_investigation_id, crash_summary.id, exc,
+        )
+
+
+async def _spawn_child_investigation_for_crash(
+    *,
+    source_investigation_id: str,
+    campaign_id: str,
+    crash_summary: VRFuzzCrashSummary,
+) -> None:
+    """Enqueue a child VR investigation targeting the crash's reproducer.
+
+    Config-gated (default OFF -- see
+    :attr:`VRConfigSchema.fuzz_crash_spawn_child`). Mirrors the child-
+    row shape used by the MASVS-audit dispatcher (api_router around
+    the ``run_vr_investigate`` submit site): copy the parent's
+    ``target_id`` / ``team_id`` / ``project_id``, mark
+    ``parent_investigation_id`` back-reference, seed the primary
+    branch with the halvar persona, then enqueue ``run_vr_investigate``.
+
+    Imports are local so the fuzz_service import graph stays free of
+    the workflow-task module (which pulls in the ARQ runtime) unless
+    the operator flips the knob.
+    """
+    from aila.modules.vr.contracts.branch import PersonaVoice
+    from aila.modules.vr.contracts.investigation import (
+        InvestigationKind,
+        InvestigationStatus,
+    )
+    from aila.platform.contracts.enums import BranchStatus
+    from aila.platform.tasks.queue import TaskQueue
+
+    async with UnitOfWork() as fetch_uow:
+        parent_inv = (await fetch_uow.session.exec(
+            _select(VRInvestigationRecord).where(
+                VRInvestigationRecord.id == source_investigation_id,
+            ),
+        )).first()
+    if parent_inv is None:
+        _log.warning(
+            "fuzz_campaign FEEDBACK child_spawn abort -- parent "
+            "investigation %s not found", source_investigation_id,
+        )
+        return
+
+    child_title = (
+        f"Crash analysis: {crash_summary.crash_type or 'unknown'} "
+        f"({crash_summary.stack_hash[:12]})"
+    )[:255]
+    child_question = (
+        f"Investigate crash {crash_summary.id} from fuzz campaign "
+        f"{campaign_id}. Reproducer: "
+        f"{crash_summary.reproducer_path or '(missing)'}. "
+        f"Confirm exploitability and extract the primitive."
+    )
+
+    async with UnitOfWork() as write_uow:
+        child = VRInvestigationRecord(
+            team_id=parent_inv.team_id,
+            project_id=parent_inv.project_id,
+            parent_investigation_id=source_investigation_id,
+            target_id=parent_inv.target_id,
+            kind=InvestigationKind.AUDIT.value,
+            title=child_title,
+            initial_question=child_question,
+            status=InvestigationStatus.CREATED.value,
+            auto_pilot=True,
+        )
+        write_uow.session.add(child)
+        await write_uow.session.flush()
+        child_id = child.id
+        primary_branch = VRInvestigationBranchRecord(
+            investigation_id=child_id,
+            status=BranchStatus.ACTIVE.value,
+            fork_reason="primary",
+            persona_voice=PersonaVoice.HALVAR.value,
+        )
+        write_uow.session.add(primary_branch)
+        await write_uow.session.commit()
+
+    # Best-effort enqueue -- the child row persists either way; a
+    # follow-up /re-enqueue or the stuck-investigation healer will
+    # pick it up if the queue is briefly unavailable. Import at
+    # call time so ARQ isn't pulled in when the flag is OFF.
+    from aila.modules.vr.workflow.task import run_vr_investigate
+
+    try:
+        queue = TaskQueue(
+            config_registry=_get_registry(), module_id="vr",
+        )
+        await queue.submit(
+            track="vr",
+            fn=run_vr_investigate,
+            kwargs={"investigation_id": child_id},
+            user_id=None,
+            group_id=None,
+            team_id=parent_inv.team_id,
+        )
+    except (OSError, RuntimeError) as exc:
+        _log.warning(
+            "fuzz_campaign FEEDBACK child_spawn enqueue failed "
+            "child=%s err=%s (row persisted, /re-enqueue will retry)",
+            child_id, exc,
+        )
+
+
+async def _emit_coverage_delta_feedback(
+    *,
+    campaign_id: str,
+    source_investigation_id: str,
+    campaign_name: str,
+    new_pct: float,
+    prev_pct: float | None,
+) -> None:
+    """Write a SYSTEM-kind observable to the source investigation when
+    coverage crosses the delta threshold.
+
+    Not a steering directive -- the reasoning loop picks it up via its
+    SYSTEM-broadened message poll (see
+    :meth:`VulnResearcher._consume_pending_operator_messages`) as a
+    passive progress signal, not a mandatory redirect. Dedup by the
+    per-emit ``last_coverage_emitted_pct`` bump on the campaign row
+    (patch_campaign updates it in the same UoW that decides to emit),
+    so a retry of the same PATCH cannot double-post.
+    """
+    async with UnitOfWork() as uow:
+        # Compose the stub campaign for text (avoids a second SELECT).
+        campaign_stub = VRFuzzCampaignRecord(
+            id=campaign_id, target_id="", workspace_id="",
+            name=campaign_name, engine_id="", strategy_id="",
+        )
+        text = _compose_coverage_delta_text(
+            campaign=campaign_stub, new_pct=new_pct, prev_pct=prev_pct,
+        )
+        # Address the investigation's primary branch (broadcast to all
+        # siblings). Matches the auto_steering.post_manual_steering
+        # branch-resolution pattern; kept inline here because coverage
+        # feedback is SYSTEM-kind, not OPERATOR-kind, and does not go
+        # through the auto_steering dedup path.
+        primary_id = (await uow.session.exec(
+            _select(VRInvestigationBranchRecord.id)
+            .where(
+                VRInvestigationBranchRecord.investigation_id == source_investigation_id,
+            )
+            .where(VRInvestigationBranchRecord.parent_branch_id.is_(None))
+            .limit(1)
+        )).first()
+        if primary_id is None:
+            # Investigation exists but has no primary branch yet
+            # (bootstrap window). Skip -- the delta will re-fire on
+            # the next threshold crossing.
+            return
+        msg = VRInvestigationMessageRecord(
+            investigation_id=source_investigation_id,
+            branch_id=primary_id,
+            sender_kind=SenderKind.SYSTEM.value,
+            sender_id="fuzz_coverage",
+            payload_kind=PayloadKind.TEXT.value,
+            payload_json=json.dumps({
+                "text": text,
+                "campaign_id": campaign_id,
+                "coverage_pct": new_pct,
+                "prev_coverage_pct": prev_pct,
+            }),
+            created_at=utc_now(),
+        )
+        uow.session.add(msg)
+        await uow.session.commit()
 
 
 def _record_telemetry_snapshot(
@@ -387,6 +881,12 @@ class FuzzCampaignService:
                 duration_hours=body.duration_hours,
                 analysis_system_id=body.analysis_system_id,
                 notes=body.notes or "",
+                # #173: back-reference the source investigation so the
+                # register_crash + patch_campaign feedback path can post
+                # observables to the reasoning loop. None for operator-
+                # initiated campaigns (no proposal upstream).
+                source_investigation_id=body.source_investigation_id,
+                source_outcome_id=body.source_outcome_id,
             )
             uow.session.add(record)
             await uow.session.commit()
@@ -603,6 +1103,15 @@ class FuzzCampaignService:
     async def patch_campaign(
         self, campaign_id: str, body: VRFuzzCampaignPatch,
     ) -> VRFuzzCampaignSummary:
+        # Pre-resolve the coverage-delta threshold OUTSIDE the write UoW
+        # so the ConfigRegistry lookup (async, may hit its own session)
+        # never races the fuzz-campaign SELECT ... FOR UPDATE below.
+        coverage_delta_threshold = await _resolve_coverage_delta_threshold()
+        # State captured for post-commit feedback emit. Populated below
+        # when the patch decision crosses the coverage-delta threshold
+        # on a campaign that is linked back to a source investigation.
+        coverage_feedback: dict[str, Any] | None = None
+
         async with UnitOfWork() as uow:
             record = (await uow.session.exec(
                 _select(VRFuzzCampaignRecord).where(
@@ -660,6 +1169,33 @@ class FuzzCampaignService:
                 record.coverage_pct = body.coverage_pct
                 mutated = True
                 telemetry_changed = True
+                # #148 feedback half: decide whether this coverage_pct
+                # jump crosses the emit threshold BEFORE the commit,
+                # bumping ``last_coverage_emitted_pct`` in the SAME UoW
+                # that writes the coverage_pct change. This makes the
+                # decision atomic -- a concurrent PATCH that reads the
+                # same prior emit value cannot double-emit; the second
+                # writer will see the bumped value and skip. When the
+                # decision fires, we capture the pre-bump value +
+                # source ids into ``coverage_feedback`` so the emit can
+                # run after the commit (below), keeping the feedback
+                # write OUTSIDE this UoW.
+                if record.source_investigation_id:
+                    prev_emitted = record.last_coverage_emitted_pct
+                    delta = (
+                        body.coverage_pct
+                        if prev_emitted is None
+                        else body.coverage_pct - prev_emitted
+                    )
+                    if delta >= coverage_delta_threshold:
+                        coverage_feedback = {
+                            "campaign_id": campaign_id,
+                            "campaign_name": record.name,
+                            "source_investigation_id": record.source_investigation_id,
+                            "new_pct": float(body.coverage_pct),
+                            "prev_pct": prev_emitted,
+                        }
+                        record.last_coverage_emitted_pct = body.coverage_pct
             if body.crashes_found is not None:
                 record.crashes_found = body.crashes_found
                 mutated = True
@@ -676,7 +1212,27 @@ class FuzzCampaignService:
                     _record_telemetry_snapshot(uow, record, now)
                 await uow.session.commit()
                 await uow.session.refresh(record)
-            return _campaign_record_to_summary(record)
+            summary = _campaign_record_to_summary(record)
+
+        # Post-commit coverage-delta feedback: fires only when the
+        # campaign has a source_investigation_id AND the delta crossed
+        # the threshold. Kept OUTSIDE the write UoW so a message-insert
+        # failure never rolls back the coverage_pct update. Wrapped in
+        # a try/except on specific infra exception types -- the
+        # coverage jump is durably stored on the row; feedback is
+        # best-effort.
+        if coverage_feedback is not None:
+            try:
+                await _emit_coverage_delta_feedback(**coverage_feedback)
+            except (SQLAlchemyError, OSError, RuntimeError) as exc:
+                _log.warning(
+                    "fuzz_campaign FEEDBACK coverage_delta failed "
+                    "campaign_id=%s inv=%s err=%s (coverage_pct durably stored)",
+                    coverage_feedback["campaign_id"],
+                    coverage_feedback["source_investigation_id"],
+                    exc,
+                )
+        return summary
 
     async def register_crash(
         self,
@@ -685,10 +1241,18 @@ class FuzzCampaignService:
     ) -> VRFuzzCrashSummary:
         """Register a new crash; auto-dedup + auto-triage."""
         async with UnitOfWork() as uow:
+            # #203: lock the campaign row for the duration of the
+            # crash-insert + counter update. The historical code fetched
+            # the campaign lock-free and later ran a Python-side
+            # ``crashes_found = (crashes_found or 0) + 1`` -- two
+            # concurrent crash POSTs both read the same prior value and
+            # one increment was silently lost. FOR UPDATE serialises the
+            # register_crash calls per-campaign so the counter and the
+            # telemetry snapshot below observe consistent values.
             campaign = (await uow.session.exec(
                 _select(VRFuzzCampaignRecord).where(
                     VRFuzzCampaignRecord.id == body.campaign_id,
-                ),
+                ).with_for_update(),
             )).first()
             if campaign is None:
                 raise FuzzServiceError(
@@ -759,7 +1323,40 @@ class FuzzCampaignService:
 
             await uow.session.commit()
             await uow.session.refresh(record)
-            return _crash_record_to_summary(record)
+            # Capture the values we need for the post-commit feedback
+            # BEFORE the UoW context exits. Once the async-with block
+            # unwinds, ``campaign`` / ``record`` are session-detached
+            # and any attribute access risks a lazy-load on a closed
+            # session -- exactly the failure mode that was the initial
+            # scope-creep bug for the fuzz feedback path.
+            feedback_source_investigation_id = campaign.source_investigation_id
+            feedback_campaign_id = campaign.id
+            feedback_verdict = record.triage_verdict
+            summary = _crash_record_to_summary(record)
+
+        # #173 feedback: post steering + optionally spawn a child
+        # investigation. Kept OUTSIDE the crash-write UoW so a steering
+        # failure never rolls back the durably-stored crash. Wrapped in
+        # a narrow try/except -- the crash is already committed, the
+        # loop-closer is best-effort.
+        if (
+            feedback_verdict == CrashTriageVerdict.SECURITY_RELEVANT.value
+            and feedback_source_investigation_id
+        ):
+            try:
+                await _emit_crash_confirmed_feedback(
+                    campaign_id=feedback_campaign_id,
+                    source_investigation_id=feedback_source_investigation_id,
+                    crash_summary=summary,
+                )
+            except (SQLAlchemyError, OSError, RuntimeError) as exc:
+                _log.warning(
+                    "fuzz_campaign FEEDBACK crash_confirmed failed "
+                    "campaign_id=%s inv=%s err=%s (crash %s durably stored)",
+                    feedback_campaign_id, feedback_source_investigation_id,
+                    exc, summary.id,
+                )
+        return summary
 
     async def get_crash(
         self, crash_id: str,

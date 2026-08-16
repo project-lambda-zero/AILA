@@ -347,9 +347,22 @@ class CalibrationProposer:
         """
         new_id = str(uuid4())
         async with async_session_scope() as session:
-            active_stmt = select(CalibrationProposalRecord).where(
-                CalibrationProposalRecord.outcome_kind == proposal.outcome_kind,
-                CalibrationProposalRecord.status == CALIBRATION_STATUS_ACTIVE,
+            # Issue #202: FOR UPDATE on the active-proposal rows for
+            # this ``outcome_kind`` so two concurrent persist() calls
+            # cannot both leave ACTIVE rows unsuperseded. Without the
+            # lock, both reads see the same prior set, both SUPERSEDE
+            # it, both INSERT a new ACTIVE row -- and the invariant
+            # "at most one ACTIVE per outcome_kind" is silently
+            # broken. Locking here makes the second caller block,
+            # re-read the (now superseded) prior set, and correctly
+            # supersede its own previous winner.
+            active_stmt = (
+                select(CalibrationProposalRecord)
+                .where(
+                    CalibrationProposalRecord.outcome_kind == proposal.outcome_kind,
+                    CalibrationProposalRecord.status == CALIBRATION_STATUS_ACTIVE,
+                )
+                .with_for_update()
             )
             prior = (await session.exec(active_stmt)).all()
             for row in prior:

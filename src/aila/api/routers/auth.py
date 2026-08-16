@@ -268,7 +268,9 @@ async def create_api_key(
 
 
 @protected_router.get("/keys", response_model=ApiKeyListResponse)
+@limiter.limit("60/minute")
 async def list_api_keys(
+    request: Request,
     active_only: bool = Query(False),
     admin: AuthContext = Depends(require_role(ROLE_ADMIN)),
 ) -> ApiKeyListResponse:

@@ -14,9 +14,11 @@ from redis import asyncio as aioredis
 from sqlmodel import select
 
 from aila.api.metrics import TASK_ZOMBIES_REAPED_TOTAL
+from aila.platform.config_base import _shared_registry
 from aila.platform.contracts import utc_now
 from aila.platform.llm.drift import run_purge_old_records_cron as _drift_purge_cron
 from aila.platform.llm.idempotency_cache import run_purge_expired_cron
+from aila.platform.llm.seal import run_purge_expired_seals_cron as _seal_purge_cron
 from aila.platform.modules import load_builtin_modules
 from aila.platform.tasks import get_task_tuning
 from aila.platform.tasks.constants import (
@@ -52,34 +54,47 @@ __all__ = ["WorkerSettings", "reaper"]
 # at module scope, so any future re-introduction of tz-naive comparisons
 # triggers an immediate import-time failure.
 
-# fix §44 -- grace seconds for the cron reaper are env-driven. The
-# historical cron value (600s) is the default; boot path still
-# hard-codes 30s for legitimate reasons (see `_on_startup`). Operators
-# can override via PLATFORM_WORKER_HEARTBEAT_GRACE_S for the cron
-# only.
-try:
-    _REAPER_CRON_GRACE_S: int = int(
-        os.environ.get("PLATFORM_WORKER_HEARTBEAT_GRACE_S", "600"),
-    )
-except ValueError:
-    _REAPER_CRON_GRACE_S = 600
+# fix #132 -- reaper cron knobs live on ``PlatformConfigSchema`` and are
+# resolved at each cron tick through ConfigRegistry, not read as
+# module-level constants at ``worker.py`` import time. The env form
+# rides the standard platform namespace: env
+# ``AILA_PLATFORM_REAPER_CRON_GRACE_S`` /
+# ``AILA_PLATFORM_REAPER_ZOMBIE_HEARTBEAT_MIN`` /
+# ``AILA_PLATFORM_REAPER_CURSOR_BATCH_CAP`` (env > DB > default). The
+# historical env spellings (``PLATFORM_WORKER_HEARTBEAT_GRACE_S`` etc)
+# are intentionally not accepted -- the layered lookup only recognises
+# ``AILA_<NAMESPACE>_<KEY>`` and operators must set the new spelling.
+# Defaults preserve historical values (600s cron grace, 10-min
+# heartbeat, 5000 cursor rows per tick). Boot path in ``_on_startup``
+# still hard-codes its own 30s grace for legitimate reasons.
+def _resolve_reaper_cron_grace_s() -> int:
+    """Return the cron-reaper heartbeat grace in seconds."""
+    try:
+        return int(_shared_registry().get_sync(
+            "platform", "reaper_cron_grace_s",
+        ))
+    except (TypeError, ValueError):
+        return 600
 
-# fix RFC-05 -- zombie-task + cursor reaping is platform-owned and sweeps
-# every track in the platform reaper cron (no module owns a private
-# reaper). Thresholds are env-driven with the historical vr defaults
-# (10 min stale-heartbeat, 5000 cursor rows per tick).
-try:
-    _REAPER_ZOMBIE_HEARTBEAT_MIN: int = int(
-        os.environ.get("PLATFORM_REAPER_ZOMBIE_HEARTBEAT_MIN", "10"),
-    )
-except ValueError:
-    _REAPER_ZOMBIE_HEARTBEAT_MIN = 10
-try:
-    _REAPER_CURSOR_BATCH_CAP: int = int(
-        os.environ.get("PLATFORM_REAPER_CURSOR_BATCH_CAP", "5000"),
-    )
-except ValueError:
-    _REAPER_CURSOR_BATCH_CAP = 5000
+
+def _resolve_reaper_zombie_heartbeat_min() -> int:
+    """Return the zombie-task heartbeat threshold in minutes."""
+    try:
+        return int(_shared_registry().get_sync(
+            "platform", "reaper_zombie_heartbeat_min",
+        ))
+    except (TypeError, ValueError):
+        return 10
+
+
+def _resolve_reaper_cursor_batch_cap() -> int:
+    """Return the per-tick cursor row cap for the reaper sweep."""
+    try:
+        return int(_shared_registry().get_sync(
+            "platform", "reaper_cursor_batch_cap",
+        ))
+    except (TypeError, ValueError):
+        return 5000
 
 # ``_persist_dead_letter`` is sibling-internal: imported by
 # ``aila.platform.tasks.hooks._on_job_end`` to record terminal failures.
@@ -299,7 +314,7 @@ async def reaper(ctx: dict[str, object]) -> None:
         # because heartbeat=None before boot is unambiguous zombie
         # evidence.
         await _sweep_orphan_running_tasks(
-            grace_seconds=_REAPER_CRON_GRACE_S,
+            grace_seconds=_resolve_reaper_cron_grace_s(),
             reap_null_heartbeat=False,
             trust_present_lock=True,
         )
@@ -346,8 +361,8 @@ async def reaper(ctx: dict[str, object]) -> None:
         # track. Replaces the vr module's private reaper step; a
         # stale-running task is a zombie regardless of which track owns it.
         reaped = await reap_zombie_tasks_and_cursors(
-            heartbeat_min=_REAPER_ZOMBIE_HEARTBEAT_MIN,
-            batch_cap=_REAPER_CURSOR_BATCH_CAP,
+            heartbeat_min=_resolve_reaper_zombie_heartbeat_min(),
+            batch_cap=_resolve_reaper_cursor_batch_cap(),
         )
         if reaped["zombies_cancelled"] or reaped["cursors_purged"]:
             _log.info(
@@ -385,6 +400,20 @@ async def reaper(ctx: dict[str, object]) -> None:
     except Exception as exc:
         _log.warning(
             "reaper: confidence drift purge failed: %s", exc, exc_info=True,
+        )
+    # fix §129 -- audit_seal_records retention sweep. The seal step used to
+    # run this DELETE inline on every LLM call, a full table scan on the
+    # hot path. Lifted to the cron here so the seal step stays O(1) and
+    # the DELETE never blocks concurrent seal inserts.
+    try:
+        purged = await _seal_purge_cron()
+        if purged:
+            _log.info(
+                "reaper.audit_seal: purged %d expired rows", purged,
+            )
+    except Exception as exc:
+        _log.warning(
+            "reaper: audit seal purge failed: %s", exc, exc_info=True,
         )
     # Report-file retention sweep -- ReportArtifactStore recreates DB rows on
     # every persist_run_bundle() call but the on-disk artifacts accumulated
@@ -631,6 +660,8 @@ def _bootstrap_platform_tasks() -> None:
         "aila.platform.tasks.entrypoints",
         "aila.platform.tasks.report_tasks",
         "aila.platform.tasks.discovery",
+        # Issue #158: nightly + on-demand trajectory -> SFT/DPO corpus export.
+        "aila.platform.tasks.corpus_export",
     ):
         try:
             __import__(platform_module)
@@ -865,10 +896,17 @@ async def _sweep_orphan_running_tasks(
                     # sweep clears the in-progress lock, but no code path
                     # ever schedules the next turn.
                     try:
-                        fn_short = (
-                            rec.fn_path.rsplit(".", 1)[-1]
-                            if rec.fn_path else None
-                        )
+                        # issue #98: ARQ registers functions by their
+                        # fully-qualified registry name (see
+                        # ``_Registry.all_functions`` passing
+                        # ``name=t.name`` = ``{fn.__module__}.{fn.__qualname__}``).
+                        # Enqueuing by the bare tail (``rsplit(".", 1)[-1]``)
+                        # never resolves against ARQ's function map, so the
+                        # re-enqueue silently fails and the investigation
+                        # stalls with a resumable cursor and no worker to
+                        # pick it up. Pass ``rec.fn_path`` verbatim, matching
+                        # ``queue.py`` and ``_enqueue_dependents``.
+                        fn_path = rec.fn_path or None
                         try:
                             re_kwargs = (
                                 json.loads(rec.kwargs_json)
@@ -880,13 +918,13 @@ async def _sweep_orphan_running_tasks(
                                 "for %s (%s); re-enqueue skipped",
                                 rec.id, kw_exc,
                             )
-                            fn_short = None
+                            fn_path = None
                             re_kwargs = None
                         queue_key = (
                             ARQ_QUEUE_KEY_TEMPLATE.format(track=rec.track)
                             if rec.track else None
                         )
-                        if fn_short and queue_key and re_kwargs is not None:
+                        if fn_path and queue_key and re_kwargs is not None:
                             from uuid import uuid4 as _uuid4
 
                             from arq import create_pool as _create_pool
@@ -897,7 +935,7 @@ async def _sweep_orphan_running_tasks(
                             try:
                                 new_job_id = str(_uuid4())
                                 await arq_pool.enqueue_job(
-                                    fn_short,
+                                    fn_path,
                                     _queue_name=queue_key,
                                     _job_id=new_job_id,
                                     **re_kwargs,
@@ -906,7 +944,7 @@ async def _sweep_orphan_running_tasks(
                                     "worker.reverse_sweep: re-enqueued "
                                     "resumable workflow %s as %s "
                                     "(fn=%s queue=%s)",
-                                    rec.id, new_job_id, fn_short, queue_key,
+                                    rec.id, new_job_id, fn_path, queue_key,
                                 )
                                 healed_events.append((
                                     "orphan_task_reenqueue",
@@ -917,7 +955,7 @@ async def _sweep_orphan_running_tasks(
                                     {
                                         "task_id": rec.id,
                                         "new_job_id": new_job_id,
-                                        "fn": fn_short,
+                                        "fn": fn_path,
                                         "queue": queue_key,
                                         "track": rec.track,
                                     },
@@ -1101,6 +1139,14 @@ class WorkerSettings:
     # (scheduled reports + network discovery). Phase 182 re-homes them.
     functions: list[Any] = _REGISTRY.all_functions()
     cron_jobs = [cron(reaper, second=0)]
+    # Single-task concurrency per worker process (#196). ARQ's default
+    # ``max_jobs`` is 10, which produced 10x the documented concurrency:
+    # ``cli.worker_start`` promises "max_jobs=1 (single-task concurrency
+    # per process)" and the LLM rate budgets, DB pool sizing, and the
+    # single-active-scan serialization in the service layer are all
+    # calibrated to that number. Set it here so the base and the
+    # cli-side ``_BoundWorkerSettings`` subclass both honour it.
+    max_jobs = 1
     max_tries = 3
     job_timeout = 3600
     keep_result = 3600

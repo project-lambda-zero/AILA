@@ -1,14 +1,24 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router";
 
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaCard } from "@/components/aila/AilaCard";
 import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
+import { WindowPanel } from "@/components/aila/WindowPanel";
+import {
+  DataGrid,
+  MonoBadge,
+  SectionHeader,
+} from "@/components/aila/mock";
 
 import { DeleteButton } from "../components/DeleteButton";
 import { useDeletePattern } from "../mutations";
 import { usePatterns, useWorkspaces } from "../queries";
-import type { PatternKind, PatternScope, PatternStatus } from "../types";
+import { useVRListInvalidation } from "../hooks/useVRListInvalidation";
+import type {
+  PatternKind,
+  PatternScope,
+  PatternStatus,
+  VRPatternSummary,
+} from "../types";
 
 const KINDS: PatternKind[] = [
   "exploitation_technique",
@@ -20,27 +30,37 @@ const KINDS: PatternKind[] = [
 const STATUSES: PatternStatus[] = ["draft", "active", "archived"];
 const SCOPES: PatternScope[] = ["local", "workspace", "team", "global"];
 
-const statusColor: Record<
-  PatternStatus,
-  "info" | "low" | "medium" | "high" | "critical"
-> = {
+// Status/scope -> MonoBadge tone.
+const STATUS_TONE: Record<PatternStatus, string> = {
   draft: "info",
-  active: "low",
+  active: "ok",
   archived: "high",
 };
 
-const scopeColor: Record<
-  PatternScope,
-  "info" | "low" | "medium" | "high" | "critical"
-> = {
+const SCOPE_TONE: Record<PatternScope, string> = {
   local: "info",
   workspace: "medium",
   team: "high",
   global: "critical",
 };
 
+// Mock chrome for raw form controls.
+const CTRL: React.CSSProperties = {
+  height: 26,
+  fontSize: 10.5,
+  padding: "0 8px",
+  background: "var(--surface-sunk)",
+  border: "1px solid var(--border-soft)",
+  color: "var(--text-primary)",
+  borderRadius: 3,
+  letterSpacing: "0.04em",
+  outline: "none",
+  fontFamily: "var(--font-mono)",
+};
+
 export function PatternsPage() {
   const navigate = useNavigate();
+  useVRListInvalidation("patterns");
   const { data: workspacesResult } = useWorkspaces();
   const workspaces = workspacesResult?.data ?? [];
   const deleteMut = useDeletePattern();
@@ -50,6 +70,10 @@ export function PatternsPage() {
   const [statusFilter, setStatusFilter] = useState<PatternStatus | "">("");
   const [scopeFilter, setScopeFilter] = useState<PatternScope | "">("");
 
+  // /vr/patterns has no `q` server-side param -- quick-filter runs
+  // client-side over the loaded page.
+  const [query, setQuery] = useState("");
+
   const { data: result, isLoading, isError } = usePatterns({
     workspaceId: workspaceFilter || undefined,
     kind: kindFilter || undefined,
@@ -58,149 +82,261 @@ export function PatternsPage() {
   });
   const patterns = result?.data ?? [];
 
-  return (
-    <div className="space-y-4">
+  const filteredPatterns = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return patterns;
+    return patterns.filter(
+      (p) =>
+        p.summary.toLowerCase().includes(needle) ||
+        p.kind.toLowerCase().includes(needle) ||
+        p.status.toLowerCase().includes(needle) ||
+        p.scope.toLowerCase().includes(needle),
+    );
+  }, [patterns, query]);
 
-      <AilaCard  techBorder glow><div className="flex items-center gap-2 flex-wrap">
-        <label className="text-sm text-text-muted">Workspace:</label>
+  // ─── Filter shelf ───
+  const filterShelf = (
+    <WindowPanel title="filters" tone="muted">
+      <div className="flex flex-wrap items-center" style={{ gap: 8 }}>
+        <input
+          type="search"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="filter (summary / kind)…"
+          aria-label="Filter patterns"
+          className="font-mono"
+          style={{ ...CTRL, width: 260 }}
+        />
         <select
           value={workspaceFilter}
           onChange={(e) => setWorkspaceFilter(e.target.value)}
           aria-label="Filter by workspace"
-          className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
+          className="font-mono uppercase"
+          style={CTRL}
         >
-          <option value="">-- all --</option>
-          {workspaces.map((ws) => (
-            <option key={ws.id} value={ws.id}>
-              {ws.name}
-            </option>
-          ))}
+          <option value="">all workspaces</option>
+          {workspaces
+            .slice()
+            .sort((a, b) => a.name.localeCompare(b.name))
+            .map((ws) => (
+              <option key={ws.id} value={ws.id}>
+                {ws.name}
+              </option>
+            ))}
         </select>
-      
-        <label className="text-sm text-text-muted ml-2">Kind:</label>
         <select
           value={kindFilter}
           onChange={(e) => setKindFilter(e.target.value as PatternKind | "")}
           aria-label="Filter by kind"
-          className="px-3 py-1.5 text-sm font-mono rounded-md bg-surface border border-border-default"
+          className="font-mono uppercase"
+          style={CTRL}
         >
-          <option value="">-- all --</option>
+          <option value="">all kind</option>
           {KINDS.map((k) => (
             <option key={k} value={k}>
               {k}
             </option>
           ))}
         </select>
-      
-        <label className="text-sm text-text-muted ml-2">Status:</label>
         <select
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as PatternStatus | "")}
+          onChange={(e) =>
+            setStatusFilter(e.target.value as PatternStatus | "")
+          }
           aria-label="Filter by status"
-          className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
+          className="font-mono uppercase"
+          style={CTRL}
         >
-          <option value="">-- all --</option>
+          <option value="">all status</option>
           {STATUSES.map((s) => (
             <option key={s} value={s}>
               {s}
             </option>
           ))}
         </select>
-      
-        <label className="text-sm text-text-muted ml-2">Scope:</label>
         <select
           value={scopeFilter}
           onChange={(e) => setScopeFilter(e.target.value as PatternScope | "")}
           aria-label="Filter by scope"
-          className="px-3 py-1.5 text-sm rounded-md bg-surface border border-border-default"
+          className="font-mono uppercase"
+          style={CTRL}
         >
-          <option value="">-- all --</option>
+          <option value="">all scope</option>
           {SCOPES.map((s) => (
             <option key={s} value={s}>
               {s}
             </option>
           ))}
         </select>
-      
-        <span className="text-xs text-text-muted ml-auto">
-          {patterns.length} pattern{patterns.length === 1 ? "" : "s"}
+        <span style={{ flex: 1 }} />
+        <span
+          className="font-mono"
+          style={{
+            fontSize: 10,
+            color: "var(--text-faint)",
+            letterSpacing: "0.06em",
+          }}
+        >
+          {query.trim()
+            ? `${filteredPatterns.length} of ${patterns.length}`
+            : `${patterns.length}`}
+          {" "}pattern{patterns.length === 1 ? "" : "s"}
         </span>
-      </div></AilaCard>
+      </div>
+    </WindowPanel>
+  );
 
-      {isLoading && <LoadingSkeleton size="lg" width="full" />}
+  // ─── Table ───
+  const columns: {
+    label: string;
+    width: string;
+    align?: "left" | "right" | "center";
+  }[] = [
+    { label: "summary", width: "1fr" },
+    { label: "kind", width: "160px" },
+    { label: "status", width: "90px" },
+    { label: "scope", width: "100px" },
+    { label: "conf.", width: "70px", align: "right" },
+    { label: "used", width: "60px", align: "right" },
+    { label: "created", width: "110px" },
+    { label: "", width: "40px", align: "center" },
+  ];
 
-      {isError && (
-        <AilaCard className="border-border-danger" techBorder glow><p className="text-sm text-text-danger">Failed to load patterns.</p></AilaCard>
-      )}
+  function renderCells(p: VRPatternSummary): React.ReactNode[] {
+    return [
+      <span
+        className="font-mono"
+        title={p.summary}
+        style={{
+          fontSize: 11.5,
+          color: "var(--text-primary)",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          display: "block",
+        }}
+      >
+        {p.summary}
+      </span>,
+      <span
+        className="font-mono"
+        style={{ fontSize: 10.5, color: "var(--text-muted)" }}
+      >
+        {p.kind}
+      </span>,
+      <MonoBadge tone={STATUS_TONE[p.status]}>{p.status}</MonoBadge>,
+      <MonoBadge tone={SCOPE_TONE[p.scope]}>{p.scope}</MonoBadge>,
+      <span
+        className="font-mono"
+        style={{ fontSize: 11, color: "var(--text-primary)" }}
+      >
+        {p.confidence}
+      </span>,
+      <span
+        className="font-mono"
+        style={{ fontSize: 11, color: "var(--text-primary)" }}
+      >
+        {p.times_retrieved}
+      </span>,
+      <span
+        className="font-mono"
+        style={{ fontSize: 10, color: "var(--text-faint)" }}
+      >
+        {p.created_at
+          ? new Date(p.created_at).toLocaleDateString()
+          : "--"}
+      </span>,
+      <span onClick={(e) => e.stopPropagation()}>
+        <DeleteButton
+          id={p.id}
+          label={`pattern "${p.summary.slice(0, 40)}"`}
+          mutation={deleteMut}
+          compact
+        />
+      </span>,
+    ];
+  }
 
-      {!isLoading && !isError && patterns.length === 0 && (
-        <AilaCard  techBorder glow><p className="text-center py-6 text-text-muted">
-          No patterns. Auto-extraction runs when investigations complete
-          successfully; you can also create patterns manually via the API.
-        </p></AilaCard>
-      )}
+  const tableActions = (
+    <span
+      className="font-mono"
+      style={{
+        fontSize: 10,
+        letterSpacing: "0.06em",
+        color: "var(--text-faint)",
+      }}
+    >
+      {filteredPatterns.length}
+      <span style={{ opacity: 0.5 }}> / {patterns.length}</span>
+    </span>
+  );
 
-      {!isLoading && !isError && patterns.length > 0 && (
-        <AilaCard className="overflow-x-auto p-0" techBorder glow><table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border-default text-left text-xs uppercase tracking-wide text-text-muted">
-              <th className="px-4 py-2 font-semibold">Summary</th>
-              <th className="px-4 py-2 font-semibold">Kind</th>
-              <th className="px-4 py-2 font-semibold">Status</th>
-              <th className="px-4 py-2 font-semibold">Scope</th>
-              <th className="px-4 py-2 font-semibold">Confidence</th>
-              <th className="px-4 py-2 font-semibold text-right">Used</th>
-              <th className="px-4 py-2 font-semibold">Created</th>
-              <th className="px-2 py-2"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {patterns.map((p) => (
-              <tr
-                key={p.id}
-                onClick={() => navigate(`/vr/patterns/${p.id}`)}
-                className="border-b border-border-default last:border-b-0 cursor-pointer hover:bg-surface transition-colors"
-              >
-                <td className="px-4 py-2 font-semibold text-foreground max-w-md truncate">
-                  {p.summary}
-                </td>
-                <td className="px-4 py-2 font-mono text-xs text-text-muted">
-                  {p.kind}
-                </td>
-                <td className="px-4 py-2">
-                  <AilaBadge severity={statusColor[p.status]} size="sm">
-                    {p.status}
-                  </AilaBadge>
-                </td>
-                <td className="px-4 py-2">
-                  <AilaBadge severity={scopeColor[p.scope]} size="sm">
-                    {p.scope}
-                  </AilaBadge>
-                </td>
-                <td className="px-4 py-2 font-mono text-xs">
-                  {p.confidence}
-                </td>
-                <td className="px-4 py-2 font-mono text-xs text-right">
-                  {p.times_retrieved}
-                </td>
-                <td className="px-4 py-2 font-mono text-xs text-text-muted">
-                  {p.created_at
-                    ? new Date(p.created_at).toLocaleDateString()
-                    : "--"}
-                </td>
-                <td className="px-2 py-2 text-right">
-                  <DeleteButton
-                    id={p.id}
-                    label={`pattern "${p.summary.slice(0, 40)}"`}
-                    mutation={deleteMut}
-                    compact
-                  />
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table></AilaCard>
-      )}
+  let tableBody: React.ReactNode;
+  if (isLoading) {
+    tableBody = (
+      <div style={{ padding: 12 }}>
+        <LoadingSkeleton size="lg" width="full" />
+      </div>
+    );
+  } else if (isError) {
+    tableBody = (
+      <div
+        className="font-mono"
+        style={{
+          padding: 24,
+          textAlign: "center",
+          color: "var(--accent)",
+          fontSize: 11,
+          letterSpacing: "0.06em",
+        }}
+      >
+        failed to load patterns.
+      </div>
+    );
+  } else {
+    tableBody = (
+      <DataGrid
+        columns={columns}
+        rows={filteredPatterns}
+        renderCells={renderCells}
+        getKey={(p) => p.id}
+        onRowClick={(p) => navigate(`/vr/patterns/${p.id}`)}
+        empty={
+          <div
+            className="font-mono"
+            style={{
+              padding: 34,
+              textAlign: "center",
+              fontSize: 11.5,
+              color: "var(--text-muted)",
+              letterSpacing: "0.04em",
+            }}
+          >
+            {query.trim() ||
+            workspaceFilter ||
+            kindFilter ||
+            statusFilter ||
+            scopeFilter
+              ? "no patterns match the current filters."
+              : "no patterns yet -- auto-extraction runs when investigations complete."}
+          </div>
+        }
+      />
+    );
+  }
+
+  return (
+    <div className="flex flex-col" style={{ gap: 14 }}>
+      <SectionHeader icon="◈" title="Patterns" />
+      {filterShelf}
+      <WindowPanel
+        title="results"
+        tone="accent"
+        actions={tableActions}
+        flush
+      >
+        {tableBody}
+      </WindowPanel>
     </div>
   );
 }

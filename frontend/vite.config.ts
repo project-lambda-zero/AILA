@@ -73,8 +73,20 @@ function manualChunks(id: string): string | undefined {
   if (/[\\/]node_modules[\\/]@tanstack[\\/]/.test(id)) {
     return "vendor-tanstack";
   }
+  // @phosphor-icons must stay OUT of the eager entry chunk (shell chrome
+  // imports many icons; leaving them unchunked collapses ~250 KB of
+  // shell + shared icons into the entry). But a single `vendor-phosphor`
+  // chunk had grown to ~516 KB and tripped the 500 KB advisory. Split the
+  // deep-imported (tree-shakeable) icon set into a few bounded, parallel-
+  // loaded chunks, bucketed deterministically by icon module id, so each
+  // chunk stays well under 500 KB while the entry chunk is unaffected.
+  // See #222.
   if (/[\\/]node_modules[\\/]@phosphor-icons[\\/]/.test(id)) {
-    return "vendor-phosphor";
+    let hash = 0;
+    for (let i = 0; i < id.length; i += 1) {
+      hash = (hash * 31 + id.charCodeAt(i)) | 0;
+    }
+    return `vendor-phosphor-${Math.abs(hash) % 4}`;
   }
   if (/[\\/]node_modules[\\/](recharts|d3-[a-z-]+|victory-vendor)[\\/]/.test(id)) {
     return "vendor-recharts";
@@ -110,7 +122,7 @@ export default defineConfig({
     __APP_BUILD_SHA__: JSON.stringify(buildSha),
   },
   optimizeDeps: {
-    include: ["ogl", "@monaco-editor/react", "monaco-editor"],
+    include: ["ogl"],
   },
   resolve: {
     alias: [

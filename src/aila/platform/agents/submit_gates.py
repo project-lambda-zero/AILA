@@ -29,48 +29,13 @@ __all__ = [
 _log = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------ #
-#  Known allocator and input-reader function names.                    #
-#  The gate checks whether the agent called read_function on any of   #
-#  these BEFORE submitting an overflow/allocation claim.               #
+#  Domain vocabulary the gate consults is module-supplied:            #
+#  ``known_allocators`` and ``known_input_readers`` reach the gate    #
+#  as arguments, sourced from the active turn runner's ClassVars.     #
+#  A module with an empty vocabulary (malware, forensics today) is    #
+#  a no-op for the overflow-class allocator/reader check; the         #
+#  reachability check (``callers_of``) still runs for every claim.    #
 # ------------------------------------------------------------------ #
-KNOWN_ALLOCATORS: frozenset[str] = frozenset({
-    # FFmpeg
-    "av_malloc", "av_mallocz", "av_calloc", "av_realloc",
-    "av_fast_realloc", "av_buffer_alloc", "av_frame_get_buffer",
-    "av_realloc_f", "av_malloc_array", "av_calloc_array",
-    # libc / POSIX
-    "malloc", "calloc", "realloc", "reallocarray",
-    # nginx
-    "ngx_palloc", "ngx_pnalloc", "ngx_pcalloc", "ngx_alloc",
-    # Apache httpd
-    "apr_palloc", "apr_pcalloc",
-    # OpenSSL
-    "OPENSSL_malloc", "OPENSSL_zalloc", "CRYPTO_malloc",
-    # GLib
-    "g_malloc", "g_malloc0", "g_new", "g_new0",
-    # Linux kernel
-    "kmalloc", "kzalloc", "kcalloc", "vmalloc",
-    # Go (via cgo or audit-mcp representation)
-    "make", "append",
-})
-
-INPUT_READERS: frozenset[str] = frozenset({
-    # FFmpeg I/O
-    "avio_r8", "avio_rb16", "avio_rb32", "avio_rb64",
-    "avio_rl16", "avio_rl32", "avio_rl64",
-    # FFmpeg bitstream
-    "get_bits", "get_bits_long", "get_bits1", "show_bits",
-    "get_bits_le", "get_sbits",
-    # FFmpeg bytestream
-    "bytestream2_get_le16", "bytestream2_get_le32",
-    "bytestream2_get_be16", "bytestream2_get_be32",
-    "bytestream2_get_byte",
-    # Generic read macros
-    "AV_RL16", "AV_RL32", "AV_RB16", "AV_RB32",
-    "AV_RL64", "AV_RB64",
-    # Network / protocol
-    "recv", "read", "fread",
-})
 
 # Claim classes that require allocator + input-range verification.
 _OVERFLOW_CLASSES: frozenset[str] = frozenset({
@@ -121,16 +86,29 @@ async def check_defense_verification(
     branch_id: str,
     claim_class: str,
     message_table: str,
+    known_allocators: frozenset[str] = frozenset(),
+    known_input_readers: frozenset[str] = frozenset(),
 ) -> tuple[bool, str | None]:
     """Check whether the branch's tool-call history shows defense verification.
 
     Queries the branch's ``tool_call`` message rows from the DB (same
     pattern as ``_survey_streak_hint`` in the VR tool executor). Checks:
 
-    - For overflow/allocation claims: did the agent call ``read_function``
-      on a known allocator AND on an input reader?
+    - For overflow/allocation claims: when the caller supplies non-empty
+      ``known_allocators`` / ``known_input_readers`` vocabularies, the
+      agent must have called ``read_function`` on at least one entry
+      from each set. A module with an empty vocabulary skips the
+      allocator / reader check for that side (the check that stays live
+      still fires if its vocabulary is populated).
     - For ALL finding claims: did the agent call ``callers_of`` at least
       once to verify reachability?
+
+    ``known_allocators`` / ``known_input_readers`` are module-supplied
+    vocabulary hooks. The turn runner reads them off its ClassVars
+    (``AgentTurnRunnerBase.known_allocators`` /
+    ``known_input_readers``) and passes them through here; each module
+    subclass populates the sets. Empty defaults keep the gate a no-op
+    for modules that never author overflow-shaped claims.
 
     Returns ``(True, None)`` if checks pass, ``(False, rejection_msg)``
     if not. The rejection message is injected as a steering directive.
@@ -165,25 +143,27 @@ async def check_defense_verification(
 
     has_callers_of = any(t.endswith("callers_of") for t in tools_used)
 
-    # Check 1: overflow/allocation claims need allocator + input-range reads.
+    # Check 1: overflow/allocation claims need allocator + input-range
+    # reads. Only fires when the module actually declared vocabulary for
+    # the side under test; an empty side is a no-op so modules whose
+    # findings are not overflow-shaped (malware, forensics today) don't
+    # get rejected on a check they don't participate in.
     if claim_class in _OVERFLOW_CLASSES:
-        if not read_targets & KNOWN_ALLOCATORS:
+        if known_allocators and not read_targets & known_allocators:
             return False, (
                 "SUBMIT REJECTED (defense-check gate): you claimed an "
                 "overflow or allocation bug but never called read_function "
-                "on the allocator used at the vulnerability site. Read the "
-                "allocator implementation (e.g. av_calloc, av_malloc, "
-                "ngx_palloc) to check whether it handles overflow "
-                "internally, then resubmit."
+                "on the allocator used at the vulnerability site. Read "
+                "the allocator implementation to check whether it handles "
+                "overflow internally, then resubmit."
             )
-        if not read_targets & INPUT_READERS:
+        if known_input_readers and not read_targets & known_input_readers:
             return False, (
                 "SUBMIT REJECTED (defense-check gate): state the bit-width "
                 "and maximum value of the input reader feeding the overflow "
-                "operand. Call read_function on the read primitive (e.g. "
-                "avio_rb16 returns uint16_t, max 65535) to determine "
-                "whether the overflow is arithmetically possible, then "
-                "resubmit."
+                "operand. Call read_function on the read primitive to "
+                "determine whether the overflow is arithmetically possible, "
+                "then resubmit."
             )
 
     # Check 2: ALL finding claims need a callers_of reachability trace.

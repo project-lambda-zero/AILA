@@ -1,0 +1,69 @@
+{
+  "_meta": {
+    "description": "Bootstrap seed for the judge-reliability harness (issue #152).",
+    "bootstrap_notice": "This is a SHAPE-ONLY bootstrap. Every 'label' equals the row's 'recorded_verdict' by construction, so calibration metrics on this seed alone are trivially perfect and prove only that the harness code path executes end-to-end. Real calibration requires augmenting this seed with human-labeled rows where 'label' is set INDEPENDENTLY of the verifier's own output, drawn from operator-reviewed outcomes on resolved investigations (e.g., approved -> label matches verifier verdict; rejected -> label opposes it). Do NOT add rows whose 'label' is inferred from the verifier's own output.",
+    "sources": [
+      "src/aila/platform/agents/claim_verifier.py (verifier_report shape + confidence anchor)",
+      "src/aila/platform/agents/prompts/system_claim_verifier_verdict.md (0.5 / 0.7 / 0.9 anchor bands)",
+      "tests/test_vr_masvs_verdict_mapper.py:68-71 (real refuted+confirmed fixtures the masvs mapper consumes)",
+      "tests/platform/agents/test_synthesis_runner_verifier_annotation.py:250-370 (recorded {refuted, 0.15} and {inconclusive, no-confidence} fixtures)"
+    ],
+    "augmentation_protocol": "For each resolved investigation with a canonical outcome carrying payload['verifier_report'], record: (a) the extractor claim text passed to the verifier (VR reads payload['answer']; malware routes through render_outcome_claim_text), (b) the composed verdict_input text (_render_verdict_input over preconditions+probe_results) as 'evidence', (c) label from the operator's dispatch decision on that outcome (approved+dispatched_to_finding -> matches verifier verdict; rejected_by_operator -> opposite of verifier verdict). Cite the investigation_id + canonical_outcome_id in 'provenance'."
+  },
+  "rows": [
+    {
+      "claim_id": "bootstrap-vr-refuted-strong",
+      "claim": "The parser at src/foo.cc:120 dereferences an unchecked pointer from user-controlled input, producing a memory-safety vulnerability reachable from the network entry point.",
+      "evidence": "# Preconditions and probe results\n\n## P1: The guard at src/foo.cc:118 does not short-circuit before the cast\nrefutation_signature: If the guard rejects the input, the cast is unreachable.\nif_refuted_then: The finding is refuted.\nprobe: read_function args={'function': 'parse_header', 'file': 'src/foo.cc'}\nprobe_result:\n// src/foo.cc:100  (35 lines)\nint parse_header(const uint8_t *buf, size_t len) {\n  if (len < sizeof(header_t)) {\n    return -EINVAL;  // guard short-circuits before the cast\n  }\n  const header_t *h = (const header_t *)buf;\n  return handle_header(h);\n}\n\nNow produce the JSON verdict per the system prompt.",
+      "label": "refuted",
+      "provenance": "Bootstrap shape row modelled on tests/platform/agents/test_synthesis_runner_verifier_annotation.py:263-268 (recorded verifier_report={verdict:'refuted', confidence:0.15, summary:'Probe with malformed input did not reproduce; the guard at src/foo.cc:118 short-circuits before the cast.'}); label equals recorded_verdict per the shape-only bootstrap protocol.",
+      "recorded_verdict": "refuted",
+      "recorded_confidence": 0.15
+    },
+    {
+      "claim_id": "bootstrap-masvs-confirmed-high",
+      "claim": "The finding at the affected component is a confirmed vulnerability meeting the MASVS control criteria at the 0.82 confidence band.",
+      "evidence": "# Preconditions and probe results\n\n## P1: The affected component is reachable from an external entry point\nrefutation_signature: If no external caller reaches the sink, the finding is refuted.\nif_refuted_then: The finding is refuted.\nprobe: callers_of args={'function': 'affected_sink'}\nprobe_result:\n(3 entries)\nhandle_external_request  src/net/http.c:412\ndispatch_message  src/net/router.c:88\nrun_worker  src/worker.c:132\n\nNow produce the JSON verdict per the system prompt.",
+      "label": "confirmed",
+      "provenance": "Bootstrap shape row modelled on tests/test_vr_masvs_verdict_mapper.py:65-71 (recorded verifier_report={verdict:'confirmed', confidence:0.82} at the FINDING floor); label equals recorded_verdict per the shape-only bootstrap protocol.",
+      "recorded_verdict": "confirmed",
+      "recorded_confidence": 0.82
+    },
+    {
+      "claim_id": "bootstrap-masvs-refuted-verystrong",
+      "claim": "The affected component contains a memory-safety vulnerability reachable from an untrusted source.",
+      "evidence": "# Preconditions and probe results\n\n## P1: The upstream defense does not neutralize the source-to-sink flow\nrefutation_signature: If a defense closes every route into the sink, the finding is refuted.\nif_refuted_then: The finding is refuted.\nprobe: search_source args={'query': 'validate_length'}\nprobe_result:\n(2 matches)\nsrc/net/parser.c:57: validate_length(buf, len);\nsrc/net/parser.c:112: validate_length(payload, payload_len);\n\nNow produce the JSON verdict per the system prompt.",
+      "label": "refuted",
+      "provenance": "Bootstrap shape row modelled on tests/test_vr_masvs_verdict_mapper.py:206-208 (recorded verifier_report={verdict:'refuted', confidence:0.91} on a direct_finding outcome); label equals recorded_verdict per the shape-only bootstrap protocol.",
+      "recorded_verdict": "refuted",
+      "recorded_confidence": 0.91
+    },
+    {
+      "claim_id": "bootstrap-confirmed-cutoff",
+      "claim": "The finding is confirmed at the promotion floor.",
+      "evidence": "# Preconditions and probe results\n\n## P1: Every load-bearing precondition returned true\nrefutation_signature: If any load-bearing precondition returns false, the finding is refuted.\nif_refuted_then: The finding is refuted.\nprobe: read_function args={'function': 'trigger_path'}\nprobe_result:\n// src/foo.c:220  (14 lines)\nvoid trigger_path(struct req *r) {\n  memcpy(r->buf, r->src, r->src_len);  // no length check on r->src_len\n}\n\nNow produce the JSON verdict per the system prompt.",
+      "label": "confirmed",
+      "provenance": "Bootstrap shape row modelled on tests/test_vr_masvs_verdict_mapper.py:88-92 (recorded verifier_report={verdict:'confirmed', confidence:0.6} at the exact promotion floor); label equals recorded_verdict per the shape-only bootstrap protocol.",
+      "recorded_verdict": "confirmed",
+      "recorded_confidence": 0.6
+    },
+    {
+      "claim_id": "bootstrap-inconclusive-anchor",
+      "claim": "The parser handles a malformed length field but the sink cannot be reached from the load-bearing precondition set.",
+      "evidence": "# Preconditions and probe results\n\n## P1: The load-bearing precondition returns a decisive result\nrefutation_signature: If probes return unknown on the load-bearing precondition, the finding is inconclusive.\nif_refuted_then: The finding is inconclusive.\nprobe: read_function args={'function': 'handle_imports'}\nprobe_result: ERROR probe timeout\n\nNow produce the JSON verdict per the system prompt.",
+      "label": "inconclusive",
+      "provenance": "Bootstrap shape row modelled on tests/platform/agents/test_synthesis_runner_verifier_annotation.py:372-377 (recorded verifier_report={verdict:'inconclusive', summary:'Probe timed out on the imports table read.'}) and the verdict prompt's <0.5 rule ('do NOT emit a final verdict; return inconclusive'). Label equals recorded_verdict per the shape-only bootstrap protocol.",
+      "recorded_verdict": "inconclusive",
+      "recorded_confidence": 0.5
+    },
+    {
+      "claim_id": "bootstrap-confirmed-highband",
+      "claim": "The direct finding at the affected component is confirmed at the operator-review high-priority band.",
+      "evidence": "# Preconditions and probe results\n\n## P1: Every load-bearing precondition returned true with no unknown remaining\nrefutation_signature: If any load-bearing precondition returned unknown, downgrade the confidence band.\nif_refuted_then: The finding is inconclusive.\nprobe: taint_paths_to args={'sink': 'affected_sink'}\nprobe_result:\n(1 entries)\nsource=http_request_body  sink=memcpy  hops=3  src/net/http.c:412 -> src/net/router.c:88 -> src/net/dispatch.c:132\n\nNow produce the JSON verdict per the system prompt.",
+      "label": "confirmed",
+      "provenance": "Bootstrap shape row modelled on tests/test_vr_masvs_verdict_mapper.py:539-541 (recorded verifier_report={verdict:'confirmed', confidence:0.9} on a direct_finding with concrete affected_components); label equals recorded_verdict per the shape-only bootstrap protocol.",
+      "recorded_verdict": "confirmed",
+      "recorded_confidence": 0.9
+    }
+  ]
+}

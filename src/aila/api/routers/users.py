@@ -27,12 +27,13 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import secrets
 from datetime import UTC, datetime
 from uuid import uuid4
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response, status
 from sqlmodel import func, select
 
 from aila.api.auth import (
@@ -53,6 +54,10 @@ from aila.api.constants import (
 )
 from aila.api.limiter import limiter
 from aila.api.metrics import SILENT_FAILURE_TOTAL
+from aila.api.middleware.csrf import (
+    AILA_CSRF_COOKIE,
+    AILA_REFRESH_COOKIE,
+)
 from aila.api.schemas.envelope import DataEnvelope
 from aila.api.schemas.users import (
     LoginRequest,
@@ -120,6 +125,97 @@ def _user_to_response(user: UserRecord) -> UserResponse:
     )
 
 
+# ---------------------------------------------------------------------------
+# #119 -- auth cookie helpers.
+#
+# The refresh token ships as an ``HttpOnly`` cookie so no in-page script can
+# read it (XSS payloads, malicious extensions, etc.). A companion CSRF cookie
+# -- readable by the SPA on purpose -- is mirrored into the ``X-CSRF-Token``
+# header on every mutating request; :class:`aila.api.middleware.csrf.CSRFMiddleware`
+# rejects a cookie-authenticated mutating request whose header does not match
+# the cookie.
+#
+# ``SameSite=Lax`` is deliberate:
+#   * Strict would drop the cookies on the top-level GET back from an OIDC
+#     provider (``/auth/oidc/callback``), breaking that login path.
+#   * Lax still blocks the cross-site POST/PUT/etc. that CSRF exploits.
+# The double-submit check catches everything Lax does not.
+#
+# ``Secure`` is set unless the request came over ``http`` (development).
+# Detecting the scheme from the request keeps http://localhost dev working
+# while every deployed environment (behind TLS) gets Secure automatically.
+# ---------------------------------------------------------------------------
+
+# 7 days -- matches _USER_REFRESH_EXPIRY in aila.api.auth.
+_REFRESH_COOKIE_MAX_AGE: int = 604_800
+
+# The CSRF cookie can live for the same session; a fresh value is minted on
+# every login/refresh so the effective rotation cadence is short.
+_CSRF_COOKIE_MAX_AGE: int = 604_800
+
+
+def _cookies_secure(request: Request) -> bool:
+    """Return True when cookies must carry the ``Secure`` attribute."""
+    scheme = request.url.scheme
+    if scheme == "https":
+        return True
+    # Behind a TLS-terminating proxy the request may arrive as http; trust
+    # X-Forwarded-Proto when present.
+    forwarded = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    return forwarded == "https"
+
+
+def _mint_csrf_token() -> str:
+    """Mint a fresh, URL-safe CSRF token."""
+    return secrets.token_urlsafe(32)
+
+
+def _set_auth_cookies(response: Response, refresh_token: str, *, secure: bool) -> str:
+    """Attach the refresh + CSRF cookies to ``response``.
+
+    Returns the CSRF value so callers may include it in the body when a
+    non-cookie client needs to pre-seed the header.
+    """
+    response.set_cookie(
+        key=AILA_REFRESH_COOKIE,
+        value=refresh_token,
+        max_age=_REFRESH_COOKIE_MAX_AGE,
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+        path="/",
+    )
+    csrf_value = _mint_csrf_token()
+    response.set_cookie(
+        key=AILA_CSRF_COOKIE,
+        value=csrf_value,
+        max_age=_CSRF_COOKIE_MAX_AGE,
+        httponly=False,  # SPA must read this to mirror into X-CSRF-Token.
+        secure=secure,
+        samesite="lax",
+        path="/",
+    )
+    return csrf_value
+
+
+def _clear_auth_cookies(response: Response, *, secure: bool) -> None:
+    """Instruct the browser to drop the refresh + CSRF cookies."""
+    response.delete_cookie(
+        key=AILA_REFRESH_COOKIE,
+        path="/",
+        secure=secure,
+        httponly=True,
+        samesite="lax",
+    )
+    response.delete_cookie(
+        key=AILA_CSRF_COOKIE,
+        path="/",
+        secure=secure,
+        httponly=False,
+        samesite="lax",
+    )
+
+
 async def _check_hibp(password: str) -> bool:
     """Check password against HaveIBeenPwned k-anonymity API (T-138-09 / D-19).
 
@@ -154,7 +250,7 @@ async def _check_hibp(password: str) -> bool:
 
 @router.post("/auth/login", response_model=DataEnvelope[TokenResponse], summary="Login with username/password")
 @limiter.limit("10/minute")
-async def login(request: Request, body: LoginRequest) -> DataEnvelope[TokenResponse]:
+async def login(request: Request, response: Response, body: LoginRequest) -> DataEnvelope[TokenResponse]:
     """Authenticate with username and password, return JWT access + refresh tokens.
 
     Per T-138-10: always returns "Invalid credentials" on failure -- never reveals
@@ -248,12 +344,17 @@ async def login(request: Request, body: LoginRequest) -> DataEnvelope[TokenRespo
         team_id=team_id,
     )
 
+    # #119: bind the refresh token into an HttpOnly cookie so no page-side
+    # script can lift it. The access token stays in the JSON body -- the
+    # browser SPA keeps it in memory only.
+    _set_auth_cookies(response, refresh_token, secure=_cookies_secure(request))
+
     _slog.info("login_success", user_id=user_id, role=role)
 
     return DataEnvelope(
         data=TokenResponse(
             access_token=access_token,
-            refresh_token=refresh_token,
+            refresh_token=None,
             token_type="bearer",
             expires_in=expires_in,
         )
@@ -262,20 +363,30 @@ async def login(request: Request, body: LoginRequest) -> DataEnvelope[TokenRespo
 
 @limiter.limit("5/minute")
 @router.post("/auth/refresh/user", response_model=DataEnvelope[TokenResponse], summary="Refresh user access token")
-async def refresh_user_token(request: Request, body: RefreshTokenRequest) -> DataEnvelope[TokenResponse]:
+async def refresh_user_token(
+    request: Request,
+    response: Response,
+    body: RefreshTokenRequest | None = None,
+    refresh_cookie: str | None = Cookie(default=None, alias=AILA_REFRESH_COOKIE),
+) -> DataEnvelope[TokenResponse]:
     """Exchange a valid user refresh token for a new access token.
 
-    #36: the refresh token is read from the JSON request body -- previously
-    it was a ``?refresh_token=`` query parameter, which leaks the long-lived
-    credential into web-server access logs, browser history, and any proxy
-    that captures the request URI. Body-only closes that channel; a caller
-    still supplying the query parameter is rejected with 422.
+    #119: the refresh token is read from the ``aila_refresh`` HttpOnly
+    cookie -- the browser attaches it automatically because it lives at
+    ``Path=/`` on our origin. A legacy caller may still supply the token
+    in the JSON body; the cookie takes precedence when both are present.
+    The CSRF middleware guarantees this cookie-authenticated POST also
+    carries a matching ``X-CSRF-Token`` header (double-submit).
 
-    Validates the token signature, checks it is not revoked in RefreshTokenRecord,
-    then issues a new access token. The refresh token is NOT rotated on each use
-    (stateful revocation via revoked_at handles security).
+    #36 (retained): the query-parameter shape is still rejected -- the
+    endpoint declares no query field for the token.
+
+    Validates the token signature, checks it is not revoked in
+    RefreshTokenRecord, then issues a new access token. The refresh
+    token is NOT rotated on each use (stateful revocation via
+    revoked_at handles security).
     """
-    refresh_token = body.refresh_token
+    refresh_token = refresh_cookie or (body.refresh_token if body else None)
     settings = get_settings()
     import jwt as _jwt
 
@@ -285,6 +396,9 @@ async def refresh_user_token(request: Request, body: RefreshTokenRequest) -> Dat
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or expired refresh token",
     )
+
+    if not refresh_token:
+        raise _invalid_refresh
 
     try:
         payload = _jwt.decode(refresh_token, settings.jwt_secret_key, algorithms=[JWT_ALGORITHM])
@@ -318,11 +432,17 @@ async def refresh_user_token(request: Request, body: RefreshTokenRequest) -> Dat
         role = user.role
         team_id = getattr(user, "team_id", None)  # TEAM-02: from UserRecord
 
+    # #119: re-mint the CSRF cookie on every refresh and re-issue the
+    # refresh cookie so its Max-Age slides forward alongside the access
+    # token. The refresh token value itself is unchanged (stateful
+    # revocation on the DB row handles compromise).
+    _set_auth_cookies(response, refresh_token, secure=_cookies_secure(request))
+
     access_token, expires_in = issue_user_jwt(user_id, role, team_id=team_id)
     return DataEnvelope(
         data=TokenResponse(
             access_token=access_token,
-            refresh_token=refresh_token,  # Return same refresh token
+            refresh_token=None,
             token_type="bearer",
             expires_in=expires_in,
         )
@@ -331,24 +451,39 @@ async def refresh_user_token(request: Request, body: RefreshTokenRequest) -> Dat
 
 @limiter.limit("10/minute")
 @router.post("/auth/logout", response_model=DataEnvelope[LogoutResponse], summary="Logout -- revoke refresh token")
-async def logout(request: Request, body: LogoutRequest) -> DataEnvelope[LogoutResponse]:
-    """Revoke a user refresh token, invalidating further refresh attempts.
+async def logout(
+    request: Request,
+    response: Response,
+    body: LogoutRequest | None = None,
+    refresh_cookie: str | None = Cookie(default=None, alias=AILA_REFRESH_COOKIE),
+) -> DataEnvelope[LogoutResponse]:
+    """Revoke the caller's refresh token and clear the auth cookies.
 
-    #36: the token is read from the JSON body for the same reason described
-    in :func:`refresh_user_token` -- the query-parameter shape leaked the
-    refresh credential into access logs and browser history.
+    #119: the token comes from the ``aila_refresh`` HttpOnly cookie the
+    browser attaches automatically; a legacy body-supplied value still
+    works as a fallback. Both auth cookies (refresh + CSRF) are cleared
+    on the response so the SPA can drop its in-memory state and land
+    on the login screen without a stale cookie hanging around.
+
+    #36 (retained): the query-parameter shape stays rejected -- no
+    query field is declared for the token.
     """
-    refresh_token = body.refresh_token
-    token_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
-    async with async_session_scope() as session:
-        stmt = select(RefreshTokenRecord).where(RefreshTokenRecord.token_hash == token_hash)
-        result = await session.exec(stmt)
-        record: RefreshTokenRecord | None = result.first()
-        if record and record.revoked_at is None:
-            record.revoked_at = datetime.now(UTC)
-            session.add(record)
-            await session.commit()
-    return DataEnvelope(data=LogoutResponse(revoked=True))
+    refresh_token = refresh_cookie or (body.refresh_token if body else None)
+    revoked = False
+    if refresh_token:
+        token_hash = hashlib.sha256(refresh_token.encode()).hexdigest()
+        async with async_session_scope() as session:
+            stmt = select(RefreshTokenRecord).where(RefreshTokenRecord.token_hash == token_hash)
+            result = await session.exec(stmt)
+            record: RefreshTokenRecord | None = result.first()
+            if record and record.revoked_at is None:
+                record.revoked_at = datetime.now(UTC)
+                session.add(record)
+                await session.commit()
+                revoked = True
+
+    _clear_auth_cookies(response, secure=_cookies_secure(request))
+    return DataEnvelope(data=LogoutResponse(revoked=revoked))
 
 
 @router.get("/auth/sessions", response_model=DataEnvelope[list[UserSessionResponse]], summary="List active sessions for current user")
