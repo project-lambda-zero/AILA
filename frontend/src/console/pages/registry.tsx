@@ -6,6 +6,7 @@ import DataPage from "./DataPage";
 import ForensicsProjectPage from "./forensics/ForensicsProjectPage";
 import KnowledgePage from "./KnowledgePage";
 import MalwareXRayPage from "./MalwareXRayPage";
+import PersonaModelRoutingPage from "./PersonaModelRoutingPage";
 import SandboxPage from "./SandboxPage";
 import UploadForm from "./UploadForm";
 import VulnerabilityPage from "./VulnerabilityPage";
@@ -34,6 +35,10 @@ const BESPOKE: Record<string, PageEntry> = {
   "vulnerability:reports": { title: "vulnerability \u00b7 reports", render: (p) => <VulnerabilityPage {...p} /> },
   "admin:knowledge": { title: "admin \u00b7 knowledge", render: (p) => <KnowledgePage {...p} /> },
   "admin:sandbox": { title: "admin \u00b7 sandbox", render: (p) => <SandboxPage {...p} /> },
+  "admin:persona-routing": {
+    title: "admin \u00b7 persona model routing",
+    render: (p) => <PersonaModelRoutingPage {...p} />,
+  },
   // Targets create is a multipart upload wizard, not a typed field form: the
   // "+ new" button opens the module's upload window instead.
   "vr:targets": {

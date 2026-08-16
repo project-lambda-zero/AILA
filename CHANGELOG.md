@@ -7,6 +7,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.35] - 2026-08-16 -- Per-persona model routing console + CI scope
+
+### Added
+
+- Admin console page "persona model routing" (platform category) for
+  per-persona sibling model routing (#151). An opt-in toggle plus a
+  per-persona model_role editor for the six sibling voices
+  (halvar/maddie/yuki/renzo/noor/wei) reads and writes the
+  `platform.persona_model_role_map` config key through the admin-gated
+  config API. An empty map is persisted as the empty string, which the
+  backend resolves as off, so the feature does nothing until an operator
+  maps at least one persona. Turning the whole feature off is a real
+  write, not a special case.
+
+### Changed
+
+- CI `frontend` job now type-checks and builds the shipping shell
+  (`@aila/shell`) instead of running a workspace-wide `pnpm -r type-check`.
+  The per-module `@aila/*-frontend` packages were superseded by the
+  in-shell windowing console and no longer compile against the current
+  shell surface; they are retained as reference scaffolds pending a
+  rewrite as window content and are not bundled. CI gates what ships.
+
+### Fixed
+
+- Corrected the shared narrative agent module docstring, which claimed to
+  close #137 (platform observation-memory primitive). That primitive is
+  not implemented; the module only consolidates the per-module narrative
+  agents (#112). The false attribution is removed.
+
 ## [0.5.34] - 2026-08-16 -- Operator knowledge ingest
 
 ### Added

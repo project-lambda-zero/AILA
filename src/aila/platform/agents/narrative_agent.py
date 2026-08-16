@@ -1,4 +1,4 @@
-"""Shared long-form narrative agent (RFC #208 P2, closes #112 + #137).
+"""Shared long-form narrative agent (RFC #208 P2, closes #112).
 
 Both the VR (vulnerability-research) and malware modules used to carry
 byte-similar ~600-800-line NarrativeAgent implementations that differ
