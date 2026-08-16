@@ -601,6 +601,62 @@ class ToolExecutorHelpersBase:
         del investigation_id, branch_id, at_turn, evicted  # base no-op
         return None
 
+    async def _on_tool_success(
+        self,
+        *,
+        investigation_id: str,
+        branch_id: str,
+        server_id: str,
+        tool_name: str,
+        args: dict[str, Any],
+        raw: dict[str, Any],
+        at_turn: int | None,
+    ) -> None:
+        """Hook: a tool call dispatched cleanly (RFC #137).
+
+        Called on the success path AFTER
+        :meth:`_persist_result_and_observables` has committed the result
+        message and observables delta, and AFTER :meth:`_post_dispatch`
+        has run. The base does nothing. A module executor overrides this
+        to route the outcome through the platform observation writer
+        (:func:`aila.platform.agents.observation.record_observation`) so
+        the fact lands in the workspace-scoped
+        ``{module}.observation.workspace.{workspace_id}`` knowledge
+        bucket a sibling branch / later turn / future investigation
+        already retrieves from. Best-effort by contract: an override
+        MUST NOT raise. The tool result is already persisted, so an
+        observation-write failure MUST only log.
+        """
+        del investigation_id, branch_id, server_id, tool_name  # base no-op
+        del args, raw, at_turn
+        return None
+
+    async def _on_tool_failure(
+        self,
+        *,
+        investigation_id: str,
+        branch_id: str,
+        server_id: str,
+        tool_name: str,
+        args: dict[str, Any],
+        error: str,
+        at_turn: int | None,
+    ) -> None:
+        """Hook: a tool call returned an error envelope (RFC #137).
+
+        Fired on the ``status not in _SUCCESS_STATUSES`` branch of
+        :meth:`execute` after the augmented error text has been
+        composed. Semantic tool failures ("not indexed",
+        "resource_not_found", contract violation) are exactly the
+        NEGATIVE-polarity observations the platform primitive wants
+        to record so a later attempt can retrieve "we already tried
+        this call and it failed with X" instead of re-issuing. Base
+        is a no-op; overrides MUST NOT raise.
+        """
+        del investigation_id, branch_id, server_id, tool_name  # base no-op
+        del args, error, at_turn
+        return None
+
     # ---- merged-dispatch hooks (subclasses override) --------------------
     async def _hard_block_repeat_limit(self) -> int | None:
         """Pre-call hard-block threshold for identical repeat failures.
@@ -1346,6 +1402,29 @@ class ToolExecutorHelpersBase:
             msg_id = await self._write_error_message(
                 investigation_id, branch_id, err, at_turn,
             )
+            # RFC #137: semantic failure hook. Fires on the tool-error
+            # envelope path (contract violation, resource-not-found,
+            # not-indexed, ...) so a module override can record a
+            # NEGATIVE observation "we called this and it failed" into
+            # the workspace-scoped knowledge store. Guarded so a buggy
+            # override never breaks the error return path.
+            try:
+                await self._on_tool_failure(
+                    investigation_id=investigation_id,
+                    branch_id=branch_id,
+                    server_id=server_id,
+                    tool_name=tool_name,
+                    args=args,
+                    error=err,
+                    at_turn=at_turn,
+                )
+            except (OSError, RuntimeError, ValueError, TypeError, AttributeError, SQLAlchemyError) as exc:
+                _log.warning(
+                    "_on_tool_failure override raised for %s.%s (%s: %s) -- "
+                    "ignored; error message already persisted",
+                    server_id, tool_name, type(exc).__name__, exc,
+                    exc_info=True,
+                )
             return ToolExecutionResult(
                 server_id=server_id, tool_name=tool_name,
                 message_id=msg_id, success=False, error=err,
@@ -1452,6 +1531,31 @@ class ToolExecutorHelpersBase:
             tool_name=tool_name,
             raw=raw if isinstance(raw, dict) else {},
         )
+
+        # RFC #137: platform observation-memory hook. Fires on every
+        # clean dispatch so a module override can route the outcome
+        # through the platform observation writer -- a kind/polarity/
+        # supersession-tagged row in the workspace-scoped knowledge
+        # store. Guarded so a buggy override never breaks the tool
+        # result path (the hook is best-effort by contract; the double
+        # try/except is defence-in-depth).
+        try:
+            await self._on_tool_success(
+                investigation_id=investigation_id,
+                branch_id=branch_id,
+                server_id=server_id,
+                tool_name=tool_name,
+                args=args,
+                raw=raw if isinstance(raw, dict) else {},
+                at_turn=at_turn,
+            )
+        except (OSError, RuntimeError, ValueError, TypeError, AttributeError, SQLAlchemyError) as exc:
+            _log.warning(
+                "_on_tool_success override raised for %s.%s (%s: %s) -- "
+                "ignored; tool result already persisted",
+                server_id, tool_name, type(exc).__name__, exc,
+                exc_info=True,
+            )
 
         # fix §81 -- auto-steering rule evaluators key off raw_result
         # shape; a tool that legitimately returns no payload (e.g.

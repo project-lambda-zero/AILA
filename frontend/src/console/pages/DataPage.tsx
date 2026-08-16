@@ -6,7 +6,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiFetch } from "../../api/client";
 import type { ModulePageProps } from "../contract";
 import { css } from "../css";
-import { PAGE_CONFIGS } from "./configs";
 import FieldForm from "./FieldForm";
 import type { FormSpec } from "./FieldForm";
 import { CREATE_FORMS, EDIT_FORMS } from "./formSpecs";
@@ -48,25 +47,6 @@ export interface PageConfig {
    * field, the detail panel uses it instead of the generic <StructuredValue>
    * (e.g. the LLM-log prompt/response rendered as a chat transcript). */
   detailRenderers?: Record<string, (value: unknown, row: Record<string, unknown>) => ReactNode>;
-}
-
-/** Best-effort lookup of the page key used to index CREATE_FORMS/EDIT_FORMS.
- * The registry passes `configKey` directly (canonical path); when it's absent
- * we walk PAGE_CONFIGS for an object-identity match, and finally fall back to
- * a title/endpoint match so a caller with a hand-built PageConfig still gets
- * typed forms whenever the key is unambiguous. */
-function resolveConfigKey(config: PageConfig, configKey?: string): string | null {
-  if (configKey && (CREATE_FORMS[configKey] || EDIT_FORMS[configKey])) return configKey;
-  for (const [k, v] of Object.entries(PAGE_CONFIGS)) {
-    if (v === config) return k;
-  }
-  for (const [k, v] of Object.entries(PAGE_CONFIGS)) {
-    if (v.title === config.title && v.endpoint === config.endpoint) return k;
-  }
-  for (const [k, v] of Object.entries(PAGE_CONFIGS)) {
-    if (v.endpoint === config.endpoint) return k;
-  }
-  return null;
 }
 
 const ROW_KEYS = ["items", "results", "rows", "entries", "records", "data", "findings", "investigations", "targets", "workspaces"];
@@ -118,7 +98,10 @@ function ctlBtn(label: string, title: string, onClick: () => void): JSX.Element 
 export default function DataPage(
   props: ModulePageProps & {
     config: PageConfig;
-    configKey?: string;
+    /** Registry key (`${moduleId}:${pageId}`) used to look up the matching
+     * typed create/edit form. Every registry entry passes this explicitly;
+     * without it, DataPage has no way to reach the correct form. */
+    configKey: string;
     /** When set, the "+ new" button opens this instead of the typed form
      * modal (targets create is a multipart upload wizard, not a field form). */
     onNewClick?: () => void;
@@ -128,9 +111,8 @@ export default function DataPage(
   },
 ): JSX.Element {
   const { config, configKey, onNewClick, onRowActivate, onBack, onMinimize, isFullscreen, onToggleFullscreen } = props;
-  const resolvedKey = useMemo(() => resolveConfigKey(config, configKey), [config, configKey]);
-  const createSpec: FormSpec | undefined = resolvedKey ? CREATE_FORMS[resolvedKey] : undefined;
-  const editSpec: FormSpec | undefined = resolvedKey ? EDIT_FORMS[resolvedKey] : undefined;
+  const createSpec: FormSpec | undefined = (CREATE_FORMS as Record<string, FormSpec>)[configKey];
+  const editSpec: FormSpec | undefined = (EDIT_FORMS as Record<string, FormSpec>)[configKey];
   const idField = config.idField ?? "id";
   // Some list endpoints require a parent scope (e.g. /malware/families needs
   // ?workspace_id=). Resolve the first available parent id, then scope the URL.

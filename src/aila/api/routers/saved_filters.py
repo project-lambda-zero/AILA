@@ -154,11 +154,13 @@ async def update_saved_filter(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Saved filter '{filter_id}' not found",
             )
-        # Ownership check (T-138-17: prevent cross-user writes)
+        # Ownership check (T-138-17: prevent cross-user writes). Returned as
+        # 404 rather than 403 so the endpoint does not act as an existence
+        # oracle for filter ids owned by other users (issue #146 item 7).
         if record.user_id != auth.user_id:
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not own this saved filter",
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Saved filter '{filter_id}' not found",
             )
 
         if body.name is not None:
@@ -197,10 +199,13 @@ async def delete_saved_filter(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Saved filter '{filter_id}' not found",
             )
+        # Ownership check (T-138-17). Returned as 404 rather than 403 so the
+        # endpoint does not act as an existence oracle for filter ids owned
+        # by other users (issue #146 item 7).
         if record.user_id != auth.user_id:
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not own this saved filter",
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Saved filter '{filter_id}' not found",
             )
         await session.delete(record)
         await session.commit()

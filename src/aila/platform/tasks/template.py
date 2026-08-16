@@ -604,11 +604,15 @@ def platform_task(
                 _current_task_user_id.reset(_user_token)
                 _current_task_team_id.reset(_team_token)
 
-        # Ensure ARQ's function-name resolution (ARQ builds a name->func map
-        # keyed by ``func.__qualname__``/``func.__name__``) points at the
-        # wrapper and not at the unwrapped original.
-        _wrapper.__name__ = fn.__name__
-        _wrapper.__qualname__ = fn.__qualname__
+        # ARQ registration is keyed by the qualified ``registry_name``
+        # passed to ``_arq_func(name=...)`` in ``PlatformTaskRegistry.
+        # all_functions``, so the wrapper's ``__name__`` is not what ARQ
+        # dispatches on. Set it to ``registry_name`` anyway so that
+        # ``repr(_wrapper)`` and stack traces show the module-qualified
+        # key instead of the bare handler name -- two modules defining a
+        # same-named handler no longer look identical in logs.
+        _wrapper.__name__ = registry_name
+        _wrapper.__qualname__ = registry_name
         _wrapper.__module__ = fn.__module__
 
         task = PlatformTask(

@@ -7,6 +7,93 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.37] - 2026-08-16 -- Enhancement/tech-debt/RFC resolution wave 2
+
+### Added
+
+- Rolling SUMMARY context tier (#24): the context assembler now folds
+  budget-evicted RECENT/RETRIEVED sections into a deterministic, no-LLM SUMMARY
+  entry that preserves file:line anchors verbatim, instead of dropping them.
+  Behavior-preserving when nothing is evicted; disable via
+  `ContextAssembler(summary_producer=None)`. The RETRIEVED tier and the shared
+  cross-branch pool remain tracked on #24.
+- Retrieval-benchmark harness (#153): `platform/eval/retrieval_bench.py` runs
+  canonical (query, positive_snippet) pairs through the live retriever and
+  reports MAP@10 / nDCG@10 / recall / precision / MRR + per-call latency, with a
+  bundled sample and a `python -m` CLI. Comparison against alternative
+  embedders/rerankers remains tracked on #153 (needs those models wired).
+- Platform recovery-service classification (#133): `PlatformRecoveryService` is
+  the single eligibility + strategy classifier; the stall-recovery and
+  stuck-healer sweeps delegate row selection to it while keeping their distinct
+  execution guarantees. The full single-sweep merger remains tracked on #133.
+- Cross-branch KV-cache reuse guard (#162): documented the judge-reliability
+  trap and the required pre-rollout parity benchmark in
+  `platform/llm/README.md` before any vLLM/SGLang prefix-caching adoption.
+
+### Changed
+
+- Frontend config maps use `satisfies Record<K, V>` and `DataPage` requires an
+  explicit `configKey` (#229): preserves literal-key evidence for consumers and
+  removes the fragile three-step config-key fallback. Further anti-slop
+  remediations (shared boundary parser, god-component splits) remain tracked on
+  #229.
+
+### Removed
+
+- The six orphaned `@aila/*-frontend` module packages (#227): superseded by the
+  in-shell windowing console and non-compiling against the current shell
+  surface. Removed from the pnpm workspace and the shell dependencies; the
+  workspace-wide `pnpm -r type-check` and CI are green again over the shell.
+
+## [0.5.36] - 2026-08-16 -- Enhancement/tech-debt/RFC resolution wave 1
+
+### Added
+
+- Kill-criterion enforcement (#201): a no-LLM heuristic in the reasoning
+  `absorb()` path matches each live hypothesis's `kill_criterion` against the
+  turn's tool observations and injects a `_directive.kill_criterion_met` nudge
+  on a whole-token match. Makes the previously advisory-only field actionable
+  without an LLM call; behavior-preserving when nothing matches.
+- Platform observation-memory primitive (#137): a platform-owned observation
+  writer (kind + polarity + supersession via dedup-key upsert) plus
+  `_on_tool_success` / `_on_tool_failure` hooks on the tool-executor base. VR
+  now records positive and negative observations to its knowledge namespace on
+  tool outcomes (the negative-observation memory it previously lacked).
+  Knowledge-store backed; no migration.
+- Router negative-example capture (#161, write-only slice): a
+  `router_negative_example` table (migration 128) and a best-effort write on
+  every auto-steering fire, accruing the hard-negative corpus for a later
+  routing re-tune.
+- Curiosity lateral discovery wave 2 (#95): an optional lateral-target LLM
+  proposal after the wave-1 regex scan, gated behind
+  `AILA_PLATFORM_VR_LATERAL_LLM_ENABLED` (default off) and routed through
+  `idempotent_llm_call` for prompt-hash / cost attribution.
+- Retrieval-eval automation + admin API (#140): a
+  `platform.retrieval_eval_sweep` automation action and read-only admin routes
+  over the retrieval benchmark and run tables.
+- Shadow-report automation schedule (#141): a default-disabled platform
+  schedule that runs a shadow report for every active shadow assignment.
+- Model-health-router shared state (#142): an L1 (process) + L2 (Redis,
+  TTL = cooldown) read-through health cache so a worker marking an endpoint
+  unhealthy is visible fleet-wide; a Redis outage falls back to per-process
+  behavior (fail-open).
+- honesty_audit cross-file orphan-export report (#198): a new `--orphans` pass
+  builds an import graph over `src/aila` and reports `__all__` names never
+  imported elsewhere. Advisory (report mode); the default invocation is
+  unchanged.
+
+### Changed
+
+- Worker-emitted domain events now reach SSE clients (#106): a Redis-stream
+  bridge fans DomainEvents across processes into the API's in-process bus; a
+  Redis outage degrades to in-process-only delivery. Advances the event-system
+  consolidation (#134).
+- Platform boundary cleanup (#146): deduplicated the `ROLE_LEVELS` map across
+  five routers onto the canonical `aila.api.auth` definition; the
+  `@platform_task` wrapper now names itself by its registry key; `infra_death`
+  folded into `resilience`; terminal-cursor-state constants unified; the
+  saved-filter ownership mismatch returns 404 instead of 403.
+
 ## [0.5.35] - 2026-08-16 -- Per-persona model routing console + CI scope
 
 ### Added

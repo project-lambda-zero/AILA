@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func
 from sqlmodel import select
 
-from aila.api.auth import AuthContext, require_user_or_api_key
+from aila.api.auth import ROLE_LEVELS, AuthContext, require_user_or_api_key
 from aila.api.constants import ROLE_ADMIN
 from aila.api.deps import get_config_registry
 from aila.api.limiter import limiter
@@ -37,11 +37,8 @@ _log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/scheduled-reports", tags=["scheduled-reports"], dependencies=[Depends(require_user_or_api_key)])
 
-_ROLE_LEVELS: dict[str, int] = {"reader": 0, "operator": 1, "admin": 2}
-
-
 def _require_admin(auth: AuthContext = Depends(require_user_or_api_key)) -> AuthContext:
-    if _ROLE_LEVELS.get(auth.role, -1) < _ROLE_LEVELS[ROLE_ADMIN]:
+    if ROLE_LEVELS.get(auth.role, -1) < ROLE_LEVELS[ROLE_ADMIN]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Scheduled reports require '{ROLE_ADMIN}' role; current role: '{auth.role}'",

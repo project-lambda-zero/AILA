@@ -1390,6 +1390,47 @@ class PlatformJournalDeadletterRecord(SQLModel, table=True):
     replay_seq: int | None = Field(default=None, sa_column=Column(BigInteger, nullable=True))
 
 
+class RouterNegativeExampleRecord(SQLModel, table=True):
+    """One routing-failure signal written whenever an auto-steering fires
+    (issue #161).
+
+    Each ``maybe_post_auto_steering`` fire is a ground-truth negative:
+    the routed model + tool on this task shape needed operator-style
+    intervention on the named rule. The row is written best-effort by
+    :func:`aila.platform.agents.auto_steering._record_router_negative_example`
+    right after the steering message posts; a DB failure only logs and
+    never breaks the steering path. No consumer / router re-tune ships
+    with the write-only slice -- the corpus accrues so a later tuner has
+    hard negatives to consume.
+
+    ``model`` is nullable because the auto-steering site does not yet
+    plumb the routed model id through; kept in the schema so the tuner
+    can populate it once the plumbing lands.
+
+    See migration 128_router_negative_examples for constraint / index
+    layout (all names ``router_negative_example_``-prefixed because
+    Postgres constraint names are schema-global).
+    """
+
+    __tablename__ = "router_negative_example"
+
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
+    task_shape: str = Field(sa_column=Column(String(128), nullable=False))
+    model: str | None = Field(
+        default=None, sa_column=Column(String(128), nullable=True),
+    )
+    tool: str | None = Field(
+        default=None, sa_column=Column(String(128), nullable=True),
+    )
+    rule_fired: str = Field(sa_column=Column(String(64), nullable=False))
+    investigation_id: str | None = Field(
+        default=None, sa_column=Column(String(36), nullable=True),
+    )
+    created_at: datetime = Field(
+        default_factory=utc_now, sa_type=DateTime(timezone=True),
+    )
+
+
 # RFC-12 criterion 5: knowledge graph edges. Imported at the very end (after
 # every record class is defined) so the transitive db_models references in the
 # knowledge-graph import chain resolve, letting create_all (fresh installs) and

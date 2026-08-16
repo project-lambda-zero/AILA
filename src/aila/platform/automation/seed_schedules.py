@@ -57,6 +57,25 @@ _DEFAULT_SCHEDULES: tuple[tuple[str, str], ...] = (
     ("platform.skill_library_sweep", "0 6 * * *"),
 )
 
+# RFC #141 seed: platform-scoped shadow-report sweep, default DISABLED.
+# The full lifecycle/shadow/canary machinery is wired but the initial
+# shadow assignment + report generation remain operator-initiated
+# unless an operator opts into this schedule. Seeding the row disabled
+# preserves current behavior (no shadow reports run automatically) but
+# gives operators a one-flip path to continuous shadow-evidence
+# accrual: PATCH the schedule to ``enabled=True`` and the sweep starts
+# firing on the next runner tick.
+#
+# Each entry is ``(action_id, cron_expression, enabled)``. Append-only
+# analogue of ``_DEFAULT_SCHEDULES`` above -- kept as a distinct tuple
+# so the enabled-by-default seed set stays a plain ``(id, cron)`` shape
+# for the existing calibration/memory sweeps.
+_DEFAULT_DISABLED_SCHEDULES: tuple[tuple[str, str, bool], ...] = (
+    # 07:00 UTC -- after every enabled-by-default sweep has landed so
+    # a manually-enabled run does not compete for the same window.
+    ("platform.shadow_report_sweep", "0 7 * * *", False),
+)
+
 _SEED_ACTOR: str = "platform.seed_default_automation_schedules"
 
 
@@ -111,6 +130,32 @@ async def seed_default_automation_schedules() -> int:
                         cron_timezone="UTC",
                         action_kwargs_json="{}",
                         enabled=True,
+                        team_id=None,
+                        created_by=_SEED_ACTOR,
+                    ),
+                )
+                seeded += 1
+            # Disabled-by-default seed set (RFC #141): same idempotency
+            # rule -- an existing row for the action_id (in any state)
+            # is left untouched so an operator toggle survives restart.
+            for action_id, cron_expression, enabled in _DEFAULT_DISABLED_SCHEDULES:
+                existing = (
+                    await session.exec(
+                        select(AutomationScheduleRecord).where(
+                            AutomationScheduleRecord.action_id == action_id,
+                        ),
+                    )
+                ).first()
+                if existing is not None:
+                    continue
+                session.add(
+                    AutomationScheduleRecord(
+                        action_id=action_id,
+                        target_name="platform",
+                        cron_expression=cron_expression,
+                        cron_timezone="UTC",
+                        action_kwargs_json="{}",
+                        enabled=enabled,
                         team_id=None,
                         created_by=_SEED_ACTOR,
                     ),

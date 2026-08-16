@@ -1,7 +1,6 @@
 packages:
   - frontend
   - packages/*
-  - src/aila/modules/*/frontend
 
 # pnpm 10+ reads overrides from this file's top-level `overrides:` key;
 # the equivalent `pnpm.overrides` block in package.json is silently ignored.

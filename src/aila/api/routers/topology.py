@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select
 
-from aila.api.auth import AuthContext, require_user_or_api_key
+from aila.api.auth import ROLE_LEVELS, AuthContext, require_user_or_api_key
 from aila.api.constants import ROLE_OPERATOR
 from aila.api.limiter import limiter
 from aila.api.schemas.envelope import DataEnvelope
@@ -53,12 +53,9 @@ _log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/topology", tags=["topology"], dependencies=[Depends(require_user_or_api_key)])
 
-_ROLE_LEVELS: dict[str, int] = {"reader": 0, "operator": 1, "admin": 2}
-
-
 def _require_operator(auth: AuthContext = Depends(require_user_or_api_key)) -> AuthContext:
     """Enforce operator+ role (T-138-25: topology reveals internal network structure)."""
-    if _ROLE_LEVELS.get(auth.role, -1) < _ROLE_LEVELS[ROLE_OPERATOR]:
+    if ROLE_LEVELS.get(auth.role, -1) < ROLE_LEVELS[ROLE_OPERATOR]:
         from fastapi import HTTPException, status
 
         raise HTTPException(

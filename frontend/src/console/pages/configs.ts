@@ -12,7 +12,7 @@ const c = (field: string, label?: string): PageColumn => ({
 /** One DataPage config per left-rail item, keyed `${moduleId}:${pageId}`.
  * Endpoints + fields are the real backend contract (mapped from the routers).
  * The registry turns each of these into a live data window. */
-export const PAGE_CONFIGS: Record<string, PageConfig> = {
+export const PAGE_CONFIGS = {
   // ---- VR (prefix /vr) --------------------------------------------------
   "vr:workspaces": {
     title: "vr \u00b7 workspaces",
@@ -416,7 +416,7 @@ export const PAGE_CONFIGS: Record<string, PageConfig> = {
     endpoint: "/widgets/layout",
     columns: [],
   },
-};
+} satisfies Record<string, PageConfig>;
 
 /** DELETE wiring per page (a delete button with confirm is legitimate human
  * UI). Create/update are handled by dedicated typed forms + wizards, NOT here.
@@ -450,7 +450,8 @@ const DELETES: Record<string, { delete: string; idField?: string }> = {
 };
 
 for (const [key, m] of Object.entries(DELETES)) {
-  if (PAGE_CONFIGS[key]) Object.assign(PAGE_CONFIGS[key], m);
+  const target = (PAGE_CONFIGS as Record<string, PageConfig>)[key];
+  if (target) Object.assign(target, m);
 }
 // Typed create/edit forms live in formSpecs.ts (CREATE_FORMS/EDIT_FORMS),
 // keyed the same way as PAGE_CONFIGS. DataPage resolves them by configKey

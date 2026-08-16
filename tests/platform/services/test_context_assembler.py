@@ -19,6 +19,7 @@ from aila.platform.services.context_assembler import (
     ContextSection,
     ContextTier,
     PinnedOverflowError,
+    SummaryProducer,
     estimate_tokens,
 )
 from aila.platform.services.reasoning import CyberReasoningEngine
@@ -70,7 +71,10 @@ def test_generous_budget_still_keeps_everything() -> None:
 
 def test_over_budget_drops_recent_before_live() -> None:
     """RFC-24: LIVE outranks RECENT. Under budget pressure the RECENT
-    tier is evicted first while LIVE and PINNED survive."""
+    tier is evicted first while LIVE and PINNED survive. RFC-24 step 2:
+    the evicted RECENT section is FOLDED into a synthesized SUMMARY
+    entry instead of vanishing, so its label lands in
+    ``sections_folded_into_summary`` rather than ``sections_dropped``."""
     pinned_body = "P" * 100
     live_body = "L" * 400  # ~100 tokens
     recent_body = "R" * 1200  # ~300 tokens
@@ -80,16 +84,22 @@ def test_over_budget_drops_recent_before_live() -> None:
         ContextSection(ContextTier.LIVE, "case", live_body),
         ContextSection(ContextTier.RECENT, "prev", recent_body),
     ]
-    # ~150 tokens: enough for pinned (~25) + live (~100), but not
-    # pinned + live + recent (~450).
-    result = ContextAssembler().assemble(sections, budget_tokens=150)
+    # ~200 tokens: enough for pinned (~25) + live (~100) + one
+    # SUMMARY bullet (~60), but not pinned + live + recent (~450).
+    result = ContextAssembler().assemble(sections, budget_tokens=200)
 
     assert "hdr" in result.sections_kept
     assert "case" in result.sections_kept
-    assert "prev" in result.sections_dropped
-    assert result.total_tokens <= 150
+    assert "prev" in result.sections_folded_into_summary
+    assert "prev" not in result.sections_dropped
+    assert "rolling_summary" in result.sections_kept
+    assert result.total_tokens <= 200
     assert pinned_body in result.text
     assert live_body in result.text
+    # The 1200-char recent body is gone verbatim; the SUMMARY bullet
+    # only carries a stance (<= 140 chars) + anchors, and this body
+    # has neither meaningful anchors nor a prose stance longer than
+    # its stance cap, so the full body substring is absent.
     assert recent_body not in result.text
 
 
@@ -150,7 +160,14 @@ def test_reserved_tokens_shrink_effective_budget() -> None:
     result = ContextAssembler().assemble(
         sections, budget_tokens=500, reserved_tokens=350,
     )
-    assert "prev" in result.sections_dropped
+    # Reserved-space eviction evicts the RECENT section (folded into
+    # SUMMARY if the fold fits, otherwise dropped plainly). This test
+    # only proves the reservation shrinks the effective budget.
+    evicted = (
+        set(result.sections_folded_into_summary)
+        | set(result.sections_dropped)
+    )
+    assert "prev" in evicted
 
 
 def test_reserved_over_budget_raises_value_error() -> None:
@@ -183,23 +200,60 @@ def test_same_tier_oldest_evicted_first() -> None:
     ]
     # ~150 tokens: enough for pinned + roughly one recent block.
     result = ContextAssembler().assemble(sections, budget_tokens=150)
-    # The OLDEST recent block should be dropped first, so the newest
-    # ("prev_new") must survive. At least one recent block dropped;
-    # the earliest-dropped is prev_old.
+    # The OLDEST recent block MUST be evicted first (the tiebreak is
+    # insertion order), so the newest ("prev_new") survives. The
+    # earliest-evicted section is either folded into SUMMARY or
+    # (when even the SUMMARY entry cannot fit) dropped plainly --
+    # this test only asserts the eviction ORDER, not the disposition.
     assert "prev_new" in result.sections_kept
-    assert "prev_old" in result.sections_dropped
+    evicted = (
+        set(result.sections_folded_into_summary)
+        | set(result.sections_dropped)
+    )
+    assert "prev_old" in evicted
 
 
 def test_insertion_order_preserved_after_eviction() -> None:
-    """Dropping a middle section must NOT reorder the survivors."""
+    """Evicting a middle RECENT section must NOT reorder the survivors.
+
+    RFC-24 step 2: the evicted RECENT block is folded into a
+    synthesized SUMMARY entry positioned "below RECENT" -- right after
+    the last RECENT-tier slot in the caller's insertion order, above
+    any trailing PINNED (response contract / instruction) sections."""
     sections = [
         ContextSection(ContextTier.PINNED, "a", "AAA", droppable=False),
         ContextSection(ContextTier.RECENT, "b", "B" * 800),  # ~200 tokens
         ContextSection(ContextTier.PINNED, "c", "CCC", droppable=False),
     ]
-    # Small budget: b must be dropped, a + c should render in order.
+    # Small budget: b must be evicted, a + c must render in order,
+    # and the synthesized SUMMARY sits between b's original slot and
+    # the trailing PINNED c.
     result = ContextAssembler().assemble(sections, budget_tokens=100)
+    assert result.sections_folded_into_summary == ["b"]
+    assert result.sections_dropped == []
+    # a first, SUMMARY next (b's slot), c last -- PINNED trailer
+    # survives at the very bottom.
+    a_idx = result.text.index("AAA")
+    c_idx = result.text.index("CCC")
+    summary_idx = result.text.index("# Rolling summary")
+    assert a_idx < summary_idx < c_idx
+
+
+def test_insertion_order_preserved_when_summary_disabled() -> None:
+    """Regression: passing ``summary_producer=None`` restores the
+    pre-step-2 behaviour where an evicted middle RECENT section is
+    dropped outright and the surviving PINNED blocks butt up
+    against each other."""
+    sections = [
+        ContextSection(ContextTier.PINNED, "a", "AAA", droppable=False),
+        ContextSection(ContextTier.RECENT, "b", "B" * 800),  # ~200 tokens
+        ContextSection(ContextTier.PINNED, "c", "CCC", droppable=False),
+    ]
+    result = ContextAssembler(summary_producer=None).assemble(
+        sections, budget_tokens=100,
+    )
     assert result.sections_dropped == ["b"]
+    assert result.sections_folded_into_summary == []
     assert result.text == "AAA\n\nCCC"
 
 
@@ -226,6 +280,147 @@ def test_estimate_tokens_matches_char_over_four() -> None:
     assert estimate_tokens("x") == 1
     assert estimate_tokens("a" * 8) == 2
     assert estimate_tokens("a" * 4000) == 1000
+
+
+# --------------------------------------------------------------------------- #
+# RFC-24 step 2: rolling SUMMARY producer + anchor-preservation guardrail
+# --------------------------------------------------------------------------- #
+
+
+def test_summary_producer_extracts_anchors_verbatim() -> None:
+    """The producer copies file:line anchors from the source body
+    without any transformation -- normalisation, separator rewrite,
+    or line-number arithmetic would violate the RFC-24 audit-chain
+    guardrail."""
+    body = (
+        "The parser at src/aila/x.py:42 dispatches through "
+        "src/aila/x.py:42-88, then falls into "
+        "C:\\Users\\a\\y.c:120:10 for the fast path. "
+        "URL http://example:8080/foo must NOT match."
+    )
+    sec = ContextSection(ContextTier.RECENT, "trace", body)
+    produced = SummaryProducer().fold([sec])
+    assert produced is not None
+    text = produced.body
+
+    for anchor in (
+        "src/aila/x.py:42",
+        "src/aila/x.py:42-88",
+        "C:\\Users\\a\\y.c:120:10",
+    ):
+        assert anchor in text, f"missing anchor {anchor!r} in {text!r}"
+    # URL port pattern must be absent (regex would misclassify it).
+    assert "example:8080" not in text
+
+
+def test_summary_producer_bullet_has_kind_and_stance() -> None:
+    """Each bullet carries the source tier/label + a one-line stance
+    extracted from the body -- gives the reader a directional cue
+    without paraphrasing the underlying anchors."""
+    body = "This is the first meaningful line.\nsrc/aila/x.py:42 is the anchor."
+    sec = ContextSection(ContextTier.RECENT, "hypothesis_note", body)
+    produced = SummaryProducer().fold([sec])
+    assert produced is not None
+    assert produced.tier == ContextTier.SUMMARY
+    assert produced.label == "rolling_summary"
+    assert "- [RECENT/hypothesis_note]" in produced.body
+    assert "This is the first meaningful line." in produced.body
+    assert "src/aila/x.py:42" in produced.body
+
+
+def test_summary_producer_empty_input_returns_none() -> None:
+    """No evictions -> no synthesized section -> caller sees no
+    SUMMARY tier entry in the assembled result."""
+    assert SummaryProducer().fold([]) is None
+
+
+def test_summary_producer_caps_anchor_list_never_the_string() -> None:
+    """A runaway body cannot inflate the summary past
+    ``max_anchors_per_section`` bullets -- but the anchors that DO
+    make it in are still VERBATIM (never truncated at the string
+    level)."""
+    body = "\n".join(f"path/to/file_{i}.c:{i}" for i in range(60))
+    sec = ContextSection(ContextTier.RECENT, "many_anchors", body)
+    produced = SummaryProducer(max_anchors_per_section=10).fold([sec])
+    assert produced is not None
+    # first 10 anchors kept verbatim, plus a "(+50 more)" cue.
+    for i in range(10):
+        assert f"path/to/file_{i}.c:{i}" in produced.body
+    assert "(+50 more)" in produced.body
+
+
+def test_folded_summary_preserves_anchors_in_assembled_text() -> None:
+    """End-to-end: an over-budget RECENT section carrying file:line
+    anchors gets folded, and the anchors survive VERBATIM in the
+    fitted prompt even though the prose is gone -- the RFC-24
+    audit-chain guardrail."""
+    prose_marker = "MARKER_XYZZY_UNIQUE"
+    prose_line = f"prose line {prose_marker} " * 20
+    prose = "\n".join(prose_line for _ in range(30))
+    anchored_body = (
+        prose
+        + "\nsrc/aila/x.py:42 is the site the branch consulted; "
+        + "see also plugins/foo/bar.c:120-133 for the caller."
+    )
+    sections = [
+        ContextSection(
+            ContextTier.PINNED, "hdr", "H" * 40, droppable=False,
+        ),
+        ContextSection(ContextTier.LIVE, "case", "L" * 400),  # ~100 tok
+        ContextSection(ContextTier.RECENT, "trace", anchored_body),
+    ]
+    # Budget: enough for PINNED + LIVE + a SUMMARY bullet, but not
+    # for the full anchored_body.
+    result = ContextAssembler().assemble(sections, budget_tokens=200)
+
+    assert "trace" in result.sections_folded_into_summary
+    # Anchors survived VERBATIM.
+    assert "src/aila/x.py:42" in result.text
+    assert "plugins/foo/bar.c:120-133" in result.text
+    # Prose collapsed to at most one truncated stance line: 600
+    # repetitions of the marker on 30 lines are gone; only what
+    # fits in a single ~140-char stance survives.
+    assert result.text.count(prose_marker) <= 15
+
+
+def test_summary_dropped_when_it_would_still_overflow_budget() -> None:
+    """If the synthesized SUMMARY entry itself cannot fit, the
+    assembler falls back to the pre-step-2 behaviour (plain drop)
+    rather than silently violating the budget."""
+    # Small budget: no room for anything past the PINNED header.
+    sections = [
+        ContextSection(ContextTier.PINNED, "hdr", "H" * 40, droppable=False),
+        ContextSection(
+            ContextTier.RECENT, "big",
+            "\n".join(f"path/to/f{i}.c:{i}" for i in range(500)),
+        ),
+    ]
+    # Effective budget ~15 tokens -- big-anchor body summary needs
+    # far more, so the fold has to be reverted.
+    result = ContextAssembler().assemble(sections, budget_tokens=15)
+    assert "big" in result.sections_dropped
+    assert "big" not in result.sections_folded_into_summary
+    assert result.total_tokens <= 15
+
+
+def test_no_eviction_produces_no_summary_and_is_byte_identical() -> None:
+    """Behaviour-preservation guarantee: with a generous budget, the
+    assembler MUST produce byte-identical output to the same call
+    with ``summary_producer=None``. RFC-24 step 2 changes on-drop
+    behaviour ONLY."""
+    sections = [
+        ContextSection(ContextTier.PINNED, "hdr", "header body", droppable=False),
+        ContextSection(ContextTier.LIVE, "case", "case body"),
+        ContextSection(ContextTier.RECENT, "prev", "recent body"),
+    ]
+    with_producer = ContextAssembler().assemble(sections, budget_tokens=10_000)
+    without = ContextAssembler(summary_producer=None).assemble(
+        sections, budget_tokens=10_000,
+    )
+    assert with_producer.text == without.text
+    assert with_producer.sections_kept == without.sections_kept
+    assert with_producer.sections_folded_into_summary == []
+    assert without.sections_folded_into_summary == []
 
 
 # --------------------------------------------------------------------------- #
@@ -528,10 +723,13 @@ def test_vr_shape_small_budget_keeps_pinned_drops_or_summarizes_recent() -> None
     assert "# Primary target snapshot" in prompt
     assert "# Available tools" in prompt
     assert "# Instruction" in prompt
-    # RECENT tier is elided: either dropped outright or swapped for
-    # its summary. Either way, the heavy body must be gone.
-    assert "PPPPPPPPP" not in prompt
-    assert "SSSSSSSSS" not in prompt
+    # RECENT tier is elided: either dropped outright, swapped for its
+    # per-section summary, or folded into the rolling SUMMARY entry.
+    # In every case the FULL heavy body is gone -- at most a truncated
+    # ~140-char stance line survives inside a SUMMARY bullet, so an
+    # order-of-magnitude longer run of the marker char must be absent.
+    assert "P" * 500 not in prompt
+    assert "S" * 500 not in prompt
 
 
 def test_build_user_prompt_zero_budget_applies_config_default() -> None:

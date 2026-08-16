@@ -62,8 +62,10 @@ from aila.platform.llm.client import is_llm_recently_unhealthy
 from aila.platform.services.branch_cleanup import (
     close_orphan_branches_on_terminal,
 )
-from aila.platform.services.infra_death import InfraDeathClassifier
-from aila.platform.services.resilience import get_default_resilience_layer
+from aila.platform.services.resilience import (
+    InfraDeathClassifier,
+    get_default_resilience_layer,
+)
 from aila.platform.uow import UnitOfWork
 
 # Module-level singleton -- the classifier is stateless. Sourced from the

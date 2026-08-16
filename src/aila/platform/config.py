@@ -211,6 +211,19 @@ class PlatformConfigSchema(BaseModel):
     llm_tool_timeout_s: float = 300.0
     llm_kill_switch: bool = False
 
+    # ENHANCEMENT #142 -- share model-health-router state across workers.
+    # When True (default) AND a Redis URL is configured (see ``redis_url``
+    # above / ``AILA_PLATFORM_REDIS_URL`` env), one worker's discovery of
+    # a down LLM gateway is visible to every peer through a Redis-backed
+    # L2 cache keyed by endpoint URL with TTL == the router's cooldown.
+    # The process-local singleton stays as the L1 cache so the hot path
+    # never pays a round-trip on a warm-unhealthy entry, and a Redis
+    # outage silently degrades to the pre-#142 per-process behaviour
+    # (a Redis MISS is treated as HEALTHY -- fail-open). Set to False to
+    # force the pre-#142 in-process-only path even with a Redis URL
+    # configured (e.g. to isolate a worker for debugging).
+    llm_health_router_redis_shared: bool = True
+
     # fix #132 -- in-call LLM retry loop knobs. Previously read as
     # module-level constants at ``client.py`` import time via
     # ``os.environ.get("AILA_LLM_MAX_RETRIES"|"AILA_LLM_RETRY_BASE_DELAY_S"
@@ -506,6 +519,27 @@ class PlatformConfigSchema(BaseModel):
     # the escalation entirely and keeps the pre-RFC-13-#68 behavior where
     # a stalled hub always emits ``hub_stalled`` -> COMPLETED.
     dispatch_replan_timeout_s: float = 1800.0
+
+    # Issue #95, Wave 2 -- curiosity-driven lateral discovery LLM gate.
+    # When True, ``aila.platform.agents.auto_steering`` runs one cheap
+    # LLM call per audit_mcp source-surfacing tool result (after the
+    # Wave-1 regex scan) that proposes additional lateral vulnerability
+    # targets in the returned body; each proposal is appended to the
+    # investigation ledger as a ``discovery`` entry with
+    # ``source="lateral_llm"``, mirroring the Wave-1 posting shape.
+    # Defaults False so the path is byte-identical to today's Wave-1-only
+    # behavior; operator flips it on via ``PUT /config/platform/
+    # vr_lateral_llm_enabled`` (env ``AILA_PLATFORM_VR_LATERAL_LLM_ENABLED``)
+    # once the corpus of Wave-1 hits has been validated and the incremental
+    # per-read LLM cost is worth paying. The model is resolved by the
+    # standard LLM routing chain under task type
+    # ``vulnerability_research.lateral_observation`` (schema-registered
+    # via ``llm_model_vulnerability_research.lateral_observation`` when
+    # an operator pins a specific model; falls back to the platform
+    # default otherwise). Wave 3 (full explorer/planner persona split)
+    # is intentionally out of scope for this flag and is tracked as a
+    # separate follow-up in issue #95.
+    vr_lateral_llm_enabled: bool = False
 
     # ------------------------------------------------------------------
     # Platform sandbox service (issue #147). See

@@ -55,13 +55,12 @@ jobs:
       - name: pnpm install
         run: pnpm install --frozen-lockfile
 
-      # The shipping frontend is the shell SPA (`@aila/shell`). The per-module
-      # `@aila/*-frontend` packages were superseded by the in-shell windowing
-      # console and are kept only as reference scaffolds pending a rewrite as
-      # window content; they do not compile against the current shell surface
-      # and are not bundled. CI gates what ships: the shell type-check + build.
-      - name: Shell type-check
-        run: pnpm --filter @aila/shell run type-check
+      # The orphaned per-module `@aila/*-frontend` packages were removed in
+      # #227; the workspace is now the shell SPA (`@aila/shell`) plus the
+      # shared tsconfig package, so the workspace-wide type-check gates the
+      # whole live frontend again.
+      - name: Workspace type-check
+        run: pnpm -r run type-check
 
       - name: Shell production build
         run: pnpm --filter @aila/shell run build

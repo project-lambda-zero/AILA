@@ -86,15 +86,37 @@ Detects seventy-four categories of structural dishonesty:
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
     python -m aila.tools.honesty_audit src/ --whitelist honesty_whitelist.py
+    python -m aila.tools.honesty_audit src/ --orphans
 
 Exit code 0 = no findings (clean).
 Exit code 1 = findings exist.
+Exit code 0 (always, when --orphans is set) = orphan report is advisory and
+    does not gate CI; it prints names present in a module's ``__all__`` that
+    are never imported anywhere else in the tree.  See below.
 
 Whitelist:
     honesty_whitelist.py defines HONESTY_WHITELIST as a list of
     (filename_suffix, function_name, detail) tuples.  A finding is suppressed
     when the finding's file ends with filename_suffix AND function_name appears
     in the finding's message AND detail appears in the finding's message.
+
+    The same file MAY also define HONESTY_ORPHAN_ALLOWLIST as a list of
+    (filename_suffix, exported_name) tuples that suppress matching entries
+    from the ``--orphans`` cross-file report.  Only ``--orphans`` reads this
+    list; the default per-file gate ignores it.
+
+Cross-file report (``--orphans``):
+    A SECOND pass builds an import graph over every ``*.py`` file rooted at
+    the target directory (which is treated as a top-level package -- e.g.
+    ``src/aila`` maps to the ``aila`` package).  For every file that
+    declares ``__all__``, each name is checked against every other file's
+    imports (direct ``from X import name``, star imports ``from X import *``,
+    module imports ``import X.Y.Z``, and one hop of ``__init__.py``
+    re-exports).  Names never consumed elsewhere are printed as ``[orphan]``
+    lines to stderr; the exit code is 0.  The pass is deliberately advisory
+    (the recommended first slice of #198): false positives go into
+    HONESTY_ORPHAN_ALLOWLIST rather than blocking CI, and the existing
+    per-file 79-rule gate is byte-identical to the pre-flag invocation.
 
 Design constraints (D-04):
     AST analysis only -- no runtime inspection.
@@ -113,7 +135,15 @@ from pathlib import Path
 
 _log = logging.getLogger(__name__)
 
-__all__ = ["Finding", "HonestyAuditor", "load_whitelist"]
+__all__ = [
+    "Finding",
+    "HonestyAuditor",
+    "ImportGraph",
+    "OrphanFinding",
+    "build_import_graph",
+    "load_orphan_allowlist",
+    "load_whitelist",
+]
 
 # ---------------------------------------------------------------------------
 # Keyword sets
@@ -477,6 +507,415 @@ def load_whitelist(path: Path) -> Whitelist:
                     triple = tuple(e.value for e in elt.elts)  # type: ignore[union-attr]
                     result.add(triple)  # type: ignore[arg-type]
     return result
+
+
+# ---------------------------------------------------------------------------
+# Cross-file import graph -- second pass for orphan-export reporting (#198)
+#
+# The 79 per-file AST rules above are single-file blind: they never open a
+# second file and therefore cannot see that a name published in one module's
+# ``__all__`` has no importers anywhere in the tree.  This section builds a
+# lightweight import graph over every ``*.py`` file under a chosen root
+# (typically ``src/aila``) so a separate, advisory report can flag those
+# orphan exports.  The pass runs only when the CLI is invoked with
+# ``--orphans``; the default invocation is byte-identical to the
+# pre-existing gate and never touches this code path.
+# ---------------------------------------------------------------------------
+
+
+OrphanAllowlist = set[tuple[str, str]]
+
+
+@dataclass(frozen=True)
+class OrphanFinding:
+    """One name in a module's ``__all__`` with no importer elsewhere in the tree.
+
+    Attributes:
+        file: Absolute path to the file that declares ``__all__``.
+        line: Line number of the ``__all__`` entry (falls back to the
+            ``__all__`` assignment's line when the individual entry's
+            line number cannot be recovered).
+        module: Dotted module name that owns the export.
+        name: The name declared in ``__all__`` with no importer.
+    """
+
+    file: str
+    line: int
+    module: str
+    name: str
+
+    @property
+    def message(self) -> str:
+        return (
+            f"'{self.name}' in __all__ of {self.module} is not imported "
+            f"anywhere else under the audit root"
+        )
+
+
+def load_orphan_allowlist(path: Path) -> OrphanAllowlist:
+    """Parse *path* and return HONESTY_ORPHAN_ALLOWLIST as (suffix, name) pairs.
+
+    The file MAY define a top-level ``HONESTY_ORPHAN_ALLOWLIST`` list of
+    2-element string tuples.  Absent list, wrong shape, and non-tuple
+    entries are silently skipped (mirroring :func:`load_whitelist`).  When
+    the file lacks the binding, this returns an empty set -- the orphan
+    report then prints every candidate.
+    """
+    source = path.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(path))
+
+    result: OrphanAllowlist = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+            raw_value: ast.expr | None = node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets = [node.target]
+            raw_value = node.value
+        else:
+            continue
+        for target in targets:
+            if not (
+                isinstance(target, ast.Name)
+                and target.id == "HONESTY_ORPHAN_ALLOWLIST"
+            ):
+                continue
+            value = raw_value
+            # Unwrap _validate([...]) -> the inner list literal (parity with load_whitelist).
+            if isinstance(value, ast.Call) and value.args:
+                value = value.args[0]
+            if not isinstance(value, ast.List):
+                continue
+            for elt in value.elts:
+                if (
+                    isinstance(elt, ast.Tuple)
+                    and len(elt.elts) == 2
+                    and all(isinstance(e, ast.Constant) for e in elt.elts)
+                    and all(isinstance(e.value, str) for e in elt.elts)  # type: ignore[union-attr]
+                ):
+                    pair = tuple(e.value for e in elt.elts)  # type: ignore[union-attr]
+                    result.add(pair)  # type: ignore[arg-type]
+    return result
+
+
+@dataclass(frozen=True)
+class _FileFacts:
+    """Cross-file analysis facts about one ``*.py`` file under the audit root."""
+
+    path: Path
+    module: str
+    is_init: bool
+    # Every string entry in the file's ``__all__`` as (name, lineno).
+    all_names: tuple[tuple[str, int], ...]
+    has_all: bool
+    # ImportFrom bindings: (absolute_source_module, imported_name).
+    from_imports: tuple[tuple[str, str], ...]
+    # ImportFrom modules where the file does ``from X import *``.
+    star_imports: tuple[str, ...]
+    # Plain ``import X.Y.Z`` targets (root dotted-path of each alias).
+    module_imports: tuple[str, ...]
+
+
+def _module_name_for_file(path: Path, root: Path) -> str:
+    """Return the dotted module name a file resolves to under *root*.
+
+    ``root.name`` supplies the top-level package (so ``src/aila`` maps to
+    the ``aila`` package).  An ``__init__.py`` file becomes its package's
+    name; every other file appends its stem.
+    """
+    rel = path.relative_to(root).with_suffix("")
+    parts = list(rel.parts)
+    if parts and parts[-1] == "__init__":
+        parts.pop()
+    if not parts:
+        return root.name
+    return ".".join([root.name, *parts])
+
+
+def _resolve_relative_module(
+    base_module: str,
+    is_init: bool,
+    level: int,
+    module: str | None,
+) -> str | None:
+    """Convert a ``from`` clause into its absolute module name.
+
+    ``level=0`` is a plain absolute import; the returned value is
+    ``module`` (or None when ``module`` is empty, which is syntactically
+    impossible but guarded for safety).  ``level>=1`` walks up from the
+    caller's package: for a non-``__init__`` file the caller sits inside
+    its package, so level 1 targets that package; for an ``__init__.py``
+    file the file IS the package, so level 1 stays put.
+    """
+    if level == 0:
+        return module or None
+    base_parts = base_module.split(".")
+    if not is_init:
+        base_parts = base_parts[:-1]
+    pops = level - 1
+    if pops > len(base_parts):
+        return None
+    if pops > 0:
+        base_parts = base_parts[:-pops]
+    if module:
+        base_parts = [*base_parts, *module.split(".")]
+    return ".".join(base_parts) if base_parts else None
+
+
+def _extract_string_sequence(node: ast.expr) -> list[tuple[str, int]]:
+    """Return (value, lineno) for every string constant in a list/tuple literal.
+
+    Non-constant entries (e.g. ``*_EXTRA`` unpacks) are skipped -- the
+    orphan report treats them as opaque and never flags them.
+    """
+    if not isinstance(node, (ast.List, ast.Tuple)):
+        return []
+    out: list[tuple[str, int]] = []
+    for elt in node.elts:
+        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+            out.append((elt.value, elt.lineno))
+    return out
+
+
+def _extract_all_names(tree: ast.Module) -> tuple[list[tuple[str, int]], bool]:
+    """Return the ``__all__`` entries and whether the file declared it.
+
+    Handles the two shapes the codebase uses:
+      * ``__all__ = [...]`` (plain assignment)
+      * ``__all__: list[str] = [...]`` (annotated assignment)
+    Anything more exotic (a computed union, a runtime-mutated list) is
+    treated as "no ``__all__``" so the orphan check ignores it.
+    """
+    for node in tree.body:
+        target: ast.expr | None = None
+        value: ast.expr | None = None
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            value = node.value
+        elif isinstance(node, ast.AnnAssign):
+            target = node.target
+            value = node.value
+        if not (
+            isinstance(target, ast.Name)
+            and target.id == "__all__"
+            and value is not None
+        ):
+            continue
+        # Unwrap _validate([...]) if the codebase adopts it later.
+        if isinstance(value, ast.Call) and value.args:
+            value = value.args[0]
+        return _extract_string_sequence(value), True
+    return [], False
+
+
+def _extract_imports(
+    tree: ast.Module,
+    file_module: str,
+    is_init: bool,
+) -> tuple[list[tuple[str, str]], list[str], list[str]]:
+    """Return (from_imports, star_imports, module_imports) for *tree*.
+
+    ``from_imports`` is the list of every ``from X import name`` binding
+    with ``X`` resolved to an absolute module.  ``star_imports`` collects
+    every ``from X import *`` target (any name in ``X`` MUST be treated
+    as consumed).  ``module_imports`` collects every ``import X.Y.Z``
+    target -- attribute access on the imported module is dynamic, so
+    every name in ``X.Y.Z`` MUST also be treated as consumed to avoid
+    false-positive orphans.
+    """
+    from_imports: list[tuple[str, str]] = []
+    star_imports: list[str] = []
+    module_imports: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                module_imports.append(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            abs_mod = _resolve_relative_module(
+                file_module, is_init, node.level, node.module,
+            )
+            if abs_mod is None:
+                continue
+            for alias in node.names:
+                if alias.name == "*":
+                    star_imports.append(abs_mod)
+                else:
+                    from_imports.append((abs_mod, alias.name))
+    return from_imports, star_imports, module_imports
+
+
+class ImportGraph:
+    """Cross-file import graph over one aila-style package tree.
+
+    Built once per ``--orphans`` invocation via :func:`build_import_graph`.
+    Holds one :class:`_FileFacts` per parseable ``*.py`` file: the file's
+    dotted module name, its ``__all__`` entries, and every import it
+    performs (from-imports, star imports, plain module imports).  The
+    :meth:`orphan_exports` method combines those into a single
+    consumed-name set (with one hop of ``__init__.py`` re-export
+    propagation) and returns the export lines with no consumer.
+    """
+
+    def __init__(self) -> None:
+        self._files: list[_FileFacts] = []
+        self._by_module: dict[str, _FileFacts] = {}
+
+    def add(self, facts: _FileFacts) -> None:
+        self._files.append(facts)
+        self._by_module[facts.module] = facts
+
+    @property
+    def files(self) -> list[_FileFacts]:
+        """Return the ordered list of file facts (test hook)."""
+        return list(self._files)
+
+    def orphan_exports(
+        self,
+        allowlist: OrphanAllowlist | None = None,
+    ) -> list[OrphanFinding]:
+        """Return every ``__all__`` entry with no importer elsewhere in the graph.
+
+        Consumption sources, in order applied:
+          1. Direct ``from <defining_module> import <name>`` in any other file.
+          2. ``from <star_module> import *`` in any other file (every name
+             in that module's ``__all__`` counts as consumed).
+          3. Plain ``import <defining_module>[.suffix]`` in any other file
+             (attribute lookup is dynamic; every name in the imported
+             module is over-approximated as consumed).
+          4. One hop of ``__init__.py`` re-export: if a package
+             ``__init__`` binds ``name`` via ``from .child import name``
+             AND ``(package, name)`` is consumed externally, then
+             ``(child, name)`` is also treated as consumed.
+
+        Over-approximation of consumption (rules 2 + 3) is deliberate:
+        the orphan report is advisory, and a false-negative orphan
+        (a missed one) is preferable to a false-positive orphan (noise
+        the reviewer must allowlist).
+        """
+        allow = allowlist or set()
+
+        # Phase 1: direct ImportFrom + star + module-level consumption.
+        consumed: set[tuple[str, str]] = set()
+        star_targets: set[str] = set()
+        module_targets: set[str] = set()
+        for facts in self._files:
+            for abs_mod, name in facts.from_imports:
+                consumed.add((abs_mod, name))
+            for s in facts.star_imports:
+                star_targets.add(s)
+            for m in facts.module_imports:
+                module_targets.add(m)
+
+        # Phase 2: star + module import expansion against files we know
+        # about.  A ``from foo import *`` or an ``import foo.bar.baz``
+        # consumes every ``__all__`` name of any known file whose module
+        # equals or descends from the target.  Descent handling matters
+        # for ``import aila.platform.contracts`` -- the importer might
+        # touch ``aila.platform.contracts.enums.SomeEnum`` at runtime.
+        for star_mod in star_targets:
+            facts = self._by_module.get(star_mod)
+            if facts is not None:
+                for name, _ in facts.all_names:
+                    consumed.add((star_mod, name))
+        for target_mod in module_targets:
+            # Exact hit + every strict descendant.
+            for other_module, facts in self._by_module.items():
+                if other_module == target_mod or other_module.startswith(
+                    target_mod + ".",
+                ):
+                    for name, _ in facts.all_names:
+                        consumed.add((other_module, name))
+
+        # Phase 3: one hop of __init__.py re-export propagation.
+        # If a package __init__ imports ``name`` from a sibling module
+        # and (package, name) is consumed externally, then (sibling, name)
+        # is also consumed.  Iterated to fixed point in case a chain of
+        # __init__s re-exports a symbol upward through several packages.
+        init_files = [f for f in self._files if f.is_init]
+        changed = True
+        while changed:
+            changed = False
+            for facts in init_files:
+                init_mod = facts.module
+                for src_mod, name in facts.from_imports:
+                    if src_mod == init_mod:
+                        continue
+                    key = (init_mod, name)
+                    if key not in consumed and init_mod not in star_targets:
+                        continue
+                    downstream = (src_mod, name)
+                    if downstream not in consumed:
+                        consumed.add(downstream)
+                        changed = True
+
+        # Phase 4: pull the orphans out.
+        findings: list[OrphanFinding] = []
+        for facts in self._files:
+            if not facts.has_all:
+                continue
+            for name, lineno in facts.all_names:
+                if (facts.module, name) in consumed:
+                    continue
+                if _orphan_is_allowed(facts.path, name, allow):
+                    continue
+                findings.append(OrphanFinding(
+                    file=str(facts.path),
+                    line=lineno,
+                    module=facts.module,
+                    name=name,
+                ))
+        findings.sort(key=lambda f: (f.file, f.line, f.name))
+        return findings
+
+
+def _orphan_is_allowed(
+    path: Path,
+    name: str,
+    allow: OrphanAllowlist,
+) -> bool:
+    """Return True when (file, name) matches any (suffix, name) allowlist row."""
+    filestr = str(path).replace("\\", "/")
+    for suffix, allowed_name in allow:
+        if name != allowed_name:
+            continue
+        if filestr.endswith(suffix.replace("\\", "/")):
+            return True
+    return False
+
+
+def build_import_graph(root: Path) -> ImportGraph:
+    """Walk *root* once and return an :class:`ImportGraph` over every ``*.py`` file.
+
+    Files that fail to parse (syntax error) or read (OS error) are
+    silently skipped -- the primary auditor already surfaces syntax
+    errors elsewhere, and skipping a broken file cannot mint a
+    false-positive orphan.  Sorted iteration keeps the report
+    deterministic across platforms.
+    """
+    graph = ImportGraph()
+    for py_file in sorted(root.rglob("*.py")):
+        try:
+            source = py_file.read_text(encoding="utf-8")
+            tree = ast.parse(source, filename=str(py_file))
+        except (OSError, SyntaxError, ValueError):
+            continue
+        module = _module_name_for_file(py_file, root)
+        is_init = py_file.name == "__init__.py"
+        all_names, has_all = _extract_all_names(tree)
+        from_imports, star_imports, module_imports = _extract_imports(
+            tree, module, is_init,
+        )
+        graph.add(_FileFacts(
+            path=py_file,
+            module=module,
+            is_init=is_init,
+            all_names=tuple(all_names),
+            has_all=has_all,
+            from_imports=tuple(from_imports),
+            star_imports=tuple(star_imports),
+            module_imports=tuple(module_imports),
+        ))
+    return graph
 
 
 # ---------------------------------------------------------------------------
@@ -6178,24 +6617,38 @@ class HonestyAuditor:
 # ---------------------------------------------------------------------------
 
 
-def _parse_args(argv: list[str]) -> tuple[Path, Path | None]:
-    """Return (target_dir, whitelist_path | None) from *argv*."""
+def _parse_args(argv: list[str]) -> tuple[Path, Path | None, bool]:
+    """Return (target_dir, whitelist_path | None, orphans_mode) from *argv*.
+
+    ``--orphans`` selects the cross-file report and is mutually neutral
+    with ``--whitelist``: the whitelist file is still consulted, but for
+    its ``HONESTY_ORPHAN_ALLOWLIST`` binding instead of ``HONESTY_WHITELIST``.
+    Unknown flags are ignored so callers may add flags without breaking
+    this parser -- consistent with the pre-existing behaviour.
+    """
     if not argv:
-        _log.error("Usage: python -m aila.tools.honesty_audit <directory> [--whitelist <path>]")
+        _log.error(
+            "Usage: python -m aila.tools.honesty_audit <directory> "
+            "[--whitelist <path>] [--orphans]",
+        )
         sys.exit(2)
 
     target = Path(argv[0])
     whitelist_path: Path | None = None
+    orphans_mode = False
 
     i = 1
     while i < len(argv):
         if argv[i] == "--whitelist" and i + 1 < len(argv):
             whitelist_path = Path(argv[i + 1])
             i += 2
+        elif argv[i] == "--orphans":
+            orphans_mode = True
+            i += 1
         else:
             i += 1
 
-    return target, whitelist_path
+    return target, whitelist_path, orphans_mode
 
 
 _DEFAULT_WHITELIST_NAMES: tuple[str, ...] = (
@@ -6228,19 +6681,29 @@ def _main(argv: list[str]) -> int:
     ``python -m aila.tools.honesty_audit src/`` to automatically load
     the project whitelist without requiring an explicit --whitelist flag.
 
+    ``--orphans`` runs a separate cross-file report that builds an import
+    graph over every ``*.py`` file under the target root and prints every
+    name in a module's ``__all__`` with no importer elsewhere.  It is
+    advisory: the exit code is always 0 when ``--orphans`` is set (unless
+    the target itself is unreadable).  The per-file 79-rule gate is
+    skipped in this mode; run the default invocation for CI.
+
     Args:
         argv: Command-line arguments excluding the script name.
 
     Returns:
         Exit code: 0 if no findings, 1 if findings exist, 2 on usage error.
     """
-    target, whitelist_path = _parse_args(argv)
+    target, whitelist_path, orphans_mode = _parse_args(argv)
 
     # Auto-discover whitelist if not explicitly specified
     if whitelist_path is None:
         whitelist_path = _find_default_whitelist(target)
         if whitelist_path is not None:
             _log.debug("honesty_audit: auto-loaded whitelist from %s", whitelist_path)
+
+    if orphans_mode:
+        return _run_orphan_report(target, whitelist_path)
 
     whitelist: Whitelist = set()
     if whitelist_path is not None:
@@ -6263,6 +6726,38 @@ def _main(argv: list[str]) -> int:
         _log.warning("%s:%d: [%s] %s", f.file, f.line, f.rule, f.message)
 
     return 1 if findings else 0
+
+
+def _run_orphan_report(target: Path, whitelist_path: Path | None) -> int:
+    """Build the import graph over *target* and print orphan exports.
+
+    Never returns a failure exit code except on a target-directory error
+    (parity with the primary auditor's ``target not found`` handling).
+    The orphan report is advisory -- reviewers add legitimate public API
+    to ``HONESTY_ORPHAN_ALLOWLIST`` in the whitelist file rather than
+    have this pass block CI.
+    """
+    if not target.is_dir():
+        _log.error("target not found or not a directory: %s", target)
+        return 2
+
+    allow: OrphanAllowlist = set()
+    if whitelist_path is not None and whitelist_path.exists():
+        allow = load_orphan_allowlist(whitelist_path)
+
+    graph = build_import_graph(target)
+    findings = graph.orphan_exports(allowlist=allow)
+
+    for finding in findings:
+        _log.warning(
+            "%s:%d: [orphan] %s", finding.file, finding.line, finding.message,
+        )
+    _log.info(
+        "honesty_audit: --orphans scanned %d files, %d orphan(s) reported",
+        len(graph.files),
+        len(findings),
+    )
+    return 0
 
 
 if __name__ == "__main__":

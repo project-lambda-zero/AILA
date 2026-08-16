@@ -604,6 +604,339 @@ async def _post_lateral_discoveries(
 
 
 # ─────────────────────────────────────────────────────────────────
+# Router negative-example corpus (issue #161, write-only slice)
+# ─────────────────────────────────────────────────────────────────
+#
+# Every fired auto-steering is a ground-truth routing failure signal
+# (this route/tool on this task shape needed intervention). We persist
+# one :class:`RouterNegativeExampleRecord` per successful post so a
+# downstream router re-tuner has hard negatives to consume. No
+# consumer / re-tune ships in this slice -- the table simply accrues
+# behind the write-only path.
+#
+# Best-effort by design: any DB failure logs a WARNING and returns.
+# A negative-example write must NEVER derail a steering post (which
+# already committed its own row before this helper runs).
+
+
+async def _record_router_negative_example(
+    *,
+    investigation_id: str,
+    server_id: str,
+    tool_name: str,
+    rule_fired: str,
+    model: str | None = None,
+) -> None:
+    """Persist one router-negative-example row for the just-posted
+    steering. See migration 128_router_negative_examples for the
+    table shape.
+
+    ``task_shape`` and ``tool`` both collapse to
+    ``"{server_id}.{tool_name}"`` at the current auto-steering site
+    because the tool-executor context does not carry a distilled
+    task-shape identifier separate from the routed tool. Kept as
+    two columns anyway so the tuner can widen its shape derivation
+    later without a second migration.
+
+    ``model`` is left ``None`` at this site (the routed model id is
+    not plumbed through the auto-steering call surface); the column
+    stays nullable so the write path never fails on the missing
+    field. Callers with routing context in scope MAY pass it via
+    the ``model`` kwarg.
+
+    Deferred imports break the ``platform.agents -> platform.storage``
+    ->
+    ``platform.uow`` import cycle. Catches specific DB / interpreter
+    errors only.
+    """
+    if not investigation_id or not rule_fired:
+        return
+    tool_key = f"{server_id}.{tool_name}" if server_id and tool_name else (
+        server_id or tool_name or "unknown"
+    )
+    try:
+        from aila.storage.db_models import RouterNegativeExampleRecord
+    except ImportError as exc:
+        _log.warning(
+            "auto_steering: RouterNegativeExampleRecord import failed "
+            "inv=%s err=%s",
+            investigation_id, exc,
+        )
+        return
+    try:
+        async with UnitOfWork() as uow:
+            row = RouterNegativeExampleRecord(
+                task_shape=tool_key,
+                model=model,
+                tool=tool_key,
+                rule_fired=rule_fired,
+                investigation_id=investigation_id,
+            )
+            uow.session.add(row)
+            await uow.commit()
+    except (
+        OSError, RuntimeError, ValueError, TypeError, AttributeError,
+        SQLAlchemyError,
+    ) as exc:
+        # Truncate to WARNING; the steering post already committed. A
+        # failure here just delays adding one row to the negative-example
+        # corpus -- future fires will still populate the same signal.
+        _log.warning(
+            "auto_steering: router_negative_example write failed "
+            "inv=%s rule=%s tool=%s err=%s",
+            investigation_id, rule_fired, tool_key, exc,
+        )
+
+
+async def _post_and_record_negative(
+    investigation_id: str,
+    branch_id: str | None,
+    text: str,
+    auto_steering_key: str,
+    *,
+    rule_fired: str,
+    server_id: str,
+    tool_name: str,
+    message_model: Any,
+    branch_model: Any,
+) -> str | None:
+    """Thin wrapper around :func:`_post` that also writes a
+    :class:`RouterNegativeExampleRecord` when the post lands. Used by
+    every Rule 1-4 branch so #161's write-only slice fires uniformly
+    on every steering.
+
+    A ``None`` return from ``_post`` (dedup race lost, ``_already_posted``
+    already returned True upstream, or an IntegrityError inside
+    ``_post``) skips the negative-example write -- the winning writer
+    already recorded the negative on its own path.
+    """
+    posted = await _post(
+        investigation_id, branch_id, text, auto_steering_key,
+        message_model=message_model, branch_model=branch_model,
+    )
+    if posted:
+        await _record_router_negative_example(
+            investigation_id=investigation_id,
+            server_id=server_id,
+            tool_name=tool_name,
+            rule_fired=rule_fired,
+        )
+    return posted
+
+
+# ─────────────────────────────────────────────────────────────────
+# Lateral discovery via cheap LLM call (issue #95, Wave 2)
+# ─────────────────────────────────────────────────────────────────
+#
+# When enabled via the ``platform.vr_lateral_llm_enabled`` flag
+# (default OFF, env ``AILA_PLATFORM_VR_LATERAL_LLM_ENABLED``), a
+# single cheap LLM call runs AFTER the Wave-1 regex scan on every
+# audit_mcp source-surfacing tool result. The LLM proposes lateral
+# vulnerability targets it notices in the returned body; each
+# proposal is appended to the investigation ledger as a
+# ``discovery`` entry with ``source="lateral_llm"``, mirroring the
+# Wave-1 posting shape.
+#
+# When disabled, the code path is byte-identical to today: the
+# gate short-circuits before any imports / model construction /
+# ledger write happen.
+#
+# Wave 3 (full explorer/planner persona split) is OUT of scope
+# here; the Wave 2 slice is the cheapest independently-shippable
+# increment.
+
+# LLM task-type key routed through the standard config chain
+# (``llm_model_{task_type}``). An operator pins a specific model
+# via ``PUT /config/platform/llm_model_vulnerability_research.lateral_observation``;
+# otherwise the platform default handles it.
+_LATERAL_LLM_TASK_TYPE: str = "vulnerability_research.lateral_observation"
+
+# Body-slice budget for the one-shot prompt. Kept small so a large
+# ``read_lines`` payload does not blow up per-call tokens; the LLM
+# only needs a representative slice to spot lateral targets.
+_LATERAL_LLM_BODY_CHARS: int = 2400
+
+# Ceiling on proposals persisted per LLM call. Each valid line
+# becomes one ledger row; capping keeps the ledger flat when the
+# LLM emits an over-eager list.
+_LATERAL_LLM_MAX_PROPOSALS: int = 5
+
+
+async def _lateral_llm_enabled() -> bool:
+    """Read the ``vr_lateral_llm_enabled`` gate through ConfigRegistry.
+
+    Env > cache > DB > schema default (False). Deferred import
+    keeps the module load cheap when the flag is off. A registry
+    failure collapses to False so a broken registry never silently
+    turns on a paid LLM path.
+    """
+    try:
+        from aila.storage.registry import ConfigRegistry
+    except ImportError:
+        return False
+    try:
+        raw = await ConfigRegistry().get("platform", "vr_lateral_llm_enabled")
+    except (OSError, RuntimeError, ValueError, TypeError, AttributeError):
+        return False
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        return raw.strip().lower() in ("1", "true", "yes", "on")
+    return False
+
+
+def _parse_lateral_llm_reply(reply: str) -> list[str]:
+    """Split the LLM's plain-text reply into proposal lines.
+
+    Contract with the prompt: one proposal per line, exactly ``NONE``
+    (case-insensitive) when nothing stands out. Blank lines and
+    NONE tokens filter out. Each proposal is capped at 240 chars to
+    match the Wave-1 snippet cap.
+    """
+    if not reply:
+        return []
+    proposals: list[str] = []
+    for raw_line in reply.splitlines():
+        line = raw_line.strip().lstrip("-*0123456789.) ").strip()
+        if not line:
+            continue
+        if line.upper() == "NONE":
+            continue
+        if len(line) > 240:
+            line = line[:237] + "..."
+        proposals.append(line)
+        if len(proposals) >= _LATERAL_LLM_MAX_PROPOSALS:
+            break
+    return proposals
+
+
+async def _post_lateral_llm_proposals(
+    *,
+    server_id: str,
+    tool_name: str,
+    args: dict,
+    raw: dict,
+    investigation_id: str,
+    branch_id: str,
+) -> None:
+    """Issue one cheap LLM call and post its proposals to the ledger.
+
+    Runs ONLY when :func:`_lateral_llm_enabled` returns True AND the
+    tool call is one of the audit_mcp source-surfacing tools. Every
+    other input path returns immediately so the disabled behavior is
+    byte-identical to today.
+
+    Best-effort: every failure branch (import error, registry read
+    failure, LLM error, ledger write failure) logs at WARNING and
+    returns. The tool result path never observes an exception raised
+    from here.
+    """
+    if server_id != "audit_mcp" or tool_name not in _LATERAL_SCAN_TOOLS:
+        return
+    if not await _lateral_llm_enabled():
+        return
+
+    units = _iter_lateral_scan_units(tool_name, args, raw)
+    if not units:
+        return
+    body, file_path, fn_name = units[0]
+    if not body:
+        return
+    body_slice = body[:_LATERAL_LLM_BODY_CHARS]
+
+    # Deferred imports so the disabled path costs nothing and the
+    # import cycle (agents -> services -> agents) is broken cleanly.
+    try:
+        from aila.platform.agents.idempotent_llm import idempotent_llm_call
+        from aila.platform.llm.client import AilaLLMClient
+        from aila.platform.services.ledger import LedgerService
+        from aila.storage.registry import ConfigRegistry
+        from aila.storage.secrets import SecretStore
+    except ImportError as exc:
+        _log.warning(
+            "auto_steering: lateral-LLM deferred import failed inv=%s err=%s",
+            investigation_id, exc,
+        )
+        return
+
+    prompt = (
+        f"You just read function `{fn_name or '?'}` in "
+        f"`{file_path or '?'}`. Separately from any hypothesis a "
+        "researcher is currently pursuing, list up to "
+        f"{_LATERAL_LLM_MAX_PROPOSALS} concrete LATERAL vulnerability "
+        "targets you notice in this code -- callees, protocol branches, "
+        "unchecked allocations, sibling handlers with missing validation, "
+        "type casts, or error paths that return success. One target per "
+        "line, formatted as `<callee_or_line_ref>: <short reason>`. "
+        "Reply exactly NONE if nothing stands out.\n\nCode:\n\n"
+        f"{body_slice}"
+    )
+
+    try:
+        client = AilaLLMClient(
+            registry=ConfigRegistry(), secret_store=SecretStore(),
+        )
+        # RFC-09: route through idempotent_llm_call so the cost + seal rows
+        # carry a prompt_content_hash + prompt_version (auto-derived) and a
+        # retry replays the cached proposal instead of re-paying.
+        response, _cache_hit = await idempotent_llm_call(
+            client,
+            method="chat",
+            task_type=_LATERAL_LLM_TASK_TYPE,
+            messages=[{"role": "user", "content": prompt}],
+            investigation_id=investigation_id,
+            branch_id=branch_id,
+        )
+    except (
+        OSError, RuntimeError, ValueError, TypeError, AttributeError,
+        httpx.HTTPError,
+    ) as exc:
+        _log.warning(
+            "auto_steering: lateral-LLM chat failed inv=%s tool=%s err=%s",
+            investigation_id, tool_name, exc,
+        )
+        return
+
+    if getattr(response, "disabled", False):
+        return
+    proposals = _parse_lateral_llm_reply(getattr(response, "content", "") or "")
+    if not proposals:
+        return
+
+    try:
+        ledger = LedgerService()
+    except (OSError, RuntimeError, ValueError, TypeError) as exc:
+        _log.warning(
+            "auto_steering: LedgerService init failed inv=%s err=%s",
+            investigation_id, exc,
+        )
+        return
+
+    for idx, proposal in enumerate(proposals):
+        idem = f"{branch_id}:lateral_llm:{file_path}:{fn_name}:{idx}"
+        payload = {
+            "source": "lateral_llm",
+            "file": file_path,
+            "function": fn_name,
+            "proposal": proposal,
+        }
+        try:
+            await ledger.append_general(
+                investigation_id, branch_id, "discovery", payload,
+                idempotency_key=idem,
+            )
+        except (
+            OSError, RuntimeError, ValueError, TypeError, AttributeError,
+            KeyError, SQLAlchemyError,
+        ) as exc:
+            _log.warning(
+                "auto_steering: lateral-LLM ledger write failed "
+                "inv=%s branch=%s idx=%d err=%s",
+                investigation_id, branch_id, idx, exc,
+            )
+
+
+# ─────────────────────────────────────────────────────────────────
 # Posting
 # ─────────────────────────────────────────────────────────────────
 
@@ -843,8 +1176,12 @@ async def _evaluate_rules(
         )
         if not correction:
             return None
-        return await _post(investigation_id, branch_id, correction, key,
-                           message_model=message_model, branch_model=branch_model)
+        return await _post_and_record_negative(
+            investigation_id, branch_id, correction, key,
+            rule_fired="read_lines_past_eof",
+            server_id=server_id, tool_name=tool_name,
+            message_model=message_model, branch_model=branch_model,
+        )
 
     # Rule 2: read_function returned file header (indexer fault)
     if _detect_read_function_returned_file_header(server_id, tool_name, args, raw_result):
@@ -861,8 +1198,12 @@ async def _evaluate_rules(
         )
         if not correction:
             return None
-        return await _post(investigation_id, branch_id, correction, key,
-                           message_model=message_model, branch_model=branch_model)
+        return await _post_and_record_negative(
+            investigation_id, branch_id, correction, key,
+            rule_fired="read_function_indexer_fault",
+            server_id=server_id, tool_name=tool_name,
+            message_model=message_model, branch_model=branch_model,
+        )
 
     # Rule 3: read_lines returned file-not-found error
     if _detect_read_lines_file_not_found(server_id, tool_name, args, raw_result):
@@ -879,8 +1220,12 @@ async def _evaluate_rules(
         )
         if not correction:
             return None
-        return await _post(investigation_id, branch_id, correction, key,
-                           message_model=message_model, branch_model=branch_model)
+        return await _post_and_record_negative(
+            investigation_id, branch_id, correction, key,
+            rule_fired="read_lines_file_not_found",
+            server_id=server_id, tool_name=tool_name,
+            message_model=message_model, branch_model=branch_model,
+        )
 
     # Rule 4: bridge rejected kwarg shape
     if _detect_tool_kwarg_rejected(server_id, tool_name, args, raw_result):
@@ -900,8 +1245,12 @@ async def _evaluate_rules(
         correction = await _derive_kwarg_rejected_correction(
             f"{server_id}.{tool_name}", raw_err, args,
         )
-        return await _post(investigation_id, branch_id, correction, key,
-                           message_model=message_model, branch_model=branch_model)
+        return await _post_and_record_negative(
+            investigation_id, branch_id, correction, key,
+            rule_fired="kwarg_rejected",
+            server_id=server_id, tool_name=tool_name,
+            message_model=message_model, branch_model=branch_model,
+        )
 
     # Rule 5: lateral pattern discovery (issue #95). Runs AFTER Rules
     # 1-4 so a real steering condition always wins; a broken tool
@@ -915,6 +1264,23 @@ async def _evaluate_rules(
     )
     if lateral:
         await _post_lateral_discoveries(investigation_id, branch_id, lateral)
+
+    # Wave 2 (issue #95): after the passive regex scan, optionally
+    # ask a cheap LLM for additional lateral targets. Gated OFF by
+    # default via the ``platform.vr_lateral_llm_enabled`` flag; when
+    # off, ``_post_lateral_llm_proposals`` short-circuits before any
+    # imports or LLM construction, so the disabled path is byte-
+    # identical to today. Best-effort inside the helper -- any error
+    # logs a WARNING and returns. Wave 3 (full explorer/planner
+    # persona split) is out of scope for this slice.
+    await _post_lateral_llm_proposals(
+        server_id=server_id,
+        tool_name=tool_name,
+        args=args,
+        raw=raw_result,
+        investigation_id=investigation_id,
+        branch_id=branch_id,
+    )
 
     return None
 
