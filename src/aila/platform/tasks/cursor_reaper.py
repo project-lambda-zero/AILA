@@ -38,6 +38,7 @@ from sqlalchemy import select as _select
 from sqlalchemy import text as _text
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
 
+from aila.platform.workflows.types import RESERVED_TERMINAL_STATES
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import WorkflowStateCursor
 
@@ -57,13 +58,10 @@ _ACTIVE_STATUSES = (
 # fix §58 -- sweep covers ALL FOUR reserved terminal cursor states so
 # __failed__ / __cancelled__ / __succeeded__ don't accumulate forever
 # (previously only __crashed__ was reaped, leaving the other three as
-# dead weight that blocked re-enqueue).
-_TERMINAL_CURSOR_STATES = (
-    "__crashed__",
-    "__failed__",
-    "__cancelled__",
-    "__succeeded__",
-)
+# dead weight that blocked re-enqueue). Sorted for a stable log line
+# and IN-clause; membership drives the sweep, not order (issue #146
+# item 8: derived from the canonical engine set, not duplicated).
+_TERMINAL_CURSOR_STATES: tuple[str, ...] = tuple(sorted(RESERVED_TERMINAL_STATES))
 
 
 async def sweep_orphan_crashed_cursors() -> int:

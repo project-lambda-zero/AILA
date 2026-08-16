@@ -612,3 +612,33 @@ HONESTY_WHITELIST = [
      "heal_without_journal"),
 ]
 
+
+# ---------------------------------------------------------------------------
+# Orphan-export allowlist (advisory ``--orphans`` cross-file report).
+#
+# Each entry is a (filename_suffix, exported_name) pair.  The report
+# prints every name in a module's ``__all__`` with no importer elsewhere
+# under the audit root (``src/aila``); this list suppresses names that
+# ARE legitimately part of the public API but are only consumed from
+# outside the audited tree (tests/, scripts/, external SDK users).
+# See the top of ``src/aila/tools/honesty_audit.py`` for the full
+# semantics.  The pass is advisory and never blocks CI, so an entry
+# here is a documentation aid rather than a hard requirement.
+# ---------------------------------------------------------------------------
+
+HONESTY_ORPHAN_ALLOWLIST = [
+    # The auditor's own public API. HonestyAuditor is imported by
+    # src/aila/tools/__init__.py; every other name is consumed only by
+    # tests/ (test_honesty_audit.py, test_module_standards_compliance.py,
+    # test_honesty_guardrails_rfc.py, ...).
+    ("tools/honesty_audit.py", "Finding"),
+    ("tools/honesty_audit.py", "ImportGraph"),
+    ("tools/honesty_audit.py", "OrphanFinding"),
+    ("tools/honesty_audit.py", "build_import_graph"),
+    ("tools/honesty_audit.py", "load_orphan_allowlist"),
+    ("tools/honesty_audit.py", "load_whitelist"),
+    # HONESTY_WHITELIST is the whitelist binding itself; it is read
+    # via AST by load_whitelist, never via `from ... import`.
+    ("tools/honesty_whitelist.py", "HONESTY_WHITELIST"),
+]
+

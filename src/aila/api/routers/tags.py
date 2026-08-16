@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
-from aila.api.auth import AuthContext, TeamContext, require_user_or_api_key
+from aila.api.auth import ROLE_LEVELS, AuthContext, TeamContext, require_user_or_api_key
 from aila.api.constants import ROLE_ADMIN, ROLE_OPERATOR
 from aila.api.limiter import limiter
 from aila.api.schemas.endpoints import TagAssignRequest, TagResponse, TagVocabCreate, TagVocabResponse
@@ -25,11 +25,8 @@ __all__ = ["router"]
 
 router = APIRouter(prefix="/tags", tags=["tags"], dependencies=[Depends(require_user_or_api_key)])
 
-_ROLE_LEVELS: dict[str, int] = {"reader": 0, "operator": 1, "admin": 2}
-
-
 def _require_admin(auth: AuthContext = Depends(require_user_or_api_key)) -> AuthContext:
-    if _ROLE_LEVELS.get(auth.role, -1) < _ROLE_LEVELS[ROLE_ADMIN]:
+    if ROLE_LEVELS.get(auth.role, -1) < ROLE_LEVELS[ROLE_ADMIN]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Requires '{ROLE_ADMIN}' role; current role: '{auth.role}'",
@@ -38,7 +35,7 @@ def _require_admin(auth: AuthContext = Depends(require_user_or_api_key)) -> Auth
 
 
 def _require_operator(auth: AuthContext = Depends(require_user_or_api_key)) -> AuthContext:
-    if _ROLE_LEVELS.get(auth.role, -1) < _ROLE_LEVELS[ROLE_OPERATOR]:
+    if ROLE_LEVELS.get(auth.role, -1) < ROLE_LEVELS[ROLE_OPERATOR]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Requires '{ROLE_OPERATOR}' role or higher; current role: '{auth.role}'",

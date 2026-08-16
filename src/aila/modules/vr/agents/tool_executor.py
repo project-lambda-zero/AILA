@@ -36,6 +36,12 @@ from aila.modules.vr.db_models import (
 )
 from aila.modules.vr.services.knowledge_scope import vr_knowledge_namespaces
 from aila.modules.vr.services.mcp_call_logger import record_call
+from aila.platform.agents.observation import (
+    ObservationKind,
+    ObservationPolarity,
+    PlatformObservation,
+    record_observation,
+)
 from aila.platform.agents.tool_execution import (
     ToolExecutionResult,
 )
@@ -367,6 +373,199 @@ class ToolExecutor(ToolExecutorHelpersBase):
                     "evicted-observation burn failed inv=%s branch=%s key=%s: %s",
                     investigation_id, branch_id, key, exc, exc_info=True,
                 )
+
+    # ---- RFC #137: platform observation-memory hooks -------------------
+    # Routes tool-dispatch outcomes through the platform observation
+    # writer so a NEGATIVE observation ("we already looked for X in
+    # this workspace and it isn't there") lands in the workspace-scoped
+    # ``vr.observation.workspace.{workspace_id}`` knowledge bucket the
+    # VR retrieval scope already reads. Positive READ_HIT rows record
+    # confirming reads so a sibling branch retrieves "X exists and
+    # here is its shape" instead of re-reading. All writes are
+    # supersedable: :func:`observation_dedup_key` upserts on
+    # ``(module, workspace, subject, kind)``.
+    #
+    # Filtering: this is the reasoning agent's dead-end memory. Recording
+    # every survey / list-metadata call would flood the retrieval floor
+    # with low-signal rows the agent will never benefit from re-reading.
+    # The hook opts IN on:
+    #   * successful READ tools (real body returned) -> READ_HIT
+    #   * empty search / lookup results              -> DEAD_END
+    #   * semantic tool failures                      -> DEAD_END / TOOL_FAILURE
+    # and opts OUT on: successful non-read tools with a non-empty body
+    # (surveys, listings, complexity_hotspots-style ranking output). Those
+    # are still available in the live case_state / durable message row for
+    # the next turn; they just don't earn a cross-investigation memory.
+
+    _OBSERVATION_SUBJECT_KEYS: ClassVar[tuple[str, ...]] = (
+        "name",
+        "function",
+        "symbol",
+        "file_path",
+        "path",
+        "pattern",
+        "query",
+        "regex",
+    )
+
+    def _observation_subject(
+        self, tool_name: str, args: dict[str, Any],
+    ) -> str:
+        """Extract a stable subject string from ``args``.
+
+        Walks a fixed key list in priority order and returns the first
+        non-empty string value trimmed to 200 chars. Falls back to
+        ``tool_name`` when no known identifier arg is present so
+        supersession still keys off SOMETHING coherent per tool.
+        """
+        for key in self._OBSERVATION_SUBJECT_KEYS:
+            value = args.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()[:200]
+        return tool_name
+
+    @staticmethod
+    def _raw_body_is_empty(raw: dict[str, Any]) -> bool:
+        """True when the bridge response carries no result payload.
+
+        Mirrors the empty-result shape the auto-steering skip block
+        already uses: after stripping the envelope fields (status,
+        action, kwargs) the response has no data keys.
+        """
+        if not isinstance(raw, dict) or not raw:
+            return True
+        for key in raw.keys():
+            if key not in {"status", "action", "kwargs"}:
+                return False
+        return True
+
+    async def _ensure_obs_writer(self) -> KnowledgeService:
+        """Lazily construct + cache the observation writer."""
+        writer = self._obs_knowledge_writer
+        if writer is None:
+            writer = KnowledgeService()
+            self._obs_knowledge_writer = writer
+        return writer
+
+    async def _on_tool_success(
+        self,
+        *,
+        investigation_id: str,
+        branch_id: str,
+        server_id: str,
+        tool_name: str,
+        args: dict[str, Any],
+        raw: dict[str, Any],
+        at_turn: int | None,
+    ) -> None:
+        workspace_id, _team_id = await self._resolve_workspace_scope(
+            investigation_id,
+        )
+        if not workspace_id:
+            return
+        is_read = (server_id, tool_name) in self._read_tools()
+        empty = self._raw_body_is_empty(raw)
+        subject = self._observation_subject(tool_name, args)
+        if is_read and not empty:
+            polarity = ObservationPolarity.POSITIVE
+            kind = ObservationKind.READ_HIT.value
+            content = (
+                f"{server_id}.{tool_name} returned a body for {subject!r} "
+                f"in workspace {workspace_id[:8]}."
+            )
+        elif empty:
+            polarity = ObservationPolarity.NEGATIVE
+            kind = ObservationKind.DEAD_END.value
+            content = (
+                f"{server_id}.{tool_name} for {subject!r} returned no results "
+                f"in workspace {workspace_id[:8]} -- looked, nothing there."
+            )
+        else:
+            # Non-read successful call with a body (survey, listing,
+            # ranking). Skip: these are not dead-end memory.
+            return
+        writer = await self._ensure_obs_writer()
+        await record_observation(
+            PlatformObservation(
+                module="vr",
+                workspace_id=workspace_id,
+                subject=f"{server_id}.{tool_name}:{subject}",
+                kind=kind,
+                polarity=polarity,
+                content=content,
+                investigation_id=investigation_id,
+                branch_id=branch_id,
+                turn_number=at_turn,
+                extra={"server_id": server_id, "tool_name": tool_name},
+            ),
+            writer=writer,
+        )
+
+    async def _on_tool_failure(
+        self,
+        *,
+        investigation_id: str,
+        branch_id: str,
+        server_id: str,
+        tool_name: str,
+        args: dict[str, Any],
+        error: str,
+        at_turn: int | None,
+    ) -> None:
+        workspace_id, _team_id = await self._resolve_workspace_scope(
+            investigation_id,
+        )
+        if not workspace_id:
+            return
+        subject = self._observation_subject(tool_name, args)
+        lc = error.lower()
+        # Dead-end error classes -- the resource itself is confirmed
+        # absent from the target (not indexed, not found, unknown
+        # index). Recording these lets a sibling branch / later turn
+        # retrieve "identifier X is not present in this workspace's
+        # index" without re-issuing the failing call.
+        dead_end = any(
+            marker in lc
+            for marker in (
+                "not indexed",
+                "not found",
+                "no such",
+                "unknown index",
+                "does not exist",
+            )
+        )
+        if dead_end:
+            polarity = ObservationPolarity.NEGATIVE
+            kind = ObservationKind.DEAD_END.value
+            content = (
+                f"{server_id}.{tool_name} confirmed {subject!r} is absent "
+                f"from workspace {workspace_id[:8]}: "
+                f"{error.strip().splitlines()[0][:400]}"
+            )
+        else:
+            polarity = ObservationPolarity.NEGATIVE
+            kind = ObservationKind.TOOL_FAILURE.value
+            content = (
+                f"{server_id}.{tool_name} failed for {subject!r} in "
+                f"workspace {workspace_id[:8]}: "
+                f"{error.strip().splitlines()[0][:400]}"
+            )
+        writer = await self._ensure_obs_writer()
+        await record_observation(
+            PlatformObservation(
+                module="vr",
+                workspace_id=workspace_id,
+                subject=f"{server_id}.{tool_name}:{subject}",
+                kind=kind,
+                polarity=polarity,
+                content=content,
+                investigation_id=investigation_id,
+                branch_id=branch_id,
+                turn_number=at_turn,
+                extra={"server_id": server_id, "tool_name": tool_name},
+            ),
+            writer=writer,
+        )
 
     def _augment_tool_error(
         self, server_id: str, tool_name: str, args: dict[str, Any],

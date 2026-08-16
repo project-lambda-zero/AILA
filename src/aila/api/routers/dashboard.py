@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, Request
 from sqlalchemy import func
 from sqlmodel import select
 
-from aila.api.auth import AuthContext, TeamContext, require_user_or_api_key
+from aila.api.auth import ROLE_LEVELS, AuthContext, TeamContext, require_user_or_api_key
 from aila.api.constants import ROLE_OPERATOR
 from aila.api.limiter import limiter
 from aila.api.schemas.endpoints import DashboardResponse, FleetStats
@@ -28,11 +28,8 @@ _log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"], dependencies=[Depends(require_user_or_api_key)])
 
-_ROLE_LEVELS: dict[str, int] = {"reader": 0, "operator": 1, "admin": 2}
-
-
 def _require_operator(auth: AuthContext = Depends(require_user_or_api_key)) -> AuthContext:
-    if _ROLE_LEVELS.get(auth.role, -1) < _ROLE_LEVELS[ROLE_OPERATOR]:
+    if ROLE_LEVELS.get(auth.role, -1) < ROLE_LEVELS[ROLE_OPERATOR]:
         from fastapi import HTTPException, status
 
         raise HTTPException(
@@ -133,10 +130,7 @@ async def get_dashboard(
     platform = getattr(request.app.state, "platform", None)
     if platform is not None:
         try:
-            modules = platform.runtime.module_registry.modules
-            for module in modules:
-                if not hasattr(module, "dashboard_providers"):
-                    continue
+            for module in platform.runtime.module_registry.all_with("dashboard_providers"):
                 providers = module.dashboard_providers()
                 for name, provider in providers.items():
                     try:

@@ -302,6 +302,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             "Automation tick supervisor started (60s base interval, exponential backoff)",
         )
 
+    # #106 -- Start the DomainEvent Redis-stream consumer so events
+    # published from ARQ workers land in this process's in-process
+    # DomainEventBus (where SSE / typed subscribers live). Fail-open
+    # by contract: unavailable Redis logs a warning and leaves the
+    # bus in-process-only, matching the pre-bridge behaviour. The
+    # publisher side is wired lazily inside
+    # ``aila.platform.events.bus.default_bus`` so both the API and
+    # every worker publish to the same stream without an explicit
+    # bootstrap.
+    try:
+        from aila.platform.events.bus import default_bus
+        from aila.platform.events.redis_bridge import start_consumer
+
+        default_bus()  # force publisher subscription in this process too
+        start_consumer()
+    except (OSError, RuntimeError, ImportError) as exc:
+        _log.warning(
+            "DomainEvent Redis bridge consumer not started: %s -- "
+            "worker-emitted DomainEvents will not reach this process's "
+            "subscribers",
+            exc,
+        )
+
     yield
 
     # Signal the supervisor to stop, then cancel as a backstop.
@@ -313,6 +336,17 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             await _automation_tick_task
         except asyncio.CancelledError:
             pass
+
+    # #106 -- stop the DomainEvent Redis bridge consumer before we
+    # close the shared Redis pool below. Silent when never started.
+    try:
+        from aila.platform.events.redis_bridge import stop_consumer
+
+        await stop_consumer()
+    except (OSError, RuntimeError, ImportError):
+        _log.warning(
+            "DomainEvent Redis bridge stop failed", exc_info=True,
+        )
 
     # --- Shutdown (OPS-03) ---
     _log.info("Shutting down AILA platform...")
@@ -759,6 +793,12 @@ def create_app() -> FastAPI:
     # Plan 176e: admin LLM interaction log router (admin-only)
     from aila.api.routers.llm_log import router as llm_log_router
     application.include_router(llm_log_router)
+
+    # RFC #140: admin retrieval-eval read router (god-tier admin --
+    # lists benchmarks + scored runs recorded by the CLI and by the
+    # ``platform.retrieval_eval_sweep`` automation action).
+    from aila.api.routers.retrieval_eval import router as retrieval_eval_router
+    application.include_router(retrieval_eval_router)
 
     # MOD-01/MOD-02: auto-discover and mount module-owned routers.
     # Modules declare their HTTP surface via route_specs() on ModuleProtocol.

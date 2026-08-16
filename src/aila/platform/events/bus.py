@@ -174,6 +174,16 @@ def default_bus() -> DomainEventBus:
             from .persistence import persist_domain_event
 
             bus.subscribe("journal_persist", persist_domain_event)
+            # #106 -- attach the Redis cross-process publisher so a
+            # DomainEvent emitted in a worker also lands in the API
+            # process's local bus (where SSE subscribers live). The
+            # publisher is fail-open: unavailable Redis means the
+            # emit stays in-process only, no exception raised. The
+            # matching consumer is API-process-only and is started
+            # explicitly by the FastAPI lifespan hook.
+            from .redis_bridge import install_redis_publisher
+
+            install_redis_publisher(bus)
             _DEFAULT_BUS = bus
     return _DEFAULT_BUS
 

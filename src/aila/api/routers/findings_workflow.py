@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlmodel import select
 
-from aila.api.auth import AuthContext, TeamContext, require_user_or_api_key
+from aila.api.auth import ROLE_LEVELS, AuthContext, TeamContext, require_user_or_api_key
 from aila.api.constants import ROLE_OPERATOR
 from aila.api.limiter import limiter
 from aila.api.schemas.endpoints import (
@@ -40,11 +40,8 @@ _log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/findings", tags=["findings-workflow"], dependencies=[Depends(require_user_or_api_key)])
 
-_ROLE_LEVELS: dict[str, int] = {"reader": 0, "operator": 1, "admin": 2}
-
-
 def _require_operator(auth: AuthContext = Depends(require_user_or_api_key)) -> AuthContext:
-    if _ROLE_LEVELS.get(auth.role, -1) < _ROLE_LEVELS[ROLE_OPERATOR]:
+    if ROLE_LEVELS.get(auth.role, -1) < ROLE_LEVELS[ROLE_OPERATOR]:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Finding workflow requires '{ROLE_OPERATOR}' role or higher; current role: '{auth.role}'",

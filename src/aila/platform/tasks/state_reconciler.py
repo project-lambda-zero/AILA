@@ -71,6 +71,7 @@ from sqlalchemy import text as _sql_text
 from sqlalchemy import update as _update
 
 from aila.platform.contracts import utc_now
+from aila.platform.workflows.types import RESERVED_TERMINAL_STATES
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import WorkflowStateCursor
 
@@ -133,12 +134,12 @@ def _extract_investigation_id(kwargs_json: str | None) -> str | None:
     return None
 
 
-# Reserved terminal cursor states. Kept in sync with cursor_reaper's list
-# (fix §58); duplicated here rather than imported so a rename lands in
-# both files at once and the drift itself becomes a merge conflict.
-_TERMINAL_CURSOR_STATES: frozenset[str] = frozenset({
-    "__crashed__", "__failed__", "__cancelled__", "__succeeded__",
-})
+# Reserved terminal cursor states -- the same four members the workflow
+# engine declares in :data:`aila.platform.workflows.types.RESERVED_TERMINAL_STATES`.
+# Aliased (not re-declared) so a rename in the engine's canonical
+# definition propagates here without a duplicated literal drifting
+# (issue #146 item 8).
+_TERMINAL_CURSOR_STATES: frozenset[str] = RESERVED_TERMINAL_STATES
 
 _TERMINAL_TASK_STATUSES: frozenset[str] = frozenset({
     TaskStatus.DONE.value,

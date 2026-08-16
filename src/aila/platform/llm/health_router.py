@@ -34,15 +34,32 @@ Wired at :func:`aila.platform.llm.client._record_llm_error` /
 :func:`aila.platform.llm.client._record_llm_ok` via
 :func:`get_default_health_router`, so every LLM retry loop feeds the
 router without the call sites knowing the router exists.
+
+ENHANCEMENT #142 -- cross-worker sharing of endpoint health state.
+The process-local ``_state`` dict is now the L1 cache in front of a
+Redis-backed L2 keyed by endpoint URL with TTL == the current
+``cooldown_s``. Reads consult L1 first; a warm-unhealthy L1 entry
+short-circuits without a round-trip. On an L1 miss / L1-healthy read
+the router asks Redis whether a peer worker has already flagged the
+endpoint. Redis MISS is treated as HEALTHY (fail-open) so a Redis
+outage silently degrades to the pre-#142 per-process behaviour rather
+than blackholing every endpoint. Writes update both L1 and Redis; a
+Redis outage on the write path is logged and swallowed so an outage
+in the shared cache never turns into an LLM-call failure. The whole
+mechanism is gated by ``PlatformConfigSchema.llm_health_router_redis_shared``
+plus the presence of ``AILA_PLATFORM_REDIS_URL`` -- when either is
+false the router falls back to L1-only exactly as before #142.
 """
 from __future__ import annotations
 
+import json
 import logging
+import os
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal, Protocol
 
 __all__ = [
     "DRIFT_STATUS_DEGRADED",
@@ -57,6 +74,61 @@ __all__ = [
     "get_default_health_router",
     "reset_default_health_router",
 ]
+
+# Redis client errors + socket failures the L2 helpers degrade on. Mirrors
+# the tuple :mod:`aila.storage.registry` uses so both sync-Redis touchpoints
+# swallow the same exception family. ``redis`` is an optional dependency;
+# folding its base class in only when importable keeps a redis-less install
+# working (the sync client factory returns None; every L2 call becomes a
+# no-op fail-open).
+try:  # pragma: no cover - optional dependency probe
+    from redis.exceptions import RedisError as _RedisError
+
+    _REDIS_ERRORS: tuple[type[BaseException], ...] = (OSError, _RedisError)
+except ImportError:  # pragma: no cover
+    _REDIS_ERRORS = (OSError,)
+
+
+class _SyncRedisLike(Protocol):
+    """Minimal sync Redis surface used by the L2 cache.
+
+    Both ``redis.Redis`` and lightweight test fakes satisfy it. Kept narrow
+    so a test can inject an in-memory client via
+    :class:`ModelHealthRouter`'s ``redis_sync_client_factory`` without
+    pulling redis-py.
+    """
+
+    def get(self, key: str) -> Any: ...
+    def set(self, key: str, value: Any, ex: int | None = None) -> Any: ...
+    def delete(self, *keys: str) -> Any: ...
+
+
+class _Missing:
+    """Sentinel distinguishing "sync-redis client never resolved" from
+    "resolved to None"."""
+
+    __slots__ = ()
+
+
+_MISSING = _Missing()
+
+# Redis key namespace for per-endpoint health entries. Grep-friendly:
+# ``KEYS aila:llm_health_router:endpoint:*`` lists every shared marker.
+_REDIS_KEY_PREFIX: str = "aila:llm_health_router:endpoint:"
+
+# ConfigRegistry key gating the Redis-shared path. Mirrors
+# ``PlatformConfigSchema.llm_health_router_redis_shared`` (default True) so
+# an operator can flip the flag via PUT /config or the env override
+# ``AILA_PLATFORM_LLM_HEALTH_ROUTER_REDIS_SHARED`` without a worker restart.
+_REDIS_SHARED_CONFIG_NS: str = "platform"
+_REDIS_SHARED_CONFIG_KEY: str = "llm_health_router_redis_shared"
+
+# Cache the gate value inside the router instance to keep the hot path off
+# ``ConfigRegistry.get_sync`` on every ``pick``. 30s is short enough that a
+# ``PUT /config`` toggle propagates within an ARQ retry window; the registry
+# itself carries a 60s TTL + cross-process invalidation on top of this so
+# the effective staleness window is at most both combined.
+_GATE_CACHE_TTL_S: float = 30.0
 
 _log = logging.getLogger(__name__)
 
@@ -191,6 +263,9 @@ class ModelHealthRouter:
         cooldown_s: float = _DEFAULT_COOLDOWN_S,
         drift_cooldown_s: float = _DEFAULT_DRIFT_COOLDOWN_S,
         monotonic_clock: Callable[[], float] | None = None,
+        wall_clock: Callable[[], float] | None = None,
+        redis_sync_client_factory: Callable[[], _SyncRedisLike | None] | None = None,
+        gate_resolver: Callable[[], bool] | None = None,
     ) -> None:
         if cooldown_s <= 0:
             raise ValueError(
@@ -205,6 +280,12 @@ class ModelHealthRouter:
         self._cooldown_s = cooldown_s
         self._drift_cooldown_s = drift_cooldown_s
         self._clock = monotonic_clock or time.monotonic
+        # Wall-clock used for the Redis L2 payload deadlines. Cross-process
+        # coordination needs an epoch reading -- ``time.monotonic`` is a
+        # process-local anchor and MUST NOT leak into the shared value.
+        # Injectable so a test can advance wall time deterministically in
+        # lockstep with ``monotonic_clock``.
+        self._wall_clock = wall_clock or time.time
         # url -> per-URL bookkeeping. Values are plain dicts (not a
         # dataclass) so a single mutation on the happy path is one
         # attribute write and stays inside the GIL; the snapshot
@@ -218,6 +299,230 @@ class ModelHealthRouter:
         # candidate is available.
         self._drift: dict[tuple[str, str], dict[str, object]] = {}
         self._lock = threading.Lock()
+        # ENHANCEMENT #142 -- Redis L2 wiring. Both factories are lazy:
+        # the sync-redis client is built on first L2 access via
+        # ``AILA_PLATFORM_REDIS_URL`` (mirrors ConfigRegistry's sync-redis
+        # factory precedent); the gate is resolved via
+        # ``ConfigRegistry.get_sync`` with a short TTL cache so ``pick``
+        # doesn't pay a DB round-trip per candidate URL. Tests inject
+        # deterministic overrides.
+        self._redis_sync_client_factory = redis_sync_client_factory
+        self._sync_redis_client: _SyncRedisLike | None | _Missing = _MISSING
+        self._sync_redis_lock = threading.Lock()
+        self._gate_resolver = gate_resolver
+        self._gate_cached_value: bool | None = None
+        self._gate_cached_at_monotonic: float = -1.0
+
+    # ------------------------------------------------------------------
+    # #142 -- Redis L2 helpers. Every method here MUST swallow
+    # ``_REDIS_ERRORS`` and return a safe fallback (None on read, silent
+    # no-op on write). A Redis outage MUST NEVER escape into the LLM
+    # retry loop -- fail-open is the whole point of the design.
+    # ------------------------------------------------------------------
+
+    def _resolve_sync_redis_client(self) -> _SyncRedisLike | None:
+        """Return a sync Redis client, or None if unavailable. Cached per
+        router instance.
+
+        Preference: constructor-injected factory > ``redis.Redis.from_url``
+        on ``AILA_PLATFORM_REDIS_URL``. A resolved None is cached so the
+        second call doesn't re-attempt the import + env read on every
+        LLM call. Mirrors :meth:`aila.storage.registry.ConfigRegistry._resolve_sync_redis_client`
+        so both sync-Redis touchpoints degrade identically when the URL is
+        unset or the socket can't build.
+        """
+        if self._redis_sync_client_factory is not None:
+            try:
+                return self._redis_sync_client_factory()
+            except _REDIS_ERRORS:
+                _log.debug(
+                    "model_health_router: injected sync redis factory raised",
+                    exc_info=True,
+                )
+                return None
+        with self._sync_redis_lock:
+            if not isinstance(self._sync_redis_client, _Missing):
+                return self._sync_redis_client
+            url = os.environ.get("AILA_PLATFORM_REDIS_URL", "").strip()
+            if not url:
+                self._sync_redis_client = None
+                return None
+            try:
+                import redis
+
+                client = redis.Redis.from_url(
+                    url,
+                    socket_connect_timeout=2.0,
+                    socket_timeout=2.0,
+                    decode_responses=True,
+                )
+            except (ImportError, OSError, RuntimeError, ValueError):
+                _log.debug(
+                    "model_health_router: sync redis client build failed",
+                    exc_info=True,
+                )
+                self._sync_redis_client = None
+                return None
+            self._sync_redis_client = client
+            return client
+
+    def _redis_shared_enabled(self) -> bool:
+        """Return True iff the L2 path should run for this call.
+
+        Both the config gate AND a resolvable sync-Redis client are
+        required. Cached for :data:`_GATE_CACHE_TTL_S` so the hot path
+        doesn't pay ``ConfigRegistry.get_sync`` (with its own 60s cache
+        plus cross-process invalidation) on every LLM call. Any failure
+        resolving the gate defaults to True (fail-safe -- if a Redis URL
+        is configured and the operator hasn't explicitly disabled the
+        shared cache, use it) but a client factory that returns None
+        still short-circuits every L2 call.
+        """
+        now = self._clock()
+        if (
+            self._gate_cached_value is not None
+            and now - self._gate_cached_at_monotonic < _GATE_CACHE_TTL_S
+        ):
+            return self._gate_cached_value
+        gate_value: bool
+        if self._gate_resolver is not None:
+            try:
+                gate_value = bool(self._gate_resolver())
+            except (OSError, RuntimeError, ValueError):
+                _log.debug(
+                    "model_health_router: injected gate resolver raised",
+                    exc_info=True,
+                )
+                gate_value = True
+        else:
+            gate_value = _resolve_redis_shared_gate_default()
+        self._gate_cached_value = gate_value
+        self._gate_cached_at_monotonic = now
+        return gate_value
+
+    def _redis_key(self, url: str) -> str:
+        return f"{_REDIS_KEY_PREFIX}{url}"
+
+    def _write_redis_unhealthy(
+        self,
+        url: str,
+        *,
+        kind: str,
+        consecutive_failures: int,
+        total_failures: int,
+    ) -> None:
+        """Publish an ``unhealthy`` marker for ``url`` to the L2 cache.
+
+        No-op when the shared path is gated off or the sync-Redis client
+        is unavailable. Any Redis error is logged at debug and swallowed
+        so the LLM retry loop never sees a shared-cache outage.
+        """
+        if not self._redis_shared_enabled():
+            return
+        client = self._resolve_sync_redis_client()
+        if client is None:
+            return
+        payload = {
+            "status": ENDPOINT_STATUS_UNHEALTHY,
+            "unhealthy_until_epoch": float(self._wall_clock() + self._cooldown_s),
+            "last_failure_kind": kind,
+            "consecutive_failures": int(consecutive_failures),
+            "total_failures": int(total_failures),
+        }
+        try:
+            client.set(
+                self._redis_key(url),
+                json.dumps(payload),
+                ex=max(1, int(self._cooldown_s)),
+            )
+        except _REDIS_ERRORS:
+            _log.debug(
+                "model_health_router: redis SET failed url=%s",
+                url,
+                exc_info=True,
+            )
+
+    def _delete_redis(self, url: str) -> None:
+        """Clear the L2 marker for ``url`` after a fresh success.
+
+        Absence == HEALTHY (fail-open); a delete is the correct primitive
+        so peer workers see the recovery immediately instead of waiting
+        for the TTL to elapse. Errors swallowed identically to the write
+        path.
+        """
+        if not self._redis_shared_enabled():
+            return
+        client = self._resolve_sync_redis_client()
+        if client is None:
+            return
+        try:
+            client.delete(self._redis_key(url))
+        except _REDIS_ERRORS:
+            _log.debug(
+                "model_health_router: redis DEL failed url=%s",
+                url,
+                exc_info=True,
+            )
+
+    def _read_redis(self, url: str) -> dict[str, Any] | None:
+        """Return a peer worker's L2 marker for ``url``, or None on
+        miss/error.
+
+        The caller interprets None as HEALTHY (fail-open). A parseable
+        payload whose ``unhealthy_until_epoch`` has already elapsed also
+        returns None -- the TTL is the source of truth, a stale row is a
+        healthy row.
+        """
+        if not self._redis_shared_enabled():
+            return None
+        client = self._resolve_sync_redis_client()
+        if client is None:
+            return None
+        try:
+            raw = client.get(self._redis_key(url))
+        except _REDIS_ERRORS:
+            _log.debug(
+                "model_health_router: redis GET failed url=%s",
+                url,
+                exc_info=True,
+            )
+            return None
+        if raw is None:
+            return None
+        if isinstance(raw, (bytes, bytearray)):
+            try:
+                raw = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                _log.debug(
+                    "model_health_router: redis payload is not utf-8 url=%s",
+                    url,
+                    exc_info=True,
+                )
+                return None
+        try:
+            payload = json.loads(raw)
+        except (TypeError, ValueError):
+            _log.debug(
+                "model_health_router: redis payload is not JSON url=%s raw=%r",
+                url,
+                raw,
+            )
+            return None
+        if not isinstance(payload, dict):
+            return None
+        deadline = payload.get("unhealthy_until_epoch")
+        try:
+            deadline_f = float(deadline)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            _log.debug(
+                "llm-health L2: malformed unhealthy_until_epoch %r for %s; "
+                "ignoring peer marker",
+                deadline, url,
+            )
+            return None
+        if self._wall_clock() >= deadline_f:
+            return None
+        return payload
 
     def _drift_slot(self, model_id: str, task_type: str) -> dict[str, object]:
         """Return the live bookkeeping dict for (``model_id``, ``task_type``),
@@ -279,11 +584,23 @@ class ModelHealthRouter:
                 slot["total_failures"],  # type: ignore[arg-type]
             ) + 1
             slot["last_failure_kind"] = kind
+            consecutive_snapshot = int(slot["consecutive_failures"])  # type: ignore[arg-type]
+            total_snapshot = int(slot["total_failures"])  # type: ignore[arg-type]
+        # #142 L2 write happens OUTSIDE the router lock -- the redis
+        # socket is blocking and we must not hold ``self._lock`` across
+        # a network round-trip. The dict snapshot above captures the
+        # counters at the exact mutation for the L2 payload.
+        self._write_redis_unhealthy(
+            url,
+            kind=kind,
+            consecutive_failures=consecutive_snapshot,
+            total_failures=total_snapshot,
+        )
         _log.info(
             "model_health_router.record_infra_failure url=%s kind=%s "
             "cooldown_s=%.1f consecutive=%d total=%d",
             url, kind, self._cooldown_s,
-            slot["consecutive_failures"], slot["total_failures"],
+            consecutive_snapshot, total_snapshot,
         )
 
     def record_success(self, url: str) -> None:
@@ -302,6 +619,13 @@ class ModelHealthRouter:
             slot["total_successes"] = int(
                 slot["total_successes"],  # type: ignore[arg-type]
             ) + 1
+        # #142 clear the shared marker on recovery so peer workers see
+        # the endpoint eligible immediately instead of waiting on TTL.
+        # DEL runs unconditionally -- the peer marker may have been
+        # written by a *different* worker's failure that this call
+        # happened to recover, and a DEL of a non-existent key is
+        # a cheap round-trip that keeps the reasoning simple.
+        self._delete_redis(url)
 
     def is_healthy(self, url: str) -> bool:
         """Return True iff ``url`` is currently eligible for routing.
@@ -312,22 +636,60 @@ class ModelHealthRouter:
         the recovery is lazy -- ``pick`` and ``is_healthy`` are the
         only touchpoints that observe the clock so a caller that
         never asks never wakes anything up.
+
+        ENHANCEMENT #142: on L1 miss OR L1-healthy the router consults
+        the Redis L2 cache for peer worker failure discoveries. An L1
+        warm-unhealthy entry short-circuits without a round-trip so the
+        hot path stays cheap. A Redis MISS or Redis error is treated
+        as HEALTHY (fail-open) so an outage in the shared cache
+        degrades to today's per-process behaviour rather than
+        blackholing every endpoint. When Redis reports an unhealthy
+        peer marker the state is promoted into L1 so the next call on
+        the same URL short-circuits.
         """
         with self._lock:
             slot = self._state.get(url)
-            if slot is None:
-                return True
-            if slot["status"] == ENDPOINT_STATUS_HEALTHY:
-                return True
-            deadline = float(slot["unhealthy_until"])  # type: ignore[arg-type]
-            if self._clock() >= deadline:
-                # Lazy recovery: cooldown elapsed, mark healthy and
-                # let the caller try again. Counter resets happen on
-                # the next real success via ``record_success``.
+            if slot is not None and slot["status"] == ENDPOINT_STATUS_UNHEALTHY:
+                deadline = float(slot["unhealthy_until"])  # type: ignore[arg-type]
+                if self._clock() < deadline:
+                    # #142 hot path: warm-unhealthy L1 -> no round-trip.
+                    return False
+                # Cooldown elapsed locally, fall through to L2 (a peer
+                # may have re-flagged it under a fresh outage that this
+                # worker hasn't seen a call for yet).
                 slot["status"] = ENDPOINT_STATUS_HEALTHY
                 slot["unhealthy_until"] = 0.0
-                return True
-            return False
+        # L1 says healthy (either default-absent, prior success, or
+        # elapsed cooldown). #142: check whether a peer worker has
+        # flagged this URL since our last observation.
+        peer = self._read_redis(url)
+        if peer is None:
+            return True
+        # Adopt the peer's deadline into L1 so subsequent picks skip
+        # the round-trip. Wall-clock -> monotonic conversion carries
+        # a few-ms skew from the ``time.time()`` reading in
+        # ``_read_redis`` but the cooldown window is 60s by default,
+        # so the drift is immaterial.
+        try:
+            deadline_epoch = float(peer["unhealthy_until_epoch"])
+        except (KeyError, TypeError, ValueError):
+            _log.debug(
+                "llm-health L2: peer marker for %s missing/invalid deadline; "
+                "treating endpoint as healthy (fail-open)",
+                url,
+            )
+            return True
+        remaining = deadline_epoch - self._wall_clock()
+        if remaining <= 0:
+            return True
+        with self._lock:
+            slot = self._slot(url)
+            slot["status"] = ENDPOINT_STATUS_UNHEALTHY
+            slot["unhealthy_until"] = float(self._clock() + remaining)
+            peer_kind = peer.get("last_failure_kind")
+            if peer_kind is not None:
+                slot["last_failure_kind"] = peer_kind
+        return False
 
     def record_drift(
         self,
@@ -582,6 +944,58 @@ class ModelHealthRouter:
                 for url in urls
             )
         return snap
+
+
+def _resolve_redis_shared_gate_default() -> bool:
+    """Read ``platform.llm_health_router_redis_shared`` via ConfigRegistry.
+
+    Env > cache > DB > :class:`PlatformConfigSchema` default (True). A
+    registry / DB failure defaults to True so a bad DB row cannot
+    silently disable the shared cache on an otherwise-configured
+    deployment. Deferred import breaks a circular: ``storage.registry``
+    imports ``platform.services.redis_pool``, which imports back into
+    ``platform`` at module load; keeping the import inside the
+    resolver keeps this file leaf-level for cold-load ordering.
+    """
+    try:
+        from ...storage.registry import ConfigRegistry
+    except ImportError:
+        _log.debug(
+            "model_health_router: ConfigRegistry unimportable; "
+            "defaulting shared-cache gate to True",
+            exc_info=True,
+        )
+        return True
+    try:
+        import sqlalchemy.exc as _sa_exc
+
+        _db_errors: tuple[type[BaseException], ...] = (
+            OSError, RuntimeError, ValueError, LookupError,
+            _sa_exc.SQLAlchemyError,
+        )
+    except ImportError:  # pragma: no cover - sqlalchemy is a hard dep
+        _db_errors = (OSError, RuntimeError, ValueError, LookupError)
+    try:
+        raw = ConfigRegistry().get_sync(
+            _REDIS_SHARED_CONFIG_NS, _REDIS_SHARED_CONFIG_KEY,
+        )
+    except _db_errors:
+        _log.debug(
+            "model_health_router: ConfigRegistry.get_sync raised; "
+            "defaulting shared-cache gate to True",
+            exc_info=True,
+        )
+        return True
+    if raw is None:
+        return True
+    if isinstance(raw, bool):
+        return raw
+    # PlatformConfigSchema declares this key as ``bool``, but env-var
+    # round-tripping surfaces strings ("1"/"true"/"false"). Mirror the
+    # ConfigRegistry coercion tolerantly instead of failing closed.
+    if isinstance(raw, str):
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(raw)
 
 
 # Process-wide singleton wired into the LLM client's retry loop. Kept

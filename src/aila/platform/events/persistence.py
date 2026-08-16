@@ -170,7 +170,19 @@ def persist_domain_event(event: DomainEvent) -> None:
     subscriber is synchronous (per :class:`DomainEventBus` contract) but
     the DB write is a background best-effort so a slow journal never
     stalls the emitter.
+
+    Skipped on Redis-consumer replay (#106): a peer process already
+    journaled the event on the emit side, so writing a second row here
+    would double the journal without gaining tamper-evidence -- the
+    origin process's row is authoritative. See
+    :func:`aila.platform.events.redis_bridge.is_inbound_replay`.
     """
+    # Deferred import: redis_bridge -> bus, and bus imports this
+    # module lazily. A top-level import here would risk a cycle.
+    from .redis_bridge import is_inbound_replay
+
+    if is_inbound_replay():
+        return
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:

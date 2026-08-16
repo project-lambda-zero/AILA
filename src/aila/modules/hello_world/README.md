@@ -1,6 +1,15 @@
 # hello_world Module
 
-Minimal reference implementation of the AILA module contract. Copy this module (or `_template/`) as a starting point for new modules.
+Minimal reference implementation of the AILA module contract, kept as a
+working end-to-end example (module + tool + API + frontend + workflow).
+
+> New modules should be scaffolded from `_template/`, not copied from
+> here. `_template/` is the canonical starting point; it carries the
+> `reasoning_strategies()` / `reasoning_domain_profiles()` scaffolding
+> and the current workflow shape. `hello_world/` retains the older
+> synchronous three-stage workflow on purpose so the reference stays
+> stable while `_template/` evolves with the platform (issue #146
+> item 5).
 
 ## What This Module Does
 

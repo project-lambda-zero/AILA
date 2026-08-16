@@ -34,9 +34,18 @@ VR_KNOWLEDGE_KINDS: tuple[str, ...] = (
     "crash_triage",
     "config_delta",
     "profile_spec",
-    # RFC-12: evicted observations burned by the VR ToolExecutor's
-    # _on_observables_evicted hook, so working-memory eviction does not
-    # lose the underlying tool reading -- it just moves off the hot path.
+    # RFC-12 + RFC #137: workspace-scoped tool observations. Two
+    # writers land here:
+    #   * :meth:`ToolExecutorHelpersBase._on_observables_evicted` burns
+    #     observations the storage cap evicted from live working memory
+    #     so a later branch turn can still recall them by query.
+    #   * :meth:`ToolExecutor._on_tool_success` /
+    #     :meth:`ToolExecutor._on_tool_failure` (RFC #137) route
+    #     kind/polarity/supersession-tagged rows through
+    #     :func:`aila.platform.agents.observation.record_observation`
+    #     so a sibling branch / later turn / future investigation on
+    #     the same workspace retrieves "we already looked for X and
+    #     it isn't there" instead of re-issuing the failing call.
     "observation",
     # Issue #150: semantic-tier facts written by the platform consolidator
     # (:mod:`aila.platform.services.memory.consolidator`) after distilling

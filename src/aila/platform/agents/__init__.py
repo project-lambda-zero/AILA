@@ -20,6 +20,14 @@ from aila.platform.agents.claim_verifier import (
 )
 from aila.platform.agents.idempotent_llm import idempotent_llm_call
 from aila.platform.agents.intent_classifier import classify_intent
+from aila.platform.agents.observation import (
+    ObservationKind,
+    ObservationPolarity,
+    PlatformObservation,
+    observation_dedup_key,
+    observation_namespace,
+    record_observation,
+)
 from aila.platform.agents.outcome_dispatcher import (
     OutcomeDispatcherBase,
     OutcomeDispatcherError,
@@ -50,6 +58,8 @@ __all__ = [
     "BranchOpResult",
     "BranchPool",
     "ClaimVerifierAgentBase",
+    "ObservationKind",
+    "ObservationPolarity",
     "OutcomeDispatchResult",
     "OutcomeDispatcherBase",
     "OutcomeDispatcherError",
@@ -58,6 +68,7 @@ __all__ = [
     "PatternExtractorError",
     "PersonaRole",
     "PersonaRouter",
+    "PlatformObservation",
     "SynthesisRunnerBase",
     "ToolExecutionResult",
     "classify_contract_error",
@@ -66,6 +77,9 @@ __all__ = [
     "inject_sibling_consensus",
     "is_negative_finding_claim",
     "maybe_post_auto_steering",
+    "observation_dedup_key",
+    "observation_namespace",
     "parse_command",
+    "record_observation",
     "synthesis_confidence",
 ]
