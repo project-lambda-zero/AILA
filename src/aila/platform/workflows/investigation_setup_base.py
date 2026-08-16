@@ -560,17 +560,69 @@ def state_investigation_setup(
             try:
                 from aila.platform.eval.routing_learner import RoutingLearner
 
+                # Issue #161 fold-into-learner switch: when the
+                # ``platform.routing_negative_feedback_enabled`` flag is
+                # True, wrap the module's history provider so every
+                # recommend call unions synthetic REJECT samples from
+                # ``router_hard_negative`` on top of the real
+                # outcome-review history. Default False; when False the
+                # base provider is used byte-identically so wiring the
+                # flag OFF (or leaving the retune schedule disabled)
+                # keeps the pre-#161 behaviour unchanged. The registry
+                # / config read isolates its own failure so a bad DB
+                # row cannot silently flip the fold on.
+                effective_provider = bindings.routing_history_provider
+                try:
+                    from aila.platform.config import PlatformConfigSchema
+                    from aila.storage.registry import ConfigRegistry
+
+                    _reg = ConfigRegistry()
+                    _raw_flag = await _reg.get(
+                        "platform", "routing_negative_feedback_enabled",
+                    )
+                    if _raw_flag is None:
+                        _neg_enabled = bool(
+                            PlatformConfigSchema().routing_negative_feedback_enabled,
+                        )
+                    elif isinstance(_raw_flag, bool):
+                        _neg_enabled = _raw_flag
+                    elif isinstance(_raw_flag, str):
+                        _neg_enabled = _raw_flag.strip().lower() in (
+                            "1", "true", "yes", "on",
+                        )
+                    else:
+                        _neg_enabled = bool(_raw_flag)
+                except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as _flag_exc:
+                    _log.warning(
+                        "investigation_setup routing_negative_feedback "
+                        "flag read failed (%s); leaving fold OFF",
+                        type(_flag_exc).__name__, exc_info=_flag_exc,
+                    )
+                    _neg_enabled = False
+                if _neg_enabled:
+                    from aila.platform.routing.negative_feedback import (
+                        augment_history_provider_with_hard_negatives,
+                    )
+
+                    effective_provider = (
+                        augment_history_provider_with_hard_negatives(
+                            bindings.routing_history_provider,
+                        )
+                    )
+
                 learner = RoutingLearner()
                 routing_recommendation = await learner.recommend(
-                    target_kind, bindings.routing_history_provider,
+                    target_kind, effective_provider,
                 )
                 _log.info(
                     "investigation_setup routing_recommendation inv=%s "
-                    "target_kind=%s ranked=%d samples=%d seam=%s",
+                    "target_kind=%s ranked=%d samples=%d seam=%s "
+                    "negatives_folded=%s",
                     investigation_id, target_kind,
                     len(routing_recommendation.ranked_task_types),
                     routing_recommendation.total_samples,
                     routing_recommendation.seam_status,
+                    _neg_enabled,
                 )
             except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
                 _log.warning(

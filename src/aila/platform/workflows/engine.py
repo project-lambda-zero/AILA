@@ -49,6 +49,10 @@ import structlog
 from arq.worker import Retry
 from sqlalchemy.exc import IntegrityError
 
+from aila.platform.observability import (
+    GEN_AI_OPERATION_INVOKE_AGENT,
+    gen_ai_span,
+)
 from aila.platform.tasks.models import TaskRecord
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import WorkflowStateCursor
@@ -123,28 +127,45 @@ class DurableStateMachine:
         # self-reference).
         previous_state: str | None = None
 
-        # Phase 178 fix 6: hard cap to avoid infinite loops on malformed
-        # definitions. Breach -> non-retriable crash with typed origin.
-        steps = 0
-        while not cls._is_terminal(state.current, definition):
-            if steps >= MAX_STEPS_PER_JOB:
-                exc = WorkflowStepLimitExceeded(
-                    f"exceeded MAX_STEPS_PER_JOB={MAX_STEPS_PER_JOB} "
-                    f"(definition_id={definition.definition_id!r}, "
-                    f"current_state={state.current!r})"
+        # ENHANCEMENT #160 -- one ``invoke_agent`` span per execute() call
+        # names the durable workflow the ARQ attempt is driving. Per-state
+        # transitions nest under it via a child span in ``_step_once``,
+        # and every LLM call made from inside a handler nests one level
+        # deeper as a ``chat`` span. The whole chain is a no-op when
+        # otel is absent or the flag is off.
+        with gen_ai_span(
+            GEN_AI_OPERATION_INVOKE_AGENT,
+            agent_name=definition.definition_id,
+            run_id=run_id,
+            attributes={
+                "aila.workflow.start_state": state.current,
+                "aila.workflow.version": state.version,
+            },
+        ) as _run_span:
+            # Phase 178 fix 6: hard cap to avoid infinite loops on malformed
+            # definitions. Breach -> non-retriable crash with typed origin.
+            steps = 0
+            while not cls._is_terminal(state.current, definition):
+                if steps >= MAX_STEPS_PER_JOB:
+                    exc = WorkflowStepLimitExceeded(
+                        f"exceeded MAX_STEPS_PER_JOB={MAX_STEPS_PER_JOB} "
+                        f"(definition_id={definition.definition_id!r}, "
+                        f"current_state={state.current!r})"
+                    )
+                    state = await cls._force_crashed(
+                        run_id, definition, state, exc
+                    )
+                    break
+                new_state = await cls._step_once(
+                    run_id, definition, state, previous_state
                 )
-                state = await cls._force_crashed(
-                    run_id, definition, state, exc
-                )
-                break
-            new_state = await cls._step_once(
-                run_id, definition, state, previous_state
-            )
-            previous_state = state.current
-            state = new_state
-            steps += 1
+                previous_state = state.current
+                state = new_state
+                steps += 1
 
-        return state.input
+            _run_span.set_attribute("aila.workflow.steps", steps)
+            _run_span.set_attribute("aila.workflow.terminal_state", state.current)
+            return state.input
 
     # ---- Termination check -------------------------------------------------
 
@@ -551,7 +572,41 @@ class DurableStateMachine:
                 f"State {state.current!r} not in definition "
                 f"{definition.definition_id!r}"
             )
+        # ENHANCEMENT #160 -- child ``invoke_agent`` span per state
+        # transition delegated to ``_step_once_body`` so this method
+        # can hold the span in a normal ``with`` block without an
+        # eighty-line reindent. Nested LLM ``chat`` spans emitted from
+        # the handler chain under this one, so an operator inspecting
+        # a workflow trace sees state -> chat -> tool without any
+        # per-call plumbing.
+        with gen_ai_span(
+            GEN_AI_OPERATION_INVOKE_AGENT,
+            agent_name=f"{definition.definition_id}.{state.current}",
+            run_id=run_id,
+            attributes={
+                "aila.workflow.state": state.current,
+                "aila.workflow.retries_in_state": state.retries_in_state,
+                "aila.workflow.version": state.version,
+            },
+        ) as _step_span:
+            new_state = await cls._step_once_body(
+                run_id, definition, state, previous_state, spec
+            )
+            _step_span.set_attribute("aila.workflow.next_state", new_state.current)
+            return new_state
 
+    @classmethod
+    async def _step_once_body(
+        cls,
+        run_id: str,
+        definition: WorkflowDefinition,
+        state: State,
+        previous_state: str | None,
+        spec: StateSpec,
+    ) -> State:
+        """Body of :meth:`_step_once` factored out so the span wrapper can
+        hold the current state transition in a normal ``with`` block. See
+        the ENHANCEMENT #160 span note on ``_step_once``."""
         # Step 1: log `entered` in its own transaction. D-41 preserves the
         # crash signal (orphan entered rows with no matching exited:*).
         # Phase 178 fix 11: from_state carries the previous state so the

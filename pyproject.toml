@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aila"
-version = "0.5.37"
+version = "0.5.38"
 description = "Modular AI security platform with pluggable analysis modules."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -92,6 +92,18 @@ pdf-weasyprint = [
 ]
 server = [
   "gunicorn>=25.3.0",
+]
+otel = [
+  # ENHANCEMENT #160: OpenTelemetry GenAI-conventions span emission
+  # from :mod:`aila.platform.observability`. Import is guarded by
+  # try/except ImportError inside ``otel.py`` so a base install without
+  # this extra runs unchanged (every span call collapses to a no-op).
+  # Install alongside an OTLP exporter + the operator's own
+  # ``opentelemetry-instrument`` bootstrap when wiring a trace pipeline;
+  # then flip ``PUT /config/platform/otel_enabled`` to True to start
+  # emitting spans.
+  "opentelemetry-api>=1.27.0",
+  "opentelemetry-sdk>=1.27.0",
 ]
 microsoft-oidc = [
   # Optional: enables the Microsoft (Entra ID) OIDC provider. The provider

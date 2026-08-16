@@ -40,6 +40,7 @@ from pydantic import BaseModel, ValidationError
 
 from ..config_base import _shared_registry
 from ..exceptions import AILAError
+from ..observability import GEN_AI_OPERATION_CHAT, gen_ai_span
 from .cancellation import LLMCancelledError, is_run_cancelled
 from .config import LLMConfigProvider
 from .errors import LLMError
@@ -320,6 +321,41 @@ class LLMResponse:
     confidence: Any = None
     seal_id: str | None = None
     pipeline_metadata: dict[str, Any] | None = None
+
+
+def _annotate_llm_span(span: Any, response: LLMResponse, requested_model: str) -> None:
+    """Tag a gen_ai span with response-side attributes.
+
+    Records the resolved model, token usage, and finish reason using the
+    stabilized GenAI attribute names. ``span`` is a
+    :class:`aila.platform.observability.SpanHandle`; every setter is a
+    no-op when otel is disabled, so this helper is cheap on the base
+    install path.
+    """
+    if response.disabled:
+        span.set_attribute("aila.llm.disabled", True)
+        return
+    resolved_model = response.model or requested_model
+    if resolved_model:
+        span.set_attribute("gen_ai.response.model", resolved_model)
+    usage = response.usage or {}
+    prompt_tokens = int(usage.get("prompt_tokens") or 0)
+    completion_tokens = int(usage.get("completion_tokens") or 0)
+    total_tokens = int(usage.get("total_tokens") or 0)
+    if prompt_tokens:
+        span.set_attribute("gen_ai.usage.input_tokens", prompt_tokens)
+    if completion_tokens:
+        span.set_attribute("gen_ai.usage.output_tokens", completion_tokens)
+    if total_tokens:
+        span.set_attribute("gen_ai.usage.total_tokens", total_tokens)
+    if response.finish_reason:
+        # Spec models this as an array; keep the single-value form here
+        # because the platform never surfaces multi-choice completions.
+        span.set_attribute(
+            "gen_ai.response.finish_reasons", (response.finish_reason,)
+        )
+
+
 # Retry budget -- TIGHT BY DESIGN.
 #
 # Background (the change shipped on 2026-06-13 after the maddie /
@@ -675,15 +711,23 @@ class AilaLLMClient:
             if effective_max != routing.max_tokens:
                 routing = _dc_replace(routing, max_tokens=effective_max)
 
-        return await self._call_with_retry(
-            routing=routing,
-            messages=messages,
-            response_format=None,
-            tools=tools,
-            tool_executor=tool_executor,
+        with gen_ai_span(
+            GEN_AI_OPERATION_CHAT,
+            model=routing.model_id,
+            task_type=task_type,
             run_id=run_id,
-            team_id=team_id,
-        )
+        ) as _span:
+            response = await self._call_with_retry(
+                routing=routing,
+                messages=messages,
+                response_format=None,
+                tools=tools,
+                tool_executor=tool_executor,
+                run_id=run_id,
+                team_id=team_id,
+            )
+            _annotate_llm_span(_span, response, routing.model_id)
+            return response
 
     async def chat_json(
         self,
@@ -759,54 +803,63 @@ class AilaLLMClient:
                 "schema": _make_strict_schema(schema),
             },
         }
-        try:
-            resp = await self._call_with_retry(
-                routing=routing,
-                messages=messages,
-                response_format=response_format,
-                tools=tools,
-                tool_executor=tool_executor,
-                run_id=run_id,
-                team_id=team_id,
-            )
-        except LLMError as exc:
-            if not (_schema_has_open_object(schema) and _is_strict_schema_rejection(exc)):
-                raise
-            logger.warning(
-                "chat_json: provider rejected strict json_schema (%s) -- "
-                "retrying in json_object mode",
-                str(exc)[:160],
-            )
-            # json_object mode has no provider-side enforcement, so a weak model
-            # emits non-conforming JSON that fails the client parse. Append the
-            # schema to the prompt so the model still has the exact field names,
-            # enum values, and required set.
-            schema_hint = {
-                "role": "system",
-                "content": (
-                    "Respond with a SINGLE JSON object that conforms exactly to "
-                    "this JSON schema. Include every required field and use the "
-                    "exact field names and enum values. Emit only the JSON "
-                    "object, no prose and no code fences.\n"
-                    + json.dumps(schema)
-                ),
-            }
-            resp = await self._call_with_retry(
-                routing=routing,
-                messages=[*messages, schema_hint],
-                response_format={"type": "json_object"},
-                tools=tools,
-                tool_executor=tool_executor,
-                run_id=run_id,
-                team_id=team_id,
-            )
-        # Some upstream routers (OmniRoute via Anthropic Claude) wrap structured
-        # output in Markdown code fences despite response_format=json_schema.
-        # Strip fences so downstream json.loads() never chokes on ```json\n...\n```
-        if resp.content:
-            from dataclasses import replace as _dc_replace
-            resp = _dc_replace(resp, content=_strip_json_fences(resp.content))
-        return resp
+        with gen_ai_span(
+            GEN_AI_OPERATION_CHAT,
+            model=routing.model_id,
+            task_type=task_type,
+            run_id=run_id,
+            attributes={"gen_ai.request.response_format": "json_schema"},
+        ) as _span:
+            try:
+                resp = await self._call_with_retry(
+                    routing=routing,
+                    messages=messages,
+                    response_format=response_format,
+                    tools=tools,
+                    tool_executor=tool_executor,
+                    run_id=run_id,
+                    team_id=team_id,
+                )
+            except LLMError as exc:
+                if not (_schema_has_open_object(schema) and _is_strict_schema_rejection(exc)):
+                    raise
+                logger.warning(
+                    "chat_json: provider rejected strict json_schema (%s) -- "
+                    "retrying in json_object mode",
+                    str(exc)[:160],
+                )
+                _span.set_attribute("aila.chat_json.fallback", "json_object")
+                # json_object mode has no provider-side enforcement, so a weak model
+                # emits non-conforming JSON that fails the client parse. Append the
+                # schema to the prompt so the model still has the exact field names,
+                # enum values, and required set.
+                schema_hint = {
+                    "role": "system",
+                    "content": (
+                        "Respond with a SINGLE JSON object that conforms exactly to "
+                        "this JSON schema. Include every required field and use the "
+                        "exact field names and enum values. Emit only the JSON "
+                        "object, no prose and no code fences.\n"
+                        + json.dumps(schema)
+                    ),
+                }
+                resp = await self._call_with_retry(
+                    routing=routing,
+                    messages=[*messages, schema_hint],
+                    response_format={"type": "json_object"},
+                    tools=tools,
+                    tool_executor=tool_executor,
+                    run_id=run_id,
+                    team_id=team_id,
+                )
+            # Some upstream routers (OmniRoute via Anthropic Claude) wrap structured
+            # output in Markdown code fences despite response_format=json_schema.
+            # Strip fences so downstream json.loads() never chokes on ```json\n...\n```
+            if resp.content:
+                from dataclasses import replace as _dc_replace
+                resp = _dc_replace(resp, content=_strip_json_fences(resp.content))
+            _annotate_llm_span(_span, resp, routing.model_id)
+            return resp
 
     async def chat_structured(
         self,
@@ -874,83 +927,104 @@ class AilaLLMClient:
         # the reported cap from the actual iteration count).
         structured_json_max_attempts = _resolve_structured_json_max_attempts()
 
-        for attempt in range(structured_json_max_attempts):
-            # #44: cancellation peek between correction attempts. chat_json's
-            # own retry loop honours the token too; this catches a cancel
-            # that flipped between the previous correction call and the
-            # next one so the run does not burn a fresh provider round-trip.
-            if run_id is not None and is_run_cancelled(run_id):
-                raise LLMCancelledError(
-                    f"run {run_id} cancelled during chat_structured "
-                    f"(attempt {attempt + 1}/{structured_json_max_attempts})"
+        # Resolve model up-front for the span attribute; chat_json will
+        # resolve it again per attempt but that lookup is cached and
+        # cheap. The span here is the parent for every correction
+        # attempt so total accumulated usage lands on ONE record.
+        _routing = await self._config.resolve_routing(task_type)
+        with gen_ai_span(
+            GEN_AI_OPERATION_CHAT,
+            model=_routing.model_id,
+            task_type=task_type,
+            run_id=run_id,
+            attributes={
+                "gen_ai.request.response_format": "json_schema",
+                "aila.chat_structured.model_class": model_class.__name__,
+                "aila.chat_structured.max_attempts": structured_json_max_attempts,
+            },
+        ) as _structured_span:
+            for attempt in range(structured_json_max_attempts):
+                # #44: cancellation peek between correction attempts. chat_json's
+                # own retry loop honours the token too; this catches a cancel
+                # that flipped between the previous correction call and the
+                # next one so the run does not burn a fresh provider round-trip.
+                if run_id is not None and is_run_cancelled(run_id):
+                    raise LLMCancelledError(
+                        f"run {run_id} cancelled during chat_structured "
+                        f"(attempt {attempt + 1}/{structured_json_max_attempts})"
+                    )
+
+                if attempt == 0:
+                    attempt_messages = messages
+                else:
+                    partial_block = (
+                        f"\n\nYour extracted JSON before validation was:\n{prior_partial_json}"
+                        if prior_partial_json else ""
+                    )
+                    correction = (
+                        f"Your previous response failed to produce a valid "
+                        f"instance of {model_class.__name__}.\n\n"
+                        f"Validation error (verbatim):\n{prior_error_text}"
+                        f"{partial_block}\n\n"
+                        f"Respond with ONLY valid JSON matching this schema:\n"
+                        f"{json.dumps(schema, indent=2)}"
+                    )
+                    attempt_messages = list(messages) + [
+                        {"role": "assistant", "content": prior_content},
+                        {"role": "user", "content": correction},
+                    ]
+
+                response = await self.chat_json(
+                    task_type,
+                    attempt_messages,
+                    schema,
+                    tools=tools,
+                    tool_executor=tool_executor,
+                    run_id=run_id,
+                    team_id=team_id,
+                    max_output_tokens=max_output_tokens,
                 )
 
-            if attempt == 0:
-                attempt_messages = messages
-            else:
-                partial_block = (
-                    f"\n\nYour extracted JSON before validation was:\n{prior_partial_json}"
-                    if prior_partial_json else ""
-                )
-                correction = (
-                    f"Your previous response failed to produce a valid "
-                    f"instance of {model_class.__name__}.\n\n"
-                    f"Validation error (verbatim):\n{prior_error_text}"
-                    f"{partial_block}\n\n"
-                    f"Respond with ONLY valid JSON matching this schema:\n"
-                    f"{json.dumps(schema, indent=2)}"
-                )
-                attempt_messages = list(messages) + [
-                    {"role": "assistant", "content": prior_content},
-                    {"role": "user", "content": correction},
-                ]
+                if response.disabled:
+                    return response
 
-            response = await self.chat_json(
-                task_type,
-                attempt_messages,
-                schema,
-                tools=tools,
-                tool_executor=tool_executor,
-                run_id=run_id,
-                team_id=team_id,
-                max_output_tokens=max_output_tokens,
-            )
-
-            if response.disabled:
-                return response
-
-            accumulated_usage = (
-                _merge_usage(accumulated_usage, response.usage)
-                if accumulated_usage else response.usage
-            )
-
-            parsed, error_text, partial_json = self._parse_model_verbose(
-                response.content, model_class
-            )
-            if parsed is not None:
-                return LLMResponse(
-                    content=response.content,
-                    model=response.model,
-                    usage=accumulated_usage,
-                    disabled=False,
-                    finish_reason=response.finish_reason,
+                accumulated_usage = (
+                    _merge_usage(accumulated_usage, response.usage)
+                    if accumulated_usage else response.usage
                 )
 
-            logger.warning(
-                "chat_structured: attempt %d/%d failed for %s -- %s",
-                attempt + 1, structured_json_max_attempts, model_class.__name__,
-                (error_text or "unparseable").replace("\n", " | ")[:400],
+                parsed, error_text, partial_json = self._parse_model_verbose(
+                    response.content, model_class
+                )
+                if parsed is not None:
+                    _structured_span.set_attribute(
+                        "aila.chat_structured.attempts", attempt + 1
+                    )
+                    final = LLMResponse(
+                        content=response.content,
+                        model=response.model,
+                        usage=accumulated_usage,
+                        disabled=False,
+                        finish_reason=response.finish_reason,
+                    )
+                    _annotate_llm_span(_structured_span, final, _routing.model_id)
+                    return final
+
+                logger.warning(
+                    "chat_structured: attempt %d/%d failed for %s -- %s",
+                    attempt + 1, structured_json_max_attempts, model_class.__name__,
+                    (error_text or "unparseable").replace("\n", " | ")[:400],
+                )
+
+                prior_content = response.content
+                prior_error_text = error_text or "response was not valid JSON matching the schema"
+                prior_partial_json = partial_json
+
+            raise LLMError(
+                f"Failed to parse LLM response into {model_class.__name__} "
+                f"after {structured_json_max_attempts} attempts",
+                retryable=False,
             )
-
-            prior_content = response.content
-            prior_error_text = error_text or "response was not valid JSON matching the schema"
-            prior_partial_json = partial_json
-
-        raise LLMError(
-            f"Failed to parse LLM response into {model_class.__name__} "
-            f"after {structured_json_max_attempts} attempts",
-            retryable=False,
-        )
 
     # ----- sync wrappers (per D-03) -----
 
