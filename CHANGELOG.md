@@ -7,6 +7,44 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.37] - 2026-08-16 -- Enhancement/tech-debt/RFC resolution wave 2
+
+### Added
+
+- Rolling SUMMARY context tier (#24): the context assembler now folds
+  budget-evicted RECENT/RETRIEVED sections into a deterministic, no-LLM SUMMARY
+  entry that preserves file:line anchors verbatim, instead of dropping them.
+  Behavior-preserving when nothing is evicted; disable via
+  `ContextAssembler(summary_producer=None)`. The RETRIEVED tier and the shared
+  cross-branch pool remain tracked on #24.
+- Retrieval-benchmark harness (#153): `platform/eval/retrieval_bench.py` runs
+  canonical (query, positive_snippet) pairs through the live retriever and
+  reports MAP@10 / nDCG@10 / recall / precision / MRR + per-call latency, with a
+  bundled sample and a `python -m` CLI. Comparison against alternative
+  embedders/rerankers remains tracked on #153 (needs those models wired).
+- Platform recovery-service classification (#133): `PlatformRecoveryService` is
+  the single eligibility + strategy classifier; the stall-recovery and
+  stuck-healer sweeps delegate row selection to it while keeping their distinct
+  execution guarantees. The full single-sweep merger remains tracked on #133.
+- Cross-branch KV-cache reuse guard (#162): documented the judge-reliability
+  trap and the required pre-rollout parity benchmark in
+  `platform/llm/README.md` before any vLLM/SGLang prefix-caching adoption.
+
+### Changed
+
+- Frontend config maps use `satisfies Record<K, V>` and `DataPage` requires an
+  explicit `configKey` (#229): preserves literal-key evidence for consumers and
+  removes the fragile three-step config-key fallback. Further anti-slop
+  remediations (shared boundary parser, god-component splits) remain tracked on
+  #229.
+
+### Removed
+
+- The six orphaned `@aila/*-frontend` module packages (#227): superseded by the
+  in-shell windowing console and non-compiling against the current shell
+  surface. Removed from the pnpm workspace and the shell dependencies; the
+  workspace-wide `pnpm -r type-check` and CI are green again over the shell.
+
 ## [0.5.36] - 2026-08-16 -- Enhancement/tech-debt/RFC resolution wave 1
 
 ### Added

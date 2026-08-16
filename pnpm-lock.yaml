@@ -19,16 +19,6 @@ catalogs:
     typescript:
       specifier: 6.0.2
       version: 6.0.2
-  dnd:
-    '@dnd-kit/core':
-      specifier: 6.3.1
-      version: 6.3.1
-    '@dnd-kit/sortable':
-      specifier: 10.0.0
-      version: 10.0.0
-    '@dnd-kit/utilities':
-      specifier: 3.2.2
-      version: 3.2.2
   flow:
     '@xyflow/react':
       specifier: 12.11.0
@@ -215,21 +205,6 @@ importers:
 
   frontend:
     dependencies:
-      '@aila/forensics-frontend':
-        specifier: workspace:*
-        version: link:../src/aila/modules/forensics/frontend
-      '@aila/hello-world-frontend':
-        specifier: workspace:*
-        version: link:../src/aila/modules/hello_world/frontend
-      '@aila/malware-frontend':
-        specifier: workspace:*
-        version: link:../src/aila/modules/malware/frontend
-      '@aila/vr-frontend':
-        specifier: workspace:*
-        version: link:../src/aila/modules/vr/frontend
-      '@aila/vulnerability-frontend':
-        specifier: workspace:*
-        version: link:../src/aila/modules/vulnerability/frontend
       '@base-ui/react':
         specifier: catalog:ui
         version: 1.5.0(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -402,222 +377,6 @@ importers:
       vite:
         specifier: catalog:vite
         version: 8.0.16(@types/node@24.7.2)(esbuild@0.28.1)(jiti@2.7.0)
-
-  src/aila/modules/_template/frontend:
-    dependencies:
-      '@tanstack/react-query':
-        specifier: catalog:query
-        version: 5.101.0(react@19.2.7)
-      react:
-        specifier: catalog:react19
-        version: 19.2.7
-    devDependencies:
-      '@aila/typescript-config':
-        specifier: workspace:*
-        version: link:../../../../../packages/typescript-config
-      '@types/react':
-        specifier: catalog:react19
-        version: 19.2.17
-      typescript:
-        specifier: 'catalog:'
-        version: 6.0.2
-
-  src/aila/modules/forensics/frontend:
-    dependencies:
-      '@phosphor-icons/react':
-        specifier: catalog:ui
-        version: 2.1.10(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@tanstack/react-query':
-        specifier: catalog:query
-        version: 5.101.0(react@19.2.7)
-      react:
-        specifier: catalog:react19
-        version: 19.2.7
-      react-router:
-        specifier: '>=7.18.0'
-        version: 8.3.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-    devDependencies:
-      '@aila/typescript-config':
-        specifier: workspace:*
-        version: link:../../../../../packages/typescript-config
-      '@storybook/react':
-        specifier: catalog:storybook
-        version: 10.4.4(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(storybook@10.4.4(@testing-library/dom@10.4.1)(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(typescript@6.0.2)
-      '@storybook/react-vite':
-        specifier: catalog:storybook
-        version: 10.4.4(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(esbuild@0.28.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(storybook@10.4.4(@testing-library/dom@10.4.1)(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(typescript@6.0.2)(vite@8.0.16(@types/node@24.7.2)(esbuild@0.28.1)(jiti@2.7.0))
-      '@types/react':
-        specifier: catalog:react19
-        version: 19.2.17
-      storybook:
-        specifier: catalog:storybook
-        version: 10.4.4(@testing-library/dom@10.4.1)(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      typescript:
-        specifier: 'catalog:'
-        version: 6.0.2
-
-  src/aila/modules/hello_world/frontend:
-    dependencies:
-      '@phosphor-icons/react':
-        specifier: catalog:ui
-        version: 2.1.10(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@tanstack/react-query':
-        specifier: catalog:query
-        version: 5.101.0(react@19.2.7)
-      react:
-        specifier: catalog:react19
-        version: 19.2.7
-    devDependencies:
-      '@aila/typescript-config':
-        specifier: workspace:*
-        version: link:../../../../../packages/typescript-config
-      '@types/react':
-        specifier: catalog:react19
-        version: 19.2.17
-      typescript:
-        specifier: 'catalog:'
-        version: 6.0.2
-
-  src/aila/modules/malware/frontend:
-    dependencies:
-      '@monaco-editor/react':
-        specifier: catalog:ui
-        version: 4.7.0(monaco-editor@0.55.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@phosphor-icons/react':
-        specifier: catalog:ui
-        version: 2.1.10(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@tanstack/react-query':
-        specifier: catalog:query
-        version: 5.101.0(react@19.2.7)
-      '@xyflow/react':
-        specifier: catalog:flow
-        version: 12.11.0(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(immer@11.1.8)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      react:
-        specifier: catalog:react19
-        version: 19.2.7
-      react-dom:
-        specifier: catalog:react19
-        version: 19.2.7(react@19.2.7)
-      react-router:
-        specifier: '>=7.18.0'
-        version: 8.3.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-    devDependencies:
-      '@aila/typescript-config':
-        specifier: workspace:*
-        version: link:../../../../../packages/typescript-config
-      '@storybook/react':
-        specifier: catalog:storybook
-        version: 10.4.4(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(storybook@10.4.4(@testing-library/dom@10.4.1)(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(typescript@6.0.2)
-      '@storybook/react-vite':
-        specifier: catalog:storybook
-        version: 10.4.4(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(esbuild@0.28.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(storybook@10.4.4(@testing-library/dom@10.4.1)(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(typescript@6.0.2)(vite@8.0.16(@types/node@24.7.2)(esbuild@0.28.1)(jiti@2.7.0))
-      '@types/react':
-        specifier: catalog:react19
-        version: 19.2.17
-      '@types/react-dom':
-        specifier: catalog:react19
-        version: 19.2.3(@types/react@19.2.17)
-      storybook:
-        specifier: catalog:storybook
-        version: 10.4.4(@testing-library/dom@10.4.1)(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      typescript:
-        specifier: 'catalog:'
-        version: 6.0.2
-
-  src/aila/modules/vr/frontend:
-    dependencies:
-      '@monaco-editor/react':
-        specifier: catalog:ui
-        version: 4.7.0(monaco-editor@0.55.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@phosphor-icons/react':
-        specifier: catalog:ui
-        version: 2.1.10(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@tanstack/react-query':
-        specifier: catalog:query
-        version: 5.101.0(react@19.2.7)
-      '@xyflow/react':
-        specifier: catalog:flow
-        version: 12.11.0(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(immer@11.1.8)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      react:
-        specifier: catalog:react19
-        version: 19.2.7
-      react-dom:
-        specifier: catalog:react19
-        version: 19.2.7(react@19.2.7)
-      react-router:
-        specifier: '>=7.18.0'
-        version: 8.3.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-    devDependencies:
-      '@aila/typescript-config':
-        specifier: workspace:*
-        version: link:../../../../../packages/typescript-config
-      '@storybook/react':
-        specifier: catalog:storybook
-        version: 10.4.4(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(storybook@10.4.4(@testing-library/dom@10.4.1)(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(typescript@6.0.2)
-      '@storybook/react-vite':
-        specifier: catalog:storybook
-        version: 10.4.4(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(esbuild@0.28.1)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(storybook@10.4.4(@testing-library/dom@10.4.1)(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(typescript@6.0.2)(vite@8.0.16(@types/node@24.7.2)(esbuild@0.28.1)(jiti@2.7.0))
-      '@types/react':
-        specifier: catalog:react19
-        version: 19.2.17
-      '@types/react-dom':
-        specifier: catalog:react19
-        version: 19.2.3(@types/react@19.2.17)
-      storybook:
-        specifier: catalog:storybook
-        version: 10.4.4(@testing-library/dom@10.4.1)(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      typescript:
-        specifier: 'catalog:'
-        version: 6.0.2
-
-  src/aila/modules/vulnerability/frontend:
-    dependencies:
-      '@dnd-kit/core':
-        specifier: catalog:dnd
-        version: 6.3.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@dnd-kit/sortable':
-        specifier: catalog:dnd
-        version: 10.0.0(@dnd-kit/core@6.3.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)
-      '@dnd-kit/utilities':
-        specifier: catalog:dnd
-        version: 3.2.2(react@19.2.7)
-      '@phosphor-icons/react':
-        specifier: catalog:ui
-        version: 2.1.10(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@tanstack/react-query':
-        specifier: catalog:query
-        version: 5.101.0(react@19.2.7)
-      '@tanstack/react-table':
-        specifier: catalog:query
-        version: 8.21.3(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      react:
-        specifier: catalog:react19
-        version: 19.2.7
-      react-router:
-        specifier: '>=7.18.0'
-        version: 8.3.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-    devDependencies:
-      '@aila/typescript-config':
-        specifier: workspace:*
-        version: link:../../../../../packages/typescript-config
-      '@testing-library/jest-dom':
-        specifier: catalog:testing
-        version: 6.9.1
-      '@testing-library/react':
-        specifier: catalog:testing
-        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@testing-library/user-event':
-        specifier: catalog:testing
-        version: 14.6.1(@testing-library/dom@10.4.1)
-      '@types/react':
-        specifier: catalog:react19
-        version: 19.2.17
-      typescript:
-        specifier: 'catalog:'
-        version: 6.0.2
-      vitest:
-        specifier: catalog:vite
-        version: 4.1.8(@types/node@24.7.2)(@vitest/coverage-v8@4.1.8)(jsdom@29.1.1(@noble/hashes@1.8.0))(msw@2.14.5(@types/node@24.7.2)(typescript@6.0.2))(vite@8.0.16(@types/node@24.7.2)(esbuild@0.28.1)(jiti@2.7.0))
 
 packages:
 
@@ -970,28 +729,6 @@ packages:
   '@csstools/css-tokenizer@4.0.0':
     resolution: {integrity: sha512-QxULHAm7cNu72w97JUNCBFODFaXpbDg+dP8b/oWFAZ2MTRppA3U00Y2L1HqaS4J6yBqxwa/Y3nMBaxVKbB/NsA==}
     engines: {node: '>=20.19.0'}
-
-  '@dnd-kit/accessibility@3.1.1':
-    resolution: {integrity: sha512-2P+YgaXF+gRsIihwwY1gCsQSYnu9Zyj2py8kY5fFvUM1qm2WA2u639R6YNVfU4GWr+ZM5mqEsfHZZLoRONbemw==}
-    peerDependencies:
-      react: '>=16.8.0'
-
-  '@dnd-kit/core@6.3.1':
-    resolution: {integrity: sha512-xkGBRQQab4RLwgXxoqETICr6S5JlogafbhNsidmrkVv2YRs5MLwpjoF2qpiGjQt8S9AoxtIV603s0GIUpY5eYQ==}
-    peerDependencies:
-      react: '>=16.8.0'
-      react-dom: '>=16.8.0'
-
-  '@dnd-kit/sortable@10.0.0':
-    resolution: {integrity: sha512-+xqhmIIzvAYMGfBYYnbKuNicfSsk4RksY2XdmJhT+HAC01nix6fHCztU68jooFiMUB01Ky3F0FyOvhG/BZrWkg==}
-    peerDependencies:
-      '@dnd-kit/core': ^6.3.0
-      react: '>=16.8.0'
-
-  '@dnd-kit/utilities@3.2.2':
-    resolution: {integrity: sha512-+MKAJEOfaBe5SmV6t34p80MMKhjvUz0vRrvVJbPT0WElzaOJ/1xs+D+KDv+tD/NE5ujfrChEcshd4fLn0wpiqg==}
-    peerDependencies:
-      react: '>=16.8.0'
 
   '@dotenvx/dotenvx@1.65.0':
     resolution: {integrity: sha512-v4FA/Lw3pTEloLxBqTOaYDX6MNo0Jo7lGBsPZhwnJBqRJp0AzQg1ZZNxrFsh6HVC6QWeWrfIKLn0y2eyIXaVDg==}
@@ -6086,31 +5823,6 @@ snapshots:
       css-tree: 3.2.1
 
   '@csstools/css-tokenizer@4.0.0': {}
-
-  '@dnd-kit/accessibility@3.1.1(react@19.2.7)':
-    dependencies:
-      react: 19.2.7
-      tslib: 2.8.1
-
-  '@dnd-kit/core@6.3.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
-    dependencies:
-      '@dnd-kit/accessibility': 3.1.1(react@19.2.7)
-      '@dnd-kit/utilities': 3.2.2(react@19.2.7)
-      react: 19.2.7
-      react-dom: 19.2.7(react@19.2.7)
-      tslib: 2.8.1
-
-  '@dnd-kit/sortable@10.0.0(@dnd-kit/core@6.3.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(react@19.2.7)':
-    dependencies:
-      '@dnd-kit/core': 6.3.1(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
-      '@dnd-kit/utilities': 3.2.2(react@19.2.7)
-      react: 19.2.7
-      tslib: 2.8.1
-
-  '@dnd-kit/utilities@3.2.2(react@19.2.7)':
-    dependencies:
-      react: 19.2.7
-      tslib: 2.8.1
 
   '@dotenvx/dotenvx@1.65.0':
     dependencies:

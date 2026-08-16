@@ -212,7 +212,7 @@ const workspaceRef = (endpoint: string, required = true): FieldSpec => ({
 // CREATE FORMS
 // ============================================================================
 
-export const CREATE_FORMS: Record<string, FormSpec> = {
+export const CREATE_FORMS = {
   // -- VR ---------------------------------------------------------------
   "vr:workspaces": {
     title: "vr \u00b7 new workspace",
@@ -613,13 +613,13 @@ export const CREATE_FORMS: Record<string, FormSpec> = {
       { name: "task_type", label: "task type", type: "text", required: true, placeholder: "e.g. vr.finding_accept", help: "fits isotonic + temperature calibrators from this task_type's accept/reject history; persists a candidate (inert until promoted)" },
     ],
   },
-};
+} satisfies Record<string, FormSpec>;
 
 // ============================================================================
 // EDIT FORMS  (PATCH / PUT -- omit untouched fields to preserve server state)
 // ============================================================================
 
-export const EDIT_FORMS: Record<string, FormSpec> = {
+export const EDIT_FORMS = {
   // -- VR ---------------------------------------------------------------
   "vr:workspaces": {
     title: "vr \u00b7 edit workspace",
@@ -839,4 +839,4 @@ export const EDIT_FORMS: Record<string, FormSpec> = {
       { name: "value_type", label: "type", type: "select", options: CONFIG_VALUE_TYPES },
     ],
   },
-};
+} satisfies Record<string, FormSpec>;

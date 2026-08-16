@@ -1,53 +1,45 @@
 """Generic periodic sweep that re-enqueues stalled investigations.
 
-Module bindings supply the eligibility SQL identifiers (table names for the
-investigations + branches), the sweepable-kind set, the env-var prefix that
-tunes rate/idle threshold, and the concrete submitter that knows how to
-enqueue a task for that module. See ``branch_reaper`` for the same pattern
-applied to the orphan-branch reaper: each module wraps this callable via a
-module-level ``functools.partial`` so the callable identity is stable across
-imports (the periodic-sweep registry keys re-registration on identity, so an
-inline partial at the registration site would break the re-registration
-no-op).
+Module bindings supply the eligibility SQL identifiers (table names for
+the investigations + branches), the sweepable-kind set, the env-var
+prefix that tunes rate/idle threshold, and the concrete submitter that
+knows how to enqueue a task for that module. See ``branch_reaper`` for
+the same pattern applied to the orphan-branch reaper: each module
+wraps this callable via a module-level ``functools.partial`` so the
+callable identity is stable across imports (the periodic-sweep
+registry keys re-registration on identity, so an inline partial at
+the registration site would break the re-registration no-op).
 
 Context (unchanged from the pre-lift module docstrings):
 
 When a task gets killed mid-execution -- ``CancelledError`` from ARQ's
-``max_job_time``, worker process restart, host kernel kill -- no exception
-handler runs, no cursor is written, no ``AUTO_CONTINUE`` fires. The
-investigation row stays at ``status='running'`` (or ``status='created'`` if
-the very first enqueue was lost) with branches in ``status='active'``
-forever, with zero in-flight tasks pointing at it. Every other cutover fix
-assumes the task body returns or raises through ``Exception``; sequence
-of ``CancelledError`` (inherits from ``BaseException``, escapes broad
+``max_job_time``, worker process restart, host kernel kill -- no
+exception handler runs, no cursor is written, no ``AUTO_CONTINUE``
+fires. The investigation row stays at ``status='running'`` (or
+``status='created'`` if the very first enqueue was lost) with
+branches in ``status='active'`` forever, with zero in-flight tasks
+pointing at it. Every other cutover fix assumes the task body
+returns or raises through ``Exception``; a sequence of
+``CancelledError`` (inherits from ``BaseException``, escapes broad
 ``except Exception`` handlers) is the recovery gap this sweep closes.
 
-Eligibility (every clause MUST hold):
+Eligibility, dispatch, rate model
+---------------------------------
 
-* ``inv.status IN ('created', 'running', 'stalled')`` -- non-terminal
-  investigations can recover. Stalled investigations are re-enqueued
-  immediately (bypass the idle threshold) so operators never need to
-  manually intervene on a provider outage.
-* ``inv.pause_reason IS NULL`` -- operator and self-paused investigations
-  are intentional waits and MUST NOT be auto-resumed by this sweep.
-* ``inv.kind = ANY(:kinds)`` -- only sweepable kinds are handled. Callers
-  exclude parent-batch kinds whose lifecycle is owned by another
-  reconciler (VR's ``masvs_audit`` is the current example).
-* ``inv.updated_at < NOW() - <idle threshold>`` -- distinguishes
-  "legitimately slow" from "really stalled".
-* **No in-flight task** references this investigation. A row in
-  ``taskrecord`` with status ``queued`` / ``running`` / ``waiting`` whose
-  ``kwargs_json::jsonb->>'investigation_id'`` equals this ``inv.id``
-  blocks re-enqueue. The worker's stale-in-progress reaper will
-  eventually flip dead-worker tasks to ``cancelled``; the next sweep
-  tick after that picks them up.
+Eligibility lives on the unified
+:class:`aila.platform.services.recovery_service.PlatformRecoveryService`
+(:meth:`PlatformRecoveryService.fetch_stall_candidates`) alongside the
+sibling stuck-healer SELECT. This module orchestrates the STALLED /
+CREATED / RUNNING recovery path documented in
+:class:`aila.platform.services.recovery_service.RecoveryStrategy`
+(``STALL_REENQUEUE``).
 
 Re-enqueue dispatch:
 
 * ``inv.kind`` in ``single_submit_kinds`` -> single inv-level submit,
   no branch fan-out. Used by module kinds that own their own branch
-  lifecycle internally (VR's ``n_day``); the caller's submitter routes
-  these to the appropriate task function.
+  lifecycle internally (VR's ``n_day``); the caller's submitter
+  routes these to the appropriate task function.
 * everything else -> if the inv has ``status='active'`` branches, fan
   out one submit per branch with ``branch_id`` set; otherwise submit
   once with only ``investigation_id`` (``investigation_setup`` will
@@ -55,20 +47,16 @@ Re-enqueue dispatch:
 
 Rate model:
 
-``rate_per_tick`` caps **total task submits** in one sweep call -- NOT
-investigation count. The unit matters: one investigation with 6 active
-personas produces 6 submits; six 1-branch investigations also produce 6.
-The cap is what bounds the downstream LLM request rate. Default 6.
+``rate_per_tick`` caps **total task submits** in one sweep call --
+NOT investigation count. The unit matters: one investigation with 6
+active personas produces 6 submits; six 1-branch investigations also
+produce 6. The cap is what bounds the downstream LLM request rate.
+Default 6.
 
 Operator tunes via env vars derived from ``env_prefix``:
 
 * ``<PREFIX>_LIMIT`` -- submits per tick (default 6)
 * ``<PREFIX>_IDLE_MIN`` -- idle threshold in minutes (default 15)
-
-The raw SQL uses ``sqlalchemy.text`` and interpolates the bound table
-names -- table identifiers cannot be bind parameters, and the identifiers
-are trusted module constants defined at import time in each module's
-binding file, never operator or request input.
 """
 from __future__ import annotations
 
@@ -77,12 +65,14 @@ import os
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 from sqlalchemy import text as _sql_text
 from sqlalchemy.exc import SQLAlchemyError
 
-from aila.platform.services.recovery_claim import try_claim_recovery
+from aila.platform.services.recovery_service import (
+    PlatformRecoveryService,
+    RecoveryStrategy,
+)
 from aila.storage.database import async_session_scope
 
 __all__ = [
@@ -154,48 +144,6 @@ def _env_int(key: str, default: int) -> int:
         return default
 
 
-async def _fetch_eligible(
-    *,
-    investigations_table: str,
-    sweepable_kinds: tuple[str, ...],
-    cutoff: datetime,
-    over_fetch: int,
-) -> list[dict[str, Any]]:
-    """Single eligibility SELECT against the configured DB."""
-    stmt = _sql_text(
-        f"""
-        SELECT inv.id::text AS id,
-               inv.kind AS kind,
-               inv.status AS status,
-               inv.team_id::text AS team_id,
-               inv.updated_at AS updated_at
-        FROM {investigations_table} inv
-        WHERE inv.status IN ('created', 'running', 'stalled')
-          AND inv.pause_reason IS NULL
-          AND inv.kind = ANY(:kinds)
-          AND (inv.status = 'stalled' OR inv.updated_at < :cutoff)
-          AND NOT EXISTS (
-              SELECT 1
-              FROM taskrecord t
-              WHERE t.kwargs_json::jsonb->>'investigation_id'
-                    = inv.id::text
-                AND t.status IN ('queued', 'running', 'waiting')
-          )
-        ORDER BY inv.updated_at ASC
-        LIMIT :limit
-        """,
-    ).bindparams(
-        kinds=list(sweepable_kinds),
-        cutoff=cutoff,
-        limit=over_fetch,
-    )
-    async with async_session_scope() as session:
-        return [
-            dict(r) for r in
-            (await session.execute(stmt)).mappings().all()
-        ]
-
-
 async def _fetch_active_branches(
     *,
     branches_table: str,
@@ -231,12 +179,18 @@ async def sweep_stalled_investigations(
 ) -> StallRecoveryResult:
     """Re-enqueue investigations that have stalled without progress.
 
-    See the module docstring for the eligibility, dispatch, and rate-model
-    contracts. Module bindings wrap this callable via ``functools.partial``
-    with the binding args pre-supplied; callers see the same public
-    signature as the pre-lift module files (``idle_minutes``,
-    ``rate_per_tick``, ``submit_fn``) plus the ability for tests to
-    override the bound submitter.
+    See the module docstring for the eligibility, dispatch, and
+    rate-model contracts. Module bindings wrap this callable via
+    ``functools.partial`` with the binding args pre-supplied; callers
+    see the same public signature as the pre-lift module files
+    (``idle_minutes``, ``rate_per_tick``, ``submit_fn``) plus the
+    ability for tests to override the bound submitter.
+
+    Eligibility + strategy classification delegate to
+    :class:`aila.platform.services.recovery_service.PlatformRecoveryService`;
+    the loop body owns only the STALL_REENQUEUE-specific dispatch (the
+    ``stalled -> running`` atomic flip, the non-stalled timestamp claim,
+    and the branch fan-out).
 
     Args:
         submit_fn: module-provided task submitter. Called for each
@@ -244,10 +198,10 @@ async def sweep_stalled_investigations(
             tests override with a capture-style mock.
         sweepable_kinds: kinds the sweep handles. Rows whose kind is
             not in this tuple are ignored at the SQL level.
-        single_submit_kinds: subset of ``sweepable_kinds`` that own their
-            own branch lifecycle. Rows with these kinds get one
-            inv-level submit; no branch fan-out. Empty tuple for modules
-            with no such kinds.
+        single_submit_kinds: subset of ``sweepable_kinds`` that own
+            their own branch lifecycle. Rows with these kinds get one
+            inv-level submit; no branch fan-out. Empty tuple for
+            modules with no such kinds.
         env_prefix: env-var prefix. ``<PREFIX>_LIMIT`` overrides
             ``rate_per_tick``; ``<PREFIX>_IDLE_MIN`` overrides
             ``idle_minutes``.
@@ -283,12 +237,18 @@ async def sweep_stalled_investigations(
     # some rows turn out to have zero active branches (creates 1
     # submit each, not the per-row average). Capped at ``max(cap*3, 30)``
     # to keep the SELECT bounded under unusual backlog conditions.
-    eligible = await _fetch_eligible(
-        investigations_table=investigations_table,
-        sweepable_kinds=sweepable_kinds,
-        cutoff=cutoff,
-        over_fetch=max(cap * 3, 30),
-    )
+    try:
+        eligible = await PlatformRecoveryService.fetch_stall_candidates(
+            investigations_table=investigations_table,
+            sweepable_kinds=sweepable_kinds,
+            cutoff=cutoff,
+            limit=max(cap * 3, 30),
+        )
+    except SQLAlchemyError as exc:
+        _log.warning(
+            "stall_recovery: eligibility SELECT failed: %s", exc,
+        )
+        return result
     result.examined = len(eligible)
 
     for row in eligible:
@@ -304,6 +264,23 @@ async def sweep_stalled_investigations(
         team_id = row["team_id"]
         seen_updated_at = row["updated_at"]
 
+        # Sanity: the SELECT already applied the sweepable-kind and
+        # status filters, but the classifier is where the unified
+        # eligibility contract lives -- run it so a future SELECT edit
+        # cannot silently diverge from the platform decision. Cursor
+        # state is not consulted at the SELECT level for this path;
+        # ``has_resumable_cursor`` is treated as True (the classifier
+        # then routes running-with-cursor rows to STALL_REENQUEUE
+        # rather than STUCK_HEAL, matching pre-lift behavior). The
+        # stuck-healer sweep owns the narrower cursor-absent zombie.
+        strategy = PlatformRecoveryService.classify(
+            status=inv_status,
+            has_live_task=False,
+            has_resumable_cursor=True,
+        )
+        if strategy is not RecoveryStrategy.STALL_REENQUEUE:
+            continue
+
         # Issue #121: shared mutual exclusion with stuck_healer (and
         # cross-process cron ticks). Both sweeps can independently
         # match the same investigation in one tick and would submit
@@ -311,9 +288,10 @@ async def sweep_stalled_investigations(
         # ``status = 'stalled' -> 'running'`` flip below (whose
         # ``WHERE status='stalled'`` clause matches at most one racer,
         # so rowcount == 1 means we won) or, for non-stalled rows, a
-        # compare-and-set on ``updated_at`` via ``try_claim_recovery``.
-        # The losing racer's UPDATE affects zero rows and the loop
-        # skips its submit for this tick.
+        # compare-and-set on ``updated_at`` via
+        # :meth:`PlatformRecoveryService.try_claim`. The losing
+        # racer's UPDATE affects zero rows and the loop skips its
+        # submit for this tick.
         if inv_status == "stalled":
             # Stalled investigations need their status flipped back to
             # running before the workflow setup handler will accept
@@ -322,25 +300,14 @@ async def sweep_stalled_investigations(
             # the minimal direct flip so the setup handler re-spawns
             # branches. The flip itself is the recovery claim (see
             # above).
-            try:
-                async with async_session_scope() as _s:
-                    _flip = await _s.execute(
-                        _sql_text(
-                            f"UPDATE {investigations_table} "
-                            f"SET status = 'running', "
-                            f"    updated_at = NOW() "
-                            f"WHERE id = :inv_id "
-                            f"  AND status = 'stalled'",
-                        ).bindparams(inv_id=inv_id),
-                    )
-                    await _s.commit()
-            except (OSError, RuntimeError, SQLAlchemyError):
-                _log.warning(
-                    "stall_recovery: failed to flip stalled->running inv=%s",
-                    inv_id, exc_info=True,
-                )
+            flip = await PlatformRecoveryService.try_stalled_status_flip(
+                investigations_table=investigations_table,
+                inv_id=inv_id,
+            )
+            if flip is None:
+                # Transport error -- service logs; skip this row.
                 continue
-            if not (_flip.rowcount or 0):
+            if not flip:
                 # Another sweep (this process or another worker) beat
                 # us to the atomic flip. The winner owns the submit.
                 _log.info(
@@ -358,7 +325,7 @@ async def sweep_stalled_investigations(
             # Compare-and-set on ``updated_at = seen_updated_at`` so
             # racers observing the same SELECT window converge on
             # exactly one winner.
-            if not await try_claim_recovery(
+            if not await PlatformRecoveryService.try_claim(
                 inv_table=investigations_table,
                 timestamp_column="updated_at",
                 inv_id=inv_id,

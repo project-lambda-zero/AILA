@@ -1,7 +1,7 @@
 {
   "name": "@aila/shell",
   "private": true,
-  "version": "0.5.36",
+  "version": "0.5.37",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 3000",
@@ -20,11 +20,6 @@
     "clean": "rm -rf dist node_modules .vite"
   },
   "dependencies": {
-    "@aila/forensics-frontend": "workspace:*",
-    "@aila/hello-world-frontend": "workspace:*",
-    "@aila/malware-frontend": "workspace:*",
-    "@aila/vulnerability-frontend": "workspace:*",
-    "@aila/vr-frontend": "workspace:*",
     "@base-ui/react": "catalog:ui",
     "@fontsource-variable/geist": "catalog:ui",
     "@monaco-editor/react": "catalog:ui",

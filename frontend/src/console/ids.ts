@@ -4,15 +4,15 @@
  * the UUID (like a git short hash). Deterministic: the same investigation always
  * renders the same code. */
 
-const MODULE_CODE: Record<string, string> = {
+const MODULE_CODE = {
   vr: "VR",
   vulnerability: "VULN",
   forensics: "DFIR",
   malware: "MAL",
-};
+} as const satisfies Record<string, string>;
 
 export function shortCaseId(moduleId: string, id: string): string {
-  const code = MODULE_CODE[moduleId] ?? moduleId.slice(0, 3).toUpperCase();
+  const code = (MODULE_CODE as Record<string, string>)[moduleId] ?? moduleId.slice(0, 3).toUpperCase();
   const hex = id.replace(/[^0-9a-fA-F]/g, "").slice(0, 4).toUpperCase();
   return hex ? `${code}-${hex}` : code;
 }

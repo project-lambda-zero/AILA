@@ -9,6 +9,7 @@ from .context_assembler import (
     ContextSection,
     ContextTier,
     PinnedOverflowError,
+    SummaryProducer,
 )
 from .embedding import BGEProvider, EmbeddingProvider, MiniLMProvider, resolve_provider
 from .factory import ServiceFactory
@@ -41,6 +42,7 @@ __all__ = [
     "SSHService",
     "ServiceFactory",
     "StorageService",
+    "SummaryProducer",
     "SystemService",
     "build_async_http_client",
     "build_http_client",

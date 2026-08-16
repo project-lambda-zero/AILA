@@ -1,46 +1,45 @@
 """RFC-07 criterion 6 -- automatic INVESTIGATION-level stuck healer.
 
-The task-level sweeps (:mod:`aila.platform.tasks.worker._sweep_orphan_running_tasks`
-+ :mod:`aila.platform.tasks.state_reconciler`) cover one recovery gap only:
-a ``taskrecord`` row still in ``queued`` / ``running`` / ``waiting`` whose
-worker died AND whose ``workflow_state_cursor`` is still resumable. The
-reconciler flips the stale task row to ``CANCELLED`` and the next worker
-sweep re-enqueues from the resumable cursor.
+The task-level sweeps
+(:mod:`aila.platform.tasks.worker._sweep_orphan_running_tasks` +
+:mod:`aila.platform.tasks.state_reconciler`) cover one recovery gap
+only: a ``taskrecord`` row still in ``queued`` / ``running`` /
+``waiting`` whose worker died AND whose ``workflow_state_cursor`` is
+still resumable. The reconciler flips the stale task row to
+``CANCELLED`` and the next worker sweep re-enqueues from the
+resumable cursor.
 
-They do NOT cover the sibling zombie: an investigation whose ``status`` is
-still ``running``, whose tasks are ALL terminal (or absent), AND whose
-cursor is absent or terminal (``__crashed__`` / ``__failed__`` /
-``__cancelled__`` / ``__succeeded__``). No resumable cursor means the
-task-level sweep leaves it alone; the ``running`` status projection means
-finalize will not close it either. Without an automated healer the row sits
-``running`` forever until an operator manually calls ``/re-enqueue``.
+They do NOT cover the sibling zombie: an investigation whose
+``status`` is still ``running``, whose tasks are ALL terminal (or
+absent), AND whose cursor is absent or terminal (``__crashed__`` /
+``__failed__`` / ``__cancelled__`` / ``__succeeded__``). No resumable
+cursor means the task-level sweep leaves it alone; the ``running``
+status projection means finalize will not close it either. Without an
+automated healer the row sits ``running`` forever until an operator
+manually calls ``/re-enqueue``.
 
-This module owns that healer. It is parameterised so each module binds one
-partial with its own investigation model, running-status vocabulary,
-investigate-task ``fn_path`` pattern, and per-tick config namespace. The
-platform sweep:
+Eligibility, dispatch
+---------------------
 
-* selects investigations whose ``status`` is in ``running_status_values``
-  (never touching ``PAUSED`` / ``CANCELLED`` / ``COMPLETED`` /
-  ``FAILED`` / ``ABANDONED`` / ``STALLED``);
-* filters to rows whose ``<inv_timestamp_column>`` is older than the
-  configured idle grace so a just-started run is never touched;
-* excludes rows with any live ``taskrecord`` (``kwargs_json`` carries the
-  ``investigation_id``, status in ``queued`` / ``running`` / ``waiting``);
-* excludes rows with any resumable ``workflow_state_cursor``
-  (denormalised ``investigation_id`` join key, ``current_state`` NOT in the
-  reserved-terminal + ``__paused__`` set) -- the task-level sweep owns
-  those;
-* for each survivor (bounded by ``max_heals_per_tick``), calls
-  :func:`aila.platform.services.investigation_lifecycle.reenqueue_investigation`
-  to drive the four-source-of-truth reset + fresh submit, then journals a
-  durable ``kind='recovery'`` ledger entry via
-  :func:`ResilienceLayer.emit_recovery_event` so the heal is itself
-  auditable (RFC-07 #31 + honesty rule 54).
+Eligibility lives on the unified
+:class:`aila.platform.services.recovery_service.PlatformRecoveryService`
+(:meth:`PlatformRecoveryService.fetch_stuck_candidates`) alongside the
+sibling stall SELECT. The non-resumable cursor sentinel set lives at
+:data:`aila.platform.services.recovery_service.NON_RESUMABLE_CURSOR_STATES`
+so a future sentinel addition does not drift between call sites.
 
-Best-effort per id: one failing re-enqueue logs and the sweep continues
-with the next id; a whole-sweep failure never blocks other periodic
-sweeps in the same tick.
+Per-row dispatch stays here: this module owns the
+:attr:`RecoveryStrategy.STUCK_HEAL` execution path, which is the full
+:func:`aila.platform.services.investigation_lifecycle.reenqueue_investigation`
+four-source-of-truth reset (cancel stale tasks, wipe crashed cursors,
+reset row to CREATED, commit, submit fresh) plus a durable
+``kind='recovery'`` ledger event via
+:func:`ResilienceLayer.emit_recovery_event` so the heal is itself
+auditable (RFC-07 #31 + honesty rule 54).
+
+Best-effort per id: one failing re-enqueue logs and the sweep
+continues with the next id; a whole-sweep failure never blocks other
+periodic sweeps in the same tick.
 """
 from __future__ import annotations
 
@@ -49,7 +48,6 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import text as _sql_text
 from sqlalchemy.exc import SQLAlchemyError
 
 from aila.platform.config_base import ModuleConfigReader
@@ -57,9 +55,8 @@ from aila.platform.services.investigation_lifecycle import (
     ReenqueueInvestigationError,
     reenqueue_investigation,
 )
-from aila.platform.services.recovery_claim import try_claim_recovery
+from aila.platform.services.recovery_service import PlatformRecoveryService
 from aila.platform.services.resilience import get_default_resilience_layer
-from aila.storage.database import async_session_scope
 
 __all__ = [
     "CONFIG_KEY_IDLE_GRACE_S",
@@ -89,17 +86,6 @@ CONFIG_KEY_MAX_HEALS_PER_TICK = "stuck_healer_max_heals_per_tick"
 # task queue in one tick.
 DEFAULT_IDLE_GRACE_S: int = 600
 DEFAULT_MAX_HEALS_PER_TICK: int = 5
-
-# Reserved cursor states that count as NON-resumable. Kept in sync with
-# :data:`aila.platform.tasks.state_reconciler._TERMINAL_CURSOR_STATES`
-# plus the ``__paused__`` operator sentinel; a cursor row in any of these
-# states does not gate the healer because the task-level sweep will not
-# re-enqueue from it (terminal cursors are dead, ``__paused__`` is
-# operator-owned).
-_NON_RESUMABLE_CURSOR_STATES: tuple[str, ...] = (
-    "__crashed__", "__failed__", "__cancelled__", "__succeeded__",
-    "__paused__",
-)
 
 
 # Same shape ``reenqueue_investigation`` accepts for its ``submit_one``:
@@ -147,78 +133,6 @@ async def _resolve_int_config(
     return value
 
 
-async def _fetch_stuck_ids(
-    *,
-    investigations_table: str,
-    running_status_values: tuple[str, ...],
-    inv_timestamp_column: str,
-    cutoff: datetime,
-    limit: int,
-) -> list[tuple[str, datetime]]:
-    """Return (id, timestamp) pairs that match the stuck-but-dead criteria.
-
-    The paired ``timestamp`` is the value of ``inv_timestamp_column`` at
-    SELECT time; the caller feeds it to
-    :func:`aila.platform.services.recovery_claim.try_claim_recovery` as
-    the compare-and-set guard so the mutual exclusion with
-    :mod:`aila.platform.services.stall_recovery` (issue #121) does not
-    require a second SELECT round-trip.
-
-
-    Every clause below MUST hold for a row to appear:
-
-    * ``status`` is in the module's running vocabulary (never a paused,
-      cancelled, or terminal row);
-    * the row's chosen timestamp column is older than the cutoff (so a
-      brand-new run is never healed);
-    * no live ``taskrecord`` references this investigation (any queued /
-      running / waiting task blocks the heal so we do not double-submit);
-    * no ``workflow_state_cursor`` row for this investigation is
-      resumable (a resumable cursor is the task-level sweep's territory).
-
-    The two table identifiers (``investigations_table`` and the timestamp
-    column name) are trusted platform / module constants -- never user
-    input -- so they interpolate into the SQL body directly. Postgres
-    disallows bind parameters for identifiers, and the module-owned
-    identifier surface is small enough that a whitelist would only add
-    noise.
-    """
-    stmt = _sql_text(
-        f"""
-        SELECT inv.id::text AS id,
-               inv.{inv_timestamp_column} AS seen_ts
-        FROM {investigations_table} inv
-        WHERE inv.status = ANY(:running_values)
-          AND inv.{inv_timestamp_column} < :cutoff
-          AND NOT EXISTS (
-              SELECT 1
-              FROM taskrecord t
-              WHERE t.kwargs_json::jsonb->>'investigation_id'
-                    = inv.id::text
-                AND t.status IN ('queued', 'running', 'waiting')
-          )
-          AND NOT EXISTS (
-              SELECT 1
-              FROM workflow_state_cursor c
-              WHERE c.investigation_id = inv.id::text
-                AND c.current_state <> ALL(:non_resumable_states)
-          )
-        ORDER BY inv.{inv_timestamp_column} ASC
-        LIMIT :lim
-        """,
-    ).bindparams(
-        running_values=list(running_status_values),
-        cutoff=cutoff,
-        non_resumable_states=list(_NON_RESUMABLE_CURSOR_STATES),
-        lim=limit,
-    )
-    async with async_session_scope() as session:
-        return [
-            (r["id"], r["seen_ts"])
-            for r in (await session.execute(stmt)).mappings().all()
-        ]
-
-
 async def sweep_stuck_investigations(
     *,
     inv_model: type[Any],
@@ -234,13 +148,20 @@ async def sweep_stuck_investigations(
 ) -> dict[str, Any]:
     """Detect + heal investigations stuck at ``running`` with no worker path.
 
-    Module bindings supply the concrete investigation model, the running-
-    status values that count as "should be making progress", the
-    ``fn_path`` LIKE pattern used to cancel stale tasks in the re-enqueue
-    reset, the module id (for config lookup + recovery event provenance),
-    and the atomic submit primitive. The optional ``branch_model`` /
-    ``branch_status_active`` mirror ``reenqueue_investigation``'s fan-out
-    contract; ``None`` keeps the VR-style single-submit behavior.
+    Module bindings supply the concrete investigation model, the
+    running-status values that count as "should be making progress",
+    the ``fn_path`` LIKE pattern used to cancel stale tasks in the
+    re-enqueue reset, the module id (for config lookup + recovery
+    event provenance), and the atomic submit primitive. The optional
+    ``branch_model`` / ``branch_status_active`` mirror
+    ``reenqueue_investigation``'s fan-out contract; ``None`` keeps the
+    VR-style single-submit behavior.
+
+    Eligibility SELECT + non-resumable cursor set live on
+    :class:`aila.platform.services.recovery_service.PlatformRecoveryService`;
+    this loop owns only the ``STUCK_HEAL`` execution path (atomic
+    claim -> ``reenqueue_investigation`` -> journal a
+    ``kind='recovery'`` ledger event).
 
     Config knobs resolve through :class:`ModuleConfigReader` under the
     module namespace; every module's ``config_schema.py`` declares
@@ -254,17 +175,18 @@ async def sweep_stuck_investigations(
 
         {"examined": int, "healed": int, "ids": list[str]}
 
-    ``examined`` is the number of stuck rows the SELECT returned in this
-    tick (before the per-heal cap). ``healed`` counts successful
-    re-enqueue + journal pairs. ``ids`` lists the investigation ids that
-    actually healed (a per-row failure keeps the id off this list).
+    ``examined`` is the number of stuck rows the SELECT returned in
+    this tick (before the per-heal cap). ``healed`` counts successful
+    re-enqueue + journal pairs. ``ids`` lists the investigation ids
+    that actually healed (a per-row failure keeps the id off this
+    list).
 
-    Best-effort per id: a re-enqueue or journal failure is logged and the
-    sweep continues with the next id. A whole-sweep failure would abort
-    the surrounding periodic-sweep block, so nothing here is allowed to
-    raise unless the SELECT itself fails (which the caller's
-    ``_run_reaper_block`` handles per the existing best-effort cron
-    policy).
+    Best-effort per id: a re-enqueue or journal failure is logged and
+    the sweep continues with the next id. A whole-sweep failure would
+    abort the surrounding periodic-sweep block, so nothing here is
+    allowed to raise unless the SELECT itself fails (which the
+    caller's ``_run_reaper_block`` handles per the existing
+    best-effort cron policy).
     """
     grace_s = idle_grace_s if idle_grace_s is not None else (
         await _resolve_int_config(
@@ -287,7 +209,7 @@ async def sweep_stuck_investigations(
     cutoff = datetime.now(UTC) - timedelta(seconds=grace_s)
 
     try:
-        stuck_ids = await _fetch_stuck_ids(
+        stuck_ids = await PlatformRecoveryService.fetch_stuck_candidates(
             investigations_table=investigations_table,
             running_status_values=running_status_values,
             inv_timestamp_column=inv_timestamp_column,
@@ -312,11 +234,11 @@ async def sweep_stuck_investigations(
         # overlap on ``status=running, no live task, past idle grace``,
         # so the same investigation can appear in both. The atomic
         # compare-and-set on the timestamp column ensures only one
-        # racer proceeds; the loser's UPDATE affects zero rows and this
-        # iteration skips. Bumping the timestamp also hides the row
-        # from the next tick's SELECT until the fresh re-enqueue drives
-        # a turn that settles the row.
-        if not await try_claim_recovery(
+        # racer proceeds; the loser's UPDATE affects zero rows and
+        # this iteration skips. Bumping the timestamp also hides the
+        # row from the next tick's SELECT until the fresh re-enqueue
+        # drives a turn that settles the row.
+        if not await PlatformRecoveryService.try_claim(
             inv_table=investigations_table,
             timestamp_column=inv_timestamp_column,
             inv_id=inv_id,
@@ -338,8 +260,9 @@ async def sweep_stuck_investigations(
                 branch_status_active=branch_status_active,
             )
         except ReenqueueInvestigationError as exc:
-            # Investigation row vanished between SELECT and lock. Log and
-            # skip; the next tick's SELECT will not surface it again.
+            # Investigation row vanished between SELECT and lock. Log
+            # and skip; the next tick's SELECT will not surface it
+            # again.
             _log.info(
                 "stuck_healer[%s]: inv=%s no longer present: %s",
                 module_id, inv_id, exc,
