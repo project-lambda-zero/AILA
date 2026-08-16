@@ -742,8 +742,13 @@ class ConfigRegistry:
         # will pick up the change when their per-key TTL (cache_ttl) elapses.
         await self._bump_version_async()
 
-        # Emit audit event AFTER successful write (D-12, D-14)
-        if self._emitter is not None and self._is_security_relevant(key):
+        # Emit audit event AFTER successful write (D-12, D-14). Security
+        # keys carry the redacted values; every write additionally publishes
+        # a typed ConfigChanged domain event on the shared bus (RFC #134) so
+        # the process-wide journal + Redis cross-process fanout subscribers
+        # see the config change without any per-caller wiring. The typed
+        # publish is fail-open: a broken bus never blocks the write.
+        if self._is_security_relevant(key):
             from ..platform.events.event import PlatformEvent
 
             secret = is_secret_config_key(key)
@@ -751,22 +756,44 @@ class ConfigRegistry:
                 _REDACTED if secret else (str(old_value) if old_value is not None else "")
             )
             new_display = _REDACTED if secret else value
-            self._emitter.emit(PlatformEvent(
-                stage="config_security_change",
-                action="update",
-                key=f"config.{namespace}.{key}",
-                message=f"Security config changed: {namespace}/{key}",
-                details={
-                    "namespace": namespace,
-                    "key": key,
-                    "old_value": old_display,
-                    "new_value": new_display,
-                    "value_hash_sha256": (
-                        _hash_config_change(old_value, value) if secret else None
+            if self._emitter is not None:
+                self._emitter.emit(PlatformEvent(
+                    stage="config_security_change",
+                    action="update",
+                    key=f"config.{namespace}.{key}",
+                    message=f"Security config changed: {namespace}/{key}",
+                    details={
+                        "namespace": namespace,
+                        "key": key,
+                        "old_value": old_display,
+                        "new_value": new_display,
+                        "value_hash_sha256": (
+                            _hash_config_change(old_value, value) if secret else None
+                        ),
+                        "user_id": "system",
+                    },
+                ))
+            try:
+                from ..platform.events import (
+                    ConfigChanged,
+                    ConfigChangedPayload,
+                    publish,
+                )
+
+                publish(ConfigChanged(
+                    source_module="platform.config",
+                    payload=ConfigChangedPayload(
+                        namespace=namespace,
+                        key=key,
+                        old_value=old_display,
+                        new_value=new_display,
                     ),
-                    "user_id": "system",
-                },
-            ))
+                ))
+            except (RuntimeError, OSError, TimeoutError, ValueError, TypeError) as exc:
+                _log.warning(
+                    "config domain-event publish failed for %s/%s: %s",
+                    namespace, key, exc,
+                )
 
     async def all_entries_by_namespace(self) -> dict[str, dict[str, object]]:
         """Resolve all config values grouped by namespace.

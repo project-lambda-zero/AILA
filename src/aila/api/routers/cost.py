@@ -120,12 +120,35 @@ async def get_run_cost_breakdown(
     total_cost = round(sum(m.cost_usd for m in models), 6)
     total_tokens = sum(m.total_tokens for m in models)
 
+    # #155: attach the process-local cache-hit-rate gauge when the
+    # request lands in a process that owns the run's RunMemory (an
+    # in-worker admin surface, an SSE consumer bound to the worker).
+    # An API-only process returns 0.0 -- the operator reads the
+    # process-agnostic mirror from Prometheus
+    # (``aila_llm_cache_hit_ratio{model=...}``).
+    cache_read_tokens = 0
+    cache_write_tokens = 0
+    cache_hit_rate = 0.0
+    try:
+        from aila.platform.llm.prompt_layout import get_cache_metrics
+        from aila.platform.llm.run_memory import RunMemory
+        _run_memory_singleton = RunMemory()
+        gauge = get_cache_metrics(_run_memory_singleton, run_id)
+        cache_read_tokens = int(gauge.get("cache_read_tokens", 0))
+        cache_write_tokens = int(gauge.get("cache_write_tokens", 0))
+        cache_hit_rate = float(gauge.get("cache_hit_rate", 0.0))
+    except (ImportError, RuntimeError, ValueError, TypeError, AttributeError) as exc:
+        _log.debug("cost.runs cache metrics read failed run_id=%s err=%s", run_id, exc)
+
     return DataEnvelope(
         data=CostBreakdownResponse(
             run_id=run_id,
             total_cost_usd=total_cost,
             total_tokens=total_tokens,
             models=models,
+            cache_hit_rate=cache_hit_rate,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
         )
     )
 

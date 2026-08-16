@@ -1244,15 +1244,47 @@ class ToolExecutorHelpersBase:
                     message_id=msg_id, success=False, error=err,
                 )
 
+        # Issue #156: speculative pre-warm CLAIM seam. When
+        # ``platform.speculative_enabled`` is on AND the previous turn's
+        # background prediction pre-warmed this exact
+        # ``(server, tool, canonical(args))`` call, ``claim()`` returns
+        # the cached raw dict and we skip the real ``bridge.forward``
+        # round trip. On disagreement / no-slot / error, ``claim()``
+        # returns ``None`` and the dispatch runs normally so the strong
+        # model's decision is authoritative -- outputs are byte-
+        # identical to the non-speculative path (LOSSLESS by contract).
+        # Every call is best-effort; the deferred import means an
+        # operator with the flag OFF pays for nothing on this hot path.
+        _spec_settings, _prewarmed_raw = await self._maybe_claim_prewarm(
+            branch_id=branch_id,
+            at_turn=at_turn,
+            server_id=server_id,
+            tool_name=tool_name,
+            args=args,
+        )
+
         try:
-            # RFC-07 wire-in: dispatch goes through the ToolRouter when
-            # the module has an RFC-11 descriptor for this server AND
-            # the catalog holds >=1 enabled row matching. Otherwise the
-            # helper falls straight back to direct bridge.forward so
-            # the byte-identical happy-path guarantee holds.
-            raw = await self._dispatch_via_router(
-                bridge, server_id, tool_name, args,
-            )
+            if _prewarmed_raw is not None:
+                # Latency win: the pre-warm task already ran the same
+                # ``bridge.forward`` (against the same instance) so its
+                # ``raw`` dict is byte-identical to what a fresh
+                # dispatch would return. No router call, no MCP round
+                # trip.
+                _log.info(
+                    "tool_executor speculative HIT server=%s tool=%s "
+                    "-- using pre-warmed raw (dispatch skipped)",
+                    server_id, tool_name,
+                )
+                raw = _prewarmed_raw
+            else:
+                # RFC-07 wire-in: dispatch goes through the ToolRouter when
+                # the module has an RFC-11 descriptor for this server AND
+                # the catalog holds >=1 enabled row matching. Otherwise the
+                # helper falls straight back to direct bridge.forward so
+                # the byte-identical happy-path guarantee holds.
+                raw = await self._dispatch_via_router(
+                    bridge, server_id, tool_name, args,
+                )
         except (httpx.HTTPError, OSError, RuntimeError, ValueError, TypeError) as exc:
             # fix §197 -- broadened from (OSError, TimeoutError,
             # RuntimeError). `bridge.forward` reaches into httpx
@@ -1627,6 +1659,25 @@ class ToolExecutorHelpersBase:
                     exc_info=True,
                 )
 
+        # Issue #156: speculative pre-warm ENQUEUE seam. This turn's
+        # tool call has settled; kick off a background prediction of
+        # the NEXT turn's tool call so its bridge round trip runs
+        # concurrently with the strong model's next-turn decision. The
+        # speculator enforces its own read-only + allowed-server safety
+        # guard; it NEVER pre-warms a state-changing tool. Failures
+        # log at INFO and no-op so a broken speculator can never
+        # regress the real dispatch.
+        await self._maybe_enqueue_next_prewarm(
+            settings=_spec_settings,
+            investigation_id=investigation_id,
+            branch_id=branch_id,
+            at_turn=at_turn,
+            server_id=server_id,
+            tool_name=tool_name,
+            args=args,
+            phase_allowed_servers=phase_allowed_servers,
+        )
+
         _log.info(
             "tool_executor OK server=%s tool=%s args=%s summary=%s",
             server_id, tool_name, list(args.keys()), adapter_result.summary,
@@ -1635,3 +1686,203 @@ class ToolExecutorHelpersBase:
             server_id=server_id, tool_name=tool_name,
             message_id=msg_id, success=True,
         )
+
+    # ------------------------------------------------------------------
+    # Issue #156: speculative planning seams.
+    #
+    # Both helpers are best-effort by contract -- every failure branch
+    # (deferred import failure, registry read failure, LLM error,
+    # bridge error) logs at INFO and returns cleanly so the real
+    # dispatch path never observes a speculator-raised exception.
+    # ------------------------------------------------------------------
+    async def _maybe_claim_prewarm(
+        self,
+        *,
+        branch_id: str,
+        at_turn: int | None,
+        server_id: str,
+        tool_name: str,
+        args: dict[str, Any],
+    ) -> tuple[Any, dict[str, Any] | None]:
+        """Return ``(settings, prewarmed_raw_or_None)``.
+
+        A ``settings`` object is returned for reuse by
+        :meth:`_maybe_enqueue_next_prewarm` so both seams share ONE
+        registry read per dispatch. When speculation is disabled OR
+        ``at_turn`` is None (test / cold call), both fields are safe
+        no-op values: ``(None, None)`` short-circuits the enqueue seam.
+        """
+        if at_turn is None:
+            return None, None
+        # Fast off-path: one cached-registry boolean read. When the flag
+        # is off we skip the deferred speculator import entirely so the
+        # heavy ``services`` init graph never loads unless the operator
+        # opted in.
+        try:
+            _reg = ConfigRegistry()
+            enabled_raw = await _reg.get("platform", "speculative_enabled")
+        except (OSError, RuntimeError, ValueError, TypeError, SQLAlchemyError):
+            return None, None
+        if not (
+            enabled_raw is True
+            or str(enabled_raw).strip().lower() in {"1", "true", "yes", "on"}
+        ):
+            return None, None
+        try:
+            from aila.platform.services.speculator import (
+                get_default_speculator,
+                resolve_speculation_settings,
+            )
+        except ImportError as exc:  # pragma: no cover - defensive
+            _log.info(
+                "speculator: deferred import failed (%s: %s) -- "
+                "dispatch proceeds normally",
+                type(exc).__name__, exc,
+            )
+            return None, None
+        try:
+            settings = await resolve_speculation_settings(_reg)
+        except (OSError, RuntimeError, ValueError, TypeError, SQLAlchemyError) as exc:
+            _log.info(
+                "speculator: settings resolve failed (%s: %s)",
+                type(exc).__name__, exc,
+            )
+            return None, None
+        if not settings.enabled:
+            return settings, None
+        try:
+            raw = await get_default_speculator().claim(
+                branch_id=branch_id,
+                turn_number=at_turn,
+                server_id=server_id,
+                tool_name=tool_name,
+                args=args,
+                wait_timeout_s=settings.claim_wait_timeout_s,
+            )
+        except (OSError, RuntimeError, ValueError, TypeError,
+                AttributeError, SQLAlchemyError) as exc:
+            _log.info(
+                "speculator: claim failed (best-effort) tool=%s.%s: %s",
+                server_id, tool_name, exc,
+            )
+            return settings, None
+        return settings, raw
+
+    async def _maybe_enqueue_next_prewarm(
+        self,
+        *,
+        settings: Any,
+        investigation_id: str,
+        branch_id: str,
+        at_turn: int | None,
+        server_id: str,
+        tool_name: str,
+        args: dict[str, Any],
+        phase_allowed_servers: frozenset[str] | None,
+    ) -> None:
+        """Kick off the next-turn speculation task in the background."""
+        if settings is None or not settings.enabled or at_turn is None:
+            return
+        try:
+            from aila.platform.services.speculator import (
+                get_default_speculator,
+            )
+        except ImportError:  # pragma: no cover - defensive
+            _log.debug("speculator module unavailable; skipping prewarm enqueue")
+            return
+        try:
+            recent_history = await self._recent_tool_history_for_speculator(
+                branch_id, limit=settings.history_max_messages,
+            )
+        except (OSError, RuntimeError, ValueError, TypeError, SQLAlchemyError) as exc:
+            _log.info(
+                "speculator: recent-history fetch failed (%s: %s) -- "
+                "enqueuing with just-completed dispatch only",
+                type(exc).__name__, exc,
+            )
+            recent_history = []
+        # Always append the just-completed dispatch so the prediction
+        # sees the freshest branch state (the DB message row may still
+        # be racing the read).
+        recent_history.append(
+            {"server": server_id, "tool": tool_name, "args": args},
+        )
+        effective_allowed: frozenset[str] | None
+        module_allowed = self._AGENT_ALLOWED_SERVERS
+        if module_allowed is None and phase_allowed_servers is None:
+            effective_allowed = None
+        elif module_allowed is None:
+            effective_allowed = phase_allowed_servers
+        elif phase_allowed_servers is None:
+            effective_allowed = module_allowed
+        else:
+            effective_allowed = frozenset(
+                module_allowed & phase_allowed_servers,
+            )
+        try:
+            await get_default_speculator().enqueue_next(
+                investigation_id=investigation_id,
+                branch_id=branch_id,
+                target_turn=at_turn + 1,
+                recent_tool_history=recent_history,
+                allowed_servers=effective_allowed,
+                read_tools=self._read_tools(),
+                bridge_for=self._bridge_for,
+                registry=ConfigRegistry(),
+                settings=settings,
+            )
+        except (OSError, RuntimeError, ValueError, TypeError,
+                AttributeError, SQLAlchemyError) as exc:
+            _log.info(
+                "speculator: enqueue failed (best-effort) branch=%s: %s",
+                branch_id[:8], exc,
+            )
+
+    async def _recent_tool_history_for_speculator(
+        self, branch_id: str, *, limit: int,
+    ) -> list[dict[str, Any]]:
+        """Return the branch's most recent ``limit`` tool_call payloads.
+
+        Returns a chronologically-ordered list of
+        ``{"server", "tool", "args"}`` dicts (oldest → newest). Called
+        from :meth:`_maybe_enqueue_next_prewarm`; on any DB error the
+        caller falls back to the just-completed dispatch alone.
+        """
+        if limit <= 0:
+            return []
+        # Fetch a small window; the speculator only uses the tail.
+        # Reads directly rather than through a subclass hook to keep the
+        # speculator wiring self-contained.
+        window = max(limit * 2, 8)
+        async with UnitOfWork() as uow:
+            rows = (await uow.session.exec(
+                _select(self._message_model)
+                .where(self._message_model.branch_id == branch_id)
+                .where(
+                    self._message_model.payload_kind
+                    == PayloadKind.TOOL_CALL.value,
+                )
+                .order_by(self._message_model.created_at.desc())
+                .limit(window)
+            )).all()
+        history: list[dict[str, Any]] = []
+        # Rows come newest→oldest; reverse for chronological order.
+        for row in reversed(rows):
+            try:
+                payload = json.loads(row.payload_json or "{}")
+                cmd = json.loads(payload.get("command") or "{}")
+            except (ValueError, TypeError):
+                continue
+            tool_id = cmd.get("tool")
+            cmd_args = cmd.get("args") or {}
+            if not isinstance(tool_id, str) or not isinstance(cmd_args, dict):
+                continue
+            server_id, _, tool_name = tool_id.partition(".")
+            if not server_id or not tool_name:
+                continue
+            history.append({
+                "server": server_id,
+                "tool": tool_name,
+                "args": cmd_args,
+            })
+        return history[-limit:]

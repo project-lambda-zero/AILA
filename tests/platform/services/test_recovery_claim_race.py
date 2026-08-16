@@ -42,7 +42,7 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
     VRWorkspaceRecord,
 )
-from aila.platform.services import stuck_healer as _sh_mod
+from aila.platform.services import recovery_service as _rec_mod
 from aila.platform.services.recovery_claim import try_claim_recovery
 from aila.platform.services.stall_recovery import (
     sweep_stalled_investigations,
@@ -199,7 +199,12 @@ async def test_stall_recovery_and_stuck_healer_double_submit_blocked(
             "investigation_id": investigation_id,
         }
 
-    monkeypatch.setattr(_sh_mod, "reenqueue_investigation", _capture_reenqueue)
+    # Issue #133: reenqueue_investigation is imported once at module load
+    # by aila.platform.services.recovery_service (which owns the unified
+    # STUCK_HEAL execution path). stall_recovery + stuck_healer are now
+    # thin back-compat wrappers that delegate to the unified sweep, so
+    # the monkeypatch target has moved with the callsite.
+    monkeypatch.setattr(_rec_mod, "reenqueue_investigation", _capture_reenqueue)
 
     async def _noop_submit_one(_inv_id: str, _branch_id: str | None) -> None:
         return None

@@ -862,6 +862,21 @@ def state_investigation_emit(
                 investigation_id, exc,
             )
 
+        # RFC #149 auto-patch trigger. Fires ONLY when the module bound
+        # a patcher task AND the operator has enabled the platform
+        # ``autopatch_enabled`` flag AND the canonical outcome carries
+        # a confirmed verifier verdict with no prior ``patch_report``.
+        # Default OFF: this call short-circuits with no-op on every
+        # existing deployment (byte-identical to pre-#149 flow).
+        if bindings.patcher_task_fn is not None:
+            try:
+                await _maybe_trigger_patcher(investigation_id)
+            except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+                _log.warning(
+                    "investigation_emit PATCHER_TRIGGER FAILED inv=%s err=%s",
+                    investigation_id, exc,
+                )
+
         # Post-completion proposers \u2014 best-effort. PatternProposer drafts
         # reusable patterns (YARA templates / unpacker recipes / family
         # fingerprints / config-extractor templates) from accepted
@@ -1106,6 +1121,103 @@ def state_investigation_emit(
         )
         _log.info(
             "investigation_emit VERIFIER queued investigation_id=%s",
+            investigation_id,
+        )
+
+
+    async def _maybe_trigger_patcher(investigation_id: str) -> None:
+        """Enqueue :class:`PatchingService` when the operator has enabled
+        ``platform.autopatch_enabled`` AND the claim verifier just wrote
+        a confirmed verdict on the canonical outcome.
+
+        Fires from the same emit chokepoint the verifier does, and only
+        after :func:`_maybe_trigger_verifier` above -- so the verifier
+        task has already been queued by the time this runs. The gate
+        that keeps the patcher from firing before the verifier finishes
+        is the ``verifier_report`` presence check below: a race where
+        the operator sees the emit tick before the verifier task
+        completes simply skips this fire; the NEXT emit tick (fired by
+        the verifier task's own outcome update at commit time) picks
+        the trigger up idempotently.
+
+        Idempotent on four levels:
+          1. Module bound a ``patcher_task_fn`` (short-circuit above).
+          2. ``inv.status`` is terminal (COMPLETED / FAILED).
+          3. Canonical outcome carries a ``verifier_report`` with
+             ``verdict == 'confirmed'``.
+          4. No prior ``patch_report`` on the payload (retry safety).
+
+        Config-gated on ``platform.autopatch_enabled`` -- read once per
+        fire through :class:`PatchingService.is_enabled` so the
+        registry cache handles the hot path and a PUT /config flip
+        lands on the next terminal investigation.
+        """
+        # Deferred import breaks the otherwise-inevitable cycle from
+        # platform.workflows -> platform.services.patching ->
+        # storage.db_models -> platform.workflows. The corresponding
+        # PLC0415 suppression lives in pyproject.toml's per-file-ignores
+        # for this file (repo policy is per-file-ignores, not inline noqa).
+        from aila.config import get_settings
+        from aila.platform.config import build_platform_settings
+        from aila.platform.services.patching import PatchingService
+
+        try:
+            platform_settings = build_platform_settings(get_settings())
+        except (OSError, RuntimeError, ValueError) as exc:
+            _log.warning(
+                "investigation_emit PATCHER settings build failed inv=%s err=%s",
+                investigation_id, exc,
+            )
+            return
+        patching_service = PatchingService(platform_settings)
+        if not await patching_service.is_enabled():
+            return  # operator opt-out -- default OFF
+
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _select(bindings.inv_model).where(
+                    bindings.inv_model.id == investigation_id,
+                )
+            )).first()
+            if inv is None:
+                return
+            if inv.status not in (
+                InvestigationStatus.COMPLETED.value,
+                InvestigationStatus.FAILED.value,
+            ):
+                return  # verifier itself gates on terminal; mirror it
+            canonical = (await uow.session.exec(
+                _select(bindings.outcome_model)
+                .where(bindings.outcome_model.investigation_id == investigation_id)
+                .order_by(bindings.outcome_model.created_at.asc())
+                .limit(1),
+            )).first()
+            if canonical is None:
+                return
+            try:
+                payload = json.loads(canonical.payload_json or "{}")
+            except (ValueError, TypeError):
+                payload = {}
+            vr = payload.get("verifier_report") or {}
+            if not isinstance(vr, dict) or vr.get("verdict") != "confirmed":
+                # Verifier hasn't run yet, or verdict is refuted /
+                # inconclusive -- no patch to synthesise.
+                return
+            if payload.get("patch_report"):
+                return  # already patched -- task-side agent also gates
+            team_id = inv.team_id
+
+        task_queue = bindings.task_queue_factory()
+        await task_queue.submit(
+            track=bindings.track,
+            fn=bindings.patcher_task_fn,
+            kwargs={"investigation_id": investigation_id},
+            user_id="system",
+            group_id=f"{bindings.track}_auto_patch",
+            team_id=team_id,
+        )
+        _log.info(
+            "investigation_emit PATCHER queued investigation_id=%s",
             investigation_id,
         )
 

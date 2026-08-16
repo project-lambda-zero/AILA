@@ -44,6 +44,7 @@ __all__ = [
     "GEN_AI_SYSTEM_AILA",
     "SpanHandle",
     "gen_ai_span",
+    "inject_trace_context",
     "is_otel_available",
     "is_otel_enabled",
 ]
@@ -81,12 +82,14 @@ _TELEMETRY_SAFE_ERRORS = (
 # the opentelemetry namespace.
 try:  # pragma: no cover - import-time branch, exercised by presence/absence of extra
     from opentelemetry import trace as _otel_trace
+    from opentelemetry.propagate import inject as _otel_propagate_inject
     from opentelemetry.trace import Status as _OtelStatus
     from opentelemetry.trace import StatusCode as _OtelStatusCode
 
     _OTEL_AVAILABLE = True
 except ImportError:  # pragma: no cover - exercised on base install
     _otel_trace = None  # type: ignore[assignment]
+    _otel_propagate_inject = None  # type: ignore[assignment]
     _OtelStatus = None  # type: ignore[assignment]
     _OtelStatusCode = None  # type: ignore[assignment]
     _OTEL_AVAILABLE = False
@@ -268,3 +271,28 @@ def gen_ai_span(
             raise
         else:
             handle.set_ok()
+
+
+def inject_trace_context(headers: dict[str, str]) -> None:
+    """Inject the active span's W3C trace context into ``headers`` in place.
+
+    Adds the ``traceparent`` (and, when present, ``tracestate``) header
+    to the supplied dict so an outbound MCP request carries the current
+    span context across the process boundary. The downstream server
+    (audit-mcp / ida-headless / semble / ...) can then attach its own
+    spans as children of the caller's span through any W3C
+    trace-context-aware receiver.
+
+    No-op when otel is not installed OR :func:`is_otel_enabled` is
+    False -- the request goes out byte-identical to the pre-otel path,
+    matching the module's opt-in, side-effect-free contract. Uses the
+    globally-configured propagator (``opentelemetry.propagate.inject``)
+    so an operator switching in b3/jaeger propagators via
+    ``OTEL_PROPAGATORS`` env is honoured without a code change.
+    """
+    if not is_otel_enabled() or _otel_propagate_inject is None:
+        return
+    try:
+        _otel_propagate_inject(headers)
+    except _TELEMETRY_SAFE_ERRORS:
+        logger.debug("otel propagate.inject failed", exc_info=True)

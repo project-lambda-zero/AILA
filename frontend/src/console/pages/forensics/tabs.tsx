@@ -12,6 +12,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch, ApiError } from "../../../api/client";
+import { asRecord, readArray, readNum, readStr } from "../../../api/parse";
 import { css } from "../../css";
 
 import {
@@ -941,15 +942,15 @@ export function FindingsTab({ projectId }: TabProps): JSX.Element {
       field: "suspicious_reasons",
       label: "reasons",
       render: (r) => {
-        const rs = (r as Record<string, unknown>).suspicious_reasons;
-        return Array.isArray(rs) ? rs.join(", ") : "\u2014";
+        const rs = readArray(r, "suspicious_reasons");
+        return rs ? rs.join(", ") : "\u2014";
       },
     },
     {
       field: "occurrences",
       label: "count",
       width: 70,
-      render: (r) => String((r as Record<string, unknown>).occurrences ?? 1),
+      render: (r) => String(readNum(r, "occurrences") ?? 1),
     },
   ];
   return (
@@ -976,23 +977,23 @@ export function FindingsTab({ projectId }: TabProps): JSX.Element {
           <div style={css("padding:11px 13px;display:flex;flex-direction:column;gap:12px;")}>
             <KV
               entries={[
-                ["fingerprint", (row.fingerprint as string) ?? "\u2014"],
-                ["artifact type", (row.artifact_type as string) ?? "\u2014"],
-                ["artifact family", (row as Record<string, unknown>).artifact_family],
-                ["source tool", (row as Record<string, unknown>).source_tool],
-                ["executable", (row.executable as string) ?? "\u2014"],
-                ["path", (row.path as string) ?? "\u2014"],
-                ["name", (row.name as string) ?? "\u2014"],
-                ["user", (row.user as string) ?? "\u2014"],
-                ["reasons", (row as Record<string, unknown>).suspicious_reasons],
-                ["last run", (row as Record<string, unknown>).last_run],
-                ["run count", (row as Record<string, unknown>).run_count],
-                ["occurrences", (row as Record<string, unknown>).occurrences],
+                ["fingerprint", readStr(row, "fingerprint") ?? "\u2014"],
+                ["artifact type", readStr(row, "artifact_type") ?? "\u2014"],
+                ["artifact family", row["artifact_family"]],
+                ["source tool", row["source_tool"]],
+                ["executable", readStr(row, "executable") ?? "\u2014"],
+                ["path", readStr(row, "path") ?? "\u2014"],
+                ["name", readStr(row, "name") ?? "\u2014"],
+                ["user", readStr(row, "user") ?? "\u2014"],
+                ["reasons", row["suspicious_reasons"]],
+                ["last run", row["last_run"]],
+                ["run count", row["run_count"]],
+                ["occurrences", row["occurrences"]],
               ]}
             />
             <div>
               <div style={css("font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);margin:6px 0 4px;")}>raw record</div>
-              <DictPanel data={((row as Record<string, unknown>).raw_record as Record<string, unknown>) ?? {}} />
+              <DictPanel data={asRecord(row["raw_record"]) ?? {}} />
             </div>
           </div>
         )}
@@ -1185,9 +1186,10 @@ function StructuredAnalysisTab<T extends Record<string, unknown>>({
   }
   const data = q.data;
   if (!data) return <div style={emptyNote}>no data.</div>;
-  const activeRows = (data as Record<string, unknown>)[active];
-  const rows = Array.isArray(activeRows) ? (activeRows as Record<string, unknown>[]) : [];
-  const stats = statsKey ? ((data as Record<string, unknown>)[statsKey] as Record<string, unknown>) : null;
+  const rows = (readArray(data, active) ?? []).filter(
+    (r): r is Record<string, unknown> => asRecord(r) !== null,
+  );
+  const stats = statsKey ? asRecord(data[statsKey]) : null;
 
   return (
     <Panel
@@ -1196,8 +1198,8 @@ function StructuredAnalysisTab<T extends Record<string, unknown>>({
       right={
         <div style={css("display:flex;gap:4px;flex-wrap:wrap;")}>
           {sections.map(([k, label]) => {
-            const src = (data as Record<string, unknown>)[k];
-            const n = Array.isArray(src) ? src.length : 0;
+            const src = readArray(data, k as string);
+            const n = src ? src.length : 0;
             return (
               <button
                 key={k}
@@ -1318,9 +1320,7 @@ function TableWithDetail<R>({
                 : detail
                 ? (
                   <div style={css("padding:11px 13px;")}>
-                    <KV
-                      entries={Object.entries(detail as Record<string, unknown>).map(([k, v]) => [k, v])}
-                    />
+                    <KV entries={Object.entries(asRecord(detail) ?? {})} />
                   </div>
                 )
                 : null}

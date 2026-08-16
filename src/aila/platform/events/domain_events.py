@@ -5,14 +5,24 @@ DomainEvent and carry typed Pydantic payloads. Events carry IDs not
 full objects -- consumers query services for details.
 
 The platform owns only generic, cross-module infrastructure events
-(system lifecycle, config change, assessment lifecycle, LLM call
-accounting). Module-domain vocabulary (a scan, a finding, an
-investigation) is NOT a platform concern -- a module that needs to
-publish a workflow or entity event declares its own event in its own
-package. The scan/finding events that once lived here were never
-emitted; they were removed (RFC-05 concern c) and the
+(system lifecycle, config change, LLM call accounting, generic
+module workflow lifecycle, per-run workflow-stage announcements).
+Module-domain vocabulary (a scan, a finding, an investigation) is
+NOT a platform concern -- a module that needs to publish a workflow
+or entity event declares its own event in its own package. The
+scan/finding events that once lived here were never emitted; they
+were removed (RFC-05 concern c) and the
 platform_owns_event_vocabulary honesty rule blocks re-adding
 domain-named event classes here.
+
+RFC #134 -- consolidation. The frozen ``PlatformEvent`` per-request
+stage payload was folded into :class:`WorkflowStageAnnounced` so
+every per-request stage announcement travels the same typed
+:func:`aila.platform.events.publish` path as the process-wide domain
+events. The obsolete ``AssessmentCreated`` / ``AssessmentCompleted``
+and ``ModuleEntityBatchUpserted`` types had no publishers in the
+codebase and were deleted as part of the same pass; wire them
+back in on the module side when a real need arrives.
 
 Frozen dataclasses prevent mutation after creation (T-165-01 mitigation).
 """
@@ -30,17 +40,11 @@ from ..contracts._common import utc_now
 from ..llm.correlation import current_join_keys
 
 __all__ = [
-    "AssessmentCompleted",
-    "AssessmentCompletedPayload",
-    "AssessmentCreated",
-    "AssessmentCreatedPayload",
     "ConfigChanged",
     "ConfigChangedPayload",
     "DomainEvent",
     "LlmCallCompleted",
     "LlmCallCompletedPayload",
-    "ModuleEntityBatchUpserted",
-    "ModuleEntityBatchUpsertedPayload",
     "ModuleWorkflowCompleted",
     "ModuleWorkflowCompletedPayload",
     "ModuleWorkflowStarted",
@@ -49,6 +53,8 @@ __all__ = [
     "SystemDeregisteredPayload",
     "SystemRegistered",
     "SystemRegisteredPayload",
+    "WorkflowStageAnnounced",
+    "WorkflowStagePayload",
 ]
 
 # --- Base ---
@@ -103,20 +109,6 @@ class SystemDeregisteredPayload(BaseModel):
     reason: str
 
 
-class AssessmentCreatedPayload(BaseModel):
-    """Payload for assessment.created events."""
-
-    session_id: str
-    framework: str
-
-
-class AssessmentCompletedPayload(BaseModel):
-    """Payload for assessment.completed events."""
-
-    session_id: str
-    score: float
-
-
 class ConfigChangedPayload(BaseModel):
     """Payload for config.changed events."""
 
@@ -164,18 +156,32 @@ class ModuleWorkflowCompletedPayload(BaseModel):
     metrics: JsonObject = Field(default_factory=dict)
 
 
-class ModuleEntityBatchUpsertedPayload(BaseModel):
-    """Payload for module.entity.batch_upserted events.
+class WorkflowStagePayload(BaseModel):
+    """Payload for workflow.stage.announced events (RFC #134).
 
-    Generic bulk-upsert notification. ``entity_type`` is a
-    module-scoped table/entity name; ``items`` carries the upserted
-    rows as plain JSON objects so subscribers do not need module
-    imports.
+    Carries the per-request lifecycle-stage announcement that used to
+    ride the ``PlatformEvent`` frozen dataclass through the parallel
+    ``EventEmitter`` system. Every workflow phase transition, LLM
+    pipeline audit checkpoint, config-security change, and platform
+    tool exec is now a typed event on the single bus so subscribers
+    (journal, cross-process Redis fanout, per-request audit_db /
+    run_history / progress / redis_stream destinations) receive them
+    through one path.
+
+    Fields mirror the legacy PlatformEvent shape so the migration is
+    a payload-swap at each call site; the ``details`` JsonObject holds
+    the arbitrary structured context a stage wants to attach.
     """
 
-    module_id: str
-    entity_type: str
-    items: list[JsonObject] = Field(default_factory=list)
+    stage: str
+    action: str
+    key: str
+    message: str
+    details: JsonObject = Field(default_factory=dict)
+    run_id: str = ""
+    current: int | None = None
+    total: int | None = None
+    progress_message: str | None = None
 
 
 # --- Events (frozen dataclasses inheriting DomainEvent) ---
@@ -198,28 +204,6 @@ class SystemDeregistered(DomainEvent):
     event_type: str = "system.deregistered"
     payload: SystemDeregisteredPayload = field(
         default_factory=lambda: SystemDeregisteredPayload(system_id="", reason=""),
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class AssessmentCreated(DomainEvent):
-    """Emitted when a new security assessment session begins."""
-
-    event_type: str = "assessment.created"
-    payload: AssessmentCreatedPayload = field(
-        default_factory=lambda: AssessmentCreatedPayload(
-            session_id="", framework="",
-        ),
-    )
-
-
-@dataclass(frozen=True, slots=True)
-class AssessmentCompleted(DomainEvent):
-    """Emitted when a security assessment session finishes."""
-
-    event_type: str = "assessment.completed"
-    payload: AssessmentCompletedPayload = field(
-        default_factory=lambda: AssessmentCompletedPayload(session_id="", score=0.0),
     )
 
 
@@ -277,12 +261,26 @@ class ModuleWorkflowCompleted(DomainEvent):
 
 
 @dataclass(frozen=True, slots=True)
-class ModuleEntityBatchUpserted(DomainEvent):
-    """Emitted when a module upserts a batch of domain entities."""
+class WorkflowStageAnnounced(DomainEvent):
+    """Emitted at every per-request workflow-stage transition (RFC #134).
 
-    event_type: str = "module.entity.batch_upserted"
-    payload: ModuleEntityBatchUpsertedPayload = field(
-        default_factory=lambda: ModuleEntityBatchUpsertedPayload(
-            module_id="", entity_type="",
+    Carries the payload the legacy ``PlatformEvent`` used to hold. Fired
+    from LLM pipeline steps (classify / gate / validate / verify / seal),
+    the platform module's tool-execution surface, the orchestrator's
+    routing and dispatch phases, the config-registry security-change
+    write, and any other per-run-scoped lifecycle notification.
+
+    Subscribers on the process-wide bus receive it through the same
+    :func:`publish` path as every other domain event; the per-request
+    :class:`aila.platform.events.emitter.EventEmitter` additionally
+    dispatches to its four run-scoped destinations (audit_db /
+    run_history / progress / redis_stream) when the payload's
+    ``run_id`` matches the emitter's scope.
+    """
+
+    event_type: str = "workflow.stage.announced"
+    payload: WorkflowStagePayload = field(
+        default_factory=lambda: WorkflowStagePayload(
+            stage="", action="", key="", message="",
         ),
     )

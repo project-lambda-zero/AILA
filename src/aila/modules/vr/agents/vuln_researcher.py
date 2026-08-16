@@ -39,6 +39,7 @@ from sqlmodel import select as _select
 
 from aila.modules.vr._task_queue import default_task_queue
 from aila.modules.vr.agents.claim_verifier import is_negative_finding_claim
+from aila.modules.vr.agents.explorer_planner import maybe_run_explorer_planner
 from aila.modules.vr.agents.persona_router import resolve_task_type
 from aila.modules.vr.contracts import (
     OutcomeKind,
@@ -80,6 +81,9 @@ from aila.platform.contracts.reasoning import (
     ReasoningContract,
     ReasoningPromptContext,
     ReasoningTurnDecision,
+)
+from aila.platform.llm.prompt_layout import (
+    is_prompt_layout_enabled as _is_prompt_layout_enabled,
 )
 from aila.platform.mcp.adapters import (
     KNOWN_TOOLS,
@@ -203,6 +207,9 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
     _error_cls = VulnResearcherError
     _result_cls = VulnResearcherTurnResult
     _message_model = VRInvestigationMessageRecord
+    # RFC-24 step 3 -- scopes the RETRIEVED-tier populator to this
+    # module's observation namespace (``vr.observation.workspace.<id>*``).
+    _MODULE_ID = "vr"
     _branch_model = VRInvestigationBranchRecord
     _OUTCOME_STATE_APPROVED = OUTCOME_STATE_APPROVED
 
@@ -336,7 +343,24 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         there is no live focus yet (setup retrieval stands), when the focus is
         unchanged, or when no workspace id is resolvable. The resolver is
         best-effort and never raises into the turn.
+
+        Wave-3 explorer/planner hook (issue #95): before the RFC-12
+        retrieval refresh, run the VR-scoped explorer/planner pass
+        gated on ``platform.vr_explorer_enabled`` (env
+        ``AILA_PLATFORM_VR_EXPLORER_ENABLED``). When the flag is OFF
+        (default), :func:`maybe_run_explorer_planner` returns before
+        any DB read / LLM construction / observable write, so this
+        method's behaviour is byte-identical to today. When the flag
+        is ON, the helper injects a ``_directive.explorer_top_lead``
+        observable that the prompt's active-directives section
+        surfaces on the next turn.
         """
+        await maybe_run_explorer_planner(
+            investigation_id=self.investigation_id,
+            branch_id=self.branch_id,
+            case_state=case_state,
+        )
+
         claims = [
             h.claim for h in (case_state.hypotheses or [])
             if getattr(h, "claim", None)
@@ -718,7 +742,16 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         target_kind = (target_snapshot or {}).get("kind")
         primary_language = (target_snapshot or {}).get("primary_language")
 
-        header_body = (
+        # #155: the header body is split into a stable prefix
+        # (investigation-wide facts that do NOT change turn-to-turn)
+        # and a dynamic suffix (turn + branch marker). When
+        # ``prompt_layout_enabled`` is on, the reorder pass below places
+        # the stable prefix in the immutable segment so provider prompt
+        # caches stay warm across turns. When the flag is off, the two
+        # halves are concatenated with the original two-newline
+        # separator so the assembled body is byte-identical to
+        # pre-#155.
+        header_body_stable = (
             "# Investigation\n"
             "\n"
             f"Title: {inv.title}\n"
@@ -726,9 +759,14 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             f"Question: {inv.initial_question}\n"
             f"Primary target: {inv.target_id}\n"
             f"Secondary targets: {secondary_str}\n"
-            f"Strategy: {inv.strategy_family}\n"
+            f"Strategy: {inv.strategy_family}"
+        )
+        header_body_dynamic = (
             f"Turn: {turn}\n"
             f"Branch: {branch.id} (persona: {branch.persona_voice or 'none'})"
+        )
+        header_body = (
+            header_body_stable + "\n" + header_body_dynamic
         )
 
         sections: list[ContextSection] = []
@@ -882,6 +920,26 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             ),
             droppable=False,
         ))
+
+        # #155: apply the immutable-prefix / mutable-tail reorder when
+        # the platform flag is on. This is a POST-processing pass on
+        # the assembled ``sections`` list -- it splits
+        # ``investigation_header`` into the stable prefix (title / kind
+        # / question / target / strategy) and the mutable suffix (turn +
+        # branch), then stable-sorts every section by its declared
+        # layout kind so IMMUTABLE segments render first and the
+        # provider prompt-cache stays warm turn-over-turn. Flag off =
+        # sections list is left in original insertion order (behaviour
+        # preserved).
+        layout_enabled = _is_prompt_layout_enabled(
+            getattr(self._engine, "_config_registry", None),
+        )
+        if layout_enabled:
+            sections = _reorder_sections_for_prompt_layout(
+                sections,
+                stable_header_body=header_body_stable,
+                dynamic_header_body=header_body_dynamic,
+            )
 
         context = ReasoningPromptContext(
             turn=turn,
@@ -2389,6 +2447,88 @@ def _render_cve_intel_section(entries: list[dict[str, Any]]) -> str:
         lines.append("")
     return "\n".join(lines) + "\n"
 
+
+
+# ---------------------------------------------------------------------------
+# #155 prompt-layout section categorisation
+# ---------------------------------------------------------------------------
+#
+# Every ``ContextSection`` label produced by ``_build_user_prompt`` above
+# belongs to exactly ONE of the two layout kinds:
+#
+#   IMMUTABLE -- byte-identical across turns of the same investigation
+#                (system-adjacent content: stable header fields, target
+#                snapshot, available-tools catalog, response contract).
+#   MUTABLE   -- may change turn-over-turn (operator steering, active
+#                directives, per-turn header line, case model, CVE intel,
+#                applicable patterns, prior submissions, sibling context,
+#                retrieved knowledge, any label not otherwise classified).
+#
+# The reorder pass stable-sorts the section list so every IMMUTABLE
+# section precedes every MUTABLE section while preserving relative
+# order within each group. Anthropic / OpenAI provider caches key on
+# the first N bytes of the assembled prompt; keeping those bytes
+# byte-stable across turns collapses per-turn prefill cost to the
+# cached-read price (roughly 10% on Anthropic, per issue #155
+# citations).
+_LAYOUT_IMMUTABLE_LABELS: frozenset[str] = frozenset({
+    "investigation_header_stable",
+    "target_snapshot",
+    "available_tools",
+    "instruction",
+})
+
+
+def _reorder_sections_for_prompt_layout(
+    sections: list[ContextSection],
+    *,
+    stable_header_body: str,
+    dynamic_header_body: str,
+) -> list[ContextSection]:
+    """Return a section list ordered for the #155 prompt-layout contract.
+
+    Transformations:
+
+    1. Locate the fused ``investigation_header`` section and REPLACE
+       it with two sections: ``investigation_header_stable`` (PINNED,
+       IMMUTABLE) followed by ``investigation_header_dynamic`` (PINNED,
+       MUTABLE). The stable half carries the title / kind / question /
+       target / strategy lines that do not change per turn; the
+       dynamic half carries the turn + branch marker.
+    2. Stable-sort the result by layout kind: every IMMUTABLE label
+       (``investigation_header_stable``, ``target_snapshot``,
+       ``available_tools``, ``instruction``) sorts before every
+       MUTABLE label. Relative order within each group is preserved so
+       the operator-facing top-to-bottom reading of the assembled
+       prompt stays predictable.
+
+    ``ContextSection`` is frozen -- the sort produces a NEW list; the
+    caller's original list is untouched. The assembler downstream sees
+    the reordered list and renders sections in insertion order, so the
+    reordered prefix bytes are what land in the LLM request.
+    """
+    split: list[ContextSection] = []
+    for section in sections:
+        if section.label == "investigation_header":
+            split.append(ContextSection(
+                tier=ContextTier.PINNED,
+                label="investigation_header_stable",
+                body=stable_header_body,
+                droppable=False,
+            ))
+            split.append(ContextSection(
+                tier=ContextTier.PINNED,
+                label="investigation_header_dynamic",
+                body=dynamic_header_body,
+                droppable=False,
+            ))
+        else:
+            split.append(section)
+
+    def _sort_key(s: ContextSection) -> int:
+        return 0 if s.label in _LAYOUT_IMMUTABLE_LABELS else 1
+
+    return sorted(split, key=_sort_key)
 
 
 def _render_operator_messages_section(messages: list[dict[str, Any]]) -> str:

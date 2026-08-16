@@ -41,6 +41,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
@@ -54,6 +55,11 @@ from aila.platform.mcp.instance_catalog import (
     McpInstanceCatalog,
     McpServerInstance,
     decode_capability_tags,
+)
+from aila.platform.observability.otel import (
+    GEN_AI_OPERATION_EXECUTE_TOOL,
+    gen_ai_span,
+    inject_trace_context,
 )
 from aila.storage.registry import ConfigRegistry
 
@@ -541,12 +547,26 @@ class McpClient:
     async def _http_post(
         self, url: str, payload: dict[str, Any], timeout: float,
     ) -> httpx.Response:
-        """POST ``payload`` to ``url`` via the pool or a fresh client."""
+        """POST ``payload`` to ``url`` via the pool or a fresh client.
+
+        The ``headers`` dict is populated by the otel propagator when
+        ``platform.otel_enabled`` is on -- injecting the active span's
+        W3C ``traceparent`` / ``tracestate`` so the downstream MCP
+        server (audit-mcp / ida-headless / semble / ...) can stitch its
+        own spans onto the caller's trace. When otel is absent or the
+        flag is off, :func:`inject_trace_context` is a no-op and the
+        headers dict stays empty -- httpx sends the same bytes as the
+        pre-otel path (RFC #160).
+        """
+        headers: dict[str, str] = {}
+        inject_trace_context(headers)
         if self._persistent_pool:
             client = await self._pooled_client()
-            return await client.post(url, json=payload, timeout=timeout)
+            return await client.post(
+                url, json=payload, headers=headers, timeout=timeout,
+            )
         async with httpx.AsyncClient(timeout=timeout) as client:
-            return await client.post(url, json=payload)
+            return await client.post(url, json=payload, headers=headers)
 
     async def aclose(self) -> None:
         """Close the pool client if one was opened. No-op otherwise."""
@@ -572,10 +592,51 @@ class McpClient:
         "error": "..."}`` envelope so the caller never branches on the
         transport layer. Status classification is byte-identical to the
         pre-Tier-C bridge dispatch.
+
+        Wrapped in a GenAI ``execute_tool`` span (RFC #160) so the
+        outbound httpx call carries this span's W3C ``traceparent`` --
+        the downstream MCP server attaches its own spans as children.
+        The wrapper is a no-op when otel is unavailable or the flag is
+        off, so this dispatch stays byte-identical to the base install.
+        """
+        span_attrs: dict[str, Any] = {
+            "gen_ai.tool.name": action,
+            "aila.mcp.server_id": self.server_id,
+        }
+        with gen_ai_span(
+            GEN_AI_OPERATION_EXECUTE_TOOL,
+            attributes=span_attrs,
+        ) as _span:
+            started = time.perf_counter()
+            try:
+                return await self._post_impl(
+                    action, payload, timeout=timeout, ctx=ctx, span=_span,
+                )
+            finally:
+                _span.set_attribute(
+                    "aila.mcp.latency_ms",
+                    (time.perf_counter() - started) * 1000.0,
+                )
+
+    async def _post_impl(
+        self,
+        action: str,
+        payload: dict[str, Any],
+        *,
+        timeout: float | None,
+        ctx: dict[str, Any] | None,
+        span: Any,
+    ) -> dict[str, Any]:
+        """Inner body of :meth:`post` -- kept separate so the outer span
+        wrapper reads cleanly. Semantics are byte-identical to the
+        pre-#160 dispatch.
         """
         resolved = await self.resolve()
         base = resolved.url
         url = f"{base}/tools/{action}"
+        span.set_attribute("aila.mcp.instance_source", resolved.source)
+        if resolved.instance_id is not None:
+            span.set_attribute("aila.mcp.instance_id", resolved.instance_id)
         effective_timeout = timeout if timeout is not None else self._timeout
         try:
             resp = await self._http_post(url, payload, effective_timeout)

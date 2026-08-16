@@ -721,6 +721,14 @@ def create_app() -> FastAPI:
     from aila.api.routers.platform_sandbox import router as platform_sandbox_router
     application.include_router(platform_sandbox_router)
 
+    # Issue #149: platform auto-patch attempts (god-tier admin, rate-limited).
+    # Read-only view over :class:`PlatformPatchAttemptRecord` rows the
+    # :mod:`aila.platform.services.patching` service writes when the
+    # operator has flipped ``platform.autopatch_enabled`` to True.
+    # Empty result set until then -- the flag defaults OFF.
+    from aila.api.routers.platform_patching import router as platform_patching_router
+    application.include_router(platform_patching_router)
+
     # Platform tasks router: /tasks (Phase 54 plan 05 -- task queue API surface)
     from aila.api.routers.tasks import router as tasks_router
     application.include_router(tasks_router)

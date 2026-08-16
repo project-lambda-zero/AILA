@@ -274,6 +274,16 @@ class CyberReasoningEngine:
         # Instances are stateless between assemble() calls so one per
         # engine (rather than one per turn) is fine.
         self._prompt_assembler = ContextAssembler()
+        # RFC-24 step 3 -- RETRIEVED-tier sections resolved out-of-band
+        # by the async populator on the turn runner
+        # (:meth:`aila.platform.agents.turn_runner
+        # .AgentTurnRunnerBase._rfc24_populate_retrieved_tier`). Left
+        # empty when the ``platform.context_retrieved_enabled`` flag is
+        # off so the next ``build_user_prompt`` call is byte-identical
+        # to the pre-RETRIEVED-tier path. Reset after every consume so
+        # a caller can never accidentally splice yesterday's sections
+        # into today's prompt.
+        self._pending_retrieved_sections: list[ContextSection] = []
 
     def resolve_domain_profile(self, domain_id: str) -> ReasoningDomainProfile:
         """Return the reasoning profile for ``domain_id``.
@@ -1098,6 +1108,42 @@ class CyberReasoningEngine:
             return _DEFAULT_CONTEXT_BUDGET_TOKENS
         return raw
 
+    def set_pending_retrieved_sections(
+        self, sections: list[ContextSection] | None,
+    ) -> None:
+        """Buffer RETRIEVED-tier sections for the NEXT ``build_user_prompt``.
+
+        RFC-24 step 3 wiring seam. The turn runner resolves the
+        RETRIEVED tier asynchronously (via
+        :class:`aila.platform.services.context_retrieval.KnowledgeRetrievalProvider`),
+        stashes the result here, and lets the sync ``build_user_prompt``
+        splice the sections into the assembler's input list. Passing
+        ``None`` or an empty list resets the buffer -- callers that
+        detect the flag is off use this to clear any leftover from a
+        prior flag-on turn without also having to call
+        ``build_user_prompt``.
+
+        The buffer is CONSUMED on the next ``build_user_prompt`` call
+        (see :meth:`_consume_pending_retrieved_sections`) so a caller
+        can never accidentally splice yesterday's hits into today's
+        prompt.
+        """
+        self._pending_retrieved_sections = list(sections or [])
+
+    def _consume_pending_retrieved_sections(self) -> list[ContextSection]:
+        """Return the buffered RETRIEVED-tier sections and clear the buffer.
+
+        Called exactly once per ``build_user_prompt`` invocation --
+        the clear guarantees the sections stitched into turn N never
+        leak into turn N+1's prompt when the populator opted not to
+        refresh them (a paused branch, a config flip mid-run).
+        """
+        if not self._pending_retrieved_sections:
+            return []
+        buffered = self._pending_retrieved_sections
+        self._pending_retrieved_sections = []
+        return buffered
+
     def build_user_prompt(self, context: ReasoningPromptContext) -> str:
         """Build the user-prompt payload for one reasoning turn.
 
@@ -1140,6 +1186,17 @@ class CyberReasoningEngine:
             sections = list(context.prebuilt_sections)
         else:
             sections = self._prompt_sections(context)
+        # RFC-24 step 3 -- splice any RETRIEVED-tier sections resolved
+        # out-of-band by the async populator on the turn runner. The
+        # ``consume`` clears the buffer so a subsequent build without
+        # a fresh populator call cannot reuse stale hits. When the
+        # ``platform.context_retrieved_enabled`` flag is off (the
+        # default) the buffer is always empty and ``sections`` is
+        # byte-identical to the pre-RETRIEVED-tier list -- the
+        # assembler output is unchanged.
+        retrieved_extras = self._consume_pending_retrieved_sections()
+        if retrieved_extras:
+            sections.extend(retrieved_extras)
         if context.context_budget_tokens > 0:
             budget_tokens = context.context_budget_tokens
         else:

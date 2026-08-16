@@ -14,6 +14,8 @@ __all__ = [
     "LLM_CALL_DURATION",
     "LLM_TOKENS_TOTAL",
     "LLM_COST_TOTAL",
+    "LLM_CACHE_TOKENS_TOTAL",
+    "LLM_CACHE_HIT_RATIO",
     "SILENT_FAILURE_TOTAL",
     "VERIFICATION_TOTAL",
     "CONFIDENCE_DRIFT",
@@ -79,6 +81,24 @@ LLM_TOKENS_TOTAL = Counter(
 LLM_COST_TOTAL = Counter(
     "aila_llm_cost_dollars_total",
     "Estimated LLM cost in USD",
+    ["model"],
+)
+# ENHANCEMENT #155 -- provider prompt-cache surface. ``kind`` is one of
+# ``read`` (tokens served from a warm cache prefix, Anthropic
+# ``cache_read_input_tokens`` / OpenAI ``prompt_tokens_details.cached_tokens``)
+# or ``write`` (tokens written INTO the cache on this call, Anthropic
+# ``cache_creation_input_tokens``). The gauge exposes the per-model
+# hit-rate (cache_read / prompt_tokens) sampled on every call so an
+# operator can see the effect of flipping ``platform.prompt_layout_enabled``
+# to True on 50-100 turn investigations.
+LLM_CACHE_TOKENS_TOTAL = Counter(
+    "aila_llm_cache_tokens_total",
+    "Provider-reported prompt-cache tokens",
+    ["model", "kind"],
+)
+LLM_CACHE_HIT_RATIO = Gauge(
+    "aila_llm_cache_hit_ratio",
+    "Fraction of prompt tokens served from provider prompt-cache (0..1)",
     ["model"],
 )
 

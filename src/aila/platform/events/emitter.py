@@ -1,7 +1,26 @@
+"""Per-request adapter over the unified typed event bus (RFC #134).
+
+RFC #134 consolidated the two parallel event systems (``DomainEventBus``
++ ``EventEmitter``/``PlatformEvent``) into a single typed bus (see
+:mod:`.bus`). ``EventEmitter`` survives as a thin per-request adapter:
+it wraps the shared bus, translates the legacy per-request
+:class:`PlatformEvent` into a typed
+:class:`~aila.platform.events.domain_events.WorkflowStageAnnounced`
+domain event, and dispatches to the four request-scoped destinations
+(``audit_db``, ``run_history``, ``progress``, ``redis_stream``) that
+require per-request context (session, run_state, progress callback).
+
+Every ``emit(PlatformEvent)`` therefore feeds the unified bus once
+(so the process-wide journal + Redis fanout subscribers see it) AND
+runs the request-scoped destinations that carry per-run
+observability. ``ThreadSafeEventEmitter`` is kept as an alias for
+backwards compatibility -- the drain-and-dispatch primitive lives in
+the bus now (:class:`aila.platform.events.bus.DomainEventBus`), so
+every request-scoped emitter is thread-safe by default.
+"""
 from __future__ import annotations
 
 import logging
-import queue
 import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -9,6 +28,12 @@ from typing import TYPE_CHECKING
 import sqlalchemy.exc
 
 from ._dispatch import safe_dispatch
+from .bus import DomainEventBus, default_bus
+from .domain_events import (
+    DomainEvent,
+    WorkflowStageAnnounced,
+    WorkflowStagePayload,
+)
 from .event import PlatformEvent
 
 if TYPE_CHECKING:
@@ -79,18 +104,61 @@ def _bump_sse_write_failure(source: str) -> None:
         _log.debug("resilience signal skipped: %s", exc)
 
 
-class EventEmitter:
-    """Fan-out emitter: one emit() call delivers to all registered destinations.
+def _workflow_stage_event(event: PlatformEvent) -> WorkflowStageAnnounced:
+    """Build the typed :class:`WorkflowStageAnnounced` mirror of ``event``.
 
-    Destinations are registered at construction time via register_destination().
-    Adding a new destination never requires changes at call sites (per EMIT-03).
+    Every ``EventEmitter.emit(PlatformEvent)`` publishes one of these
+    on the shared bus so the process-wide subscribers (journal, Redis
+    cross-process fanout) see the per-request stage announcement as a
+    typed domain event. Fields map 1:1 from the frozen dataclass to
+    the Pydantic payload; ``details`` is copied defensively so a later
+    mutation of the caller's dict cannot alter the persisted payload.
+    """
+    return WorkflowStageAnnounced(
+        source_module="platform.workflow",
+        payload=WorkflowStagePayload(
+            stage=event.stage,
+            action=event.action,
+            key=event.key,
+            message=event.message,
+            details=dict(event.details or {}),
+            run_id=event.run_id,
+            current=event.current,
+            total=event.total,
+            progress_message=event.progress_message,
+        ),
+    )
+
+
+class EventEmitter:
+    """Per-request adapter over the unified typed event bus (RFC #134).
+
+    Every :meth:`emit` publishes a typed
+    :class:`~aila.platform.events.domain_events.WorkflowStageAnnounced`
+    domain event on the shared bus (feeding the journal + Redis
+    cross-process fanout subscribers) AND dispatches to the emitter's
+    own per-request destinations (audit_db, run_history, progress,
+    redis_stream). Destinations are registered at construction time
+    via :meth:`register_destination`; adding one does not require any
+    change at call sites.
+
+    ``register_destination`` and per-destination failure isolation
+    remain unchanged from the pre-consolidation ``EventEmitter`` --
+    call sites see the same shape. The single publish surface is the
+    behavioural change: the same event now feeds the bus AND the
+    request-scoped destinations, so a worker-emitted stage event
+    reaches SSE subscribers via the Redis bridge without any extra
+    wiring at the call site.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, *, bus: DomainEventBus | None = None) -> None:
         self._destinations: list[tuple[str, DestinationFn]] = []
         # Per-destination running failure count. Public read via
         # destination_failure_count(name); test/telemetry hook.
         self._destination_failures: dict[str, int] = {}
+        # RFC #134 -- feed the typed bus on every emit. Tests may inject
+        # a fresh bus to isolate subscribers.
+        self._bus = bus if bus is not None else default_bus()
 
     def register_destination(self, name: str, fn: DestinationFn) -> None:
         """Add a named destination callable to the fan-out list.
@@ -103,24 +171,54 @@ class EventEmitter:
         self._destinations.append((name, fn))
 
     def emit(self, event: PlatformEvent) -> None:
-        """Deliver the event to all registered destinations in registration order.
+        """Publish the typed event on the shared bus AND fan out to destinations.
 
-        A failure in one destination is isolated: the remaining destinations
-        still receive the event, the exception is logged with full traceback,
-        and destination_failure_count(name) increments. This matches issue #60-1:
-        the previous unisolated for-loop silently dropped every downstream
-        destination when an earlier one raised.
+        Every emit does two things:
+
+        1. Publish a
+           :class:`~aila.platform.events.domain_events.WorkflowStageAnnounced`
+           mirror of ``event`` on the shared bus so the process-wide
+           subscribers (journal, Redis cross-process fanout) see it.
+           A worker-emitted stage event therefore reaches API-process
+           SSE subscribers via the Redis bridge without any per-call
+           wiring.
+        2. Dispatch to each registered destination in registration
+           order under the shared isolation guard so a failure in one
+           destination is logged, counted, and skipped past.
         """
+        # (1) Publish on the shared bus. The bus itself is thread-safe
+        # and drains on the publishing thread; a subscriber failure is
+        # isolated there. A bus failure is logged and swallowed so a
+        # broken subscriber never breaks the caller's request.
+        try:
+            self._bus.publish(_workflow_stage_event(event))
+        except (RuntimeError, OSError, TimeoutError, ValueError, TypeError) as exc:
+            _log.warning(
+                "emitter shared-bus publish failed for event %s/%s: %s",
+                event.stage, event.action, exc.__class__.__name__,
+                exc_info=True,
+            )
+        # (2) Local per-request destinations. Fanout preserves the
+        # legacy per-destination isolation contract (issue #60-1).
         for name, fn in self._destinations:
             self._dispatch(name, fn, event)
+
+    def publish(self, event: DomainEvent) -> None:
+        """Publish a typed domain event on the shared bus.
+
+        Convenience for call sites that are already typed: LLM cost
+        accounting, config-registry security changes, module workflow
+        lifecycle. The event goes through the same bus every emit
+        feeds, so journal + Redis fanout + any in-process subscriber
+        see it exactly once.
+        """
+        self._bus.publish(event)
 
     def _dispatch(self, name: str, fn: DestinationFn, event: PlatformEvent) -> None:
         """Call one destination under the shared isolation guard.
 
-        Kept as a hook so ThreadSafeEventEmitter reuses the identical
-        per-destination policy from inside its drain loop. The isolation
-        exception tuple and the try/except/log block live in
-        :mod:`aila.platform.events._dispatch` so this emitter and
+        The isolation exception tuple and the try/except/log block live
+        in :mod:`aila.platform.events._dispatch` so this emitter and
         :class:`aila.platform.events.bus.DomainEventBus` cannot drift.
 
         SSE / progress-stream destinations (``progress`` and
@@ -166,53 +264,11 @@ class EventEmitter:
         return dict(self._destination_failures)
 
 
-class ThreadSafeEventEmitter(EventEmitter):
-    """Thread-safe variant: serializes emit() calls through an internal queue.
-
-    Parallel SSH workers, DAG stages, and scoring threads all call emit()
-    safely without external locking (per EMIT-04).
-
-    Async-ready: the drain loop is synchronous. Async destinations (SSE,
-    WebSocket) register via register_destination() and receive events in
-    drain order; they do not block fast synchronous destinations (per EMIT-05).
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._queue: queue.SimpleQueue[PlatformEvent] = queue.SimpleQueue()
-        self._lock = threading.Lock()
-
-    def emit(self, event: PlatformEvent) -> None:
-        """Enqueue the event and attempt to drain the queue under a non-blocking lock.
-
-        If another thread is already draining, this call exits immediately after
-        enqueuing -- the event is still in the queue and will be delivered by the
-        draining thread before it releases the lock.
-        """
-        self._queue.put(event)
-        self._drain()
-
-    def _drain(self) -> None:
-        """Deliver all queued events to destinations while holding the drain lock.
-
-        Non-blocking lock acquisition means concurrent emit() callers skip the
-        drain and return immediately. The current drain owner processes all
-        enqueued events before releasing, so no events are lost. Each
-        destination call is isolated via _dispatch so one broken destination
-        cannot starve the rest.
-        """
-        if not self._lock.acquire(blocking=False):
-            return
-        try:
-            while True:
-                try:
-                    event = self._queue.get_nowait()
-                except queue.Empty:
-                    break
-                for name, fn in self._destinations:
-                    self._dispatch(name, fn, event)
-        finally:
-            self._lock.release()
+# ``ThreadSafeEventEmitter`` alias -- RFC #134 folded the drain-and-dispatch
+# primitive into the bus, so every ``EventEmitter`` is thread-safe by
+# construction. The alias is kept because existing call sites and tests
+# spell it out explicitly; new call sites should reach for ``EventEmitter``.
+ThreadSafeEventEmitter = EventEmitter
 
 
 def build_emitter(
@@ -220,19 +276,25 @@ def build_emitter(
     run_state: RunState,
     progress_callback: Callable | None = None,
 ) -> EventEmitter:
-    """Construct an EventEmitter with four destinations wired.
+    """Construct an EventEmitter with four request-scoped destinations wired.
 
     Destinations (per EMIT-01):
       1. audit_db       -- writes AuditEventRecord via record_audit_event
       2. run_history    -- appends WorkflowEvent to run_state.events
       3. progress       -- calls progress_callback(ProgressUpdate(...)) if provided
       4. redis_stream   -- publishes to Redis Stream for SSE frontend consumption
+
+    RFC #134 additionally publishes a typed
+    :class:`~aila.platform.events.domain_events.WorkflowStageAnnounced`
+    on the shared bus for every emit, so the process-wide journal +
+    Redis cross-process fanout subscribers receive the same event
+    without any per-call wiring.
     """
     from aila.platform.contracts.platform import ProgressUpdate
     from aila.platform.services.audit import record_audit_event
     from aila.storage.memory import append_run_event
 
-    emitter = ThreadSafeEventEmitter()
+    emitter = EventEmitter()
 
     def _audit_db(event: PlatformEvent) -> None:
         try:

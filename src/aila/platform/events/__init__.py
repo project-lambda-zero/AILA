@@ -1,4 +1,12 @@
-"""Platform event emitter and domain events."""
+"""Platform event bus and typed domain events.
+
+RFC #134 -- one typed event system. Every call site publishes via the
+single :func:`publish` surface (or the per-request
+:class:`EventEmitter` adapter that wraps it) and the process-wide bus
+fans the event out to the journal + Redis cross-process fanout
+subscribers. The Redis bridge (#106) delivers worker-emitted events
+into the API process's local bus so SSE fanout sees them.
+"""
 
 from __future__ import annotations
 
@@ -11,17 +19,11 @@ from .bus import (
     unsubscribe,
 )
 from .domain_events import (
-    AssessmentCompleted,
-    AssessmentCompletedPayload,
-    AssessmentCreated,
-    AssessmentCreatedPayload,
     ConfigChanged,
     ConfigChangedPayload,
     DomainEvent,
     LlmCallCompleted,
     LlmCallCompletedPayload,
-    ModuleEntityBatchUpserted,
-    ModuleEntityBatchUpsertedPayload,
     ModuleWorkflowCompleted,
     ModuleWorkflowCompletedPayload,
     ModuleWorkflowStarted,
@@ -30,6 +32,8 @@ from .domain_events import (
     SystemDeregisteredPayload,
     SystemRegistered,
     SystemRegisteredPayload,
+    WorkflowStageAnnounced,
+    WorkflowStagePayload,
 )
 from .emitter import EventEmitter, ThreadSafeEventEmitter, build_emitter
 from .event import PlatformEvent
@@ -43,10 +47,6 @@ from .redis_bridge import (
 )
 
 __all__ = [
-    "AssessmentCompleted",
-    "AssessmentCompletedPayload",
-    "AssessmentCreated",
-    "AssessmentCreatedPayload",
     "ConfigChanged",
     "ConfigChangedPayload",
     "DomainEvent",
@@ -54,8 +54,6 @@ __all__ = [
     "EventEmitter",
     "LlmCallCompleted",
     "LlmCallCompletedPayload",
-    "ModuleEntityBatchUpserted",
-    "ModuleEntityBatchUpsertedPayload",
     "ModuleWorkflowCompleted",
     "ModuleWorkflowCompletedPayload",
     "ModuleWorkflowStarted",
@@ -69,6 +67,8 @@ __all__ = [
     "SystemRegistered",
     "SystemRegisteredPayload",
     "ThreadSafeEventEmitter",
+    "WorkflowStageAnnounced",
+    "WorkflowStagePayload",
     "build_emitter",
     "default_bus",
     "install_redis_publisher",

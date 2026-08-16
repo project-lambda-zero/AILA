@@ -22,6 +22,7 @@ from sqlalchemy import (
     Column,
     Computed,
     DateTime,
+    Float,
     Index,
     Integer,
     SmallInteger,
@@ -1503,4 +1504,123 @@ from aila.platform.services.ledger import InvestigationLedgerRecord
 # end-of-file rule so create_all + Alembic autogen register specialist_agent
 # without a circular import back through the platform services chain.
 from aila.platform.services.specialist_registry import SpecialistAgentRecord
+
+
+class PlatformPatchAttemptRecord(SQLModel, table=True):
+    """One synthesize + verify pass fired by
+    :mod:`aila.platform.services.patching` (issue #149 auto-patch).
+
+    Written after :class:`aila.platform.agents.claim_verifier
+    .ClaimVerifierAgentBase` returns a ``confirmed`` verdict and the
+    operator has enabled the ``platform.autopatch_enabled`` flag.
+    Empty for every existing deployment (flag defaults OFF).
+
+    See migration 130_auto_patch for the constraint / index layout.
+    Every named constraint is ``platform_patch_attempt_``-prefixed per
+    the schema-global naming rule (CLAUDE.md common mistake 21).
+
+    ``verify_status`` values:
+        ``pending``   -- row created, verify not yet started (transient).
+        ``accepted``  -- reproducer stopped triggering on the patched
+                         source; the patch closes the finding.
+        ``rejected``  -- reproducer still triggers on the patched
+                         source; the patch does not close the finding.
+        ``skipped``   -- no sandbox provisioned, no harness available,
+                         or the synthesiser declined to produce a diff.
+        ``error``     -- sandbox execution error; separate from
+                         ``rejected`` so operators can retry once the
+                         infra is healthy.
+    """
+
+    __tablename__ = "platform_patch_attempt"
+
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
+    investigation_id: str | None = Field(
+        default=None,
+        sa_column=Column("investigation_id", String(64), nullable=True),
+    )
+    outcome_id: str | None = Field(
+        default=None,
+        sa_column=Column("outcome_id", String(64), nullable=True),
+    )
+    module_id: str = Field(
+        default="",
+        sa_column=Column(String(64), nullable=False, server_default=""),
+    )
+    team_id: str | None = Field(
+        default=None,
+        sa_column=Column("team_id", String(64), nullable=True),
+    )
+    finding_ref: str = Field(
+        default="",
+        sa_column=Column(String(128), nullable=False, server_default=""),
+    )
+    synth_model: str = Field(
+        default="",
+        sa_column=Column(String(128), nullable=False, server_default=""),
+    )
+    synth_task_type: str = Field(
+        default="",
+        sa_column=Column(String(128), nullable=False, server_default=""),
+    )
+    synth_prompt_tokens: int = Field(
+        default=0,
+        sa_column=Column(Integer, nullable=False, server_default="0"),
+    )
+    synth_completion_tokens: int = Field(
+        default=0,
+        sa_column=Column(Integer, nullable=False, server_default="0"),
+    )
+    synth_cost_usd: float = Field(
+        default=0.0,
+        sa_column=Column("synth_cost_usd", Float, nullable=False, server_default="0"),
+    )
+    patch_diff: str = Field(default="", sa_column=Column(Text, nullable=False, server_default=""))
+    patch_files_json: str = Field(
+        default="[]",
+        sa_column=Column(Text, nullable=False, server_default="[]"),
+    )
+    verify_status: str = Field(
+        default="pending",
+        sa_column=Column(String(16), nullable=False, server_default="pending"),
+    )
+    verify_backend: str = Field(
+        default="",
+        sa_column=Column(String(32), nullable=False, server_default=""),
+    )
+    verify_exit_code: int | None = Field(
+        default=None,
+        sa_column=Column(Integer, nullable=True),
+    )
+    verify_stdout: str = Field(default="", sa_column=Column(Text, nullable=False, server_default=""))
+    verify_stderr: str = Field(default="", sa_column=Column(Text, nullable=False, server_default=""))
+    verify_duration_s: float = Field(
+        default=0.0,
+        sa_column=Column("verify_duration_s", Float, nullable=False, server_default="0"),
+    )
+    verify_reason: str = Field(
+        default="",
+        sa_column=Column(String(128), nullable=False, server_default=""),
+    )
+    harness_json: str = Field(
+        default="{}",
+        sa_column=Column(Text, nullable=False, server_default="{}"),
+    )
+    total_cost_usd: float = Field(
+        default=0.0,
+        sa_column=Column("total_cost_usd", Float, nullable=False, server_default="0"),
+    )
+    created_at: datetime = Field(
+        default_factory=utc_now, sa_type=DateTime(timezone=True),
+    )
+    updated_at: datetime = Field(
+        default_factory=utc_now, sa_type=DateTime(timezone=True),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "investigation_id", "outcome_id", "finding_ref",
+            name="uq_platform_patch_attempt_inv_outcome_finding",
+        ),
+    )
 

@@ -117,6 +117,15 @@ class InvestigationStateBindings:
     # emit-state (Phase 4c) inputs -- optional until the emit binds them.
     synthesis_task_fn: Callable[..., Awaitable[Any]] | None = None
     verifier_task_fn: Callable[..., Awaitable[Any]] | None = None
+    # RFC #149 auto-patch trigger. When set AND the operator has flipped
+    # ``platform.autopatch_enabled`` to True AND the canonical outcome
+    # carries a ``verifier_report`` with ``verdict == 'confirmed'`` (and
+    # no prior ``patch_report``), the emit chokepoint enqueues this task
+    # to run :class:`aila.platform.services.patching.PatchingService`.
+    # Left ``None`` on modules that have not bound a patcher yet, and
+    # gated by the platform flag on the modules that have -- default OFF
+    # so the emit-state path is byte-identical to pre-#149 behaviour.
+    patcher_task_fn: Callable[..., Awaitable[Any]] | None = None
     task_queue_factory: Callable[[], Any] | None = None
     get_int: Callable[[str], Awaitable[int]] | None = None
     get_float: Callable[[str], Awaitable[float]] | None = None

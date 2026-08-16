@@ -17,6 +17,7 @@ import type { QueryKey } from "@tanstack/react-query";
 
 import { ApiError } from "../../api/client";
 import { useFieldOptions, useResourceMutation } from "../../api/mutations";
+import { asRecord, readNum, readStr } from "../../api/parse";
 import { css } from "../css";
 
 export type FieldType =
@@ -114,14 +115,13 @@ function toWidgetValue(field: FieldSpec, raw: unknown): FieldValue {
       if (Array.isArray(raw)) return raw.map((v) => String(v));
       return [];
     case "keyval": {
-      if (raw && typeof raw === "object" && !Array.isArray(raw)) {
-        const out: Record<string, string> = {};
-        for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
-          out[k] = typeof v === "string" ? v : JSON.stringify(v);
-        }
-        return out;
+      const rec = asRecord(raw);
+      if (!rec) return {};
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(rec)) {
+        out[k] = typeof v === "string" ? v : JSON.stringify(v);
       }
-      return {};
+      return out;
     }
     case "json-array-tags": {
       if (typeof raw === "string" && raw.length) {
@@ -138,10 +138,10 @@ function toWidgetValue(field: FieldSpec, raw: unknown): FieldValue {
     case "json-object-keyval": {
       if (typeof raw === "string" && raw.length) {
         try {
-          const parsed: unknown = JSON.parse(raw);
-          if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          const rec = asRecord(JSON.parse(raw));
+          if (rec) {
             const out: Record<string, string> = {};
-            for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+            for (const [k, v] of Object.entries(rec)) {
               out[k] = typeof v === "string" ? v : JSON.stringify(v);
             }
             return out;
@@ -153,31 +153,31 @@ function toWidgetValue(field: FieldSpec, raw: unknown): FieldValue {
       return {};
     }
     case "steps": {
-      if (Array.isArray(raw)) {
-        return (raw as unknown[]).map((s, i) => {
-          const row = (s && typeof s === "object" ? s : {}) as Record<string, unknown>;
-          const args: Record<string, string> = {};
-          if (row.args && typeof row.args === "object" && !Array.isArray(row.args)) {
-            for (const [k, v] of Object.entries(row.args as Record<string, unknown>)) {
-              args[k] = typeof v === "string" ? v : JSON.stringify(v);
-            }
+      if (!Array.isArray(raw)) return [];
+      return raw.map((s, i) => {
+        const row = asRecord(s) ?? {};
+        const args: Record<string, string> = {};
+        const argsRec = asRecord(row["args"]);
+        if (argsRec) {
+          for (const [k, v] of Object.entries(argsRec)) {
+            args[k] = typeof v === "string" ? v : JSON.stringify(v);
           }
-          const expects: Record<string, string> = {};
-          if (row.expects && typeof row.expects === "object" && !Array.isArray(row.expects)) {
-            for (const [k, v] of Object.entries(row.expects as Record<string, unknown>)) {
-              expects[k] = typeof v === "string" ? v : JSON.stringify(v);
-            }
+        }
+        const expects: Record<string, string> = {};
+        const expectsRec = asRecord(row["expects"]);
+        if (expectsRec) {
+          for (const [k, v] of Object.entries(expectsRec)) {
+            expects[k] = typeof v === "string" ? v : JSON.stringify(v);
           }
-          return {
-            sequence: typeof row.sequence === "number" ? row.sequence : i,
-            tool: typeof row.tool === "string" ? row.tool : "",
-            args,
-            expects,
-            on_failure: typeof row.on_failure === "string" ? row.on_failure : "continue",
-          };
-        });
-      }
-      return [];
+        }
+        return {
+          sequence: readNum(row, "sequence") ?? i,
+          tool: readStr(row, "tool") ?? "",
+          args,
+          expects,
+          on_failure: readStr(row, "on_failure") ?? "continue",
+        };
+      });
     }
     default:
       return null;
@@ -215,7 +215,7 @@ function serializeField(field: FieldSpec, value: FieldValue): unknown {
       return arr;
     }
     case "keyval": {
-      const obj = (value && typeof value === "object" && !Array.isArray(value) ? value : {}) as Record<string, string>;
+      const obj = (asRecord(value) ?? {}) as Record<string, string>;
       const trimmed: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(obj)) {
         if (k.length === 0) continue;
@@ -231,7 +231,7 @@ function serializeField(field: FieldSpec, value: FieldValue): unknown {
       return JSON.stringify(arr);
     }
     case "json-object-keyval": {
-      const obj = (value && typeof value === "object" && !Array.isArray(value) ? value : {}) as Record<string, string>;
+      const obj = (asRecord(value) ?? {}) as Record<string, string>;
       const trimmed: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(obj)) {
         if (k.length === 0) continue;
@@ -759,7 +759,7 @@ export default function FieldForm({
                 <label key={key} style={label}>
                   <span>{f.label}{f.required ? " *" : ""}</span>
                   <KeyValRows
-                    value={(v && typeof v === "object" && !Array.isArray(v) ? v : {}) as Record<string, string>}
+                    value={(asRecord(v) ?? {}) as Record<string, string>}
                     onChange={(next) => setField(key, next)}
                   />
                   {f.help ? <span style={help}>{f.help}</span> : null}
