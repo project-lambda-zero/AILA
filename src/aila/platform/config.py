@@ -650,6 +650,34 @@ class PlatformConfigSchema(BaseModel):
     sandbox_rootfs_path: str = ""
     sandbox_kernel_path: str = ""
 
+    # Issue #161 consumer -- ``platform.routing_negative_retune``
+    # automation action drains new ``router_negative_example`` rows
+    # (migration 128) above this ISO-8601 UTC timestamp into the
+    # ``router_hard_negative`` aggregate (migration 129) and advances
+    # this HWM to the max ``created_at`` it observed. Empty string is
+    # the "epoch" sentinel -- the first tick after enabling the
+    # schedule processes every accrued row. Written back by the retune
+    # action via :class:`ConfigRegistry.set`; an operator can also
+    # rewind it manually with ``PUT /config/platform/routing_negative_hwm``
+    # to force a re-drain from an earlier point (useful when the
+    # aggregate was truncated).
+    routing_negative_hwm: str = ""
+
+    # Issue #161 fold-into-learner switch. When True and a
+    # ``routing_history_provider`` is bound, the pre-execution sizing
+    # seam in ``investigation_setup_base`` wraps the provider through
+    # :func:`aila.platform.routing.negative_feedback
+    # .augment_history_provider_with_hard_negatives` so
+    # :class:`RoutingLearner` sees synthetic REJECT samples derived
+    # from the ``router_hard_negative`` aggregate on top of the module's
+    # real outcome-review history. Default False so a fresh install
+    # with the retune schedule ALSO disabled is byte-identical to
+    # pre-#161 behaviour, AND an operator that enables the retune
+    # schedule to accrue the aggregate can still keep the fold OFF
+    # (accrue signal, decide separately when to consume it -- matches
+    # the propose-and-gate posture of RFC-08 calibration proposals).
+    routing_negative_feedback_enabled: bool = False
+
     # #159 part 1 -- MCP tool-description hash pin (supply-chain guard).
     # When True, the platform bridge refuses to serve a projected tool
     # catalogue whose sha256 differs from the first-sight pin,
@@ -661,4 +689,23 @@ class PlatformConfigSchema(BaseModel):
     # True on hardened deployments where a poisoned tool description
     # is a higher-severity outcome than a five-minute deploy stall.
     mcp_tool_hash_strict: bool = False
+
+    # ENHANCEMENT #160 -- OpenTelemetry GenAI-conventions span emission.
+    # When True AND the ``opentelemetry`` package is installed (see the
+    # ``[otel]`` optional extra in ``pyproject.toml``), the LLM client
+    # and the workflow engine emit spans following the stabilized 2026
+    # GenAI semantic conventions (``gen_ai.operation.name``,
+    # ``gen_ai.request.model``, ``gen_ai.usage.input_tokens`` /
+    # ``output_tokens``, ``gen_ai.agent.name``, ...). Consumed by
+    # :func:`aila.platform.observability.gen_ai_span`. Default False so
+    # a base install (no extra, no exporter) is byte-identical to the
+    # pre-#160 path. Flip via ``PUT /config/platform/otel_enabled`` or
+    # ``AILA_PLATFORM_OTEL_ENABLED`` once an OTLP exporter is wired
+    # through the operator's ``opentelemetry-instrument`` bootstrap;
+    # a value flip lands on the next call without a worker restart.
+    # Cross-boundary MCP trace-context propagation
+    # (audit-mcp / ida-headless / semble stitching) is intentionally
+    # NOT gated by this flag -- issue #160 tracks that as a follow-up
+    # slice.
+    otel_enabled: bool = False
 

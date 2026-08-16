@@ -7,6 +7,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.38] - 2026-08-16 -- Enhancement/tech-debt/RFC resolution wave 3
+
+### Added
+
+- OpenTelemetry GenAI spans (#160): a `platform/observability` helper emits
+  `gen_ai.*` spans for the LLM client (chat / chat_json / chat_structured, with
+  model and token-usage attributes) and the workflow engine (an `invoke_agent`
+  span per run plus a child span per state transition, so LLM spans nest
+  underneath). Behind an optional `[otel]` extra and the `platform.otel_enabled`
+  flag (default off); a base install without opentelemetry, or the flag off, is
+  a zero-cost no-op. Cross-boundary MCP trace-context propagation remains
+  tracked on #160.
+- Routing negative-feedback consumer (#161): a default-disabled
+  `platform.routing_negative_retune` automation action aggregates accrued
+  `router_negative_example` rows into a `router_hard_negative` table
+  (migration 129, high-water mark tracked in config) and folds them into the
+  routing learner as hard negatives through a history-provider augmenter, gated
+  behind `platform.routing_negative_feedback_enabled` (default off). Completes
+  the #161 feedback loop (capture in v0.5.36 + this consumer); the A/B
+  evaluation of the re-tuned router remains a follow-up.
+
 ## [0.5.37] - 2026-08-16 -- Enhancement/tech-debt/RFC resolution wave 2
 
 ### Added

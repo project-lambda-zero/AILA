@@ -1431,6 +1431,63 @@ class RouterNegativeExampleRecord(SQLModel, table=True):
     )
 
 
+class RouterHardNegativeRecord(SQLModel, table=True):
+    """Aggregated ``(task_shape, model, tool)`` bucket produced by the
+    nightly ``platform.routing_negative_retune`` action (issue #161).
+
+    One row per unique combo of ``task_shape``, ``model`` (``''`` when
+    the source ``router_negative_example`` row carried NULL), and
+    ``tool`` (same ``''`` rule). ``hit_count`` increments on every
+    retune tick that folds a matching source row above the
+    ``platform.routing_negative_hwm`` config high-water mark.
+
+    Consumed by
+    :func:`aila.platform.routing.negative_feedback
+    .augment_history_provider_with_hard_negatives` -- when the
+    ``platform.routing_negative_feedback_enabled`` flag is True the
+    wrapper unions ``min(hit_count, cap)`` synthetic REJECT
+    :class:`RoutingSample` rows per aggregate into the base history
+    provider's stream so the :class:`RoutingLearner` sees every
+    accrued failure as a hard negative for the queried ``target_kind``.
+
+    See migration 129_router_hard_negatives for constraint / index
+    layout. Every constraint is ``router_hard_negative_``-prefixed
+    per the schema-global naming rule (CLAUDE.md common mistake 21).
+    """
+
+    __tablename__ = "router_hard_negative"
+
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
+    task_shape: str = Field(sa_column=Column(String(128), nullable=False))
+    # NOT NULL with '' sentinel so the (task_shape, model, tool) unique
+    # index dedupes cleanly -- Postgres treats NULL as distinct in a
+    # unique constraint, which would let two ``model=NULL`` rows for
+    # the same tool sneak in past the aggregate.
+    model: str = Field(
+        default="", sa_column=Column(String(128), nullable=False, server_default=""),
+    )
+    tool: str = Field(
+        default="", sa_column=Column(String(128), nullable=False, server_default=""),
+    )
+    hit_count: int = Field(
+        default=0,
+        sa_column=Column(BigInteger, nullable=False, server_default="0"),
+    )
+    first_seen_at: datetime = Field(
+        default_factory=utc_now, sa_type=DateTime(timezone=True),
+    )
+    last_seen_at: datetime = Field(
+        default_factory=utc_now, sa_type=DateTime(timezone=True),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "task_shape", "model", "tool",
+            name="uq_router_hard_negative_shape_model_tool",
+        ),
+    )
+
+
 # RFC-12 criterion 5: knowledge graph edges. Imported at the very end (after
 # every record class is defined) so the transitive db_models references in the
 # knowledge-graph import chain resolve, letting create_all (fresh installs) and

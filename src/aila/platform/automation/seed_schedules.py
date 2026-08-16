@@ -74,6 +74,21 @@ _DEFAULT_DISABLED_SCHEDULES: tuple[tuple[str, str, bool], ...] = (
     # 07:00 UTC -- after every enabled-by-default sweep has landed so
     # a manually-enabled run does not compete for the same window.
     ("platform.shadow_report_sweep", "0 7 * * *", False),
+    # Issue #161 consumer half: nightly router-negative retune.
+    # DEFAULT-DISABLED so a fresh install with the write-only
+    # ``router_negative_example`` corpus (migration 128) keeps the
+    # aggregate empty and the routing learner's history provider
+    # unchanged. Operator flips the schedule ``enabled=True`` to
+    # start draining the corpus into ``router_hard_negative``
+    # (migration 129) nightly; the separate
+    # ``platform.routing_negative_feedback_enabled`` flag independently
+    # controls whether the aggregate is folded into
+    # :class:`RoutingLearner` at recommend time. 08:00 UTC picked so
+    # the retune runs AFTER every enabled-by-default calibration /
+    # memory sweep has landed and AFTER the disabled
+    # ``shadow_report_sweep`` slot -- one clean serial cadence when
+    # every schedule is enabled.
+    ("platform.routing_negative_retune", "0 8 * * *", False),
 )
 
 _SEED_ACTOR: str = "platform.seed_default_automation_schedules"

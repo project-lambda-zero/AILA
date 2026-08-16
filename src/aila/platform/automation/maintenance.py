@@ -28,6 +28,7 @@ __all__ = [
     "run_calibration_sweep",
     "run_calibrator_trainer_sweep",
     "run_retrieval_eval_sweep",
+    "run_routing_negative_retune",
     "run_semantic_consolidation_sweep",
     "run_shadow_report_sweep",
     "run_skill_library_sweep",
@@ -47,6 +48,12 @@ from aila.platform.automation.registry import AutomationRegistry
 from aila.platform.eval.calibration_sweep import (
     run_calibration_sweep,
     run_calibrator_trainer_sweep,
+)
+from aila.platform.routing.negative_feedback import (
+    RETUNE_ACTION_ID as _ROUTING_NEGATIVE_RETUNE_ACTION_ID,
+)
+from aila.platform.routing.negative_feedback import (
+    retune_router_from_negatives as run_routing_negative_retune,
 )
 from aila.platform.services.memory import (
     run_semantic_consolidation_sweep,
@@ -404,6 +411,30 @@ def register_maintenance_actions(registry: AutomationRegistry) -> None:
             "samples recent traffic, replays under the shadow candidate, "
             "and writes one ShadowReportRecord + one metrics-update "
             "LifecycleTransitionRecord per (key, version) pair"
+        ),
+        module_id="platform",
+    )
+    # Issue #161 consumer half: nightly retune that drains accrued
+    # ``router_negative_example`` rows into the ``router_hard_negative``
+    # aggregate the routing learner's history provider consumes as
+    # hard negatives (via
+    # :func:`aila.platform.routing.negative_feedback
+    # .augment_history_provider_with_hard_negatives`). Default-DISABLED
+    # in :mod:`aila.platform.automation.seed_schedules` so a fresh
+    # install with no operator opt-in stays byte-identical to today's
+    # write-only slice: the corpus keeps accruing, the aggregate stays
+    # empty, and the learner's history provider is unchanged.
+    registry.register_action(
+        action_id=_ROUTING_NEGATIVE_RETUNE_ACTION_ID,
+        handler_fn=run_routing_negative_retune,
+        description=(
+            "Drain accrued router_negative_example rows above the "
+            "platform.routing_negative_hwm high-water mark into the "
+            "router_hard_negative aggregate; advance the HWM. The "
+            "aggregate is consumed by the routing learner's history "
+            "provider as synthetic REJECT samples when "
+            "platform.routing_negative_feedback_enabled is True "
+            "(issue #161 consumer half)"
         ),
         module_id="platform",
     )
