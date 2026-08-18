@@ -622,7 +622,11 @@ function hypTone(state: string): string {
 
 export default function XRayPage(props: ModulePageProps): JSX.Element {
   const { section, investigationId, onBack, onMinimize, onNavigate, isFullscreen, onToggleFullscreen } = props;
-  const view = section ?? "overview";
+  // section may carry a registry-slug prefix ("xray" from openNamedPage, or a
+  // sub-intent like "xray:records"); validate the last segment against the
+  // view vocabulary and fall back to the default overview.
+  const viewSeg = (section ?? "overview").split(":").pop() ?? "overview";
+  const view = VIEW_INDEX[viewSeg] ? viewSeg : "overview";
   const invId = investigationId ?? null;
 
   const inv = useInvestigation(invId);
@@ -933,6 +937,23 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
       control.mutate("reset");
     }
   };
+  const doReenqueue = (): void => {
+    if (!invId) return;
+    if (window.confirm("Re-enqueue this investigation? Clears all prior cursors, cancels queued/running tasks, and dispatches a fresh run from CREATED. No checkpoint is resumed. No undo.")) {
+      control.mutate("re-enqueue");
+    }
+  };
+  // Truthful resume feedback: the resume endpoint reports what it actually
+  // did -- restored a checkpoint ("resumed"), no checkpoint so it re-enqueued
+  // fresh ("reenqueued"), or nothing could be enqueued ("noop_failed"). Keyed
+  // to the most recent control action so a pause/verify/reset does not carry
+  // stale resume text.
+  const resumeFeedback = ((): { tone: string; text: string } | null => {
+    if (control.variables !== "resume" || !control.data?.resume_action) return null;
+    if (control.data.resume_action === "resumed") return { tone: H.mint, text: "resumed from checkpoint" };
+    if (control.data.resume_action === "reenqueued") return { tone: H.amber, text: "no checkpoint \u2014 re-enqueued fresh" };
+    return { tone: H.acc, text: "resume failed \u2014 nothing enqueued" };
+  })();
   const ctlBtn = (label: string, onClick: () => void, enabled: boolean): JSX.Element => (
     <button
       type="button"
@@ -1047,10 +1068,20 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
             actions={
               <div style={css("flex:0 0 auto;display:flex;align-items:center;gap:5px;")}>
                 {ctlBtn(isPaused ? "resume" : "pause", () => control.mutate(isPaused ? "resume" : "pause"), (invRunning || isPaused) && !control.isPending)}
+                {resumeFeedback ? <span style={css(`font-size:8px;letter-spacing:0.08em;text-transform:uppercase;color:${resumeFeedback.tone};border:1px solid ${resumeFeedback.tone}66;padding:1px 6px;border-radius:2px;`)}>{resumeFeedback.text}</span> : null}
                 {ctlBtn("narrative", () => narrative.mutate(), (inv.data?.outcome_count ?? 0) > 0 && !narrative.isPending)}
                 {ctlBtn("re-verify", () => control.mutate("verify"), (inv.data?.outcome_count ?? 0) > 0 && !control.isPending)}
                 {ctlBtn("export", doExport, allMsgs.length > 0)}
                 {ctlBtn("reset", doReset, Boolean(invId) && !control.isPending)}
+                <button
+                  type="button"
+                  onClick={Boolean(invId) && !control.isPending ? doReenqueue : undefined}
+                  disabled={!Boolean(invId) || control.isPending}
+                  title="Clear all cursors, cancel queued/running tasks, dispatch a fresh run (no checkpoint resume)"
+                  style={css(`flex:0 0 auto;font-family:var(--font-mono);font-size:8px;letter-spacing:0.1em;text-transform:uppercase;padding:2px 7px;border:1px solid ${H.acc}88;border-radius:2px;background:transparent;color:${H.acc};cursor:${Boolean(invId) && !control.isPending ? "pointer" : "default"};${Boolean(invId) && !control.isPending ? "" : "opacity:0.4;"}`)}
+                >
+                  re-enqueue
+                </button>
               </div>
             }
             right={
@@ -1562,6 +1593,7 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
   palCommands.push({ group: "run", label: "export report (json)", run: doExport });
   palCommands.push({ group: "run", label: inv.data?.is_favorite ? "unfavorite" : "favorite", run: () => favorite.mutate() });
   palCommands.push({ group: "run", label: "reset investigation", run: doReset });
+  palCommands.push({ group: "run", label: "re-enqueue investigation", run: doReenqueue });
   const palQ = palQuery.trim().toLowerCase();
   const palFiltered = (palQ ? palCommands.filter((c) => c.label.toLowerCase().includes(palQ)) : palCommands).slice(0, 40);
   const palIdx = palFiltered.length ? Math.min(palSel, palFiltered.length - 1) : 0;

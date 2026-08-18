@@ -34,6 +34,7 @@ from aila.platform.tasks.sweeps import (
 )
 
 from .capabilities import CAPABILITY_DESCRIPTION, CAPABILITY_EXAMPLES
+from .services.investigation_reconciler import sweep_investigations_reconcile
 from .services.stuck_healer import sweep_stuck_investigations
 
 __all__ = ["ForensicsModule", "create_module"]
@@ -497,6 +498,22 @@ def _register_forensics_periodic_sweeps() -> None:
         "forensics.stuck_healer",
         sweep_stuck_investigations,
         order=SweepPriority.STUCK_HEALER,
+    )
+
+    # forensics.investigation_reconciler -- RFC-07 reconcile wave (L3.4):
+    # the investigation-scoped reconciler authority pass. Runs AFTER
+    # stall(500) / stuck(600) as the last-resort convergence step: it
+    # reconciles every task + cursor of each non-terminal, non-paused
+    # investigation and drives recovery (same-job-id resume or full
+    # re-enqueue) when the row is RUNNING/CREATED-but-dead, so no path
+    # can leave an investigation RUNNING-with-nothing-enqueued even when
+    # every earlier sweep's eligibility window missed it. Gated by the
+    # platform config key
+    # ``investigation_reconciler_periodic_enabled`` (default True).
+    register_periodic_sweep(
+        "forensics.investigation_reconciler",
+        sweep_investigations_reconcile,
+        order=SweepPriority.RECONCILE,
     )
 
 

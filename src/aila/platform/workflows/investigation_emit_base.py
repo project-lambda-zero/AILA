@@ -63,6 +63,14 @@ __all__ = ["resolve_final_status", "state_investigation_emit"]
 # a hard ceiling stops the runaway independent of turn_count.
 _MAX_AUTO_CONTINUE_CYCLES: int = 30
 
+# Operator-requested index-readiness gate. Bounds how many times a run may
+# re-enqueue while waiting for its bound code index (graph/trailmark +
+# semble) to finish building, so a permanently-broken index cannot
+# re-enqueue forever. Each wait re-enqueue fires ZERO agent turns; the
+# TaskQueue's same-investigation fairness defer spaces them out. At the
+# bound the run finalizes as FAILED (exit_reason ``index_wait_timeout``).
+_MAX_INDEX_WAIT_CYCLES: int = 240
+
 # RFC-13 wiring audit: exit_reasons that mean "the branch or hub is DONE,
 # do NOT auto-continue". phase_graph.make_dispatch_router emits the four
 # ``hub_*`` reasons at hub->emit transitions; ``tool_loop_blocked`` is the
@@ -143,6 +151,15 @@ def resolve_final_status(exit_reason: str) -> str | None:
         # A single branch hitting a provider 500 should NOT kill the
         # entire investigation. auto_continue will re-enqueue the branch.
         return None
+    if exit_reason == "waiting_for_index":
+        # Index-readiness gate: the loop ran ZERO turns because the bound
+        # code index (graph/trailmark + semble) is still building. This is
+        # a deferral, NOT a completion -- leave status untouched so the
+        # bounded re-enqueue keeps the run alive until the index is ready.
+        return None
+    if exit_reason == "index_wait_timeout":
+        # The index never became ready within the bounded wait window.
+        return InvestigationStatus.FAILED.value
     return InvestigationStatus.COMPLETED.value
 
 
@@ -188,6 +205,15 @@ def state_investigation_emit(
           2. ``auto_continue_count`` >= _MAX_AUTO_CONTINUE_CYCLES stops
              the researcher_error path from looping forever without
              advancing turn_count.
+          3. Investigation status gate: the loop polls status between
+             turns, but a ``researcher_error`` break skips that poll.
+             When the operator paused the investigation mid-flight, the
+             retryable-error path used to re-enqueue unconditionally --
+             the fresh run fired setup + LLM calls against a PAUSED
+             investigation (observed: pause at 02:36, new run_ids +
+             OmniRoute calls continuing at 02:37-02:39). Gate on
+             status: PAUSED / terminal (COMPLETED / FAILED / STALLED /
+             ABANDONED) never auto-continues.
         """
         if exit_reason in _NON_CONTINUE_EXIT_REASONS:
             _log.info(
@@ -199,6 +225,23 @@ def state_investigation_emit(
         is_any_researcher_error = exit_reason.startswith("researcher_error")
         if (exit_reason != "max_turns" and not is_any_researcher_error) or outcome_id is not None:
             return False, 0
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _select(bindings.inv_model).where(
+                    bindings.inv_model.id == investigation_id,
+                )
+            )).first()
+        if inv is not None:
+            inv_status = str(getattr(inv, "status", "") or "")
+            if inv_status != InvestigationStatus.RUNNING.value:
+                _log.info(
+                    "investigation_emit AUTO_CONTINUE SKIP inv=%s branch=%s "
+                    "exit_reason=%s status=%s (not RUNNING -- pause/terminal "
+                    "gate; loop's between-turn poll was skipped by the "
+                    "error break)",
+                    investigation_id, branch_id, exit_reason, inv_status,
+                )
+                return False, 0
         if auto_continue_count >= _MAX_AUTO_CONTINUE_CYCLES:
             _log.warning(
                 "investigation_emit AUTO_CONTINUE_CAP_EXCEEDED inv=%s "
@@ -235,6 +278,7 @@ def state_investigation_emit(
         branch_id: str | None = None,
         dispatch_visited: list[str] | None = None,
         auto_continue_count: int = 0,
+        index_wait_count: int = 0,
     ) -> None:
         """Submit the investigate task so the agent continues reasoning on
         the SAME branch it was running.
@@ -265,6 +309,10 @@ def state_investigation_emit(
             kwargs["_dispatch_visited"] = list(dispatch_visited)
         if auto_continue_count:
             kwargs["_auto_continue_count"] = int(auto_continue_count)
+        if index_wait_count:
+            # Bounds the index-readiness wait across re-enqueues so a
+            # permanently-broken index cannot re-enqueue forever.
+            kwargs["_index_wait_count"] = int(index_wait_count)
         task_queue = bindings.task_queue_factory()
         await task_queue.submit(
             track=bindings.track,
@@ -302,6 +350,76 @@ def state_investigation_emit(
         # re-walk every phase and the researcher_error loop is bounded.
         dispatch_visited_in = input.get("_dispatch_visited") or []
         auto_continue_count = int(input.get("_auto_continue_count") or 0)
+
+        # Index-readiness deferral (operator-requested gate). The loop ran
+        # ZERO turns because the bound code index (graph/trailmark + semble)
+        # is still building. Re-enqueue the run (bounded) so it waits on the
+        # queue without any agent turn firing. The TaskQueue's own
+        # same-investigation fairness defer prevents a tight spin; the wait
+        # counter bounds a permanently-broken index. Unreachable unless a
+        # module bound ``index_readiness_fn`` (default OFF), so existing
+        # modules stay behavior-identical.
+        if exit_reason == "waiting_for_index":
+            index_wait_count = int(input.get("_index_wait_count") or 0)
+            if index_wait_count < _MAX_INDEX_WAIT_CYCLES:
+                async with UnitOfWork() as uow:
+                    _inv = (await uow.session.exec(
+                        _select(bindings.inv_model).where(
+                            bindings.inv_model.id == investigation_id,
+                        ),
+                    )).first()
+                    team_id = _inv.team_id if _inv is not None else None
+                try:
+                    await _enqueue_next_investigation_run(
+                        investigation_id, team_id, branch_id=branch_id,
+                        dispatch_visited=(
+                            list(dispatch_visited_in)
+                            if dispatch_visited_in else None
+                        ),
+                        auto_continue_count=auto_continue_count,
+                        index_wait_count=index_wait_count + 1,
+                    )
+                except (
+                    OSError, TimeoutError, RuntimeError, ConnectionError,
+                ) as exc:
+                    _log.warning(
+                        "investigation_emit INDEX_WAIT re-enqueue failed "
+                        "inv=%s err=%s -- run stranded until operator "
+                        "re-enqueues", investigation_id, exc,
+                    )
+                    return StateResult(
+                        next_state=RESERVED_FAILED,
+                        output={
+                            "investigation_id": investigation_id,
+                            "branch_id": branch_id,
+                            "exit_reason": "index_wait_enqueue_failed",
+                            "turn_count": 0,
+                            "error_class": type(exc).__name__,
+                        },
+                    )
+                _log.info(
+                    "investigation_emit WAITING_FOR_INDEX inv=%s wait=%d "
+                    "(re-enqueued, zero turns fired)",
+                    investigation_id, index_wait_count + 1,
+                )
+                return StateResult(
+                    next_state=RESERVED_SUCCEEDED,
+                    output={
+                        "investigation_id": investigation_id,
+                        "status": InvestigationStatus.RUNNING.value,
+                        "exit_reason": "waiting_for_index",
+                        "turn_count": 0,
+                        "outcome_id": None,
+                    },
+                )
+            # Wait bound reached: stop waiting and finalize as FAILED via
+            # the normal path below (resolve_final_status -> FAILED).
+            _log.warning(
+                "investigation_emit INDEX_WAIT_TIMEOUT inv=%s waits=%d -- "
+                "giving up; code index never became ready",
+                investigation_id, index_wait_count,
+            )
+            exit_reason = "index_wait_timeout"
 
         # Auto-continuation: on max_turns without a terminal outcome, re-
         # enqueue another investigate task so the agent keeps

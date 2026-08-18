@@ -5169,20 +5169,29 @@ def create_vr_router() -> APIRouter:
             ) from exc
 
         _log.info(
-            "resume_investigation inv=%s resumed_cursors=%d submitted_tasks=%d",
+            "resume_investigation inv=%s resumed_cursors=%d submitted_tasks=%d "
+            "action=%s",
             investigation_id,
             summary["resumed_cursors"],
             summary["submitted_tasks"],
+            summary.get("action"),
         )
 
-        # Re-load the inv row for response envelope.
+        # Re-load the inv row for response envelope. Surface the action
+        # the lifecycle actually took (resumed | reenqueued |
+        # noop_failed) so the frontend renders truthfully instead of
+        # assuming RUNNING (RFC-07 reconcile wave, L2.1).
         async with UnitOfWork() as uow:
             inv = (await uow.session.exec(
                 select(VRInvestigationRecord).where(
                     VRInvestigationRecord.id == investigation_id,
                 )
             )).first()
-        return DataEnvelope(data=_investigation_summary(inv))
+        return DataEnvelope(
+            data=_investigation_summary(inv).model_copy(
+                update={"resume_action": summary.get("action")},
+            ),
+        )
 
     @router.post(
         "/investigations/{investigation_id}/reopen",

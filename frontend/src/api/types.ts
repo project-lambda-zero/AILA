@@ -23,6 +23,10 @@ export interface Investigation {
   auto_pilot?: boolean;
   pause_reason?: string | null;
   failure_reason?: string | null;
+  /** What the resume endpoint actually did: restored a checkpoint ("resumed"),
+   *  no checkpoint existed so it re-enqueued fresh ("reenqueued"), or nothing
+   *  could be enqueued ("noop_failed"). Present only on the resume response. */
+  resume_action?: "resumed" | "reenqueued" | "noop_failed" | null;
   message_count?: number;
   branch_count?: number;
   outcome_count?: number;

@@ -11,6 +11,7 @@ __all__ = [
     "ARQ_QUEUE_KEY_TEMPLATE",
     "ARQ_IN_PROGRESS_PREFIX",
     "ARQ_JOB_PREFIX",
+    "ARQ_RESULT_PREFIX",
     "ARQ_RETRY_PREFIX",
     "ARQ_DEAD_LETTER_KEY_TEMPLATE",
     "TASK_PROGRESS_KEY_TEMPLATE",
@@ -34,6 +35,12 @@ __all__ = [
 ARQ_QUEUE_KEY_TEMPLATE: str = "arq:queue:{track}"
 ARQ_IN_PROGRESS_PREFIX: str = "arq:in-progress:"
 ARQ_JOB_PREFIX: str = "arq:job:"
+# ``arq:result:<job_id>`` holds the job result / traceback while
+# ``ARQ_KEEP_RESULT_S`` (1h) is still unexpired. A stale result blob for a
+# previously-run job id makes ARQ's dedup refuse a re-enqueue under that
+# same ``_job_id`` (``enqueue_job`` returns ``None``), so the same-job-id
+# resume helper in ``queue.py`` must clear it alongside the job blob.
+ARQ_RESULT_PREFIX: str = "arq:result:"
 ARQ_RETRY_PREFIX: str = "arq:retry:"
 ARQ_DEAD_LETTER_KEY_TEMPLATE: str = "arq:dead-letter:{track}"
 TASK_PROGRESS_KEY_TEMPLATE: str = "task:{task_id}:progress"
