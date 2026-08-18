@@ -16,7 +16,8 @@ one is stale, and the fix depends on which one:
 +-----------------+------------------+---------------------+----------------------------+
 | task status     | cursor state     | arq in-progress key | action                     |
 +=================+==================+=====================+============================+
-| RUNNING         | resumable        | absent              | D-86 SKIP path (existing)  |
+| RUNNING         | resumable        | absent              | resume under the SAME job  |
+|                 |                  |                     | id (L3.1, no stranding)    |
 +-----------------+------------------+---------------------+----------------------------+
 | RUNNING         | reserved terminal| absent              | flip status FAILED         |
 +-----------------+------------------+---------------------+----------------------------+
@@ -36,22 +37,23 @@ one is stale, and the fix depends on which one:
 
 The reconciler does NOT restart any process, kill any worker, or touch
 the ARQ scheduler. It only mutates the three sources it reads (delete a
-lock, flip a status, delete a stale cursor), which are the same
-mutations the periodic sweep does; the reconciler just packages them for
-an on-demand per-task call so operators can heal one runaway task
-without waiting a minute for the next cron tick or reasoning through the
-three tables in the admin console.
+lock, flip a status, re-enqueue under the original job id, delete a
+stale cursor), which are the same mutations the periodic sweep does; the
+reconciler just packages them for an on-demand per-task call so
+operators can heal one runaway task without waiting a minute for the
+next cron tick or reasoning through the three tables in the admin
+console.
 
 Reuse, not reimplementation: the classification predicates delegate to
 :func:`aila.platform.tasks.worker._should_drop_lock` and
 :func:`aila.platform.tasks.worker._workflow_cursor_is_resumable`. The
 delete-cursor path delegates to the same reserved-terminal set the
 periodic reaper uses (:mod:`aila.platform.tasks.cursor_reaper`). The
-re-enqueue on the D-86 SKIP path is deliberately deferred to the
-periodic sweep -- an operator on-demand reconcile records the drift and
-flips the status; the next cron tick re-enqueues via the sweep's
-existing arq-pool wiring so we don't fork the enqueue plumbing across
-two callsites.
+resumable-cursor re-enqueue on the D-86 SKIP path goes through
+:func:`aila.platform.tasks.queue.requeue_same_job_id` INLINE (RFC-07
+reconcile wave, L3.1) so the same job id picks the checkpoint back up --
+the historical CANCELLED-then-sweep deferred re-enqueue stranded the row
+because the re-enqueue sweeps only select RUNNING rows.
 
 Idempotent: a second call finds the drift already healed and returns a
 report with ``healed=False``. Operator-set PAUSED or CANCELLED status is
@@ -62,16 +64,23 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Any
 
 from redis import asyncio as aioredis
 from sqlalchemy import delete as _delete
 from sqlalchemy import text as _sql_text
 from sqlalchemy import update as _update
+from sqlalchemy.exc import SQLAlchemyError
 
 from aila.platform.contracts import utc_now
-from aila.platform.workflows.types import RESERVED_TERMINAL_STATES
+from aila.platform.contracts.enums import InvestigationStatus
+from aila.platform.workflows.types import (
+    RESERVED_PAUSED,
+    RESERVED_TERMINAL_STATES,
+)
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import WorkflowStateCursor
 
@@ -81,6 +90,7 @@ from .constants import (
     REAPER_ZOMBIE_THRESHOLD_S,
 )
 from .models import TaskRecord, TaskStatus
+from .queue import requeue_same_job_id
 
 # ``get_default_resilience_layer`` is imported lazily inside ``reconcile``
 # because ``aila.platform.services.__init__`` pulls in the audit / journal
@@ -93,10 +103,13 @@ from .models import TaskRecord, TaskStatus
 # per-file-ignores (repo policy is per-file-ignores, not inline noqa).
 
 __all__ = [
+    "InvestigationReconcileReport",
+    "InvestigationRecoveryBinding",
     "ReconcileAction",
     "ReconcileReport",
     "StateReconciler",
     "TaskSignals",
+    "sweep_investigations_reconcile",
 ]
 
 _log = logging.getLogger(__name__)
@@ -148,6 +161,17 @@ _TERMINAL_TASK_STATUSES: frozenset[str] = frozenset({
     TaskStatus.DEAD_LETTER.value,
 })
 
+# Task statuses that make an investigation "has a live task" for the
+# investigation-level invariant (:meth:`StateReconciler.reconcile_investigation`).
+# Mirrors ``recovery_service.LIVE_TASK_STATUSES`` without importing that
+# module (its top-level import chain re-enters ``db_models`` mid-load --
+# same cycle the module docstring documents for resilience).
+_LIVE_TASK_STATUSES: frozenset[str] = frozenset({
+    TaskStatus.QUEUED.value,
+    TaskStatus.RUNNING.value,
+    TaskStatus.WAITING.value,
+})
+
 # Task statuses the reconciler NEVER touches. PAUSED is not a task status
 # today (workflow engine owns the __paused__ cursor state) so this set is
 # conservative; the guard is here so a future operator-set state is
@@ -174,6 +198,11 @@ class TaskSignals:
     task's kwargs carry no ``investigation_id`` (a task not tied to an
     investigation, or a row whose kwargs failed to decode); the recovery
     event still records the umbrella signal in that case.
+
+    ``task_track`` is the row's ARQ track name (``TaskRecord.track``);
+    the same-job-id resume primitive (``queue.requeue_same_job_id``)
+    needs it to re-enqueue under the original job id (RFC-07 reconcile
+    wave, L3.1).
     """
 
     task_id: str
@@ -183,6 +212,7 @@ class TaskSignals:
     cursor_state: str | None
     lock_present: bool | None
     investigation_id: str | None
+    task_track: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,6 +254,107 @@ class ReconcileReport:
         pure forward-call wrapper.
         """
         return tuple(a.kind for a in self.actions)
+
+
+# Reserved cursor states that make a cursor NOT resumable for the
+# investigation-level invariant: every engine terminal plus the operator
+# ``__paused__`` sentinel. A ``__paused__`` cursor is operator intent --
+# the investigation-scoped reconciler must never treat pause as a dead
+# run and must never resume over it.
+_NON_RESUMABLE_CURSOR_STATES: frozenset[str] = frozenset(
+    RESERVED_TERMINAL_STATES | {RESERVED_PAUSED}
+)
+
+# Investigation statuses that are operator-terminal / operator-owned and
+# therefore REFUSED by :meth:`StateReconciler.reconcile_investigation`
+# (read-only report, no heal). ``stalled`` is owned by the stall-recovery
+# sweep pipeline; touching it here would race the compare-and-set claim
+# that pipeline already holds.
+_OPERATOR_TERMINAL_INVESTIGATION_STATUSES: frozenset[str] = frozenset({
+    InvestigationStatus.COMPLETED.value,
+    InvestigationStatus.FAILED.value,
+    InvestigationStatus.ABANDONED.value,
+    InvestigationStatus.STALLED.value,
+})
+
+
+@dataclass(frozen=True, slots=True)
+class InvestigationReconcileReport:
+    """Terminal outcome of one :meth:`StateReconciler.reconcile_investigation`
+    call (RFC-07 reconcile wave, L3.3).
+
+    ``healed`` is True when any per-task heal ran OR the investigation
+    level drove a recovery action (``investigation_action`` is not None).
+    ``refusal_reason`` is set when the row was NOT touched: ``paused`` /
+    ``terminal`` (operator intent respected) or ``not_found`` (no
+    investigation row). ``task_reports`` carries every per-task
+    :class:`ReconcileReport` in enumeration order; ``investigation_action``
+    names the investigation-level recovery taken (``reenqueued`` /
+    ``requeued_run``) or None when the invariant did not fire.
+    """
+
+    investigation_id: str
+    healed: bool
+    refusal_reason: str | None = None
+    task_reports: tuple[ReconcileReport, ...] = ()
+    investigation_action: str | None = None
+
+    @property
+    def per_task_action_kinds(self) -> tuple[str, ...]:
+        """Flatten every per-task action kind, in execution order."""
+        kinds: list[str] = []
+        for report in self.task_reports:
+            kinds.extend(report.get_action_kinds())
+        return tuple(kinds)
+
+
+@dataclass(frozen=True, slots=True)
+class InvestigationRecoveryBinding:
+    """Module-supplied data the investigation-scoped reconciler authority
+    needs (RFC-07 reconcile wave, L3.3).
+
+    The platform never names a module investigation table; the module
+    binds its own table identifier + models + submit primitive, mirroring
+    the :class:`~aila.platform.services.recovery_service.StuckBinding`
+    pattern so the reconciler stays module-agnostic.
+
+    - ``investigations_table`` is a trusted module constant interpolated
+      into SQL (Postgres disallows bind parameters for identifiers).
+    - ``submit_one(inv_id, branch_id | None)`` enqueues exactly one
+      worker task (same contract as
+      :func:`aila.platform.services.investigation_lifecycle.reenqueue_investigation`).
+    - ``branch_model`` + ``branch_status_active`` select the reenqueue
+      fan-out: ``None`` submits once (VR style); a model submits one task
+      per active branch, or one setup task when none is active.
+    - ``timestamp_column`` is the claim compare-and-set column the sweep
+      uses (compare-and-set + ordering). Defaults to ``updated_at``;
+      forensics' ``InvestigationRunRecord`` predates that column and
+      binds ``created_at``.
+    - ``sweepable_statuses`` narrows the periodic sweep's candidate
+      SELECT. ``None`` (default) selects every status outside the
+      platform excluded set (``paused`` + the platform terminal
+      vocabulary); a module whose status vocabulary differs from the
+      platform enum (forensics: ``pending`` / ``exhausted`` /
+      ``cancelled``) binds the explicit live set (``("running",)``) so
+      the sweep never claims -- and never drifts the claim timestamp of
+      -- rows that are not live runs.
+    - ``extra_terminal_statuses`` extends the refusal set for DIRECT
+      :meth:`StateReconciler.reconcile_investigation` calls (module
+      terminal statuses the platform enum does not name). Used for the
+      same vocabulary-diverging modules.
+    """
+
+    module_id: str
+    investigations_table: str
+    track: str
+    fn_path_pattern: str
+    inv_model: type[Any]
+    submit_one: Callable[[str, str | None], Awaitable[None]]
+    branch_model: type[Any] | None = None
+    branch_status_active: str | None = None
+    timestamp_column: str = "updated_at"
+    sweepable_statuses: tuple[str, ...] | None = None
+    extra_terminal_statuses: tuple[str, ...] = ()
 
 
 class StateReconciler:
@@ -277,6 +408,7 @@ class StateReconciler:
             hb = rec.heartbeat_at if rec is not None else None
             started = rec.started_at if rec is not None else None
             kwargs_json = rec.kwargs_json if rec is not None else None
+            track = rec.track if rec is not None else None
             cursor_row = (await session.exec(
                 _sql_text(
                     "SELECT current_state FROM workflow_state_cursor "
@@ -295,6 +427,7 @@ class StateReconciler:
             cursor_state=cursor_state,
             lock_present=lock_present,
             investigation_id=_extract_investigation_id(kwargs_json),
+            task_track=track,
         )
 
     async def reconcile(self, task_id: str) -> ReconcileReport:
@@ -366,6 +499,47 @@ class StateReconciler:
                 healed=True, actions=tuple(actions),
             )
 
+        # Case A' (RFC-07 reconcile wave, L3.2 / Finding 9): task
+        # terminal + cursor PRESENT but NOT in a reserved terminal + ARQ
+        # lock definitely absent. This is the documented drift-table row
+        # "terminal | resumable | absent" that was never implemented: the
+        # run is over (the worker that owned the lock is gone -- no lock)
+        # but a non-terminal cursor survives, so a fresh dispatch would
+        # load a stale resumable position and no-op or crash. The cursor
+        # is dead weight -- delete it. ``__paused__`` counts as
+        # "not reserved-terminal" per the table row, so an
+        # operator-paused cursor whose task has since gone terminal is
+        # cleaned rather than left to block a later re-enqueue.
+        if (
+            signals.task_status in _TERMINAL_TASK_STATUSES
+            and signals.cursor_state is not None
+            and signals.lock_present is False
+            and self._cursor_is_resumable(signals.cursor_state)
+        ):
+            await self._delete_cursor(task_id)
+            actions.append(ReconcileAction(
+                kind="delete_stale_cursor",
+                reason=(
+                    f"task terminal ({signals.task_status}) and cursor "
+                    f"resumable-but-orphaned ({signals.cursor_state}) with "
+                    "no ARQ lock -- cursor deleted"
+                ),
+            ))
+            await resilience.emit_recovery_event(
+                investigation_id=signals.investigation_id,
+                action="reconcile_stale_resumable_cursor",
+                detail={
+                    "task_id": task_id,
+                    "task_status": signals.task_status,
+                    "cursor_state": signals.cursor_state,
+                },
+                source="state_reconciler",
+            )
+            return ReconcileReport(
+                task_id=task_id, signals=signals,
+                healed=True, actions=tuple(actions),
+            )
+
         # Case B: task RUNNING, lock definitely absent (we could probe
         # Redis and got a boolean). The reaper's ``_should_drop_lock``
         # predicate decides whether the RUNNING row's heartbeat / start
@@ -386,32 +560,59 @@ class StateReconciler:
                 )
 
             # D-86 skip: cursor is resumable -- the workflow engine can
-            # pick up from the last checkpoint. Flip status to CANCELLED
-            # so 'is this task active?' queries see a consistent NO;
-            # the cursor keeps the next-resume position; re-enqueue
-            # itself is deferred to the periodic sweep's existing
-            # arq-pool wiring (single owner, no fork of enqueue code).
+            # pick up from the last checkpoint. RFC-07 reconcile wave
+            # (L3.1): instead of flipping status to CANCELLED and
+            # "deferring re-enqueue to the periodic sweep" (which only
+            # ever selects RUNNING rows, so the cancelled row was
+            # invisible to it FOREVER -- Finding 3 stranding), call the
+            # same-job-id resume primitive INLINE. Reusing the original
+            # job id makes ARQ pick the workflow_state_cursor checkpoint
+            # back up and lets the existing TaskRecord finalize normally.
             if self._cursor_is_resumable(signals.cursor_state):
-                await self._flip_status(
-                    task_id,
-                    new_status=TaskStatus.CANCELLED.value,
-                    error_suffix=(
-                        f"[state_reconciler: {reap_reason}, cursor "
-                        f"resumable ({signals.cursor_state or 'unset'}) "
-                        "-- next worker sweep re-enqueues]"
-                    ),
+                if not signals.task_track:
+                    _log.warning(
+                        "state_reconciler.reconcile task_id=%s: RUNNING "
+                        "without lock, cursor resumable, but task_track is "
+                        "missing -- cannot requeue under the same job id; "
+                        "leaving RUNNING for the next pass",
+                        task_id,
+                    )
+                    return ReconcileReport(
+                        task_id=task_id, signals=signals,
+                        healed=False, actions=(),
+                    )
+                requeued = await requeue_same_job_id(
+                    task_id, track=signals.task_track,
                 )
+                if not requeued:
+                    # Re-enqueue refused (Redis unreachable, dedup still
+                    # holds the id, or the row vanished). Deliberately do
+                    # NOT flip CANCELLED: a cancelled row is invisible to
+                    # the re-enqueue sweeps, stranding the investigation;
+                    # leaving RUNNING lets a later pass retry the resume.
+                    _log.warning(
+                        "state_reconciler.reconcile task_id=%s: RUNNING "
+                        "without lock, cursor resumable (%s), but "
+                        "requeue_same_job_id refused -- leaving RUNNING "
+                        "for the next pass",
+                        task_id, signals.cursor_state or "unset",
+                    )
+                    return ReconcileReport(
+                        task_id=task_id, signals=signals,
+                        healed=False, actions=(),
+                    )
                 actions.append(ReconcileAction(
-                    kind="flip_status_cancelled_resumable",
+                    kind="resume_same_job_id",
                     reason=(
                         f"D-86 SKIP: running-without-lock, cursor is "
                         f"resumable ({signals.cursor_state or 'unset'}); "
-                        "status -> CANCELLED, cursor left intact"
+                        "re-enqueued under the SAME job id so the "
+                        "checkpoint is picked back up"
                     ),
                 ))
                 await resilience.emit_recovery_event(
                     investigation_id=signals.investigation_id,
-                    action="reconcile_cancel_resumable",
+                    action="reconcile_resume_same_job_id",
                     detail={
                         "task_id": task_id,
                         "reap_reason": reap_reason,
@@ -600,6 +801,260 @@ class StateReconciler:
             healed=False, actions=(),
         )
 
+    async def reconcile_investigation(
+        self,
+        investigation_id: str,
+        *,
+        binding: InvestigationRecoveryBinding,
+    ) -> InvestigationReconcileReport:
+        """Reconcile every task + cursor of one investigation, then apply
+        the investigation-level convergence invariant (RFC-07 signature,
+        L3.3).
+
+        Refuses operator-terminal / PAUSED rows (read-only report, no
+        heal): ``refusal_reason`` is ``paused`` / ``terminal`` /
+        ``not_found`` in those cases. Otherwise:
+
+        1. Enumerates every ``TaskRecord`` for the investigation via the
+           TYPED JSONB extract ``kwargs_json::jsonb->>'investigation_id'``
+           (never a substring LIKE -- same shape
+           :meth:`TaskQueue.enqueued_investigation_ids` uses) and every
+           cursor via the denormalized ``investigation_id`` column
+           (RFC-02), then calls the existing per-task
+           :meth:`reconcile` for each.
+        2. Applies the investigation invariant on RUNNING / CREATED rows
+           AFTER per-task healing: when NO live task (queued/running/
+           waiting) remains AND no resumable cursor exists, it drives the
+           full :func:`~aila.platform.services.investigation_lifecycle
+           .reenqueue_investigation` reset (the same primitive the
+           stall/stuck sweeps use), so a RUNNING-but-dead investigation
+           is detected and re-enqueued (RFC-07 acceptance criterion).
+           When a resumable cursor exists but no live task, it uses
+           :func:`aila.platform.tasks.queue.requeue_same_job_id` for that
+           cursor's run so the checkpoint is picked back up under the
+           original job id.
+        3. Journals ONE aggregated recovery event for the whole pass.
+
+        ``binding`` supplies the module data the platform authority still
+        needs (investigation table identifier, track, fn-path pattern,
+        models, submit primitive) -- see :class:`InvestigationRecoveryBinding`.
+        """
+        from aila.platform.services.resilience import (
+            get_default_resilience_layer,
+        )
+        resilience = get_default_resilience_layer()
+
+        # 1a. Read the investigation row; respect operator intent.
+        status_stmt = _sql_text(
+            f"SELECT status AS status FROM {binding.investigations_table} "
+            "WHERE id = :inv"
+        ).bindparams(inv=investigation_id)
+        try:
+            async with async_session_scope() as session:
+                status_row = (
+                    await session.execute(status_stmt)
+                ).mappings().first()
+        except SQLAlchemyError as exc:
+            _log.warning(
+                "state_reconciler.reconcile_investigation inv=%s: status "
+                "read failed: %s", investigation_id, exc,
+            )
+            return InvestigationReconcileReport(
+                investigation_id=investigation_id,
+                healed=False,
+                refusal_reason="read_failed",
+            )
+        if status_row is None:
+            return InvestigationReconcileReport(
+                investigation_id=investigation_id,
+                healed=False,
+                refusal_reason="not_found",
+            )
+        inv_status = str(status_row["status"])
+        if inv_status == InvestigationStatus.PAUSED.value:
+            return InvestigationReconcileReport(
+                investigation_id=investigation_id,
+                healed=False,
+                refusal_reason="paused",
+            )
+        refusal = _OPERATOR_TERMINAL_INVESTIGATION_STATUSES | set(
+            binding.extra_terminal_statuses
+        )
+        if inv_status in refusal:
+            return InvestigationReconcileReport(
+                investigation_id=investigation_id,
+                healed=False,
+                refusal_reason="terminal",
+            )
+
+        # 1b. Enumerate tasks (typed jsonb extract) + cursors
+        #     (denormalized investigation_id column, RFC-02).
+        try:
+            async with async_session_scope() as session:
+                task_rows = (
+                    await session.execute(_sql_text(
+                        "SELECT id::text AS id FROM taskrecord "
+                        "WHERE kwargs_json::jsonb->>'investigation_id' = :inv"
+                    ).bindparams(inv=investigation_id))
+                ).mappings().all()
+                cursor_rows = (
+                    await session.execute(_sql_text(
+                        "SELECT run_id::text AS run_id, "
+                        "       current_state AS current_state "
+                        "FROM workflow_state_cursor "
+                        "WHERE investigation_id = :inv"
+                    ).bindparams(inv=investigation_id))
+                ).mappings().all()
+        except SQLAlchemyError as exc:
+            _log.warning(
+                "state_reconciler.reconcile_investigation inv=%s: "
+                "enumeration failed: %s", investigation_id, exc,
+            )
+            return InvestigationReconcileReport(
+                investigation_id=investigation_id,
+                healed=False,
+                refusal_reason="read_failed",
+            )
+        task_ids = [str(r["id"]) for r in task_rows]
+        cursors = [
+            (str(r["run_id"]), str(r["current_state"]))
+            for r in cursor_rows
+        ]
+
+        # 2. Per-task healing (each report is journaled individually by
+        #    :meth:`reconcile`).
+        task_reports: list[ReconcileReport] = []
+        for task_id in task_ids:
+            task_reports.append(await self.reconcile(task_id))
+
+        # 3. Investigation invariant -- only RUNNING / CREATED rows.
+        if inv_status not in (
+            InvestigationStatus.RUNNING.value,
+            InvestigationStatus.CREATED.value,
+        ):
+            return InvestigationReconcileReport(
+                investigation_id=investigation_id,
+                healed=any(r.healed for r in task_reports),
+                task_reports=tuple(task_reports),
+            )
+
+        try:
+            async with async_session_scope() as session:
+                live_row = (
+                    await session.execute(_sql_text(
+                        "SELECT 1 AS one FROM taskrecord "
+                        "WHERE kwargs_json::jsonb->>'investigation_id' = :inv "
+                        "  AND status = ANY(:live) LIMIT 1"
+                    ).bindparams(
+                        inv=investigation_id,
+                        live=list(_LIVE_TASK_STATUSES),
+                    ))
+                ).mappings().first()
+                resumable_row = (
+                    await session.execute(_sql_text(
+                        "SELECT 1 AS one FROM workflow_state_cursor "
+                        "WHERE investigation_id = :inv "
+                        "  AND current_state <> ALL(:non_resumable) LIMIT 1"
+                    ).bindparams(
+                        inv=investigation_id,
+                        non_resumable=list(_NON_RESUMABLE_CURSOR_STATES),
+                    ))
+                ).mappings().first()
+        except SQLAlchemyError as exc:
+            _log.warning(
+                "state_reconciler.reconcile_investigation inv=%s: "
+                "invariant probe failed: %s", investigation_id, exc,
+            )
+            return InvestigationReconcileReport(
+                investigation_id=investigation_id,
+                healed=any(r.healed for r in task_reports),
+                task_reports=tuple(task_reports),
+            )
+        has_live_task = live_row is not None
+        has_resumable_cursor = resumable_row is not None
+
+        investigation_action: str | None = None
+        if not has_live_task:
+            if has_resumable_cursor:
+                # The checkpoint itself is worth keeping: re-run that
+                # cursor's run under its OWN job id so the engine picks
+                # the resumable state back up (never a fresh uuid).
+                requeued_runs: list[str] = []
+                for run_id, run_state in cursors:
+                    if run_state in _NON_RESUMABLE_CURSOR_STATES:
+                        continue
+                    if await requeue_same_job_id(
+                        run_id, track=binding.track,
+                    ):
+                        requeued_runs.append(run_id)
+                if requeued_runs:
+                    investigation_action = "requeued_run"
+            else:
+                # RUNNING/CREATED with NO live task and NO resumable
+                # cursor: the investigation is dead. Drive the same full
+                # reset the stall/stuck sweeps use (reset to CREATED,
+                # cancel stale tasks, wipe prior-run cursors, submit
+                # fresh) so the invariant converges immediately rather
+                # than waiting on a sibling sweep's eligibility window.
+                from aila.platform.services.investigation_lifecycle import (
+                    ReenqueueInvestigationError,
+                    reenqueue_investigation,
+                )
+                try:
+                    await reenqueue_investigation(
+                        investigation_id,
+                        inv_model=binding.inv_model,
+                        fn_path_pattern=binding.fn_path_pattern,
+                        submit_one=binding.submit_one,
+                        branch_model=binding.branch_model,
+                        branch_status_active=binding.branch_status_active,
+                    )
+                    investigation_action = "reenqueued"
+                except (
+                    ReenqueueInvestigationError,
+                    SQLAlchemyError,
+                    OSError,
+                    RuntimeError,
+                    ValueError,
+                    TypeError,
+                ) as exc:
+                    _log.warning(
+                        "state_reconciler.reconcile_investigation inv=%s: "
+                        "REENQUEUE fallback failed: %s",
+                        investigation_id, exc,
+                    )
+                    investigation_action = "reenqueue_failed"
+
+        # 4. ONE aggregated recovery event when the pass did anything.
+        task_kinds = tuple(
+            kind
+            for report in task_reports
+            for kind in report.get_action_kinds()
+        )
+        if task_kinds or investigation_action in ("reenqueued", "requeued_run"):
+            await resilience.emit_recovery_event(
+                investigation_id=investigation_id,
+                action="reconcile_investigation",
+                detail={
+                    "inv_status": inv_status,
+                    "task_action_kinds": list(task_kinds),
+                    "investigation_action": investigation_action,
+                    "task_count": len(task_ids),
+                    "cursor_count": len(cursors),
+                },
+                source="state_reconciler",
+            )
+
+        healed = bool(task_kinds) or investigation_action in (
+            "reenqueued", "requeued_run",
+        )
+        return InvestigationReconcileReport(
+            investigation_id=investigation_id,
+            healed=healed,
+            task_reports=tuple(task_reports),
+            investigation_action=investigation_action,
+        )
+
     # ------------------------------------------------------------------
     # Signal helpers
     # ------------------------------------------------------------------
@@ -777,5 +1232,165 @@ class StateReconciler:
                     "state_reconciler._drop_lock aclose: %s", exc,
                 )
         return bool(deleted)
+
+
+async def _reconciler_periodic_enabled() -> bool:
+    """Resolve the ``platform.investigation_reconciler_periodic_enabled`` gate.
+
+    Fail-open to True (the schema default): the periodic
+    :func:`sweep_investigations_reconcile` pass is a correctness fix, so an
+    unreadable config must not silently disable it (RFC-07 reconcile wave,
+    L3.4). The registry import is deferred to call time because config /
+    db_models sits on the same import cycle the module docstring documents
+    for resilience.
+    """
+    try:
+        from aila.storage.registry import ConfigRegistry
+
+        value = await ConfigRegistry().get(
+            "platform", "investigation_reconciler_periodic_enabled",
+        )
+        return bool(value)
+    except (ImportError, AttributeError, RuntimeError, OSError, ValueError, TypeError):
+        _log.warning(
+            "state_reconciler: periodic-enabled gate lookup failed; "
+            "defaulting to enabled (correctness fix)",
+            exc_info=True,
+        )
+        return True
+
+
+async def sweep_investigations_reconcile(
+    binding: InvestigationRecoveryBinding,
+    *,
+    limit: int = 25,
+) -> dict[str, int]:
+    """One periodic pass of the investigation-scoped reconciler authority
+    (RFC-07 reconcile wave, L3.4).
+
+    Reconciles the oldest ``limit`` non-terminal, non-paused
+    investigations each tick (bounded batch). Every candidate is claimed
+    with
+    :func:`aila.platform.services.recovery_claim.try_claim_recovery`
+    (compare-and-set on ``updated_at``) BEFORE the per-investigation
+    heal, so multi-worker ticks and the sibling stall/stuck sweeps cannot
+    converge on the same row twice (the claim is the same primitive the
+    stall/stuck sweeps use -- this pass is the last-resort convergence
+    step and must never race them). Fail-open per row: an error is
+    logged and the pass continues, matching the sweep-registry error
+    posture.
+
+    Gated by ``platform.investigation_reconciler_periodic_enabled``
+    (default True). Modules register this callable (bound via
+    ``functools.partial``) with
+    :func:`aila.platform.tasks.sweeps.register_periodic_sweep` at
+    ``SweepPriority.RECONCILE`` (800) so it runs AFTER stall(500) /
+    stuck(600) as the last-resort convergence pass.
+
+    Returns ``{"examined": N, "healed": N}`` (or a skip marker when the
+    gate is off) for the operator-facing sweep log.
+    """
+    if not await _reconciler_periodic_enabled():
+        return {"skipped": True, "reason": "config_disabled"}
+
+    from aila.platform.services.recovery_claim import try_claim_recovery
+
+    excluded = list(
+        _OPERATOR_TERMINAL_INVESTIGATION_STATUSES
+        | {InvestigationStatus.PAUSED.value}
+        | set(binding.extra_terminal_statuses)
+    )
+    timestamp_column = binding.timestamp_column
+    if binding.sweepable_statuses is not None:
+        # Vocabulary-diverging module (forensics): claim ONLY the live
+        # statuses so non-live rows are never selected and their claim
+        # timestamp never drifts.
+        select_stmt = _sql_text(
+            f"""
+            SELECT inv.id::text AS id, inv.{timestamp_column} AS seen_ts
+            FROM {binding.investigations_table} inv
+            WHERE inv.status = ANY(:sweepable)
+            ORDER BY inv.{timestamp_column} ASC
+            LIMIT :limit
+            """
+        ).bindparams(
+            sweepable=list(binding.sweepable_statuses),
+            limit=limit,
+        )
+    else:
+        select_stmt = _sql_text(
+            f"""
+            SELECT inv.id::text AS id, inv.{timestamp_column} AS seen_ts
+            FROM {binding.investigations_table} inv
+            WHERE inv.status <> ALL(:excluded)
+            ORDER BY inv.{timestamp_column} ASC
+            LIMIT :limit
+            """
+        ).bindparams(excluded=excluded, limit=limit)
+
+    try:
+        async with async_session_scope() as session:
+            rows = (await session.execute(select_stmt)).mappings().all()
+    except SQLAlchemyError as exc:
+        _log.warning(
+            "state_reconciler.sweep_investigations_reconcile[%s]: "
+            "candidate SELECT failed: %s",
+            binding.module_id, exc,
+        )
+        return {"examined": 0, "healed": 0, "error": "select_failed"}
+
+    reconciler = StateReconciler()
+    examined = 0
+    healed = 0
+    for row in rows:
+        inv_id = str(row["id"])
+        seen_ts = row["seen_ts"]
+        examined += 1
+        if seen_ts is None:
+            _log.warning(
+                "state_reconciler.sweep_investigations_reconcile[%s]: "
+                "inv=%s missing updated_at; cannot claim, skipping",
+                binding.module_id, inv_id,
+            )
+            continue
+        try:
+            claimed = await try_claim_recovery(
+                inv_table=binding.investigations_table,
+                timestamp_column=timestamp_column,
+                inv_id=inv_id,
+                seen_timestamp=seen_ts,
+            )
+        except SQLAlchemyError as exc:
+            _log.warning(
+                "state_reconciler.sweep_investigations_reconcile[%s]: "
+                "claim failed inv=%s: %s",
+                binding.module_id, inv_id, exc,
+            )
+            continue
+        if not claimed:
+            # A sibling sweep already owns this row this tick; the
+            # compare-and-set is the mutual exclusion -- skip.
+            continue
+        try:
+            report = await reconciler.reconcile_investigation(
+                inv_id, binding=binding,
+            )
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError) as exc:
+            _log.warning(
+                "state_reconciler.sweep_investigations_reconcile[%s]: "
+                "reconcile failed inv=%s: %s",
+                binding.module_id, inv_id, exc,
+            )
+            continue
+        if report.healed:
+            healed += 1
+        _log.info(
+            "state_reconciler.sweep_investigations_reconcile[%s]: inv=%s "
+            "healed=%s refusal=%s action=%s kinds=%s",
+            binding.module_id, inv_id, report.healed,
+            report.refusal_reason, report.investigation_action,
+            report.per_task_action_kinds,
+        )
+    return {"examined": examined, "healed": healed}
 
 

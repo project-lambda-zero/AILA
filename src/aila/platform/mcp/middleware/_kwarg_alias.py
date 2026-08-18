@@ -30,6 +30,7 @@ __all__ = [
     "build_known_params",
     "drop_unknown_pagination_kwargs",
     "normalize_kwargs",
+    "wrap_list_aliases",
 ]
 
 
@@ -228,3 +229,46 @@ def drop_unknown_pagination_kwargs(
         # validator surfaces them as a real error the agent must fix.
         out[key] = value
     return out, notes
+
+
+def wrap_list_aliases(
+    action: str,
+    kwargs: dict[str, Any],
+    list_canonicals: frozenset[tuple[str, str]],
+) -> tuple[dict[str, Any], list[str]]:
+    """Wrap scalar values in a list when the canonical param is list-typed.
+
+    Manual aliases sometimes rename a scalar-shaped kwarg the agent
+    supplied (``file_path="foo.c"``) to a canonical that must be a list
+    (``filter_paths=["foo.c"]``). ``normalize_kwargs`` renames the key
+    but preserves the value; without this wrap the upstream server
+    rejects the call with a type error and burns an agent turn.
+
+    Args:
+        action: tool name.
+        kwargs: post-normalize kwargs.
+        list_canonicals: set of ``(action, canonical_name)`` pairs whose
+            value MUST be a list. Values already list/tuple are left
+            untouched; ``None`` becomes ``[]``; scalars are wrapped as
+            ``[value]``.
+
+    Returns:
+        ``(kwargs, notes)``. Mutates ``kwargs`` in place and returns it
+        for call chaining. Notes name each wrap for the bridge log.
+    """
+    notes: list[str] = []
+    for act, canon in list_canonicals:
+        if act != action or canon not in kwargs:
+            continue
+        val = kwargs[canon]
+        if isinstance(val, (list, tuple)):
+            continue
+        if val is None:
+            kwargs[canon] = []
+        else:
+            kwargs[canon] = [val]
+        notes.append(
+            f"{action}: wrapped kwarg {canon!r} value in list "
+            f"(schema requires array)",
+        )
+    return kwargs, notes

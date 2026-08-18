@@ -328,6 +328,50 @@ def state_investigation_loop(
         last_action = ""
         exit_reason = "max_turns"
 
+        # Index-readiness gate (operator-requested): never fire a turn
+        # against a half-built code index. When the module bound an
+        # index_readiness_fn, probe it BEFORE any turn. If the graph
+        # (trailmark) or semantic (semble) index is not ready yet, run ZERO
+        # turns and exit ``waiting_for_index`` -- the emit state re-enqueues
+        # the run with a bounded delay until the index is ready, so the
+        # investigation sits on the queue without an agent ever firing a
+        # turn against tools that would only fail. Fail-open: a probe fault
+        # must not wedge the run, so it proceeds as if ready (per-call tool
+        # guards still apply).
+        if bindings.index_readiness_fn is not None:
+            try:
+                index_ready, readiness_detail = (
+                    await bindings.index_readiness_fn(investigation_id)
+                )
+            except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+                index_ready, readiness_detail = (
+                    True, f"probe-error:{type(exc).__name__}",
+                )
+                _log.warning(
+                    "investigation_loop index-readiness probe failed inv=%s "
+                    "err=%s -- proceeding as ready",
+                    investigation_id, exc,
+                )
+            if not index_ready:
+                _log.info(
+                    "investigation_loop WAITING_FOR_INDEX inv=%s branch=%s "
+                    "(%s) -- deferring, zero turns fired",
+                    investigation_id, branch_id, readiness_detail,
+                )
+                return StateResult(
+                    next_state=next_state,
+                    output={
+                        **input,
+                        "branch_id": branch_id,
+                        "exit_reason": "waiting_for_index",
+                        "last_turn_idx": 0,
+                        "last_action": "",
+                        "outcome_id": None,
+                        "_budget_exhausted": False,
+                        "_index_readiness_detail": readiness_detail,
+                    },
+                )
+
         for turn_attempt in range(1, max_turns + 1):
             # fix §287 + §288 -- single UoW polls inv.status, branch.status,
             # AND cursor.current_state (Phase B SSOT). Operator pauses at

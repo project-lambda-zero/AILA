@@ -1065,3 +1065,40 @@ class PlatformConfigSchema(BaseModel):
     autopatch_synth_cost_per_1k_prompt: float = 0.0003
     autopatch_synth_cost_per_1k_completion: float = 0.0015
 
+    # ------------------------------------------------------------------
+    # Index-readiness gate (operator-requested). When True (default), an
+    # investigation loop that binds an ``index_readiness_fn`` fires ZERO
+    # agent turns and defers (re-enqueue) until its bound audit-mcp index
+    # has BOTH the graph (trailmark) and semantic (semble) indexes ready.
+    # This stops agents flailing against a half-built index (read_function
+    # blocked, semantic_search "still building"). Set False (or
+    # ``AILA_PLATFORM_INDEX_READINESS_GATE_ENABLED=0``) to let turns fire
+    # regardless of index state. Modules that do not bind the readiness
+    # hook are unaffected either way.
+    # ------------------------------------------------------------------
+    index_readiness_gate_enabled: bool = True
+
+    # ------------------------------------------------------------------
+    # RFC-07 reconciliation wave -- investigation lifecycle convergence.
+    #
+    # ``investigation_reconciler_periodic_enabled`` is the master switch
+    # for the periodic ``reconcile_investigation`` pass (L3.4). Default
+    # True because the pass is a correctness fix (its absence lets an
+    # investigation sit RUNNING-with-nothing-enqueued forever), not a new
+    # capability: the sweep claims each row with the same compare-and-set
+    # the stall/stuck sweeps use and journals every heal. Disable via
+    # ``PUT /config/platform/investigation_reconciler_periodic_enabled``
+    # or env ``AILA_PLATFORM_INVESTIGATION_RECONCILER_PERIODIC_ENABLED=0``
+    # if an operator wants to run the reconciler only on demand.
+    #
+    # ``investigation_defer_ceiling_s`` bounds the per-investigation
+    # backpressure defer computed by ``TaskQueue._compute_investigation_defer``
+    # (L2.3 / Finding 5): the computed excess defer is clamped to this
+    # ceiling so a wide / repeatedly-resumed investigation can never be
+    # pushed back without bound. Default 180s preserves the previous
+    # effective behavior (the cap only triggers well past the 6-task
+    # in-flight allowance).
+    # ------------------------------------------------------------------
+    investigation_reconciler_periodic_enabled: bool = True
+    investigation_defer_ceiling_s: int = 180
+

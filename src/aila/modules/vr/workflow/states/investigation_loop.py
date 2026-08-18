@@ -24,6 +24,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
     VRInvestigationRecord,
 )
+from aila.modules.vr.services.index_readiness import vr_index_readiness
 from aila.modules.vr.workflow.states.investigation_setup import (
     _spawn_ratified_specialists,
 )
@@ -95,6 +96,11 @@ _LOOP_BINDINGS = InvestigationStateBindings(
     max_turns_reader=lambda: _cfg.get_int("max_turns_per_task"),
     researcher_error=VulnResearcherError,
     specialist_spawn_fn=_spawn_ratified_specialists,
+    # Operator-requested index-readiness gate: the loop fires ZERO turns
+    # and defers (re-enqueue) until the bound audit-mcp index has BOTH the
+    # graph (trailmark) and semantic (semble) indexes ready. Gated by
+    # platform.index_readiness_gate_enabled (default on); fail-open.
+    index_readiness_fn=vr_index_readiness,
 )
 
 # The loop handler is the platform factory bound to VR's researcher.

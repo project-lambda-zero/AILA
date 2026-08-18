@@ -155,3 +155,5 @@ orig_findings.py
 
 # private live-testing summary (never publish)
 LIVE_TESTING_SUMMARY.md
+/graphify-out/
+/poc/

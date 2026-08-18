@@ -8,6 +8,7 @@ import KnowledgePage from "./KnowledgePage";
 import MalwareXRayPage from "./MalwareXRayPage";
 import PersonaModelRoutingPage from "./PersonaModelRoutingPage";
 import SandboxPage from "./SandboxPage";
+import TargetInvestigations from "./TargetInvestigations";
 import UploadForm from "./UploadForm";
 import VulnerabilityPage from "./VulnerabilityPage";
 import XRayPage from "./XRayPage";
@@ -23,6 +24,10 @@ export interface PageEntry {
 // Vulnerability sub-views. Everything else is a declarative DataPage.
 const BESPOKE: Record<string, PageEntry> = {
   xray: { title: "x-ray", render: (p) => <XRayPage {...p} /> },
+  // Registry alias so `onOpenPage("vr", "xray", ...)` (row-activate from the
+  // investigations/targets pages) resolves the same X-Ray renderer that the
+  // left-rail bound-investigation open uses (bare "xray").
+  "vr:xray": { title: "vr \u00b7 x-ray", render: (p) => <XRayPage {...p} /> },
   "malware:xray": { title: "malware \u00b7 x-ray", render: (p) => <MalwareXRayPage {...p} /> },
   "vr:new-target": { title: "vr \u00b7 upload target", render: (p) => <UploadForm module="vr" {...p} /> },
   "malware:new-target": { title: "malware \u00b7 upload target", render: (p) => <UploadForm module="malware" {...p} /> },
@@ -43,11 +48,63 @@ const BESPOKE: Record<string, PageEntry> = {
   // "+ new" button opens the module's upload window instead.
   "vr:targets": {
     title: PAGE_CONFIGS["vr:targets"].title,
-    render: (p) => <DataPage config={PAGE_CONFIGS["vr:targets"]} configKey="vr:targets" {...p} onNewClick={() => p.onOpenPage?.("vr", "new-target", "upload target")} />,
+    render: (p) => (
+      <DataPage
+        config={PAGE_CONFIGS["vr:targets"]}
+        configKey="vr:targets"
+        {...p}
+        onNewClick={() => p.onOpenPage?.("vr", "new-target", "upload target")}
+        detailBody={(row) => (
+          <TargetInvestigations
+            targetId={String(row.id ?? "")}
+            endpoint="/vr/investigations"
+            onOpenXray={(inv) => p.onOpenPage?.("vr", "xray", `vr \u00b7 x-ray`, inv.id)}
+          />
+        )}
+      />
+    ),
+  },
+  // Row-activate: clicking an investigation raises its X-Ray window directly
+  // (same drill-down the targets page offers, one less hop).
+  "vr:investigations": {
+    title: PAGE_CONFIGS["vr:investigations"].title,
+    render: (p) => (
+      <DataPage
+        config={PAGE_CONFIGS["vr:investigations"]}
+        configKey="vr:investigations"
+        {...p}
+        onRowActivate={(row) => p.onOpenPage?.("vr", "xray", `vr \u00b7 x-ray`, String(row.id ?? ""))}
+      />
+    ),
   },
   "malware:targets": {
     title: PAGE_CONFIGS["malware:targets"].title,
-    render: (p) => <DataPage config={PAGE_CONFIGS["malware:targets"]} configKey="malware:targets" {...p} onNewClick={() => p.onOpenPage?.("malware", "new-target", "upload target")} />,
+    render: (p) => (
+      <DataPage
+        config={PAGE_CONFIGS["malware:targets"]}
+        configKey="malware:targets"
+        {...p}
+        onNewClick={() => p.onOpenPage?.("malware", "new-target", "upload target")}
+        detailBody={(row) => (
+          <TargetInvestigations
+            targetId={String(row.id ?? "")}
+            endpoint="/malware/investigations"
+            onOpenXray={(inv) => p.onOpenPage?.("malware", "xray", `malware \u00b7 x-ray`, inv.id)}
+          />
+        )}
+      />
+    ),
+  },
+  "malware:investigations": {
+    title: PAGE_CONFIGS["malware:investigations"].title,
+    render: (p) => (
+      <DataPage
+        config={PAGE_CONFIGS["malware:investigations"]}
+        configKey="malware:investigations"
+        {...p}
+        onRowActivate={(row) => p.onOpenPage?.("malware", "xray", `malware \u00b7 x-ray`, String(row.id ?? ""))}
+      />
+    ),
   },
   // Forensics sub-resources are project-scoped: a project row opens the tabbed
   // detail window rather than an in-row detail panel.

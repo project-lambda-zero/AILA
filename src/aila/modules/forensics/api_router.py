@@ -56,6 +56,7 @@ from aila.platform.contracts.auth import AuthContext, require_auth
 from aila.platform.exceptions import AILAError
 from aila.platform.services.redis_pool import pool_available
 from aila.platform.tasks.progress import ProgressStream
+from aila.platform.tasks.queue import qualified_task_name
 from aila.platform.uow import UnitOfWork
 from aila.storage.registry import ConfigRegistry
 
@@ -146,7 +147,7 @@ async def _active_analysis_task_id(session: Any, project_id: str) -> str | None:
     from aila.modules.forensics.workflow.task import run_forensics_analysis
     from aila.platform.tasks.models import TaskRecord
 
-    fn_path = f"{run_forensics_analysis.__module__}.{run_forensics_analysis.__qualname__}"
+    fn_path = qualified_task_name(run_forensics_analysis)
     return (await session.exec(
         select(TaskRecord.id).where(
             TaskRecord.fn_path == fn_path,

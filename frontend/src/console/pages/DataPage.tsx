@@ -44,6 +44,12 @@ export interface PageConfig {
   scopeFrom?: { endpoint: string; param?: string; idField?: string; labelField?: string };
   /** DELETE endpoint template with `{id}` (and `{scope}`). Enables "delete". */
   delete?: string;
+  /** When set, the query pages through every page (backend max 250/page)
+   * and concatenates `items`. For endpoints whose full row set exceeds the
+   * default 50-row page (e.g. the 273-row config registry) -- the DataPage
+   * grid has no pagination chrome, so without this the tail rows silently
+   * never render. */
+  fetchAllPages?: boolean;
   /** Per-field custom detail renderers (keyed by row field). When present for a
    * field, the detail panel uses it instead of the generic <StructuredValue>
    * (e.g. the LLM-log prompt/response rendered as a chat transcript). */
@@ -113,9 +119,13 @@ export default function DataPage(
     /** When set, a row click opens a dedicated window (e.g. a forensics
      * project detail) instead of toggling the in-window detail panel. */
     onRowActivate?: (row: Record<string, unknown>) => void;
+    /** When set, the in-window detail panel's body is this renderer instead
+     * of the generic field grid. Receives the selected row. Used for
+     * drill-down panels (e.g. a target row's investigations). */
+    detailBody?: (row: Record<string, unknown>) => ReactNode;
   },
 ): JSX.Element {
-  const { config, configKey, onNewClick, onRowActivate, onBack, onMinimize, isFullscreen, onToggleFullscreen } = props;
+  const { config, configKey, onNewClick, onRowActivate, detailBody, onBack, onMinimize, isFullscreen, onToggleFullscreen } = props;
   const createSpec: FormSpec | undefined = (CREATE_FORMS as Record<string, FormSpec>)[configKey];
   const editSpec: FormSpec | undefined = (EDIT_FORMS as Record<string, FormSpec>)[configKey];
   const idField = config.idField ?? "id";
@@ -144,9 +154,37 @@ export default function DataPage(
       : ""
     : config.endpoint;
   const waitingForScope = Boolean(config.scopeFrom) && !effectiveEndpoint && scopeQ.isLoading;
+  // fetchAllPages: page through every page (backend max 250/page) and merge
+  // the items arrays, so a grid without pagination chrome still shows the
+  // full dataset. The envelope shape ({items, pages, ...}) is preserved for
+  // toRows, which reads config.itemsKey.
+  const fetchAllPages = Boolean(config.fetchAllPages);
+  const pageUrl = (endpoint: string, page: number): string => {
+    const sep = endpoint.includes("?") ? "&" : "?";
+    return `${endpoint}${sep}page=${page}&page_size=250`;
+  };
   const q = useQuery({
     queryKey: ["datapage", effectiveEndpoint],
-    queryFn: () => apiFetch<unknown>(effectiveEndpoint),
+    queryFn: async () => {
+      const first = (await apiFetch<unknown>(pageUrl(effectiveEndpoint, 1))) as Record<string, unknown>;
+      if (!fetchAllPages) return first;
+      const pages = typeof first?.pages === "number" ? first.pages : 1;
+      if (pages <= 1) return first;
+      const rest = await Promise.all(
+        Array.from({ length: pages - 1 }, (_, i) =>
+          apiFetch<unknown>(pageUrl(effectiveEndpoint, i + 2)),
+        ),
+      );
+      const merged = (rest as Record<string, unknown>[]).reduce<Record<string, unknown>>(
+        (acc, p) => {
+          const items = readArray(p, config.itemsKey ?? "items") ?? [];
+          const accItems = readArray(acc, config.itemsKey ?? "items") ?? [];
+          return { ...p, [config.itemsKey ?? "items"]: [...accItems, ...items] };
+        },
+        { ...first },
+      );
+      return merged;
+    },
     enabled: Boolean(effectiveEndpoint),
     retry: false,
     refetchInterval: 15000,
@@ -301,14 +339,18 @@ export default function DataPage(
               <button type="button" onClick={() => setSel(null)} style={css("background:transparent;border:0;color:var(--text-faint);cursor:pointer;font-size:12px;margin-left:4px;")}>{"\u2715"}</button>
             </div>
             <div style={css("flex:1;min-height:0;overflow:auto;padding:11px 13px;display:grid;grid-template-columns:130px 1fr;gap:6px 10px;font-size:10.5px;align-content:start;")}>
-              {Object.entries(sel).map(([k, v]) => (
-                <span key={k} style={{ display: "contents" }}>
-                  <span style={css("color:var(--text-faint);letter-spacing:0.04em;word-break:break-word;")}>{k}</span>
-                  <span style={css("color:var(--text-primary);word-break:break-word;min-width:0;")}>
-                    {config.detailRenderers?.[k]?.(v, sel) ?? <StructuredValue value={v} />}
+              {detailBody ? (
+                detailBody(sel)
+              ) : (
+                Object.entries(sel).map(([k, v]) => (
+                  <span key={k} style={{ display: "contents" }}>
+                    <span style={css("color:var(--text-faint);letter-spacing:0.04em;word-break:break-word;")}>{k}</span>
+                    <span style={css("color:var(--text-primary);word-break:break-word;min-width:0;")}>
+                      {config.detailRenderers?.[k]?.(v, sel) ?? <StructuredValue value={v} />}
+                    </span>
                   </span>
-                </span>
-              ))}
+                ))
+              )}
             </div>
           </div>
         ) : null}

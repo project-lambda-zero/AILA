@@ -126,6 +126,13 @@ class VRInvestigationSummary(BaseModel):
     verifier_verdict: str | None = None
     verifier_confidence: float | None = None
     failure_reason: str | None = None
+    # RFC-07 reconcile wave (L2.1): what the most recent
+    # POST /investigations/{id}/resume call actually did --
+    # "resumed" (cursors restored / tasks enqueued, row RUNNING),
+    # "reenqueued" (nothing was resumable, full reset to CREATED),
+    # or "noop_failed" (even the reset failed; row left PAUSED).
+    # None on every other response so existing consumers are unchanged.
+    resume_action: str | None = None
     linked_campaign_ids: list[str] = Field(default_factory=list)
     linked_finding_ids: list[str] = Field(default_factory=list)
     started_at: datetime | None = None

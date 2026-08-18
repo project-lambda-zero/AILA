@@ -32,7 +32,7 @@ export const PAGE_CONFIGS = {
   "vr:investigations": {
     title: "vr \u00b7 investigations",
     endpoint: "/vr/investigations",
-    blurb: "open one from the left rail to raise its x-ray",
+    blurb: "click a row to raise its x-ray; the targets page drills down per target",
     columns: [c("title"), c("kind"), c("status"), c("strategy_family", "strategy"), c("branch_count", "branches"), c("message_count", "turns"), c("outcome_count", "outcomes"), c("cost_actual_usd", "cost $")],
   },
   "vr:patterns": {
@@ -228,6 +228,10 @@ export const PAGE_CONFIGS = {
     title: "admin \u00b7 config",
     endpoint: "/config",
     itemsKey: "items",
+    // The registry holds 273 rows across namespaces; the grid has no
+    // pagination chrome, so pull every page or the tail keys (e.g.
+    // platform.llm_default_model) silently never render.
+    fetchAllPages: true,
     columns: [c("namespace"), c("key"), c("value_type", "type"), c("effective_value", "value"), c("effective_source", "source"), c("overridden_by_env", "env override"), c("updated_at", "updated")],
   },
   "admin:tools": {

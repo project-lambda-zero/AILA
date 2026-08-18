@@ -7,6 +7,29 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.40] - 2026-08-18 -- Investigation recovery and tool-dispatch durability fixes
+
+### Fixed
+
+- Stalled investigations recover automatically: VR, forensics, and malware
+  now run a reconciler sweep that recovers investigations whose live
+  taskrecords desync from the row status. Previously a stale running
+  taskrecord blocked both the stall reaper and the stuck healer, so an
+  investigation could sit terminal-stalled with no worker examining it.
+- VR index-readiness gate keeps the run alive on index deferral instead of
+  terminal-stalling when the bound code index is still building.
+- Paused or terminal investigations are no longer auto-continued mid-turn
+  by the emit-base re-enqueue path.
+- audit_mcp `read_function` returns function content (was reading the
+  provider tag field), and kwarg-alias normalization passes
+  `callers_of`/`read_function` arguments to the bridge unchanged.
+- Re-enqueue cancels stale taskrecords and resubmits under the original
+  job id, with a dedup guard against re-enqueue collisions.
+
+### Added
+
+- `TargetInvestigations` console page and reconciler plumbing.
+
 ## [0.5.39] - 2026-08-16 -- Enhancement/tech-debt/RFC resolution wave 4
 
 Every capability below is behind a config flag defaulting to off, so a

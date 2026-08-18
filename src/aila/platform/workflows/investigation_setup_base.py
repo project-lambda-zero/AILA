@@ -136,6 +136,17 @@ class InvestigationStateBindings:
     post_draft_review_request: Callable[..., Awaitable[Any]] | None = None
     finalize: Callable[..., Awaitable[Any]] | None = None
     branch_table: str | None = None
+    # Index-readiness gate (operator-requested). A module-provided async
+    # callback returning ``(ready, detail)`` for the investigation's bound
+    # code index. When set and it returns not-ready, the loop runs ZERO
+    # turns and exits ``waiting_for_index`` so agents never fire against a
+    # half-built index (graph/trailmark + semble semantic index). The emit
+    # state re-enqueues the run with a bounded delay until the index is
+    # ready. ``None`` (default) disables the gate -- the loop is
+    # byte-identical to pre-gate behaviour for modules that do not bind it.
+    index_readiness_fn: (
+        Callable[[str], Awaitable[tuple[bool, str]]] | None
+    ) = None
     # RFC-08 step 1 wire-in: a module-provided async callback that turns
     # a terminal quorum verdict (approved | rejected) into a signed row
     # in the module's PatternStore via ``ExperienceWriter``. Called from
@@ -275,6 +286,7 @@ def state_investigation_setup(
         # boundary, defeating _MAX_AUTO_CONTINUE_CYCLES.
         dispatch_visited_pass_through = list(input.get("_dispatch_visited") or [])
         auto_continue_count_pass_through = int(input.get("_auto_continue_count") or 0)
+        index_wait_count_pass_through = int(input.get("_index_wait_count") or 0)
 
         async with UnitOfWork() as uow:
             inv = (await uow.session.exec(
@@ -823,6 +835,7 @@ def state_investigation_setup(
                 # run.
                 "_dispatch_visited": dispatch_visited_pass_through,
                 "_auto_continue_count": auto_continue_count_pass_through,
+                "_index_wait_count": index_wait_count_pass_through,
             },
         )
 

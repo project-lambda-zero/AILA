@@ -12,20 +12,26 @@ Coverage:
 
 * Happy path (no drift) -- reconcile is a no-op, healed=False.
 * Terminal task + stale terminal cursor -- cursor deleted.
+* Terminal task + resumable cursor + no lock (L3.2) -- stale cursor
+  deleted, task row untouched.
 * Operator-terminal task (CANCELLED) -- reconciler declines, honouring
   the RFC's "never resurrect operator-set states" rule.
-* Running + no lock + resumable cursor -- D-86 SKIP, status flipped
-  to CANCELLED; cursor left intact.
+* Running + no lock + resumable cursor -- re-enqueued UNDER THE SAME JOB
+  ID inline (L3.1) so the checkpoint is picked back up; with the
+  requeue unavailable the row is left RUNNING for the next pass (never
+  CANCELLED-then-stranded).
 * Running + no lock + no cursor -- status flipped to FAILED.
 * Idempotency -- a second reconcile finds the drift already healed.
 """
 from __future__ import annotations
 
+import os
 from datetime import timedelta
 from uuid import uuid4
 
 import pytest
 
+import aila.platform.tasks.state_reconciler as reconciler_mod
 from aila.platform.contracts import utc_now
 from aila.platform.tasks.models import TaskRecord, TaskStatus
 from aila.platform.tasks.state_reconciler import StateReconciler
@@ -212,6 +218,29 @@ class TestDriftHeal:
         # Post-heal: the cursor is gone.
         assert await _read_cursor(task_id) is None
 
+    async def test_terminal_task_resumable_cursor_no_lock_deletes_cursor(
+        self, test_db,
+    ) -> None:
+        """RFC-07 reconcile wave (L3.2 / Finding 9): the drift-table row
+        "terminal | resumable | absent". The run is over (terminal task,
+        no ARQ lock) but a non-terminal cursor survives -- a fresh
+        dispatch would load a stale resumable position -- so the stale
+        cursor is deleted. `__paused__` counts as non-reserved-terminal
+        here and is cleaned too when its task has gone terminal."""
+        del test_db
+        task_id = await _seed_task(status=TaskStatus.FAILED.value)
+        await _seed_cursor(task_id, "investigation_loop")  # resumable
+        r = _NoLockReconciler(lock_present=False)
+        report = await r.reconcile(task_id)
+        assert report.healed is True
+        assert report.get_action_kinds() == ("delete_stale_cursor",)
+        # Post-heal: the stale resumable cursor is gone.
+        assert await _read_cursor(task_id) is None
+        # The terminal task row itself is untouched.
+        rec = await _read_task(task_id)
+        assert rec is not None
+        assert rec.status == TaskStatus.FAILED.value
+
     async def test_running_no_lock_no_cursor_flips_failed(
         self, test_db,
     ) -> None:
@@ -231,26 +260,76 @@ class TestDriftHeal:
         assert rec.error is not None
         assert "state_reconciler" in rec.error
 
-    async def test_running_no_lock_resumable_cursor_d86_skip(
+    async def test_running_no_lock_resumable_cursor_requeues_inline(
+        self, test_db, monkeypatch,
+    ) -> None:
+        """RFC-07 reconcile wave (L3.1): a running-without-lock task with a
+        resumable cursor is re-enqueued under its OWN job id INLINE instead
+        of being flipped CANCELLED-then-deferred. The cursor is left intact
+        so the engine picks the checkpoint back up; the requeue is the heal.
+
+        The requeue primitive is stubbed here (unit test has no Redis):
+        asserting it was CALLED with the original task id + track and that
+        its success is reported as the ``resume_same_job_id`` action is the
+        behaviour contract -- a cancelled row would be invisible to the
+        re-enqueue sweeps forever (Finding 3 stranding).
+        """
+        del test_db
+        task_id = await _seed_task(
+            heartbeat_delta_min=None,
+            started_delta_min=60,
+            track="vr",
+        )
+        await _seed_cursor(task_id, "investigation_loop")  # resumable
+
+        called: list[tuple[str, str]] = []
+
+        async def _fake_requeue(task_id_arg: str, *, track: str) -> bool:
+            called.append((task_id_arg, track))
+            return True
+
+        monkeypatch.setattr(
+            reconciler_mod, "requeue_same_job_id", _fake_requeue,
+        )
+        r = _NoLockReconciler(lock_present=False)
+        report = await r.reconcile(task_id)
+        assert report.healed is True
+        assert report.get_action_kinds() == ("resume_same_job_id",)
+        # The requeue used the original id + the row's track (never a
+        # fresh uuid), so the checkpoint is picked back up.
+        assert called == [(task_id, "vr")]
+        rec = await _read_task(task_id)
+        assert rec is not None
+        # The row is NOT flipped CANCELLED by the reconciler; the requeue
+        # primitive owns the run-again transition.
+        assert rec.status != TaskStatus.CANCELLED.value
+        # Cursor is left intact so the re-run resumes from the checkpoint.
+        cursor = await _read_cursor(task_id)
+        assert cursor is not None
+        assert cursor.current_state == "investigation_loop"
+
+    async def test_running_no_lock_resumable_cursor_requeue_unavailable_leaves_running(
         self, test_db,
     ) -> None:
+        """L3.1 retry posture: when the same-job-id requeue cannot run
+        (no Redis URL in this unit environment), the reconciler leaves the
+        row RUNNING for a later pass instead of flipping CANCELLED -- a
+        cancelled row is invisible to the re-enqueue sweeps forever."""
         del test_db
         task_id = await _seed_task(
             heartbeat_delta_min=None,
             started_delta_min=60,
         )
         await _seed_cursor(task_id, "investigation_loop")  # resumable
+        # No AILA_PLATFORM_REDIS_URL -> requeue_same_job_id returns False.
+        os.environ.pop("AILA_PLATFORM_REDIS_URL", None)
         r = _NoLockReconciler(lock_present=False)
         report = await r.reconcile(task_id)
-        assert report.healed is True
-        assert "flip_status_cancelled_resumable" in report.get_action_kinds()
+        assert report.healed is False
+        assert report.actions == ()
         rec = await _read_task(task_id)
         assert rec is not None
-        assert rec.status == TaskStatus.CANCELLED.value
-        # Cursor is left intact so the next sweep can resume from it.
-        cursor = await _read_cursor(task_id)
-        assert cursor is not None
-        assert cursor.current_state == "investigation_loop"
+        assert rec.status == TaskStatus.RUNNING.value
 
     async def test_running_no_lock_terminal_cursor_flips_failed_and_deletes(
         self, test_db,

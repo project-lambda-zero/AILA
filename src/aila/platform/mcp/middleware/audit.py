@@ -25,6 +25,7 @@ import logging
 import os
 import re
 import time
+from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -33,15 +34,172 @@ from aila.platform.mcp.middleware._kwarg_alias import (
     build_known_params,
     drop_unknown_pagination_kwargs,
     normalize_kwargs,
+    wrap_list_aliases,
 )
+
+# Per-async-context binding of the resolved audit_mcp index_id for the
+# in-flight tool dispatch. The VR ``ToolExecutor._maybe_correct_index_id``
+# sets it inside the ``_pre_dispatch_correct_args`` seam so the middleware
+# has a durable fallback if any transformation strips ``index_id`` from
+# the kwargs dict OR if a bypass path (speculator prewarm, claim-verifier
+# probe) reaches ``forward()`` without going through the executor
+# preprocessor. asyncio ``create_task`` copies the current context, so a
+# background task spawned during an executor turn inherits the same
+# binding automatically. Default ``None`` means "no binding known";
+# middleware ONLY consumes it as a last-resort inject when the schema
+# actually requires ``index_id`` and the kwarg is missing.
+_bound_index_id_ctx: ContextVar[str | None] = ContextVar(
+    "audit_mcp_bound_index_id", default=None,
+)
+
+
+def _current_bound_index_id() -> str | None:
+    """Read the async-context-local resolved index_id, or ``None``.
+
+    Public helper so peer modules (VR tool executor, claim verifier,
+    speculator wrappers) can bind the current investigation's index
+    without importing the private ContextVar directly.
+    """
+    return _bound_index_id_ctx.get()
+
+
+def bind_index_id(index_id: str | None) -> Any:
+    """Bind ``index_id`` on the current async context.
+
+    Returns the ContextVar Token so the caller can restore the prior
+    binding via :func:`reset_index_id`. Passing ``None`` explicitly
+    clears the binding for callers that want the middleware to fall
+    back to the "missing required kwarg" error.
+    """
+    return _bound_index_id_ctx.set(index_id)
+
+
+def reset_index_id(token: Any) -> None:
+    """Restore the prior binding captured by :func:`bind_index_id`."""
+    _bound_index_id_ctx.reset(token)
+
+
+__all__ = [
+    "AuditMcpMiddleware",
+    "bind_index_id",
+    "reset_index_id",
+]
 
 if TYPE_CHECKING:
     from aila.platform.mcp.client import McpClient
     from aila.platform.mcp.server_specs import ServerSpec
 
-__all__ = ["AuditMcpMiddleware"]
 
 _log = logging.getLogger(__name__)
+
+
+# ── Per-tool teaching hints for the missing-required error path ──────
+#
+# Keys are audit-mcp tool names; values are one-line remediation
+# strings appended to the ``missing required kwarg`` error the
+# middleware returns. Written for the LLM: name the correct kwarg,
+# name the tool to use instead, or point at the discovery tool that
+# supplies the missing value. The hint fires ONLY when the specific
+# tool is missing kwargs; other tools fall back to the generic error.
+_MISSING_KWARG_HINTS: dict[str, str] = {
+    "semantic_search": (
+        "semantic_search REQUIRES query=<natural-language sentence>. "
+        "Scope with filter_paths=[<repo-relative path>, ...] (a list, "
+        "not a bare string). Use search_functions(pattern=...) for "
+        "regex-style lookups instead."
+    ),
+    "read_function": (
+        "read_function REQUIRES name=<function name>. When you have a "
+        "specific file, pass file_path=<repo-relative path>; leave it "
+        "off to let audit-mcp resolve by name against the function "
+        "index. Use search_functions(pattern=...) first if the exact "
+        "name is unknown."
+    ),
+    "extract_class": (
+        "extract_class REQUIRES name=<class name> and file_path=<repo-"
+        "relative path>. Use search_functions(pattern='class_name') "
+        "to discover locations first."
+    ),
+    "callers_of": (
+        "callers_of REQUIRES name=<callee function>. It walks the "
+        "call graph by NAME only -- do NOT pass file_path. Use "
+        "search_functions(pattern=...) to resolve a name first."
+    ),
+    "callees_of": (
+        "callees_of REQUIRES name=<caller function>. It walks the "
+        "call graph by NAME only -- do NOT pass file_path."
+    ),
+    "taint_paths_to": (
+        "taint_paths_to REQUIRES name=<sink function>. Do NOT pass "
+        "'sink' -- audit-mcp expects the sink under 'name'."
+    ),
+    "search_functions": (
+        "search_functions REQUIRES pattern=<regex>. Do NOT pass "
+        "file_path; there is no per-file scoping for this tool. Use "
+        "semantic_search(query=..., filter_paths=[...]) when you "
+        "need to scope by path."
+    ),
+    "search_source": (
+        "search_source REQUIRES pattern=<regex>. Do NOT pass 'files' "
+        "or 'file_path' -- this tool does not accept per-path scoping."
+    ),
+    "search_constants": (
+        "search_constants REQUIRES pattern=<regex>."
+    ),
+    "search_types": (
+        "search_types REQUIRES pattern=<regex>."
+    ),
+    "search_bitfields": (
+        "search_bitfields REQUIRES pattern=<regex>."
+    ),
+    "search_macros": (
+        "search_macros REQUIRES pattern=<regex>."
+    ),
+    "search_assertions": (
+        "search_assertions REQUIRES pattern=<regex>."
+    ),
+    "find_related": (
+        "find_related REQUIRES file_path=<repo-relative path> and "
+        "line=<1-indexed integer>. It scores nearby chunks around "
+        "that location."
+    ),
+    "read_lines": (
+        "read_lines REQUIRES index_id, file_path, start, end "
+        "(1-indexed inclusive line numbers)."
+    ),
+}
+
+
+def _missing_kwarg_hint(
+    action: str,
+    missing: list[str],
+    index_roots: dict[str, str],
+) -> str:
+    """Compose the teach-through hint appended to a missing-required error.
+
+    When ``index_id`` is one of the missing kwargs, always tail the
+    known-index catalog so the agent can copy-paste the right hash. The
+    per-tool hint (from ``_MISSING_KWARG_HINTS``) is appended verbatim
+    when present; tools without a curated hint fall back to the generic
+    catalog listing.
+    """
+    parts: list[str] = []
+    tool_hint = _MISSING_KWARG_HINTS.get(action)
+    if tool_hint:
+        parts.append(tool_hint)
+    if "index_id" in missing:
+        if index_roots:
+            catalog = sorted(index_roots)
+            parts.append(
+                f"Known indexes: {catalog}. "
+                f"Pass index_id=<one of the ids above>."
+            )
+        else:
+            parts.append(
+                "No indexes are cached yet -- call audit_mcp.list_indexes "
+                "first to enumerate available indexes."
+            )
+    return " ".join(parts)
 
 
 # ── Module-level constants + helpers (verbatim from the bridge) ───────
@@ -386,15 +544,69 @@ class AuditMcpMiddleware:
             "min_value",
         },
         "name": {
+            # Every "which symbol are you asking about" alias. audit-mcp
+            # tools that take a symbol name (read_function, callers_of,
+            # callees_of, taint_paths_to, extract_class) universally
+            # declare ``name`` in schema, so the family algorithm folds
+            # every alias below onto ``name``. Live agent evidence
+            # showed ``sink`` (taint_paths_to), ``target`` (callers_of),
+            # and ``func`` / ``method_name`` (read_function) as the
+            # top hallucinated synonyms rejected by the pre-#252 map.
             "name", "function_name", "class_name", "sink_name",
             "symbol_name", "fn_name", "fn", "function", "symbol",
             "exception_name",
+            "sink", "target", "target_name", "func", "method_name",
+            "method", "subroutine", "identifier",
+        },
+        # audit-mcp uses ``index_id`` universally. Agents pull ``lens_id``
+        # from unrelated MCP servers, ``codebase_id`` from prior AILA
+        # revisions, or the bare ``index`` shorthand. Fold everything to
+        # ``index_id`` -- schema only exposes that one member so the
+        # family algorithm produces an unambiguous rename.
+        "index": {
+            "index_id", "lens_id", "codebase_id", "codebase",
+            "repo_id", "repository_id", "corpus_id", "index",
+            "index_name", "handle", "index_handle",
+        },
+        # grep-style tools declare ``pattern`` (regex); the agent
+        # commonly attaches ``regex`` / ``grep`` / ``search_pattern``.
+        # ``query`` stays OUT of this family: it belongs to
+        # ``semantic_search`` (natural language) and rerouting a regex
+        # search to a semantic tool is silently wrong.
+        "pattern": {
+            "pattern", "regex", "grep", "search_pattern", "re",
         },
     }
 
     # Manual overrides for renames the family algorithm cannot infer.
     # Keep small; prefer adding to ``_KW_FAMILIES``.
-    _MANUAL_OVERRIDES: dict[str, dict[str, str]] = {}
+    #
+    # ``semantic_search``: the agent scopes a semantic query by attaching
+    # ``file_path`` / ``path`` / ``paths`` / ``files`` / ``scope``.
+    # audit-mcp exposes exactly one scoping kwarg (``filter_paths``, a
+    # list). We rename here; ``_LIST_WRAP_ALIASES`` (below) wraps the
+    # scalar value in a list post-normalise so a bare string doesn't
+    # trip the upstream ``must be array`` type error.
+    _MANUAL_OVERRIDES: dict[str, dict[str, str]] = {
+        "semantic_search": {
+            "file_path": "filter_paths",
+            "path": "filter_paths",
+            "paths": "filter_paths",
+            "files": "filter_paths",
+            "scope": "filter_paths",
+            "language": "filter_languages",
+            "languages": "filter_languages",
+        },
+    }
+
+    # (action, canonical_param) pairs whose value must be a list. When
+    # ``_MANUAL_OVERRIDES`` renames a scalar-shaped alias onto one of
+    # these, ``wrap_list_aliases`` wraps the value in ``[value]`` so
+    # audit-mcp's per-tool schema doesn't reject with a type error.
+    _LIST_WRAP_ALIASES: frozenset[tuple[str, str]] = frozenset({
+        ("semantic_search", "filter_paths"),
+        ("semantic_search", "filter_languages"),
+    })
 
     # Auto-built ``{action: {alias: canonical}}`` populated by
     # ``list_tool_specs()`` after the first /tools fetch.
@@ -493,6 +705,14 @@ class AuditMcpMiddleware:
         renamed, alias_notes = normalize_kwargs(
             action, kwargs, cls._AUTO_ALIAS_MAP,
         )
+        # List-wrap step for aliases that rename a scalar onto a
+        # list-typed canonical (see ``_LIST_WRAP_ALIASES``). Runs
+        # unconditionally -- the wrap set is small and each entry is
+        # keyed by (action, canonical) so unrelated tools pay nothing.
+        renamed, wrap_notes = wrap_list_aliases(
+            action, renamed, cls._LIST_WRAP_ALIASES,
+        )
+        alias_notes.extend(wrap_notes)
         if not cls._KNOWN_PARAMS:
             return renamed, alias_notes
         filtered, drop_notes = drop_unknown_pagination_kwargs(
@@ -1179,6 +1399,70 @@ class AuditMcpMiddleware:
         known_param_names = {p["name"] for p in (match.get("params") or [])}
         required = set(match.get("required") or [])
 
+        # Central ``index_id`` fallback. Fires when the tool's schema
+        # requires ``index_id`` and the kwargs dict does not carry one
+        # yet. Two sources are consulted in order:
+        #   (1) the async-context binding set by the module executor's
+        #       ``_pre_dispatch_correct_args`` seam (VR
+        #       ``ToolExecutor._maybe_correct_index_id`` writes it every
+        #       turn). Covers bypass paths (speculator prewarm,
+        #       claim-verifier probe) that inherit the executor's
+        #       context via ``asyncio.create_task``.
+        #   (2) the cached ``_INDEX_ROOTS`` map, but ONLY when exactly
+        #       one root is known. Multi-index deployments (this repo
+        #       ships 10+ typical) can't guess which index the caller
+        #       means; missing is left to fail loudly below with the
+        #       list of choices.
+        # Without this fallback, every code path that skipped
+        # ``_pre_dispatch_correct_args`` would burn a turn on
+        # ``missing required ['index_id']`` even though the middleware
+        # already knows the answer.
+        if (
+            "index_id" in required
+            and "index_id" in known_param_names
+            and not kwargs.get("index_id")
+        ):
+            bound = _bound_index_id_ctx.get()
+            cls = self.__class__
+            if not bound and not cls._INDEX_ROOTS:
+                await self._refresh_index_roots(client)
+            picked: str | None = None
+            if isinstance(bound, str) and bound:
+                picked = bound
+                _log.info(
+                    "audit_mcp_bridge: injected index_id=%r for %s "
+                    "from async-context binding "
+                    "(caller omitted the kwarg)",
+                    picked, action,
+                )
+            elif len(cls._INDEX_ROOTS) == 1:
+                picked = next(iter(cls._INDEX_ROOTS))
+                _log.info(
+                    "audit_mcp_bridge: injected index_id=%r for %s "
+                    "from single-entry cache (no context binding)",
+                    picked, action,
+                )
+            if picked:
+                kwargs["index_id"] = picked
+
+        # read_function resolves by NAME alone when file_path is passed as
+        # an explicit null -- audit-mcp backfills the real path. Its Python
+        # signature makes file_path a required positional, so an OMITTED
+        # key both makes audit-mcp raise TypeError AND makes this validator
+        # block the call pre-dispatch as "missing required ['file_path']".
+        # A name-only lookup is exactly what the agent needs when
+        # search_functions returns no location (it never carries one) and
+        # the semantic index is not yet warm. Inject the explicit null so
+        # the call forwards and the NOT-INDEXED fallback chain in forward()
+        # can engage on a miss. A read_function with no name at all is left
+        # to fail as genuinely malformed.
+        if (
+            action == "read_function"
+            and kwargs.get("name")
+            and not kwargs.get("file_path")
+        ):
+            kwargs["file_path"] = None
+
         # Auto-translate index_id -> path for tools that take a path
         # on disk (audit-mcp's ``detect_languages``, ``classify_strings``,
         # etc.). Callers pass index_id uniformly; rewriting them all
@@ -1236,6 +1520,9 @@ class AuditMcpMiddleware:
                 f"Valid params: {valid_list}. "
                 f"Required: {sorted(required)}."
             )
+            tool_hint = _MISSING_KWARG_HINTS.get(action)
+            if tool_hint:
+                error_msg = f"{error_msg} {tool_hint}"
             _log.warning(
                 "audit_mcp_bridge: blocked %s call with unknown kwargs %s "
                 "(suggestions: %s)", action, unknown, suggestions,
@@ -1247,10 +1534,13 @@ class AuditMcpMiddleware:
         missing = sorted(required - set(kwargs))
         if missing:
             valid_list = sorted(known_param_names)
+            hint = _missing_kwarg_hint(action, missing, self.__class__._INDEX_ROOTS)
             error_msg = (
                 f"audit_mcp.{action} rejected: missing required kwarg(s) "
                 f"{missing}. Valid params: {valid_list}."
             )
+            if hint:
+                error_msg = f"{error_msg} {hint}"
             _log.warning(
                 "audit_mcp_bridge: blocked %s call missing required %s",
                 action, missing,

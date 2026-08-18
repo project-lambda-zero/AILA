@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aila"
-version = "0.5.39"
+version = "0.5.40"
 description = "Modular AI security platform with pluggable analysis modules."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -309,6 +309,11 @@ ignore = [
 # ``agents/auto_steering.py`` do; the client is built only the first time
 # speculation actually fires with the flag on.
 "src/aila/platform/services/speculator.py" = ["PLC0415"]
+# vr/services/index_readiness.py: PLC0415 for the deferred ConfigRegistry /
+# db_models / McpClient imports in the readiness probe. Deferred so the
+# module stays a leaf import for the loop-bindings module and the gate
+# adds zero import-time cost when disabled.
+"src/aila/modules/vr/services/index_readiness.py" = ["PLC0415"]
 "src/aila/platform/agents/turn_runner.py" = ["PLC0415"]
 "src/aila/platform/workflows/investigation_setup_base.py" = ["PLC0415"]
 "src/aila/storage/report_store.py" = ["PLC0415"]
@@ -486,6 +491,12 @@ ignore = [
 "src/aila/modules/vr/services/stuck_healer.py" = ["PLC0415"]
 "src/aila/modules/malware/services/stuck_healer.py" = ["PLC0415"]
 "src/aila/modules/forensics/services/stuck_healer.py" = ["PLC0415"]
+# investigation_reconciler bindings: PLC0415 for the same deferred
+# ``_task_queue`` / ``workflow.task`` imports the stuck_healer bindings
+# use (worker boot-path -> task-registration import cycle).
+"src/aila/modules/vr/services/investigation_reconciler.py" = ["PLC0415"]
+"src/aila/modules/malware/services/investigation_reconciler.py" = ["PLC0415"]
+"src/aila/modules/forensics/services/investigation_reconciler.py" = ["PLC0415"]
 "src/aila/modules/vr/services/target_analysis.py" = ["PLC0415"]
 "src/aila/modules/vr/workflow/definitions.py" = ["PLC0415"]
 "src/aila/modules/vr/workflow/finalize.py" = ["PLC0415"]

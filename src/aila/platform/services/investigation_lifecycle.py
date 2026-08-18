@@ -48,6 +48,7 @@ from aila.platform.llm.cancellation import (
 )
 from aila.platform.tasks.arq_purge import purge_arq_jobs_for_investigation
 from aila.platform.tasks.models import TaskStatus
+from aila.platform.tasks.queue import qualified_task_name
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import RESERVED_PAUSED
 
@@ -387,7 +388,18 @@ async def resume_investigation(
 
     Returns::
 
-        {"resumed_cursors": N, "submitted_tasks": N, "inv_status": "running"}
+        {"resumed_cursors": N, "submitted_tasks": N, "inv_status": "...",
+         "action": "resumed" | "reenqueued" | "noop_failed"}
+
+    ``action`` is the truth the API/UI must render: ``resumed`` when at
+    least one cursor was restored or one task enqueued and the row moved
+    to RUNNING, ``reenqueued`` when nothing was resumable so the call
+    fell back to the full :func:`reenqueue_investigation` reset (row
+    reset to CREATED + fresh submit), and ``noop_failed`` when even that
+    reset failed and the row is left untouched at PAUSED. The RUNNING
+    write is guarded on ``effective = resumed_cursors + submitted_tasks
+    > 0`` so the row can never become RUNNING-with-nothing-enqueued
+    (RFC-07 reconcile wave, L2.1).
 
     Raises :class:`ResumeInvestigationError` if the investigation is not
     PAUSED. The fan-out submits one ``task_fn`` task per resumed cursor
@@ -402,6 +414,10 @@ async def resume_investigation(
         "resumed_cursors": 0,
         "submitted_tasks": 0,
         "inv_status": None,
+        # RFC-07 reconcile wave (L2.1): the action this call actually
+        # took -- "resumed" | "reenqueued" | "noop_failed" -- so the API /
+        # UI can render truthfully instead of assuming RUNNING.
+        "action": None,
     }
     now = utc_now()
     # (run_id, branch_id) pairs so the fan-out can submit with the
@@ -451,15 +467,21 @@ async def resume_investigation(
         locked = (await uow.session.exec(lock_stmt)).all()
 
         for row in locked:
-            if row.archived_state:
-                # Legacy cursors carry NULL branch_id; fall back to
-                # ``run_id`` which was the branch id on that path
-                # (that is the only way pause could archive them at all).
-                br = (
-                    str(row.branch_id) if row.branch_id
-                    else (str(row.run_id) if str(row.run_id) != investigation_id else None)
-                )
-                resumed_runs.append((str(row.run_id), br))
+            # RFC-07 reconcile wave (L2.1): EVERY paused cursor is
+            # restored and counted, including a ``__paused__`` row whose
+            # ``archived_state`` is NULL (locked by a path that never
+            # archived). The restore UPDATE below already COALESCEs to
+            # ``'investigation_setup'`` -- counting the row here is what
+            # makes that restore actually fire instead of the cursor
+            # being left stuck at ``__paused__`` forever.
+            # Legacy cursors carry NULL branch_id; fall back to
+            # ``run_id`` which was the branch id on that path
+            # (that is the only way pause could archive them at all).
+            br = (
+                str(row.branch_id) if row.branch_id
+                else (str(row.run_id) if str(row.run_id) != investigation_id else None)
+            )
+            resumed_runs.append((str(row.run_id), br))
 
         if resumed_runs:
             # 2. Restore archived_state and clear the archive. One UPDATE
@@ -500,12 +522,42 @@ async def resume_investigation(
         resumed_branch_result = await uow.session.exec(resumed_branch_count_stmt)
         summary["resumed_branches"] = resumed_branch_result.rowcount or 0
 
-        # 3. Flip inv.status back to RUNNING.
-        inv.status = InvestigationStatus.RUNNING.value
-        inv.pause_reason = None
-        inv.updated_at = now
-        uow.session.add(inv)
+        # 2.6. RFC-07 reconcile wave (L2.1 / Finding 4): pre-cancel every
+        # stale queued/running/waiting TaskRecord for this investigation
+        # INSIDE the same transaction as the cursor restore. Any in-flight
+        # task at resume time is stale by definition (pause cancelled
+        # them all; a survivor is an orphan left by a raced submit /
+        # auto_continue). Without this, ``TaskQueue.submit``'s input-hash
+        # dedup can match a dead orphan-queued row and hand the fan-out
+        # its id without enqueueing a live job -- counting it as
+        # submitted (the RUNNING-with-nothing bug). Mirrors pause's
+        # cancel keying on kwargs_json.
+        cancel_stmt = _sql_text(
+            "UPDATE taskrecord "
+            "SET status = :cancelled, "
+            "    completed_at = :ts, "
+            "    error = COALESCE(error, '') || :marker "
+            "WHERE status = ANY(:active_statuses) "
+            "  AND kwargs_json LIKE :inv_pat"
+        ).bindparams(
+            cancelled=TaskStatus.CANCELLED.value,
+            active_statuses=[
+                TaskStatus.QUEUED.value,
+                TaskStatus.RUNNING.value,
+                TaskStatus.WAITING.value,
+            ],
+            ts=now,
+            marker="resume_precancel\n",
+            inv_pat=f'%"{investigation_id}"%',
+        )
+        cancel_result = await uow.session.exec(cancel_stmt)
+        summary["precancelled_tasks"] = cancel_result.rowcount or 0
 
+        # 3. NO unconditional inv.status flip here. The RUNNING write is
+        #    gated on ``effective > 0`` AFTER the fan-out (step 4.6), so
+        #    a resume that restored nothing and submitted nothing can
+        #    never report RUNNING-with-nothing-enqueued (RFC-07 reconcile
+        #    wave, L2.1).
         await uow.session.commit()
         await uow.session.refresh(inv)
         summary["inv_status"] = inv.status
@@ -521,11 +573,16 @@ async def resume_investigation(
             investigation_id, exc,
             exc_info=True,
         )
-    # 4. AFTER commit: fan-out one ARQ task per resumed cursor so every
-    #    branch (not just the primary) gets a worker pickup. The cursor
-    #    row's ``branch_id`` column (RFC-02 keying) supplies the branch
-    #    id directly; legacy rows fall back to ``run_id`` (see the lock
-    #    query above).
+    # 4. AFTER the restore transaction commits: fan-out one ARQ task per
+    #    resumed cursor so every branch (not just the primary) gets a
+    #    worker pickup. The cursor row's ``branch_id`` column (RFC-02
+    #    keying) supplies the branch id directly; legacy rows fall back
+    #    to ``run_id`` (see the lock query above). Each successful
+    #    :meth:`TaskQueue.submit` that reaches the enqueue counts here --
+    #    a refused enqueue surfaces as WorkerUnreachableError or is
+    #    caught below, so ``submitted_tasks`` never counts a job that
+    #    was not actually enqueued (relies on the L1.1 enqueue-verification
+    #    chokepoint in ``queue._enqueue_arq_job``).
     submitted = 0
     for run_id, branch_id in resumed_runs:
         kwargs: dict[str, Any] = {"investigation_id": investigation_id}
@@ -541,8 +598,9 @@ async def resume_investigation(
                 team_id=auth_team_id,
                 # dedup via the TaskRecord.input_hash UNIQUE index:
                 # re-submitting the same (track, fn, canonical kwargs)
-                # within the active window raises IntegrityError which the
-                # caller catches as 'already queued'.
+                # within the active window returns the existing handle --
+                # the pre-cancel above guarantees that handle is live,
+                # never a dead orphan-queued row.
             )
             submitted += 1
         except IntegrityError:
@@ -611,6 +669,84 @@ async def resume_investigation(
                 )
 
     summary["submitted_tasks"] = submitted
+
+    # 4.6. RFC-07 reconcile wave (L2.1) -- the GUARDED status write.
+    # ``effective`` counts only restores and submits that actually
+    # landed; RUNNING is written ONLY when at least one of them did, so
+    # the row can never become RUNNING-with-nothing-enqueued.
+    effective = summary["resumed_cursors"] + summary["submitted_tasks"]
+    if effective > 0:
+        async with UnitOfWork() as uow:
+            inv_row = (await uow.session.exec(
+                select(inv_model)
+                .where(inv_model.id == investigation_id)
+                .with_for_update()
+            )).first()
+            if inv_row is not None:
+                inv_row.status = InvestigationStatus.RUNNING.value
+                inv_row.pause_reason = None
+                inv_row.updated_at = utc_now()
+                uow.session.add(inv_row)
+                await uow.session.commit()
+                await uow.session.refresh(inv_row)
+                summary["inv_status"] = inv_row.status
+        summary["action"] = "resumed"
+        return summary
+
+    # effective == 0: nothing was restored and nothing could be
+    # submitted -- a paused investigation with no resumable cursor and
+    # no live branch. What the operator means by "resume" here is "make
+    # it run again", so fall back to the full reset
+    # (:func:`reenqueue_investigation`: reset to CREATED, cancel stale
+    # tasks, wipe every prior-run cursor, submit fresh) in the same call
+    # and surface the actual action taken. The fallback's fn_path
+    # The stale-task cancel pattern derives from ``task_fn`` via the same
+    # helper TaskQueue.submit uses, so the LIKE match hits the exact rows
+    # the module's own /re-enqueue endpoint would cancel; the branch
+    # fan-out reuses the caller's branch model with the generic
+    # ``"active"`` vocabulary (zero active branches -> the one inv-level
+    # setup submit, matching VR's submit-once convention).
+    fn_path = qualified_task_name(task_fn)
+
+    async def _submit_one(inv_id: str, branch_id: str | None) -> None:
+        fb_kwargs: dict[str, Any] = {"investigation_id": inv_id}
+        if branch_id:
+            fb_kwargs["branch_id"] = branch_id
+        await task_queue.submit(
+            track=track,
+            fn=task_fn,
+            kwargs=fb_kwargs,
+            user_id=auth_user_id or user_id,
+            group_id=auth_role,
+            team_id=auth_team_id,
+        )
+
+    try:
+        reenqueued = await reenqueue_investigation(
+            investigation_id,
+            inv_model=inv_model,
+            fn_path_pattern=f"%{fn_path}%",
+            submit_one=_submit_one,
+            branch_model=branch_model,
+            branch_status_active="active",
+        )
+    except (ReenqueueInvestigationError, SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
+        # The reset itself failed (row vanished, transport error) -- the
+        # investigation stays PAUSED with no cursors restored and no
+        # tasks enqueued; report the no-op truthfully so the operator
+        # knows resume did not silently "succeed".
+        _log.warning(
+            "resume_investigation FALLBACK reenqueue failed inv=%s err=%s",
+            investigation_id, exc, exc_info=True,
+        )
+        summary["action"] = "noop_failed"
+        summary["inv_status"] = InvestigationStatus.PAUSED.value
+        return summary
+
+    summary["action"] = "reenqueued"
+    summary["inv_status"] = InvestigationStatus.CREATED.value
+    summary["fallback_reenqueue"] = reenqueued
+    summary["submitted_tasks"] = reenqueued.get("submitted", 0)
     return summary
 
 
@@ -744,10 +880,16 @@ async def reenqueue_investigation(
         cancel_result = await uow.session.exec(cancel_stmt)
         summary["cancelled_stale_tasks"] = cancel_result.rowcount or 0
 
-        # Wipe __crashed__ cursors for this investigation so the workflow
-        # engine starts fresh on the next dispatch.
+        # Wipe EVERY cursor for this investigation (not just
+        # ``__crashed__``): a row reset to CREATED must have NO prior-run
+        # cursor left behind, otherwise the fresh dispatch can load a
+        # leftover ``__failed__`` / ``__cancelled__`` / ``__succeeded__`` /
+        # ``__paused__`` cursor and no-op or crash (RFC-07 reconcile wave,
+        # L2.2 / Finding 9, desync #3). The ``only_crashed`` behaviour
+        # stays available on :func:`purge_investigation_cursors` for other
+        # callers that want the narrower wipe.
         summary["wiped_crashed_cursors"] = await purge_investigation_cursors(
-            uow.session, investigation_id, only_crashed=True,
+            uow.session, investigation_id, only_crashed=False,
         )
 
         # Reset the dispatch-hub replan clock: a stale unratified replan

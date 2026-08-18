@@ -46,7 +46,10 @@ from aila.api.constants import MODULE_ID_PLATFORM
 from aila.platform.exceptions import WorkerUnreachableError
 from aila.platform.tasks.constants import (
     ARQ_IN_PROGRESS_PREFIX,
+    ARQ_JOB_PREFIX,
     ARQ_QUEUE_KEY_TEMPLATE,
+    ARQ_RESULT_PREFIX,
+    ARQ_RETRY_PREFIX,
     CONFIG_KEY_REDIS_URL,
     CONFIG_NS_PLATFORM,
 )
@@ -54,7 +57,10 @@ from aila.platform.tasks.models import TaskHandle, TaskRecord, TaskStatus
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import WorkflowStateCursor
 
-__all__ = ["TaskQueue"]
+__all__ = [
+    "TaskQueue",
+    "requeue_same_job_id",
+]
 
 _log = logging.getLogger(__name__)
 
@@ -93,6 +99,34 @@ def _env_redis_url() -> str | None:
 
     url = os.environ.get("AILA_PLATFORM_REDIS_URL", "").strip()
     return url or None
+
+
+def qualified_task_name(fn: Callable[..., object]) -> str:
+    """Return the ARQ registry key for ``fn`` without double-qualifying.
+
+    ``@platform_task`` decorates a callable by replacing ``__qualname__``
+    with the full dotted ``registry_name`` (template.py), so joining
+    ``module.__name__`` onto it again yields a doubled path
+    (``aila.modules.vr.workflow.task.aila.modules.vr.workflow.task.run_vr_investigate``)
+    that ARQ cannot resolve -- the function map is keyed on the
+    single-qualified name. Plain module-level callables still carry a bare
+    ``__qualname__`` and need the module prefix joined.
+
+    Example: "aila.modules.vulnerability.tasks.scan"
+
+    Raises:
+        ValueError: If inspect.getmodule(fn) returns None.
+    """
+    module = inspect.getmodule(fn)
+    if module is None:
+        raise ValueError(
+            f"Cannot determine module for callable {fn!r}. "
+            "Ensure fn is defined at module scope, not as a local lambda."
+        )
+    qualname = fn.__qualname__
+    if qualname.startswith(f"{module.__name__}."):
+        return qualname
+    return f"{module.__name__}.{qualname}"
 
 
 async def _enqueue_arq_job(
@@ -138,8 +172,17 @@ async def _enqueue_arq_job(
         }
         if defer_seconds > 0:
             enqueue_kwargs["_defer_by"] = timedelta(seconds=defer_seconds)
-        await pool.enqueue_job(fn_name, **enqueue_kwargs)
-        return True
+        job = await pool.enqueue_job(fn_name, **enqueue_kwargs)
+        # RFC-07 reconcile wave: ARQ returns ``None`` when a job or its
+        # retained result for ``_job_id`` still lives in Redis (dedup with
+        # keep_result=3600s). A None return means the enqueue was REFUSED,
+        # not performed -- callers treat a False return as leave-status /
+        # retry, so reporting refused-as-success here would let a stale
+        # ``arq:job:<id>`` / ``arq:result:<id>`` fake a live queue. This
+        # is the single enqueue-verification chokepoint every resubmission
+        # path (submit, requeue_failed, set_queued_from_paused, the
+        # same-job-id resume helper) funnels through.
+        return job is not None
     except Exception as exc:
         # Redis / arq errors surface heterogeneously (RedisError, OSError,
         # ValueError from DSN parsing, TimeoutError). Callers translate a
@@ -181,6 +224,137 @@ async def _drop_arq_in_progress_key(task_id: str, redis_url: str) -> bool:
                 "queue._drop_arq_in_progress_key(%s) client.aclose() failed: %s",
                 task_id, close_exc,
             )
+
+
+async def requeue_same_job_id(task_id: str, *, track: str | None = None) -> bool:
+    """Re-run an existing tracked run under its OWN job id (never a fresh uuid).
+
+    The single "make this checkpointed run run again" primitive (RFC-07
+    reconcile wave, L1.2). ARQ dedup refuses a re-enqueue while a job or
+    its retained result for ``_job_id`` still lives in Redis
+    (``keep_result=3600s``), so a same-id resume must first clear that
+    stale debris; and the ``TaskRecord`` must be reset to QUEUED so the
+    row finalizes normally when the resumed worker finishes. The
+    ``workflow_state_cursor`` row keyed by ``run_id == task_id`` is
+    intentionally NOT touched: the engine picks the checkpoint back up
+    on the next execute, which is the entire point of reusing the id.
+
+    Ordering preserves the enqueue-first invariant (every
+    ``status='queued'`` row is backed by a live ARQ job) that
+    ``requeue_failed`` also maintains: the row is only reset after the
+    enqueue returned a live job. A missing TaskRecord, a missing Redis
+    URL, an empty ``fn_path`` / ``track``, malformed ``kwargs_json``, or
+    a refused enqueue all return ``False`` with the row untouched.
+
+    Args:
+        task_id: TaskRecord.id == ARQ job_id == workflow_state_cursor.run_id.
+        track: ARQ queue track. Defaults to the row's own ``track``.
+
+    Returns:
+        True when a live ARQ job was enqueued under ``task_id`` AND the
+        row was reset to QUEUED in the same call; False otherwise (caller
+        leaves the row alone / retries later).
+    """
+    async with async_session_scope() as session:
+        record = await session.get(TaskRecord, task_id)
+        if record is None:
+            _log.info(
+                "queue.requeue_same_job_id(%s): no TaskRecord -- nothing "
+                "to resume under this id", task_id,
+            )
+            return False
+        effective_track = track or record.track
+        if not effective_track or not record.fn_path:
+            _log.warning(
+                "queue.requeue_same_job_id(%s): missing track / fn_path -- "
+                "cannot resume", task_id,
+            )
+            return False
+        try:
+            task_kwargs = json.loads(record.kwargs_json) if record.kwargs_json else {}
+        except (TypeError, ValueError) as exc:
+            _log.warning(
+                "queue.requeue_same_job_id(%s): kwargs_json malformed (%s) "
+                "-- cannot resume", task_id, exc,
+            )
+            return False
+        redis_url = _env_redis_url()
+        if not redis_url:
+            _log.warning(
+                "queue.requeue_same_job_id(%s): AILA_PLATFORM_REDIS_URL "
+                "unset -- cannot resume", task_id,
+            )
+            return False
+
+    # 1. Clear stale ARQ debris for the id so dedup accepts it: the job
+    #    blob, the retained result, the retry counter, and any dangling
+    #    in-progress worker slot. Best-effort: a failed clear just makes
+    #    the enqueue below come back refused (False), which is the same
+    #    leave-alone outcome.
+    client = aioredis.Redis.from_url(redis_url, socket_connect_timeout=2.0)
+    try:
+        await client.delete(
+            f"{ARQ_JOB_PREFIX}{task_id}",
+            f"{ARQ_RESULT_PREFIX}{task_id}",
+            f"{ARQ_RETRY_PREFIX}{task_id}",
+            f"{ARQ_IN_PROGRESS_PREFIX}{task_id}",
+        )
+    except (OSError, TimeoutError, RuntimeError) as exc:
+        _log.warning(
+            "queue.requeue_same_job_id(%s): ARQ debris clear failed: %s",
+            task_id, exc,
+        )
+    finally:
+        try:
+            await client.aclose()
+        except (OSError, RuntimeError) as close_exc:
+            _log.debug(
+                "queue.requeue_same_job_id(%s) client.aclose() failed: %s",
+                task_id, close_exc,
+            )
+
+    # 2+3. Enqueue first (live job under the same id), then reset the row.
+    enqueued = await _enqueue_arq_job(
+        track=effective_track,
+        task_id=task_id,
+        fn_name=record.fn_path,
+        kwargs=task_kwargs,
+        redis_url=redis_url,
+    )
+    if not enqueued:
+        _log.warning(
+            "queue.requeue_same_job_id(%s): enqueue refused -- row left "
+            "unchanged", task_id,
+        )
+        return False
+
+    async with async_session_scope() as session:
+        current = await session.get(TaskRecord, task_id)
+        if current is None:
+            # Row vanished between the enqueue and this reset (a parallel
+            # canceled/delete raced us); the ARQ job will pick up nothing
+            # and finish quietly. Nothing left to reset.
+            _log.info(
+                "queue.requeue_same_job_id(%s): row vanished after "
+                "enqueue; job will no-op", task_id,
+            )
+            return False
+        current.status = TaskStatus.QUEUED.value
+        current.started_at = None
+        current.heartbeat_at = None
+        current.completed_at = None
+        current.error = (
+            (current.error or "")
+            + f"[requeue_same_job_id: resumed under original job id {task_id}]\n"
+        )
+        current.updated_at = datetime.now(UTC)
+        session.add(current)
+        await session.commit()
+    _log.info(
+        "queue.requeue_same_job_id(%s): re-enqueued under same id track=%s",
+        task_id, effective_track,
+    )
+    return True
 
 
 class TaskQueue:
@@ -369,12 +543,20 @@ class TaskQueue:
         # passes but the actual enqueue later fails, that exception is also
         # surfaced as WorkerUnreachableError so no orphan DB record remains.
         redis_url = None
+        defer_seconds = 0.0
         if not depends_on:
             redis_url = self._get_redis_url()
             if not redis_url:
                 raise WorkerUnreachableError(
                     "Task queue Redis URL is not configured -- submission rejected."
                 )
+            # Whole Window pre-computation (RFC-07 reconcile wave, L2.3):
+            # resolve the per-investigation backpressure defer BEFORE the
+            # TaskRecord commits so the commit->enqueue window holds no DB
+            # round-trip. A crash in that window used to leave a QUEUED row
+            # with no ARQ job (the defer SELECT ran after the commit and a
+            # process death between them orphaned the row).
+            defer_seconds = await self._compute_investigation_defer(kwargs)
 
         initial_status = TaskStatus.WAITING if depends_on else TaskStatus.QUEUED
 
@@ -445,23 +627,38 @@ class TaskQueue:
         if not depends_on:
             if redis_url is None:
                 raise ValueError("Redis URL is not configured -- check AILA_PLATFORM_REDIS_URL")
-            # Per-investigation backpressure: when this submission is for
-            # an investigation that already has N >= cap tasks in flight,
-            # defer the new task so other investigations (or other modules)
-            # get worker slots. Without this, one investigation spawning
-            # branches and re-enqueuing rapidly can monopolise max_jobs
-            # and starve every other investigation in the queue.
-            defer_seconds = await self._compute_investigation_defer(kwargs)
-            enqueued = await self._arq_enqueue_async(
-                track=track,
-                task_id=task_id,
-                fn_path=fn_path,
-                fn_module=fn_module,
-                kwargs=kwargs,
-                user_id=user_id,
-                redis_url=redis_url,
-                defer_seconds=defer_seconds,
-            )
+            # Per-investigation backpressure was resolved BEFORE the record
+            # commit (L2.3); ``defer_seconds`` is already computed above.
+            try:
+                enqueued = await self._arq_enqueue_async(
+                    track=track,
+                    task_id=task_id,
+                    fn_path=fn_path,
+                    fn_module=fn_module,
+                    kwargs=kwargs,
+                    user_id=user_id,
+                    redis_url=redis_url,
+                    defer_seconds=defer_seconds,
+                )
+            except (OSError, TimeoutError, RuntimeError) as exc:
+                # L2.3 exception arm: the enqueue path normally swallows
+                # broker errors into a False return, but a transport
+                # exception that escapes it (a close() failure on the
+                # pool, task teardown) must NOT leave the just-committed
+                # QUEUED row alive without a job. Mirror the enqueue==False
+                # cleanup below so every failure mode converges on the
+                # same rollback.
+                async with async_session_scope() as session:
+                    ghost = (await session.exec(
+                        select(TaskRecord).where(TaskRecord.id == task_id)
+                    )).first()
+                    if ghost is not None:
+                        await session.delete(ghost)
+                        await session.commit()
+                await self._delete_orphan_cursor(task_id)
+                raise WorkerUnreachableError(
+                    f"Task queue Redis is unreachable (url={redis_url}) -- submission rejected."
+                ) from exc
             if not enqueued:
                 # Roll back the DB record so a failed enqueue does not leave
                 # a ghost "queued" task sitting in the DB forever. fix §74 --
@@ -489,13 +686,49 @@ class TaskQueue:
     # flight; allowing 6 covers normal fan-out without monopolising.
     INVESTIGATION_INFLIGHT_CAP: int = 6
     INVESTIGATION_DEFER_STEP_S: float = 30.0
+    # RFC-07 reconcile wave (L2.3 / Finding 5): upper bound on the
+    # per-investigation defer. Schema field
+    # ``platform.investigation_defer_ceiling_s`` carries the operator
+    # override; this constant is the code fallback for a TaskQueue built
+    # without a ConfigRegistry (tests) and must match the schema default.
+    INVESTIGATION_DEFER_CEILING_DEFAULT_S: float = 180.0
+
+    def _resolve_defer_ceiling_s(self) -> float:
+        """Return the bounded defer ceiling for one investigation submit.
+
+        Reads ``platform.investigation_defer_ceiling_s`` (schema default
+        ``180``) via ``ConfigRegistry.get_sync`` -- the same sync read
+        :meth:`_get_redis_url` uses -- so an operator can widen or narrow
+        the ceiling with ``PUT /config/platform`` / the
+        ``AILA_PLATFORM_INVESTIGATION_DEFER_CEILING_S`` env var without a
+        restart. A registry-less TaskQueue (test construction) or a
+        failed lookup falls back to the class constant, which matches the
+        schema default.
+        """
+        try:
+            if self._config_registry is not None:
+                value = self._config_registry.get_sync(
+                    CONFIG_NS_PLATFORM, "investigation_defer_ceiling_s",
+                )
+                if value is not None:
+                    return float(value)
+        except (OSError, RuntimeError, ValueError, TypeError):
+            _log.debug(
+                "queue._resolve_defer_ceiling_s: lookup failed; using "
+                "default", exc_info=True,
+            )
+        return self.INVESTIGATION_DEFER_CEILING_DEFAULT_S
 
     async def _compute_investigation_defer(
         self, kwargs: dict[str, object],
     ) -> float:
         """Return seconds to defer this submission based on in-flight
         task count for the same investigation. Returns 0 when the
-        submission is not investigation-scoped or under the cap.
+        submission is not investigation-scoped or under the cap. The
+        computed excess is capped at the operator ceiling
+        (``platform.investigation_defer_ceiling_s``, default 180s) so a
+        wide / repeatedly-resumed investigation can never be deferred
+        without bound (RFC-07 reconcile wave, L2.3 / Finding 5).
         """
         inv_id = kwargs.get("investigation_id") if isinstance(kwargs, dict) else None
         if not isinstance(inv_id, str) or not inv_id:
@@ -531,7 +764,8 @@ class TaskQueue:
                 exc=exc,
             )
         excess = max(0, int(count) - self.INVESTIGATION_INFLIGHT_CAP)
-        return excess * self.INVESTIGATION_DEFER_STEP_S
+        computed = excess * self.INVESTIGATION_DEFER_STEP_S
+        return min(computed, self._resolve_defer_ceiling_s())
 
     # ---- admin management methods ----------------------------------------
 
@@ -687,18 +921,15 @@ class TaskQueue:
     def _get_fn_path(self, fn: Callable[..., object]) -> str:
         """Return the fully-qualified dotted path of fn.
 
-        Example: "aila.modules.vulnerability.tasks.scan"
+        Delegates to :func:`qualified_task_name`, which guards against
+        double-qualifying ``@platform_task`` wrappers (they already carry
+        the full dotted ``registry_name`` in ``__qualname__`` -- joining
+        ``module.__name__`` again doubles the path and ARQ fails the job
+        with ``function ... not found``).
 
-        Raises:
-            ValueError: If inspect.getmodule(fn) returns None.
+        Example: "aila.modules.vulnerability.tasks.scan"
         """
-        module = inspect.getmodule(fn)
-        if module is None:
-            raise ValueError(
-                f"Cannot determine module for callable {fn!r}. "
-                "Ensure fn is defined at module scope, not as a local lambda."
-            )
-        return f"{module.__name__}.{fn.__qualname__}"
+        return qualified_task_name(fn)
 
     def _extract_module_id(self, fn_path: str) -> str:
         """Extract module_id: 'aila.modules.X.*' -> 'X', 'aila.*' -> '__platform__'."""
@@ -870,7 +1101,7 @@ class TaskQueue:
                 # callable name (CLAUDE.md #19) cannot cross-dispatch --
                 # the right task id would otherwise resolve to whichever
                 # module was imported last.
-                await pool.enqueue_job(
+                job = await pool.enqueue_job(
                     fn_path,
                     _queue_name=queue_key,
                     _job_id=task_id,
@@ -881,7 +1112,10 @@ class TaskQueue:
                 # job args because the @platform_task wrapper owns the
                 # signature shape (ctx: TaskContext, **kwargs).
                 _ = fn_module, user_id  # retained in signature for callers
-                return True
+                # RFC-07 reconcile wave: mirror ``_enqueue_arq_job`` --
+                # a ``None`` job (ARQ dedup refusing the ``_job_id``) is a
+                # refused enqueue, never a success.
+                return job is not None
             finally:
                 await pool.aclose()
 

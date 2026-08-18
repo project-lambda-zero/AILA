@@ -89,6 +89,14 @@ class SweepPriority(IntEnum):
        cleanup step. Currently lives in ``worker.py`` outside the
        registry; this constant is defined for parity so a future
        migration into the registry keeps the ordering intact.
+    8. :attr:`RECONCILE` -- the investigation-scoped reconciler
+       authority pass (RFC-07 reconcile wave, L3.4). Runs AFTER
+       stall(500) / stuck(600) as the LAST-RESORT convergence step: it
+       reconciles every task + cursor of each non-terminal, non-paused
+       investigation and drives recovery (same-job-id resume or full
+       re-enqueue) when the row is dead, so no path can leave an
+       investigation RUNNING-with-nothing-enqueued even when every
+       earlier sweep's eligibility window missed it.
 
     :attr:`DEFAULT` (500) is what an unclassified registration lands
     on. It ties numerically with :attr:`STALL_RECOVERY`; the
@@ -104,6 +112,7 @@ class SweepPriority(IntEnum):
     STALL_RECOVERY = 500
     STUCK_HEALER = 600
     CURSOR_REAPER = 700
+    RECONCILE = 800
     DEFAULT = 500
 
 

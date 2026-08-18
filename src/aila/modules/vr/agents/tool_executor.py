@@ -48,6 +48,7 @@ from aila.platform.agents.tool_execution import (
 from aila.platform.agents.tool_executor import ToolExecutorHelpersBase
 from aila.platform.config_base import ModuleConfigReader
 from aila.platform.mcp.bridges.knowledge import KnowledgeBridgeTool
+from aila.platform.mcp.middleware.audit import bind_index_id
 from aila.platform.services.knowledge import KnowledgeService
 from aila.platform.uow import UnitOfWork
 
@@ -656,7 +657,23 @@ class ToolExecutor(ToolExecutorHelpersBase):
         """
         resolved = await self._resolve_index_id(investigation_id)
         if not resolved:
+            # No index bound to this investigation. Leave args untouched
+            # so the middleware surfaces its (index-aware) missing-required
+            # error to the agent. The context binding is explicitly cleared
+            # so any bypass path (speculator, verifier) doesn't inherit a
+            # stale id from a prior investigation on this task.
+            bind_index_id(None)
             return args
+        # Belt-and-suspenders: (a) mutate args directly so ``forward``
+        # sees the canonical kwarg on the primary dispatch, and
+        # (b) set the async-context binding so background tasks
+        # spawned during this turn (speculator prewarm, claim-verifier
+        # probes) that go straight to ``bridge.forward`` without
+        # re-entering the executor's preprocessor still resolve
+        # ``index_id`` through the middleware's central fallback.
+        # ``asyncio.create_task`` copies the current context, so a
+        # task spawned mid-turn inherits the binding automatically.
+        bind_index_id(resolved)
         current = args.get("index_id")
         if current == resolved:
             return args
