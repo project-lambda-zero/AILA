@@ -1355,6 +1355,6 @@ async function downloadFile(path: string, filename: string): Promise<void> {
     URL.revokeObjectURL(url);
   } catch (e) {
     const msg = e instanceof ApiError ? e.message : e instanceof Error ? e.message : "download failed";
-    window.alert(`download failed: ${msg}`);
+    console.warn(`download failed: ${msg}`);
   }
 }

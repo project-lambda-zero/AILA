@@ -389,7 +389,7 @@ export default function DataPage(
   const visibleActions = (row: Record<string, unknown>): PageAction[] =>
     (config.actions ?? []).filter((a) => {
       if (!a.whenStatus || a.whenStatus.length === 0) return true;
-      const status = String(row["status"] ?? "").toLowerCase();
+      const status = String(row["status"] ?? row["is_active"] ?? "").toLowerCase();
       return a.whenStatus.includes(status);
     });
 
@@ -556,7 +556,7 @@ export default function DataPage(
         {(config.filters && config.filters.length > 0) || pagination ? (
           <div style={css("display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--border-soft);flex-wrap:wrap;")}>
             {config.filters && config.filters.length > 0 ? (
-              <span style={css("font-size:8.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);")}>filter</span>
+              <span style={css("font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);")}>filter</span>
             ) : null}
             {config.filters?.map((f) =>
               f.type === "select" ? (
@@ -564,7 +564,7 @@ export default function DataPage(
                   key={f.name}
                   value={filterVals[f.name] ?? ""}
                   onChange={(e: ChangeEvent<HTMLSelectElement>) => setFilter(f.name, e.target.value)}
-                  style={css("background:var(--surface-sunk);border:1px solid var(--border-soft);color:var(--text-muted);font-family:var(--font-mono);font-size:9px;padding:1px 5px;border-radius:2px;max-width:180px;text-transform:none;letter-spacing:normal;cursor:pointer;")}
+                  style={css("background:var(--surface-sunk);border:1px solid var(--border-soft);color:var(--text-muted);font-family:var(--font-mono);font-size:11px;padding:3px 8px;border-radius:2px;max-width:180px;text-transform:none;letter-spacing:normal;cursor:pointer;")}
                 >
                   <option value="">{f.label}</option>
                   {(f.options ?? []).map((o) => (
@@ -578,7 +578,7 @@ export default function DataPage(
                   value={filterVals[f.name] ?? ""}
                   onChange={(e: ChangeEvent<HTMLInputElement>) => setFilter(f.name, e.target.value)}
                   placeholder={f.label}
-                  style={css("background:var(--surface-sunk);border:1px solid var(--border-soft);color:var(--text-muted);font-family:var(--font-mono);font-size:9px;padding:1px 6px;border-radius:2px;max-width:160px;text-transform:none;letter-spacing:normal;")}
+                  style={css("background:var(--surface-sunk);border:1px solid var(--border-soft);color:var(--text-muted);font-family:var(--font-mono);font-size:11px;padding:3px 8px;border-radius:2px;max-width:160px;text-transform:none;letter-spacing:normal;")}
                 />
               ),
             )}
@@ -589,30 +589,30 @@ export default function DataPage(
                 type="button"
                 onClick={() => doAction(a, null)}
                 disabled={action.isPending}
-                style={css(`padding:2px 8px;border:1px solid ${a.destructive ? H_WARN : "var(--accent)"}66;border-radius:2px;background:transparent;color:${a.destructive ? H_WARN : "var(--accent)"};font-family:var(--font-mono);font-size:9px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;`)}
+                style={css(`padding:4px 10px;border:1px solid ${a.destructive ? H_WARN : "var(--accent)"}66;border-radius:2px;background:transparent;color:${a.destructive ? H_WARN : "var(--accent)"};font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;`)}
               >
                 {a.label}
               </button>
             ))}
             {pagination ? (
               <span style={css("display:inline-flex;align-items:center;gap:6px;")}>
-                <button type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} style={css("border:0;background:transparent;color:var(--text-muted);cursor:pointer;font-size:10px;")}>{"\u25c0"}</button>
-                <span style={css("font-size:9px;color:var(--text-faint);text-transform:none;letter-spacing:0.03em;")}>page {page} / {pageCount} \u00b7 {total} total</span>
-                <button type="button" onClick={() => setPage((p) => p + 1)} disabled={page >= pageCount} style={css("border:0;background:transparent;color:var(--text-muted);cursor:pointer;font-size:10px;")}>{"\u25b6"}</button>
+                <button type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} style={css("border:0;background:transparent;color:var(--text-muted);cursor:pointer;font-size:11px;")}>{"\u25c0"}</button>
+                <span style={css("font-size:10px;color:var(--text-faint);text-transform:none;letter-spacing:0.03em;")}>page {page} / {pageCount} \u00b7 {total} total</span>
+                <button type="button" onClick={() => setPage((p) => p + 1)} disabled={page >= pageCount} style={css("border:0;background:transparent;color:var(--text-muted);cursor:pointer;font-size:11px;")}>{"\u25b6"}</button>
               </span>
             ) : null}
           </div>
         ) : null}
         {config.bulkActions && config.bulkActions.length > 0 && selected.size > 0 ? (
           <div style={css("display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--border-soft);background:color-mix(in srgb,var(--accent) 6%,transparent);flex-wrap:wrap;")}>
-            <span style={css("font-size:9px;color:var(--accent);letter-spacing:0.06em;text-transform:uppercase;")}>{selected.size} selected</span>
+            <span style={css("font-size:10px;color:var(--accent);letter-spacing:0.06em;text-transform:uppercase;")}>{selected.size} selected</span>
             {config.bulkActions.map((a) => (
               <button
                 key={a.label}
                 type="button"
                 onClick={() => void doBulk(a)}
                 disabled={action.isPending}
-                style={css(`padding:2px 8px;border:1px solid ${a.destructive ? H_WARN : "var(--accent)"}66;border-radius:2px;background:transparent;color:${a.destructive ? H_WARN : "var(--accent)"};font-family:var(--font-mono);font-size:9px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;`)}
+                style={css(`padding:4px 10px;border:1px solid ${a.destructive ? H_WARN : "var(--accent)"}66;border-radius:2px;background:transparent;color:${a.destructive ? H_WARN : "var(--accent)"};font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;`)}
               >
                 {a.label}
               </button>
@@ -620,12 +620,12 @@ export default function DataPage(
             <button
               type="button"
               onClick={() => setSelected(new Set())}
-              style={css("padding:2px 6px;border:1px solid var(--border-soft);border-radius:2px;background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:9px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;")}
+              style={css("padding:3px 8px;border:1px solid var(--border-soft);border-radius:2px;background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;")}
             >
               clear
             </button>
             {bulkResults ? (
-              <span style={css("font-size:9px;color:var(--text-muted);")}>{bulkResults}</span>
+              <span style={css("font-size:10px;color:var(--text-muted);")}>{bulkResults}</span>
             ) : null}
           </div>
         ) : null}
@@ -644,13 +644,13 @@ export default function DataPage(
                 <button
                   type="button"
                   onClick={() => setFormMode("edit")}
-                  style={css("padding:2px 8px;border:1px solid var(--accent);border-radius:2px;background:transparent;color:var(--accent);font-family:var(--font-mono);font-size:9px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;")}
+                  style={css("padding:3px 10px;border:1px solid var(--accent);border-radius:2px;background:transparent;color:var(--accent);font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;")}
                 >
                   edit
                 </button>
               ) : null}
               {config.delete ? (
-                <button type="button" onClick={() => sel && doDelete(sel)} style={css(`padding:2px 8px;border:1px solid ${H_WARN}66;border-radius:2px;background:transparent;color:${H_WARN};font-family:var(--font-mono);font-size:9px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;`)}>delete</button>
+                <button type="button" onClick={() => sel && doDelete(sel)} style={css(`padding:3px 10px;border:1px solid ${H_WARN}66;border-radius:2px;background:transparent;color:${H_WARN};font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;`)}>delete</button>
               ) : null}
               {sel ? (
                 visibleActions(sel).map((a) => (
@@ -659,15 +659,15 @@ export default function DataPage(
                     type="button"
                     onClick={() => doAction(a, sel)}
                     disabled={action.isPending}
-                    style={css(`padding:2px 8px;border:1px solid ${a.destructive ? H_WARN : "var(--accent)"}66;border-radius:2px;background:transparent;color:${a.destructive ? H_WARN : "var(--accent)"};font-family:var(--font-mono);font-size:9px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;`)}
+                    style={css(`padding:3px 10px;border:1px solid ${a.destructive ? H_WARN : "var(--accent)"}66;border-radius:2px;background:transparent;color:${a.destructive ? H_WARN : "var(--accent)"};font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;`)}
                   >
                     {a.label}
                   </button>
                 ))
               ) : null}
-              <button type="button" onClick={() => setSel(null)} style={css("background:transparent;border:0;color:var(--text-faint);cursor:pointer;font-size:12px;margin-left:4px;")}>{"\u2715"}</button>
+              <button type="button" onClick={() => setSel(null)} style={css("background:transparent;border:0;color:var(--text-faint);cursor:pointer;font-size:13px;margin-left:4px;")}>{"\u2715"}</button>
             </div>
-            <div style={css("flex:1;min-height:0;overflow:auto;padding:11px 13px;display:grid;grid-template-columns:130px 1fr;gap:6px 10px;font-size:10.5px;align-content:start;")}>
+            <div style={css("flex:1;min-height:0;overflow:auto;padding:12px 14px;display:grid;grid-template-columns:140px 1fr;gap:6px 12px;font-size:11px;align-content:start;")}>
               {detailBody ? (
                 detailBody(sel)
               ) : (
@@ -685,7 +685,7 @@ export default function DataPage(
                               type="button"
                               onClick={() => link && onOpenPage?.(link.module ?? "vr", link.section, link.label ?? link.section, linkVal)}
                               title={`open ${link?.section ?? ""} ${linkVal}`}
-                              style={css("padding:1px 6px;border:1px solid var(--accent)55;border-radius:2px;background:transparent;color:var(--accent);font-family:var(--font-mono);font-size:8.5px;letter-spacing:0.06em;text-transform:uppercase;cursor:pointer;")}
+                              style={css("padding:2px 7px;border:1px solid var(--accent)55;border-radius:2px;background:transparent;color:var(--accent);font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.06em;text-transform:uppercase;cursor:pointer;")}
                             >
                               {"open \u25b8"}
                             </button>

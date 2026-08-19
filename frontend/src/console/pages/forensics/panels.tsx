@@ -39,7 +39,7 @@ export const panelHatch =
   "height:2px;background-image:repeating-linear-gradient(135deg,var(--border) 0 1px,transparent 1px 3px);";
 
 export const panelTitleStyle = css(
-  "flex:0 0 auto;display:flex;align-items:center;gap:10px;height:var(--panel-title-h,27px);padding:0 12px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:9.5px;text-transform:uppercase;letter-spacing:0.14em;color:var(--text-muted);",
+  "flex:0 0 auto;display:flex;align-items:center;gap:10px;height:var(--panel-title-h,28px);padding:0 12px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;text-transform:uppercase;letter-spacing:0.14em;color:var(--text-muted);",
 );
 
 export const dotStyle = css(
@@ -51,7 +51,7 @@ export const emptyNote = css(
 );
 
 export const inlineNote = css(
-  "padding:16px 20px;font-family:var(--font-mono);font-size:10.5px;color:var(--text-faint);letter-spacing:0.04em;text-align:center;",
+  "padding:16px 20px;font-family:var(--font-mono);font-size:11px;color:var(--text-faint);letter-spacing:0.04em;text-align:center;",
 );
 
 /* --- WindowPanel primitive --------------------------------------------- */
@@ -84,7 +84,7 @@ export function Panel({
         <span style={dotStyle} />
         <span style={css("color:var(--text-primary);")}>{title}</span>
         {tag ? (
-          <span style={css("font-size:8.5px;color:var(--text-faint);letter-spacing:0.08em;")}>{tag}</span>
+          <span style={css("font-size:9.5px;color:var(--text-faint);letter-spacing:0.08em;")}>{tag}</span>
         ) : null}
         <span style={css("flex:1;")} />
         {right}
@@ -125,7 +125,7 @@ export function CtlBtn({
       disabled={disabled}
       onClick={disabled ? undefined : onClick}
       style={css(
-        `flex:0 0 auto;font-family:var(--font-mono);font-size:8.5px;letter-spacing:0.1em;text-transform:uppercase;padding:3px 9px;border:1px solid ${c}66;border-radius:2px;background:transparent;color:${c};cursor:${disabled ? "default" : "pointer"};${disabled ? "opacity:0.4;" : ""}`,
+        `flex:0 0 auto;font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;padding:4px 10px;height:26px;border:1px solid ${c}66;border-radius:2px;background:transparent;color:${c};cursor:${disabled ? "default" : "pointer"};${disabled ? "opacity:0.4;" : ""}`,
       )}
     >
       {label}
@@ -170,7 +170,7 @@ export function StatusBadge({ value }: { value: string | null | undefined }): JS
   return (
     <span
       style={css(
-        `display:inline-flex;align-items:center;gap:5px;padding:1px 7px;border:1px solid ${tone}66;border-radius:2px;font-family:var(--font-mono);font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:${tone};`,
+        `display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border:1px solid ${tone}66;border-radius:2px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:${tone};background:color-mix(in srgb,${tone} 8%,transparent);`,
       )}
     >
       <span style={css(`width:6px;height:6px;border-radius:50%;background:${tone};`)} />
@@ -185,7 +185,7 @@ export function VerdictBadge({ verdict }: { verdict: string | null | undefined }
   return (
     <span
       style={css(
-        `display:inline-flex;align-items:center;padding:1px 7px;border:1px solid ${tone}66;border-radius:2px;font-family:var(--font-mono);font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:${tone};`,
+        `display:inline-flex;align-items:center;padding:2px 8px;border:1px solid ${tone}66;border-radius:2px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:${tone};background:color-mix(in srgb,${tone} 8%,transparent);`,
       )}
     >
       {verdict ?? "\u2014"}

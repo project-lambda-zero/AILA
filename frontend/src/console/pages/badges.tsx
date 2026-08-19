@@ -70,9 +70,9 @@ export function StatusBadge({ value, tone }: { value: unknown; tone?: Tone }): R
   const color = TONE_COLOR[t];
   return (
     <span
-      style={css(`display:inline-flex;align-items:center;gap:5px;padding:1px 6px;border:1px solid ${color}55;border-radius:2px;font-size:9px;letter-spacing:0.08em;text-transform:uppercase;color:${color};background:color-mix(in srgb,${color} 8%,transparent);white-space:nowrap;`)}
+      style={css(`display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border:1px solid ${color}55;border-radius:2px;font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:${color};background:color-mix(in srgb,${color} 8%,transparent);white-space:nowrap;`)}
     >
-      <span style={css(`width:5px;height:5px;border-radius:1px;background:${color};flex:0 0 auto;`)} />
+      <span style={css(`width:6px;height:6px;border-radius:1px;background:${color};flex:0 0 auto;`)} />
       {label}
     </span>
   );

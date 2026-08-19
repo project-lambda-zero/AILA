@@ -70,4 +70,5 @@ export interface IntakeWizardProps {
 export interface SettingsOverlayProps {
   user: User | null;
   onClose: () => void;
+  onOpenPage?: (moduleId: string, pageId: string, title?: string) => void;
 }

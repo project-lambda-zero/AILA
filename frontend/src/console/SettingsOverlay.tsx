@@ -11,7 +11,7 @@ import { css } from "./css";
  */
 
 export default function SettingsOverlay(props: SettingsOverlayProps) {
-  const { user, onClose } = props;
+  const { user, onClose, onOpenPage } = props;
   const logout = useAuth((s) => s.logout);
   const [theme, setTheme] = useState<string>(() => loadTheme());
 
@@ -106,7 +106,18 @@ export default function SettingsOverlay(props: SettingsOverlayProps) {
             Review and revoke active login sessions across all your devices.
           </div>
           <div style={css(`margin-top:10px;display:flex;align-items:center;gap:16px;`)}>
-            <span style={css(`font-size:12px;color:var(--accent);`)}>manage active sessions →</span>
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onOpenPage?.("admin", "sessions", "admin · sessions");
+              }}
+              style={css(
+                `font-family:var(--font-mono);font-size:12px;color:var(--accent);background:transparent;border:0;padding:0;cursor:pointer;text-align:left;`,
+              )}
+            >
+              manage active sessions →
+            </button>
             <button
               type="button"
               onClick={() => logout()}
