@@ -74,6 +74,7 @@ class VRMessageSummary(BaseModel):
     branch_id: str
     sender_kind: SenderKind
     sender_id: str | None = None
+    persona_voice: str | None = None
     payload_kind: PayloadKind
     payload: dict[str, Any] = Field(default_factory=dict)
     operator_intent: OperatorIntent | None = None

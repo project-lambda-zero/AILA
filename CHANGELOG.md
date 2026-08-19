@@ -7,6 +7,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.41] - 2026-08-19 -- Frontend usability layer and operator workflow fixes
+
+### Added
+
+- DataPage gains filters, pagination, and offset/limit mode: config registry, audit logs, and VR findings pages now page server-side and narrow by field.
+- Shared status and severity badges across every list page; timestamps render as ISO and costs as dollars.
+- Declarative row actions with status gating: scheduled-report trigger, dead-letter requeue, notification read and read-all, MCP instance approve and revoke, forensics readiness check, task cancel, resume, requeue-failed and drain, malware playbook run, MCP server re-probe, VR fuzz launch, proposal accept and reject.
+- Bulk selection with per-row error reporting on task and notification pages.
+- Detail panels show clickable related-record links and an event timeline (config keys expose their audit trail).
+- Executive risk-summary PDF download surfaced on the executive page.
+
+### Fixed
+
+- Forensics intake wizard now creates the project and runs a real readiness check instead of animating fake stages and discarding the entered data.
+- admin:config edits are type-aware (checkbox for bool, number for int/float) and no longer show a cosmetic type selector the backend ignores.
+- VR X-Ray no longer derives a fabricated severity from investigation status; shows "unknown" without evidence.
+- vr:audit-log removed: it duplicated the MCP call log with no real audit source.
+- Malware scope pages label the scope selector and explain the first-item default.
+- Forensics artifacts next-page now uses the real total instead of row count.
+- Per-turn kill-criterion matching scans the message body only, so an observation key no longer trips the stop condition.
+- Re-enqueue and reset null the investigation wall-clock origin, so stalled hours do not count against the run window.
+- Backend services launch with hidden console windows (WMI SW_HIDE).
+- Investigation message summaries carry the branch persona, so the VR X-Ray shows the real speaker.
+
 ## [0.5.40] - 2026-08-18 -- Investigation recovery and tool-dispatch durability fixes
 
 ### Fixed

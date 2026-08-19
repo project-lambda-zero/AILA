@@ -189,12 +189,6 @@ const OIDC_PROVIDER_TYPES: { value: string; label: string }[] = [
   opt("google"),
   opt("generic"),
 ];
-const CONFIG_VALUE_TYPES: { value: string; label: string }[] = [
-  opt("str"),
-  opt("int"),
-  opt("float"),
-  opt("bool"),
-];
 
 // ---- shared field constructors --------------------------------------------
 
@@ -830,13 +824,23 @@ export const EDIT_FORMS = {
   },
   // Config is edit-only: namespace + key are the composite path key. FieldForm
   // substitutes both {namespace} and {key} directly from the selected row.
+  // The value widget derives from the row's value_type (text/number/checkbox)
+  // via typeFrom; the backend casts by the schema type, so there is no
+  // free-form type select. The row detail already surfaces the effective
+  // value + env override; this form edits the stored DB value.
   "admin:config": {
     title: "admin \u00b7 edit config value",
     endpoint: "/config/{namespace}/{key}",
     method: "PUT",
     fields: [
-      { name: "value", label: "value", type: "text", required: true },
-      { name: "value_type", label: "type", type: "select", options: CONFIG_VALUE_TYPES },
+      {
+        name: "value",
+        label: "value",
+        type: "text",
+        typeFrom: "value_type",
+        required: true,
+        help: "stored value; an env override (AILA_*) wins at runtime when set",
+      },
     ],
   },
 } satisfies Record<string, FormSpec>;

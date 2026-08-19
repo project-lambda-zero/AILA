@@ -761,19 +761,33 @@ class CyberReasoningEngine:
         # (lowercase, split on non-alphanumerics, keep tokens of length
         # >= _KILL_CRITERION_MIN_TOKEN_LEN) and check whether ANY such
         # token appears as a whole word in the accumulated tool-body
-        # observation keys or their string values. A whole-token hit
-        # injects ``_directive.kill_criterion_met`` naming the id, the
-        # matched token, and the observation key so the agent is nudged
-        # to retire the hypothesis. Nudge-only (never auto-rejects):
+        # observation VALUES. A whole-token hit injects
+        # ``_directive.kill_criterion_met`` naming the id, the matched
+        # token, and the observation key so the agent is nudged to
+        # retire the hypothesis. Nudge-only (never auto-rejects):
         # a keyword coincidence would otherwise silently drop a genuine
         # lingering lead. Cleared on the same call when nothing matches
         # so a resolved directive never persists.
         #
-        # Matched surface is restricted to _TOOL_BODY_PREFIXES so the
-        # evaluator does not trip on its own advisory text or on the
-        # stale-hypothesis directive body (both would tokenize into the
-        # criterion tokens themselves and create a self-referential
-        # match).
+        # Matched surface is the OBSERVATION BODY TEXT ONLY -- the
+        # observation KEY is deliberately NOT tokenized. Keys are
+        # routing labels whose fixed tool-verb segments
+        # (``read_function``, ``read_lines``, ``semantic_search``,
+        # ``search_functions``, ``taint_paths_to``, ...) tokenize into
+        # generic words ("read", "function", "lines", "search",
+        # "source", "query", ...) that pass the 4-char minimum and match
+        # almost any criterion mentioning them. Observed live: the
+        # directive fired on EVERY turn for hours because the
+        # accumulated tool keys (never evicted) tripped criteria like
+        # "read happens before auth check" on the key token "read" --
+        # the agent burned a reasoning paragraph each turn rebutting
+        # the false positive. The body text already carries the real
+        # signal (file paths, symbol names, code chunks); the key adds
+        # nothing but the tool-verb noise. Restricted to
+        # _TOOL_BODY_PREFIXES so the evaluator does not trip on its own
+        # advisory text or on the stale-hypothesis directive body (both
+        # would tokenize into the criterion tokens themselves and
+        # create a self-referential match).
         kc_matches: list[tuple[str, str, str, str]] = []
         if merged_live:
             tool_snippets: list[tuple[str, set[str]]] = []
@@ -795,9 +809,11 @@ class CyberReasoningEngine:
                         continue
                 else:
                     continue
-                normalized = f"{obs_key.lower()} {body_text.lower()}"
+                # Key excluded from the match surface (see above); the
+                # directive still reports it so the agent knows which
+                # observation matched.
                 toks = {
-                    t for t in _KC_TOKEN_SPLIT.split(normalized)
+                    t for t in _KC_TOKEN_SPLIT.split(body_text.lower())
                     if len(t) >= _KILL_CRITERION_MIN_TOKEN_LEN
                 }
                 if toks:

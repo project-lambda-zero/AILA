@@ -302,8 +302,16 @@ const PERSONA_ROLE: Record<string, string> = {
 
 function personaOf(m: Message, branchMap: Map<string, Branch>): { name: string; role: string; tone: string } {
   const branch = m.branch_id ? branchMap.get(m.branch_id) : undefined;
-  const voice = (branch?.persona_voice ?? "").toLowerCase();
-  const name = (branch?.persona_voice ?? (m.sender_kind === "operator" ? "you" : "engine")).toUpperCase();
+  // Message-carried persona wins: the branch may be abandoned (completed
+  // investigation) and therefore absent from the branch list, so the
+  // summary resolves it server-side. Fall back to the branch row, then
+  // to sender kind.
+  const voice = (m.persona_voice ?? branch?.persona_voice ?? "").toLowerCase();
+  const name = (
+    m.persona_voice ??
+    branch?.persona_voice ??
+    (m.sender_kind === "operator" ? "you" : "engine")
+  ).toUpperCase();
   const roleRaw = PERSONA_ROLE[voice] ?? branch?.strategy_family ?? m.sender_kind ?? "";
   const role = (roleRaw.split(".").pop() ?? roleRaw).replace(/_/g, " ").toUpperCase();
   return { name, role, tone: personaTone(name) };
@@ -1472,7 +1480,10 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
     );
   } else if (view === "finding") {
     const d = inv.data;
-    const sev = (d?.status ?? "").toLowerCase() === "completed" ? "high" : "medium";
+    // No severity field exists on the summary contract; deriving one from
+    // investigation status would fabricate evidence. Show "unknown" unless
+    // the primary outcome carries a confidence label.
+    const sev = "unknown";
     const answer = outcomeMsg ? readStr(outcomeMsg.payload ?? {}, "answer") : null;
     const reasoning = outcomeMsg ? readStr(outcomeMsg.payload ?? {}, "reasoning") : null;
     // verdict_head often carries only a markdown section label ("### Scope"),
@@ -1502,7 +1513,7 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
                 {d?.primary_outcome_confidence ? (
                   <span style={css(`font-size:8.5px;letter-spacing:0.1em;text-transform:uppercase;color:${H.amber};`)}>{d.primary_outcome_confidence}</span>
                 ) : (
-                  <span style={css(`font-size:8.5px;letter-spacing:0.1em;text-transform:uppercase;color:${sev === "high" ? H.amber : H.lav};`)}>{sev}</span>
+                  <span style={css(`font-size:8.5px;letter-spacing:0.1em;text-transform:uppercase;color:${H.lav};`)}>{sev}</span>
                 )}
                 {d?.primary_outcome_polarity ? (
                   <span style={css("font-size:8.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);")}>{d.primary_outcome_polarity}</span>

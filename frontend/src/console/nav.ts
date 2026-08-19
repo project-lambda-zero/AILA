@@ -40,7 +40,6 @@ export const MODULES: ModuleDef[] = [
       page("crashes"),
       page("mcp servers"),
       page("mcp call log"),
-      page("audit log"),
     ],
   },
   {

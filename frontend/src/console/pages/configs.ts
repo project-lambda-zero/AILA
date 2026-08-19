@@ -4,9 +4,38 @@ import type { PageColumn, PageConfig } from "./DataPage";
 import { LlmChatTranscript, llmPreviewLine } from "./LlmLogEntry";
 
 /** Column shorthand: field + auto-labelled from the field name. */
+// Auto-assign a shared semantic renderer (badges.tsx) for fields whose names
+// carry status/severity/timestamp/cost semantics, so every table reads state
+// the same way without per-page wiring. Explicit `render` on a column still
+// wins in DataPage.
+const KIND_FIELDS: Record<string, "status" | "severity" | "time" | "cost"> = {
+  status: "status",
+  analysis_state: "status",
+  disclosure_status: "status",
+  latest_disclosure_status: "status",
+  connectivity_status: "status",
+  last_scan_status: "status",
+  run_status: "status",
+  severity_rating: "severity",
+  cvss_score: "severity",
+  cost_actual_usd: "cost",
+  cost_budget_usd: "cost",
+  bounty_awarded_usd: "cost",
+  created_at: "time",
+  updated_at: "time",
+  started_at: "time",
+  completed_at: "time",
+  last_run_at: "time",
+  last_login_at: "time",
+  last_probed_at: "time",
+  called_at: "time",
+  last_seen_at: "time",
+};
+
 const c = (field: string, label?: string): PageColumn => ({
   field,
   label: label ?? field.replace(/_/g, " "),
+  kind: KIND_FIELDS[field],
 });
 
 /** One DataPage config per left-rail item, keyed `${moduleId}:${pageId}`.
@@ -43,6 +72,10 @@ export const PAGE_CONFIGS = {
   "vr:findings": {
     title: "vr \u00b7 findings",
     endpoint: "/vr/findings",
+    // /vr/findings paginates by offset/limit with meta{total,offset,limit}
+    // (api_router.py:1665+), so offset-mode pagination reads the true total.
+    pagination: true,
+    paginationParams: "offset",
     columns: [c("crash_type", "crash"), c("vulnerable_function", "function"), c("disclosure_status", "disclosure"), c("assigned_cve_id", "cve"), c("cvss_score", "cvss"), c("cwe_id", "cwe"), c("evidence_count", "evidence")],
   },
   "vr:disclosures": {
@@ -54,6 +87,15 @@ export const PAGE_CONFIGS = {
     title: "vr \u00b7 fuzz campaigns",
     endpoint: "/vr/fuzz/campaigns",
     columns: [c("name"), c("engine_id", "engine"), c("status"), c("coverage_pct", "coverage %"), c("crashes_found", "crashes"), c("total_execs", "execs"), c("execs_per_sec", "exec/s")],
+    actions: [
+      {
+        label: "launch",
+        method: "POST",
+        endpoint: "/vr/fuzz/campaigns/{id}/launch",
+        whenStatus: ["created", "draft", "stopped", "failed"],
+        confirm: "Launch this fuzz campaign on its analysis system?",
+      },
+    ],
   },
   "vr:mcp-servers": {
     title: "vr \u00b7 mcp servers",
@@ -65,13 +107,6 @@ export const PAGE_CONFIGS = {
     endpoint: "/vr/mcp/calls",
     columns: [c("server_id", "server"), c("action"), c("status"), c("http_status", "http"), c("latency_ms", "latency"), c("error_excerpt", "error"), c("called_at", "called")],
   },
-  "vr:audit-log": {
-    title: "vr \u00b7 audit log",
-    endpoint: "/vr/mcp/calls",
-    blurb: "operator-facing audit trail of every mcp bridge forward()",
-    columns: [c("called_at", "when"), c("server_id", "server"), c("action"), c("status"), c("http_status", "http"), c("latency_ms", "latency"), c("error_excerpt", "error")],
-  },
-
   // ---- Malware (prefix /malware) ---------------------------------------
   "malware:malware-analysis": {
     title: "malware \u00b7 analysis",
@@ -97,7 +132,7 @@ export const PAGE_CONFIGS = {
     title: "malware \u00b7 observations",
     endpoint: "/malware/observations",
     scopeFrom: { endpoint: "/malware/targets", param: "target_id" },
-    blurb: "scoped to the first target",
+    blurb: "scoped to the first target; pick another target in the header scope selector",
     columns: [c("kind"), c("polarity"), c("source"), c("target_id", "target"), c("investigation_id", "investigation"), c("created_at", "created")],
   },
   "malware:patterns": {
@@ -114,20 +149,36 @@ export const PAGE_CONFIGS = {
     title: "malware \u00b7 families",
     endpoint: "/malware/families",
     scopeFrom: { endpoint: "/malware/workspaces", param: "workspace_id" },
-    blurb: "scoped to the first workspace",
+    blurb: "scoped to the first workspace; pick another workspace in the header scope selector",
     columns: [c("name"), c("actor_cluster", "actor"), c("status"), c("sample_count", "samples"), c("playbook_count", "playbooks"), c("created_at", "created")],
   },
   "malware:playbooks": {
     title: "malware \u00b7 playbooks",
     endpoint: "/malware/playbooks",
     scopeFrom: { endpoint: "/malware/workspaces", param: "workspace_id" },
-    blurb: "scoped to the first workspace",
+    blurb: "scoped to the first workspace; pick another workspace in the header scope selector",
     columns: [c("name"), c("description"), c("status"), c("run_count", "runs"), c("last_run_at", "last run"), c("created_at", "created")],
+    actions: [
+      {
+        label: "run",
+        method: "POST",
+        endpoint: "/malware/playbooks/{id}/run",
+        whenStatus: ["active", "draft", "published"],
+        confirm: "Run this playbook now?",
+      },
+    ],
   },
   "malware:mcp-servers": {
     title: "malware \u00b7 mcp servers",
     endpoint: "/malware/mcp/servers",
     columns: [c("name"), c("base_url", "url"), c("status"), c("latency_ms", "latency"), c("tool_count", "tools")],
+    actions: [
+      {
+        label: "re-probe",
+        method: "POST",
+        endpoint: "/malware/mcp/servers/{id}/probe",
+      },
+    ],
   },
   "malware:mcp-call-log": {
     title: "malware \u00b7 mcp call log",
@@ -141,6 +192,14 @@ export const PAGE_CONFIGS = {
     endpoint: "/forensics/projects",
     itemsKey: "items",
     columns: [c("name"), c("project_kind", "kind"), c("status"), c("system_name", "system"), c("evidence_count", "evidence"), c("artifact_count", "artifacts"), c("lead_count", "leads"), c("investigation_count", "investigations")],
+    actions: [
+      {
+        label: "check readiness",
+        method: "POST",
+        endpoint: "/forensics/projects/{id}/readiness-check",
+        confirm: "Check analyzer readiness for this project? This may enqueue a full-analysis run.",
+      },
+    ],
   },
 
   // ---- Admin: access ----------------------------------------------------
@@ -170,12 +229,62 @@ export const PAGE_CONFIGS = {
     title: "admin \u00b7 task queue",
     endpoint: "/tasks",
     itemsKey: "tasks",
+    idField: "task_id",
     columns: [c("task_id", "task"), c("track"), c("status"), c("fn_path", "fn"), c("created_at", "created"), c("started_at", "started"), c("completed_at", "completed")],
+    actions: [
+      {
+        label: "cancel",
+        method: "POST",
+        endpoint: "/tasks/{id}/cancel",
+        whenStatus: ["queued", "running", "waiting"],
+        destructive: true,
+        confirm: "Cancel this task?",
+      },
+      {
+        label: "resume",
+        method: "POST",
+        endpoint: "/tasks/{id}/resume",
+        whenStatus: ["failed", "cancelled", "canceled"],
+      },
+    ],
+    bulkActions: [
+      {
+        label: "cancel selected",
+        method: "POST",
+        endpoint: "/tasks/{id}/cancel",
+        destructive: true,
+        confirm: "Cancel the selected tasks?",
+      },
+    ],
+    pageActions: [
+      {
+        label: "requeue failed",
+        method: "POST",
+        endpoint: "/tasks/requeue-failed",
+        confirm: "Requeue all failed tasks?",
+      },
+      {
+        label: "drain",
+        method: "POST",
+        endpoint: "/tasks/drain",
+        destructive: true,
+        confirm: "Drain the queue? This rejects queued tasks.",
+      },
+    ],
   },
   "admin:dead-letter": {
     title: "admin \u00b7 dead letter",
     endpoint: "/admin/tasks/dead-letter",
+    idField: "task_id",
     columns: [c("task_id", "task"), c("track"), c("fn_path", "fn"), c("exception_class", "exception"), c("error"), c("attempts"), c("dead_lettered_at", "when")],
+    actions: [
+      {
+        label: "requeue",
+        method: "POST",
+        endpoint: "/admin/tasks/dead-letter/{id}/requeue",
+        confirm: "Requeue this dead-lettered task?",
+      },
+    ],
   },
   "admin:health": {
     title: "admin \u00b7 health",
@@ -198,6 +307,14 @@ export const PAGE_CONFIGS = {
     title: "admin \u00b7 scheduled reports",
     endpoint: "/scheduled-reports",
     columns: [c("name"), c("report_type", "type"), c("cron_expression", "cron"), c("is_active", "active"), c("last_run_at", "last run"), c("created_at", "created")],
+    actions: [
+      {
+        label: "trigger now",
+        method: "POST",
+        endpoint: "/scheduled-reports/{id}/trigger",
+        confirm: "Trigger this report now?",
+      },
+    ],
   },
   // ---- Admin: cost & reporting -----------------------------------------
   "admin:cost": {
@@ -212,6 +329,14 @@ export const PAGE_CONFIGS = {
     endpoint: "/executive/health",
     blurb: "fleet finding + severity summary",
     columns: [],
+    pageActions: [
+      {
+        label: "risk summary pdf",
+        method: "GET",
+        endpoint: "/executive/risk-summary-pdf",
+        download: true,
+      },
+    ],
   },
   // ---- Admin: data & config --------------------------------------------
   "admin:tag-vocabulary": {
@@ -228,10 +353,25 @@ export const PAGE_CONFIGS = {
     title: "admin \u00b7 config",
     endpoint: "/config",
     itemsKey: "items",
-    // The registry holds 273 rows across namespaces; the grid has no
-    // pagination chrome, so pull every page or the tail keys (e.g.
-    // platform.llm_default_model) silently never render.
+    // The registry holds 273 rows across namespaces; the backend list
+    // endpoint accepts ONLY page/page_size (no namespace/type filter params,
+    // verified in api/routers/config.py), so filters are client-side and the
+    // full dataset is pulled once via fetchAllPages. Pagination then slices
+    // the FILTERED set client-side so totals stay truthful.
     fetchAllPages: true,
+    pagination: true,
+    filters: [
+      { name: "namespace", label: "namespace", type: "text" },
+      { name: "value_type", label: "type", type: "select", options: [
+        { value: "str", label: "str" },
+        { value: "int", label: "int" },
+        { value: "float", label: "float" },
+        { value: "bool", label: "bool" },
+      ] },
+    ],
+    // Each config PUT records an audit event with run_id="{namespace}/{key}"
+    // (config.py:169-214); the detail panel shows that trail.
+    detailEvents: { endpoint: "/audit/events?run_id={namespace}/{key}" },
     columns: [c("namespace"), c("key"), c("value_type", "type"), c("effective_value", "value"), c("effective_source", "source"), c("overridden_by_env", "env override"), c("updated_at", "updated")],
   },
   "admin:tools": {
@@ -244,6 +384,10 @@ export const PAGE_CONFIGS = {
     title: "admin \u00b7 audit logs",
     endpoint: "/audit/events",
     itemsKey: "items",
+    // /audit/events honors page/page_size and returns total/pages in a
+    // PaginatedResponse envelope (schemas/common.py:24), so server-side
+    // pagination works exactly.
+    pagination: true,
     columns: [c("created_at", "when"), c("stage"), c("action"), c("status"), c("target"), c("user_id", "user"), c("run_id", "run")],
   },
   "admin:llm-log": {
@@ -310,11 +454,50 @@ export const PAGE_CONFIGS = {
     title: "admin \u00b7 notifications",
     endpoint: "/notifications",
     columns: [c("title"), c("category"), c("source_module", "module"), c("is_read", "read"), c("created_at", "created")],
+    actions: [
+      {
+        label: "mark read",
+        method: "POST",
+        endpoint: "/notifications/{id}/read",
+        // no whenStatus: always shown; the backend marks read idempotently
+      },
+    ],
+    bulkActions: [
+      {
+        label: "mark read",
+        method: "POST",
+        endpoint: "/notifications/{id}/read",
+      },
+    ],
+    pageActions: [
+      {
+        label: "mark all read",
+        method: "POST",
+        endpoint: "/notifications/read-all",
+        confirm: "Mark all notifications as read?",
+      },
+    ],
   },
   "admin:mcp-instances": {
     title: "admin \u00b7 mcp instances",
     endpoint: "/platform/mcp/instances",
     columns: [c("name"), c("transport"), c("endpoint"), c("enabled"), c("module_scope", "module"), c("approval_state", "approval"), c("created_at", "created")],
+    actions: [
+      {
+        label: "approve",
+        method: "POST",
+        endpoint: "/platform/mcp/instances/{id}/approve",
+        whenStatus: ["pending", "pending_approval"],
+      },
+      {
+        label: "revoke",
+        method: "POST",
+        endpoint: "/platform/mcp/instances/{id}/revoke",
+        whenStatus: ["approved"],
+        destructive: true,
+        confirm: "Revoke this MCP instance? Its tools become unavailable.",
+      },
+    ],
   },
   "admin:specialist-agents": {
     title: "admin \u00b7 specialist agents",
@@ -339,11 +522,37 @@ export const PAGE_CONFIGS = {
     title: "vr \u00b7 fuzz proposals",
     endpoint: "/vr/fuzz/proposals",
     columns: [],
+    detailLinks: {
+      target_id: { module: "vr", section: "targets", label: "target" },
+      source_investigation_id: { module: "vr", section: "investigations", label: "investigation" },
+    },
+    actions: [
+      {
+        label: "accept",
+        method: "POST",
+        endpoint: "/vr/fuzz/proposals/{id}/accept",
+        whenStatus: ["pending", "submitted"],
+        confirm: "Accept this proposal? It will write the harness, build, and create a campaign.",
+      },
+      {
+        label: "reject",
+        method: "POST",
+        endpoint: "/vr/fuzz/proposals/{id}/reject",
+        whenStatus: ["pending", "submitted"],
+        destructive: true,
+        confirm: "Reject this proposal?",
+      },
+    ],
   },
   "vr:crashes": {
     title: "vr \u00b7 fuzz crashes",
     endpoint: "/vr/fuzz/crashes",
     columns: [],
+    detailLinks: {
+      campaign_id: { module: "vr", section: "fuzz-campaigns", label: "campaign" },
+      target_id: { module: "vr", section: "targets", label: "target" },
+      source_investigation_id: { module: "vr", section: "investigations", label: "investigation" },
+    },
   },
 
   // ---- Malware: additional ---------------------------------------------

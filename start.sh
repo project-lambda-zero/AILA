@@ -35,6 +35,7 @@
 
 set -e
 cd "$(dirname "$0")"
+SCRIPT_DIR="$PWD"
 
 COMMAND="${1:-start}"
 
@@ -388,18 +389,28 @@ spawn() {
   [[ -f "$log_path" ]] && mv -f "$log_path" "${log_path}.prev" 2>/dev/null
   local pidv win_cwd
   win_cwd=$(_winpath "$PWD")
-  # Launch via WMI Win32_Process.Create, NOT Start-Process. A Start-Process
-  # child inherits the launching terminal's Windows Job Object
-  # (KILL_ON_JOB_CLOSE), so the whole stack died the moment the session that
-  # ran start.sh closed (agent/session teardown, tab close, SSH drop) --
-  # confirmed via IsProcessInJob()=True on every spawned service. A
-  # WMI-created process is reparented to WmiPrvSE and belongs to no job, so it
-  # survives terminal/session teardown (IsProcessInJob()=False). CurrentDirectory
-  # MUST be set: Win32_Process.Create defaults cwd to System32, and callers
-  # depend on cwd for `python -m aila...` package resolution.
-  pidv=$("$PS" -NoProfile -Command \
-    "(Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine='cmd /c ${env_prefix}python ${cmd_args} > \"${log_path}\" 2>&1'; CurrentDirectory='${win_cwd}'}).ProcessId" \
-    2>/dev/null | tr -d '\r\n ')
+  # Launch via WMI Win32_Process.Create with a HIDDEN console window
+  # (Win32_ProcessStartup.ShowWindow=0), NOT Start-Process. A
+  # Start-Process child inherits the launching terminal's Windows Job
+  # Object (KILL_ON_JOB_CLOSE), so the whole stack died the moment the
+  # session that ran start.sh closed (agent/session teardown, tab
+  # close, SSH drop) -- confirmed via IsProcessInJob()=True on every
+  # spawned service. A WMI-created process is reparented to WmiPrvSE
+  # and belongs to no job, so it survives terminal/session teardown
+  # (IsProcessInJob()=False). CurrentDirectory MUST be set:
+  # Win32_Process.Create defaults cwd to System32, and callers depend
+  # on cwd for `python -m aila...` package resolution.
+  #
+  # The ShowWindow=0 startup info is why services no longer pop a
+  # visible blank cmd.exe window per process -- previously every
+  # spawn() got one, and closing it aborted the child
+  # ("window-CLOSE event" in the logs). The helper script lives in
+  # the repo (scripts/start_hidden.ps1) so it survives `git clean`
+  # and is usable from any cwd (spawn runs inside `cd "$AUDIT_MCP_DIR"`
+  # subshells).
+  pidv=$("$PS" -NoProfile -ExecutionPolicy Bypass -File "$(_winpath "$SCRIPT_DIR/scripts/start_hidden.ps1")" \
+    -CommandLine "cmd /c ${env_prefix}python ${cmd_args} > \"${log_path}\" 2>&1" \
+    -CurrentDirectory "$win_cwd" 2>/dev/null | sed -n 's/^ProcessId=//p' | tr -d '\r\n ')
   record_pid "$label" "$pidv"
   echo "[aila]   $label started (PID $pidv, log $log_path)"
 }
@@ -416,11 +427,13 @@ spawn_shell() {
   [[ -f "$log_path" ]] && mv -f "$log_path" "${log_path}.prev" 2>/dev/null
   local pidv win_cwd
   win_cwd=$(_winpath "$PWD")
-  # WMI Win32_Process.Create for the same Job-Object breakaway reason as
-  # spawn() -- a Start-Process child dies with the launching terminal's job.
-  pidv=$("$PS" -NoProfile -Command \
-    "(Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine='cmd /c ${cmdline} > \"${log_path}\" 2>&1'; CurrentDirectory='${win_cwd}'}).ProcessId" \
-    2>/dev/null | tr -d '\r\n ')
+  # WMI Win32_Process.Create with hidden console for the same
+  # Job-Object breakaway + no-blank-window reasons as spawn() -- a
+  # Start-Process child dies with the launching terminal's job, and a
+  # visible cmd window aborts on operator close.
+  pidv=$("$PS" -NoProfile -ExecutionPolicy Bypass -File "$(_winpath "$SCRIPT_DIR/scripts/start_hidden.ps1")" \
+    -CommandLine "cmd /c ${cmdline} > \"${log_path}\" 2>&1" \
+    -CurrentDirectory "$win_cwd" 2>/dev/null | sed -n 's/^ProcessId=//p' | tr -d '\r\n ')
   record_pid "$label" "$pidv"
   echo "[aila]   $label started (PID $pidv, log $log_path)"
 }

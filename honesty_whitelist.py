@@ -58,6 +58,14 @@ HONESTY_WHITELIST = [
     # the adapter interface method IS the indirection point.
     ("adapters/base.py", "collect_inventory", "inlining"),
 
+    # Category (g): bind_index_id is the public seam for the private
+    # _bound_index_id_ctx ContextVar -- peer modules (VR tool executor,
+    # speculator, claim verifier) bind the resolved audit_mcp index_id
+    # without importing the private ContextVar. The returned token is the
+    # stdlib ContextVar.set() token consumed by reset_index_id; inlining
+    # at call sites would leak the private variable across modules.
+    ("middleware/audit.py", "bind_index_id", "inlining"),
+
     # Category (g): stream_key is the single public accessor for the private
     # _KEY_FMT stream-key format. Inlining it at call sites reinstates the
     # module->platform private-attr coupling the accessor closes (RFC-05).

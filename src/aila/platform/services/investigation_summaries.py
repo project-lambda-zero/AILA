@@ -148,13 +148,17 @@ def build_message_summary(
     record: Any,
     *,
     summary_cls: type[SummaryT],
+    persona_voice: str | None = None,
 ) -> SummaryT:
     """Project a message record row into ``summary_cls``.
 
     ``acked_at`` is forwarded only when ``summary_cls`` declares it
     (malware surfaces operator ACKs; VR does not). The introspection
     keeps VR's ``extra='forbid'`` contract intact -- an unconditional
-    kwarg would raise on VR.
+    kwarg would raise on VR. Same pattern for ``persona_voice``: the
+    owning branch's persona name is resolved by the caller (the branch
+    may be abandoned and therefore absent from the live branch list,
+    so the message must carry it for display).
     """
     kwargs: dict[str, Any] = {
         "id": record.id,
@@ -171,6 +175,8 @@ def build_message_summary(
     }
     if "acked_at" in summary_cls.model_fields:
         kwargs["acked_at"] = getattr(record, "acked_at", None)
+    if persona_voice is not None and "persona_voice" in summary_cls.model_fields:
+        kwargs["persona_voice"] = persona_voice
     return summary_cls(**kwargs)
 
 
