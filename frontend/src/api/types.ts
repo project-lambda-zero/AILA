@@ -54,6 +54,7 @@ export interface Message {
   branch_id?: string | null;
   sender_kind: string; // operator | engine | agent | system
   sender_id?: string | null;
+  persona_voice?: string | null; // owning branch's persona (abandoned branches still resolve)
   payload_kind: string; // text | tool_call | hypothesis_update | taint_flow | ...
   payload: Record<string, unknown>;
   operator_intent?: string | null;

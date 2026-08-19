@@ -257,7 +257,7 @@ export function ArtifactsTab({ projectId }: TabProps): JSX.Element {
       right={
         <>
           <CtlBtn label={"\u25c0"} title="prev page" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} />
-          <CtlBtn label={"\u25b6"} title="next page" onClick={() => setPage((p) => p + 1)} disabled={rows.length < pageSize} />
+          <CtlBtn label={"\u25b6"} title="next page" onClick={() => setPage((p) => p + 1)} disabled={q.data?.total != null ? page * pageSize >= q.data.total : rows.length < pageSize} />
         </>
       }
       filters={

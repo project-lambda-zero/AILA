@@ -854,6 +854,12 @@ async def reenqueue_investigation(
                 inv.strategy_family = new_strategy
         inv.status = InvestigationStatus.CREATED.value
         inv.pause_reason = None
+        # Null the wall-clock origin: a re-enqueued investigation had a
+        # stall gap between the old run and this one, and those dead hours
+        # are not real work time. The dispatch-hub setup re-stamps
+        # ``started_at = now`` on the next worker pick-up, so the 6h cap
+        # restarts from the resumed run instead of counting the stall.
+        inv.started_at = None
         inv.updated_at = now
         uow.session.add(inv)
 

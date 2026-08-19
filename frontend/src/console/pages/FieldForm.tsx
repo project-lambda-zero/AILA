@@ -50,6 +50,12 @@ export interface FieldSpec {
   help?: string;
   /** Number bounds. */
   min?: number;
+  /** When set, the widget type derives from `initial[typeFrom]` (a row field
+   * like `value_type`). Maps "int"/"float" -> number, "bool" -> checkbox,
+   * anything else -> text. The declared `type` is ignored in that case;
+   * serialization stays a string so string-typed bodies (e.g. config PUT)
+   * keep working. */
+  typeFrom?: string;
   max?: number;
   step?: number;
 }
@@ -95,11 +101,24 @@ type FieldValue =
   | null
   | undefined;
 
+/** Resolve the widget type for a field. When `field.typeFrom` is set, the
+ * row's field value picks the widget: int/float -> number, bool -> checkbox,
+ * else text. The backend casts config values by the schema type, so the
+ * editor must follow the row's `value_type`, not a free-form select. */
+function effectiveFieldType(field: FieldSpec, initial: Record<string, unknown> | null | undefined): FieldType {
+  if (!field.typeFrom || !initial) return field.type;
+  const raw = String(initial[field.typeFrom] ?? "");
+  if (raw === "int" || raw === "float") return "number";
+  if (raw === "bool") return "checkbox";
+  return "text";
+}
+
 // ---------- helpers ---------------------------------------------------------
 
 /** Convert a stored raw value (from `initial`) into the widget's working form. */
-function toWidgetValue(field: FieldSpec, raw: unknown): FieldValue {
-  switch (field.type) {
+function toWidgetValue(field: FieldSpec, raw: unknown, initial: Record<string, unknown> | null | undefined = null): FieldValue {
+  const type = effectiveFieldType(field, initial);
+  switch (type) {
     case "text":
     case "textarea":
     case "password":
@@ -187,8 +206,9 @@ function toWidgetValue(field: FieldSpec, raw: unknown): FieldValue {
 /** Turn a widget value into what we send to the server, or null when the
  * value is empty and the field is not required (so `extra=forbid` + server
  * defaults hold). */
-function serializeField(field: FieldSpec, value: FieldValue): unknown {
-  switch (field.type) {
+function serializeField(field: FieldSpec, value: FieldValue, initial: Record<string, unknown> | null | undefined = null): unknown {
+  const type = effectiveFieldType(field, initial);
+  switch (type) {
     case "text":
     case "textarea":
     case "password": {
@@ -205,10 +225,15 @@ function serializeField(field: FieldSpec, value: FieldValue): unknown {
       if (value === "" || value === null || value === undefined) return undefined;
       const n = typeof value === "number" ? value : Number(value);
       if (Number.isNaN(n)) return undefined;
+      // typeFrom fields (config values) send a STRING body: the config PUT
+      // contract is `value: str` and the backend casts by schema type.
+      if (field.typeFrom) return String(n);
       return n;
     }
     case "checkbox":
-      return Boolean(value);
+      // typeFrom bool config values go out as "true"/"false" strings, which
+      // the backend's _cast_value accepts for the bool schema type.
+      return field.typeFrom ? (Boolean(value) ? "true" : "false") : Boolean(value);
     case "tags": {
       const arr = Array.isArray(value) ? value : [];
       if (!arr.length && !field.required) return undefined;
@@ -563,7 +588,7 @@ export default function FieldForm({
   const [state, setState] = useState<Record<string, FieldValue>>(() => {
     const out: Record<string, FieldValue> = {};
     for (const f of spec.fields) {
-      out[f.name] = toWidgetValue(f, initial ? initial[f.name] : undefined);
+      out[f.name] = toWidgetValue(f, initial ? initial[f.name] : undefined, initial);
     }
     return out;
   });
@@ -630,7 +655,7 @@ export default function FieldForm({
       // In PATCH mode, skip fields the operator didn't touch so we don't
       // wipe server-side values with defaults.
       if (editMode && !touched.has(f.name)) continue;
-      const serialized = serializeField(f, state[f.name]);
+      const serialized = serializeField(f, state[f.name], initial);
       if (serialized === undefined) continue;
       payload[f.name] = serialized;
     }
@@ -670,7 +695,8 @@ export default function FieldForm({
         {spec.fields.map((f) => {
           const v = state[f.name];
           const key = f.name;
-          switch (f.type) {
+          const type = effectiveFieldType(f, initial);
+          switch (type) {
             case "text":
             case "password":
               return (
@@ -710,7 +736,7 @@ export default function FieldForm({
                     placeholder={f.placeholder}
                     min={f.min}
                     max={f.max}
-                    step={f.step ?? 1}
+                    step={f.step ?? (f.typeFrom && String(initial?.[f.typeFrom] ?? "") === "float" ? "any" : 1)}
                     onChange={(e) => setField(key, e.target.value === "" ? "" : Number(e.target.value))}
                   />
                   {f.help ? <span style={help}>{f.help}</span> : null}

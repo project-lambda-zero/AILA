@@ -974,3 +974,109 @@ def test_absorb_stale_threshold_zero_disables_directive() -> None:
     merged = engine.absorb(initial, _noop_decision(), turn_number=100)
 
     assert "_directive.stale_hypotheses" not in merged.observables
+
+
+# ----------------------------------------------------------------------
+# kill-criterion directive (RFC #201): must match on OBSERVATION BODY
+# TEXT ONLY, never on the observation KEY. Keys are routing labels whose
+# tool-verb segments (read_function / read_lines / semantic_search /
+# search_functions / taint_paths_to) tokenize into generic words that
+# pass the 4-char minimum ("read", "lines", "search", "source",
+# "query", ...) -- matching them makes the directive fire on EVERY turn
+# (tool keys accumulate and are never evicted), burning an agent
+# reasoning paragraph per turn rebutting the false positive. Observed
+# live: hours of per-turn kill_criterion_met noise on Apache invs.
+# ----------------------------------------------------------------------
+
+
+def test_absorb_kill_criterion_ignores_tool_verb_in_observation_key() -> None:
+    """The directive MUST NOT fire when the criterion word lives only in
+    the observation KEY's tool-verb segment, not in the body text.
+
+    Regression: a kill_criterion of "read happens before auth check"
+    used to trip on the key ``audit_mcp.read_function.source.X`` (token
+    "read") every turn regardless of what the tool actually returned.
+    """
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    initial = ReasoningCaseState(
+        hypotheses=[
+            Hypothesis(
+                id="h_auth",
+                claim="read happens before auth check",
+                kill_criterion="read happens before auth check",
+            ),
+        ],
+        observables={
+            # Key contains 'read' (read_function) + 'source' but the
+            # BODY contains neither -- no genuine evidence landed.
+            "audit_mcp.read_function.source.RequestHandler":
+                "void doRequest() { checkLogin(); render(view); }",
+        },
+    )
+
+    merged = engine.absorb(initial, _noop_decision(), turn_number=1)
+
+    assert "_directive.kill_criterion_met" not in merged.observables
+
+
+def test_absorb_kill_criterion_fires_on_body_token_hit() -> None:
+    """Positive control: when the criterion token appears in the
+    observation BODY (real evidence), the directive fires and names the
+    matched token + observation key."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    initial = ReasoningCaseState(
+        hypotheses=[
+            Hypothesis(
+                id="h_auth",
+                claim="read happens before auth check",
+                kill_criterion="read happens before auth check",
+            ),
+        ],
+        observables={
+            "audit_mcp.read_lines.slice.RequestHandler.java:180-470":
+                "ObjectInputStream ois = new ObjectInputStream(req.getInputStream()); "
+                "Object obj = ois.readObject();  // deserialization BEFORE checkLogin",
+        },
+    )
+
+    merged = engine.absorb(initial, _noop_decision(), turn_number=1)
+
+    directive = merged.observables.get("_directive.kill_criterion_met")
+    assert isinstance(directive, str), merged.observables
+    assert "h_auth" in directive
+    assert "matched token" in directive
+    assert "audit_mcp.read_lines.slice.RequestHandler.java:180-470" in directive
+
+
+def test_absorb_kill_criterion_clears_when_no_body_match() -> None:
+    """The directive persists only while a body-token match is live;
+    once the matching observation is gone, the directive clears on the
+    same absorb call."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    initial = ReasoningCaseState(
+        hypotheses=[
+            Hypothesis(
+                id="h_auth",
+                claim="read happens before auth check",
+                kill_criterion="read happens before auth check",
+            ),
+        ],
+        observables={
+            "audit_mcp.read_function.source.RequestHandler":
+                "void doRequest() { checkLogin(); render(view); }",
+        },
+    )
+
+    merged = engine.absorb(initial, _noop_decision(), turn_number=1)
+
+    assert "_directive.kill_criterion_met" not in merged.observables
+    # Prior-turn banner must not linger either.
+    initial2 = ReasoningCaseState(
+        hypotheses=merged.hypotheses,
+        observables={
+            **merged.observables,
+            "_directive.kill_criterion_met": "prior stale banner",
+        },
+    )
+    merged2 = engine.absorb(initial2, _noop_decision(), turn_number=2)
+    assert "_directive.kill_criterion_met" not in merged2.observables

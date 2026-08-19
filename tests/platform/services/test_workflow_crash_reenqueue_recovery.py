@@ -19,13 +19,21 @@ from __future__ import annotations
 
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import text as sql_text
 
+from aila.modules.vr.db_models import (
+    VRInvestigationRecord,
+    VRTargetRecord,
+    VRWorkspaceRecord,
+)
 from aila.platform.services.investigation_lifecycle import (
     purge_investigation_cursors,
+    reenqueue_investigation,
 )
+from aila.platform.uow import UnitOfWork
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import (
     WorkflowRunRecord,
@@ -272,3 +280,79 @@ async def test_purge_returns_zero_when_no_matching_investigation(test_db) -> Non
         )
         await session.commit()
     assert deleted == 0
+
+
+@pytest.mark.asyncio
+async def test_reenqueue_nulls_wall_clock_origin(test_db) -> None:
+    """``reenqueue_investigation`` resets ``started_at`` to NULL.
+
+    A re-enqueued investigation had a stall gap between the old run and
+    the resumed one; those dead hours are not real work time and must not
+    count against the wall-clock cap. The dispatch-hub setup re-stamps
+    ``started_at = now`` on the next worker pick-up, so nulling here gives
+    the resumed run a fresh 6h budget instead of inheriting the stall.
+    """
+    del test_db
+    async with UnitOfWork() as uow:
+        ws = VRWorkspaceRecord(
+            name="wallclock-reset", slug="wallclock-reset",
+            description="", theme="custom", team_id="admin",
+        )
+        uow.session.add(ws)
+        await uow.session.flush()
+        target = VRTargetRecord(
+            workspace_id=ws.id, team_id="admin",
+            display_name="wallclock reset", kind="source_repo",
+            descriptor_json=json.dumps({"repo_url": "https://example.invalid/x"}),
+            primary_language="java", secondary_languages_json="[]",
+            tags_json="[]", mcp_handles_json="{}", status="active",
+            capability_profile_json="{}",
+        )
+        uow.session.add(target)
+        await uow.session.commit()
+        await uow.session.refresh(target)
+        target_id = target.id
+
+    async with async_session_scope() as session:
+        inv = VRInvestigationRecord(
+            target_id=target_id,
+            team_id="admin",
+            kind="discovery",
+            title="wall clock reset",
+            initial_question="test",
+            status="stalled",
+            pause_reason=None,
+            auto_pilot=True,
+            strategy_family="vulnerability_research.discovery_research",
+            cost_budget_usd=50.0,
+            started_at=datetime.now(UTC) - timedelta(hours=16),
+            updated_at=datetime.now(UTC),
+        )
+        session.add(inv)
+        await session.commit()
+        await session.refresh(inv)
+        inv_id = inv.id
+
+    submitted: list[str] = []
+
+    async def _submit_one(investigation_id: str, _branch_id: str | None) -> None:
+        submitted.append(investigation_id)
+
+    summary = await reenqueue_investigation(
+        inv_id,
+        inv_model=VRInvestigationRecord,
+        fn_path_pattern="%/run_vr%",
+        submit_one=_submit_one,
+    )
+
+    assert summary["submitted"] == 1
+    assert submitted == [inv_id]
+
+    async with async_session_scope() as session:
+        row = await session.get(VRInvestigationRecord, inv_id)
+        assert row is not None
+        assert row.status == "created"
+        assert row.started_at is None, (
+            "re-enqueue must null started_at so the wall-clock cap "
+            "restarts from the resumed run, not the stall gap"
+        )

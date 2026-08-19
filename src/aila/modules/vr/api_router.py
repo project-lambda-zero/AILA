@@ -802,9 +802,22 @@ def _branch_summary(
     )
 
 
-def _message_summary(record: Any) -> VRMessageSummary:
-    """Project a VRInvestigationMessageRecord row to summary."""
-    return build_message_summary(record, summary_cls=VRMessageSummary)
+def _message_summary(
+    record: Any,
+    persona_voice: str | None = None,
+) -> VRMessageSummary:
+    """Project a VRInvestigationMessageRecord row to summary.
+
+    ``persona_voice`` is resolved by the caller from the owning branch.
+    The branch may be abandoned (completed/terminated investigation) and
+    therefore absent from the live branch list, so the message carries
+    the persona for display rather than relying on a branch lookup.
+    """
+    return build_message_summary(
+        record,
+        summary_cls=VRMessageSummary,
+        persona_voice=persona_voice,
+    )
 
 
 def _outcome_summary(record: Any) -> VROutcomeSummary:
@@ -5471,6 +5484,11 @@ def create_vr_router() -> APIRouter:
             # the deletes above commit.
             inv.status = InvestigationStatus.CREATED.value
             inv.pause_reason = None
+            # Null the wall-clock origin: reset is "start fresh" -- any
+            # hours the prior run burned (including stall gaps) should not
+            # carry into the fresh 6h budget. The dispatch-hub setup
+            # re-stamps ``started_at = now`` on the next worker pick-up.
+            inv.started_at = None
             inv.updated_at = utc_now()
             uow.session.add(inv)
 
@@ -5681,7 +5699,28 @@ def create_vr_router() -> APIRouter:
                 .offset(offset).limit(limit)
             )).all()
 
-        items = [_message_summary(r) for r in rows]
+            # Resolve the owning branch's persona per message. The
+            # branch list endpoint filters abandoned branches, but
+            # completed investigations leave their branches abandoned --
+            # without this map every message would display as ENGINE.
+            branch_ids = {r.branch_id for r in rows if r.branch_id}
+            persona_by_branch: dict[str, str | None] = {}
+            if branch_ids:
+                from .db_models import VRInvestigationBranchRecord
+
+                branch_rows = (await uow.session.exec(
+                    select(VRInvestigationBranchRecord.id, VRInvestigationBranchRecord.persona_voice)
+                    .where(VRInvestigationBranchRecord.id.in_(branch_ids))
+                )).all()
+                for br in branch_rows:
+                    bid = br[0] if hasattr(br, "__getitem__") else br.id
+                    voice = br[1] if hasattr(br, "__getitem__") else br.persona_voice
+                    persona_by_branch[str(bid)] = voice or None
+
+        items = [
+            _message_summary(r, persona_voice=persona_by_branch.get(r.branch_id))
+            for r in rows
+        ]
         return DataEnvelope(
             data=items,
             meta=PaginatedMeta(total=int(total), offset=offset, limit=limit).model_dump(),
@@ -5902,6 +5941,30 @@ def create_vr_router() -> APIRouter:
                         ),
                     )).first()
 
+                    # Resolve the owning branch's persona per message so
+                    # the live tail shows the agent name even for
+                    # abandoned branches (completed investigations).
+                    if rows:
+                        from .db_models import VRInvestigationBranchRecord
+
+                        _poll_branch_ids = {r.branch_id for r in rows if r.branch_id}
+                        _persona_by_branch: dict[str, str | None] = {}
+                        if _poll_branch_ids:
+                            _poll_branch_rows = (await poll_uow.session.exec(
+                                select(
+                                    VRInvestigationBranchRecord.id,
+                                    VRInvestigationBranchRecord.persona_voice,
+                                ).where(
+                                    VRInvestigationBranchRecord.id.in_(_poll_branch_ids),
+                                )
+                            )).all()
+                            for _br in _poll_branch_rows:
+                                _bid = _br[0] if hasattr(_br, "__getitem__") else _br.id
+                                _voice = _br[1] if hasattr(_br, "__getitem__") else _br.persona_voice
+                                _persona_by_branch[str(_bid)] = _voice or None
+                    else:
+                        _persona_by_branch = {}
+
                 for row in rows:
                     # A single row that fails to project or serialize MUST
                     # NOT kill the generator -- otherwise one bad message
@@ -5910,7 +5973,10 @@ def create_vr_router() -> APIRouter:
                     # failure log (ASCII-only, cp1252-safe) and skip the row.
                     event_data: str | None = None
                     try:
-                        summary = _message_summary(row)
+                        summary = _message_summary(
+                            row,
+                            persona_voice=_persona_by_branch.get(row.branch_id),
+                        )
                         # Discriminate operator-steering messages from agent
                         # turns so the consumer can branch on the typed event
                         # name without parsing the payload (08_FRONTEND_UX.md).

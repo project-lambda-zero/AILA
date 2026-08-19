@@ -19,6 +19,7 @@
 import React, { useEffect, useRef, useState } from "react";
 
 import type { ApiError } from "../api/client";
+import { apiFetch } from "../api/client";
 import {
   useCreateMalwareInvestigation,
   useCreateVrInvestigation,
@@ -280,6 +281,22 @@ function IntakeWizard(
   const [workspaceFilter, setWorkspaceFilter] = useState<string>("");
   const [launchError, setLaunchError] = useState<string | null>(null);
 
+  // Forensics flow state: real system registry rows for the analyzer select,
+  // plus the live create + readiness-check result. `fxBusy` gates the launch
+  // button; the readiness stages come from the backend result, not a local
+  // animation.
+  const [fxSystems, setFxSystems] = useState<Array<{ id: number; name: string; host: string; distro: string }>>([]);
+  const [fxBusy, setFxBusy] = useState<boolean>(false);
+  const [fxProjectId, setFxProjectId] = useState<string | null>(null);
+  const [fxResult, setFxResult] = useState<{
+    ready: boolean;
+    system_name: string;
+    analyzer_os: string;
+    tools: Array<{ tool_name: string; required: boolean; status: string; version: string | null; message: string | null }>;
+    message: string;
+  } | null>(null);
+  const [fxError, setFxError] = useState<string | null>(null);
+
   // Rules of Hooks: always call these. The `enabled` gate keeps the queries
   // silent when the wizard is on vulnerability / forensics.
   const workspaces = useWorkspaces(moduleId === "malware" ? "malware" : "vr");
@@ -306,6 +323,24 @@ function IntakeWizard(
       window.clearTimeout(closeTimerRef.current ?? undefined);
     };
   }, []);
+
+  // Forensics analyzer select needs real registered systems (the backend
+  // requires a numeric system_id, not a display label). Fetch once when the
+  // wizard is on the forensics flow.
+  useEffect(() => {
+    if (!isFx) return;
+    let live = true;
+    apiFetch<{ items?: Array<{ id: number; name: string; host: string; distro: string }> }>("/systems?page_size=100")
+      .then((data) => {
+        if (live) setFxSystems(data.items ?? []);
+      })
+      .catch(() => {
+        if (live) setFxSystems([]);
+      });
+    return () => {
+      live = false;
+    };
+  }, [isFx]);
 
   const setDescField = (name: string, value: string): void => {
     setDesc((d) => ({ ...d, [name]: value }));
@@ -353,21 +388,68 @@ function IntakeWizard(
   if (cfg.flow === "forensics") {
     const projectName = desc["project_name"] ?? "";
     const description = desc["description"] ?? "";
-    const machine = desc["analyzer_machine"] ?? "";
+    const machineId = desc["analyzer_machine"] ?? "";
     const evdir = desc["evidence_directory"] ?? "";
     const analyzerOs = desc["analyzer_os"] ?? "linux";
     const currentKind = kind ?? "disk_evidence";
-    const fxReady = projectName.trim() !== "" && machine.trim() !== "" && evdir.trim() !== "";
+    const fxReady = projectName.trim() !== "" && machineId.trim() !== "" && evdir.trim() !== "";
 
     const activePk = cfg.projectKinds.find((p) => p.k === currentKind) ?? cfg.projectKinds[0];
     const activeOs = cfg.osKinds.find((o) => o.k === analyzerOs) ?? cfg.osKinds[0];
 
     const onCheck = (): void => {
-      if (!fxReady) return;
+      if (!fxReady || fxBusy) return;
+      const systemId = Number(machineId);
+      if (!Number.isFinite(systemId) || systemId <= 0) {
+        setFxError("pick an analyzer machine first");
+        return;
+      }
+      setFxBusy(true);
+      setFxError(null);
       setStep(1);
-      runStages(cfg.readiness.length, 800, () => setStep(2));
+      // Real create, then a real readiness check. The readiness stages the
+      // wizard used to animate are replaced by the backend's tool checks.
+      apiFetch<{ data: { id: string; name: string } }>("/forensics/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: projectName,
+          description,
+          system_id: systemId,
+          evidence_directory: evdir,
+          analyzer_os: analyzerOs,
+          project_kind: currentKind,
+        }),
+      })
+        .then(async (created) => {
+          const projectId = created.data.id;
+          setFxProjectId(projectId);
+          const res = await apiFetch<{
+            data: {
+              ready: boolean;
+              system_name: string;
+              analyzer_os: string;
+              tools: Array<{ tool_name: string; required: boolean; status: string; version: string | null; message: string | null }>;
+              message: string;
+            };
+          }>(`/forensics/projects/${projectId}/readiness-check`, { method: "POST" });
+          setFxResult(res.data);
+          setStep(2);
+        })
+        .catch((err: unknown) => {
+          setFxError(
+            (err && typeof err === "object" && "message" in err
+              ? String((err as ApiError).message || "").slice(0, 400)
+              : "") || "create failed",
+          );
+          setStep(0);
+        })
+        .finally(() => setFxBusy(false));
     };
-    const onConfirm = (): void => onClose();
+    const onConfirm = (): void => {
+      if (!fxProjectId) return;
+      onBind({ id: fxProjectId, title: projectName });
+    };
     const onCancel = (): void => onClose();
 
     const stepBtnStyle = (i: number): React.CSSProperties =>
@@ -462,15 +544,18 @@ function IntakeWizard(
                 <label style={css("display:flex;flex-direction:column;gap:5px;")}>
                   <span style={css("font-size:12px;color:var(--text-primary);font-family:var(--font-sans,system-ui);")}>Analyzer Machine</span>
                   <select
-                    value={machine}
+                    value={machineId}
                     onChange={(e): void => setDescField("analyzer_machine", e.target.value)}
                     style={css("background:var(--surface-sunk);border:1px solid var(--border-soft);outline:none;padding:9px 11px;color:var(--text-primary);font-family:var(--font-mono);font-size:12px;border-radius:3px;")}
                   >
                     <option value="">{"Select a system\u2026"}</option>
-                    {cfg.machines.map((m) => (
-                      <option key={m} value={m}>{m}</option>
+                    {fxSystems.map((s) => (
+                      <option key={s.id} value={String(s.id)}>{s.name} \u00b7 {s.distro || s.host}</option>
                     ))}
                   </select>
+                  {fxSystems.length === 0 ? (
+                    <span style={css("font-size:10px;color:var(--text-faint);")}>no systems registered \u2014 add one on the systems page first</span>
+                  ) : null}
                 </label>
                 <div>
                   <span style={css("font-size:12px;color:var(--text-primary);font-family:var(--font-sans,system-ui);")}>Project Kind</span>
@@ -542,44 +627,21 @@ function IntakeWizard(
             {step === 1 && (
               <div style={css("display:flex;flex-direction:column;gap:9px;")}>
                 <div style={css("font-size:11px;color:var(--text-muted);")}>
-                  checking readiness on {machine} {"\u2014"} {evdir}
+                  {fxBusy ? `creating project + checking readiness on system ${machineId} \u2014 ${evdir}` : ""}
                 </div>
-                {cfg.readiness.map((r, i) => {
-                  const done = stage > i;
-                  const run = stage === i;
-                  const dot = css(
-                    `width:9px;height:9px;flex:0 0 auto;border-radius:1px;background:${
-                      done ? "var(--status-ok)" : run ? "var(--accent)" : "var(--text-faint)"
-                    };${run ? "animation:acbreathe 1s ease-in-out infinite;" : ""}`,
-                  );
-                  const stTxt = done ? "pass" : run ? "checking" : "queued";
-                  const stStyle = css(
-                    `font-size:9px;letter-spacing:0.08em;text-transform:uppercase;color:${
-                      done ? "var(--status-ok)" : run ? "var(--accent)" : "var(--text-faint)"
-                    };`,
-                  );
-                  return (
-                    <div
-                      key={r[0]}
-                      style={css("display:flex;align-items:center;gap:10px;padding:9px 11px;border:1px solid var(--border-soft);background:var(--surface-sunk);border-radius:3px;")}
-                    >
-                      <span style={dot} />
-                      <span style={css("display:flex;flex-direction:column;flex:1;min-width:0;")}>
-                        <span style={css("font-size:11.5px;color:var(--text-primary);")}>{r[0]}</span>
-                        <span style={css("font-size:9px;color:var(--text-faint);")}>{r[1]}</span>
-                      </span>
-                      <span style={stStyle}>{stTxt}</span>
-                    </div>
-                  );
-                })}
+                {fxError ? (
+                  <div style={css("padding:9px 11px;border:1px solid var(--status-err, #d64545);background:color-mix(in srgb,var(--status-err, #d64545) 8%,transparent);border-radius:3px;font-size:11px;color:var(--text-primary);")}>
+                    {fxError}
+                  </div>
+                ) : null}
               </div>
             )}
 
-            {step >= 2 && (
-              <div style={css("display:flex;flex-direction:column;gap:8px;")}>
-                <div style={css("padding:10px 12px;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 7%,transparent);border-radius:3px;")}>
-                  <div style={css("font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:var(--status-ok);")}>
-                    {"readiness passed \u00b7 case ready"}
+            {step === 2 && fxResult && (
+              <div style={css("display:flex;flex-direction:column;gap:9px;")}>
+                <div style={css(`padding:10px 12px;border:1px solid ${fxResult.ready ? "var(--status-ok)" : "var(--status-err, #d64545)"};background:color-mix(in srgb,${fxResult.ready ? "var(--status-ok)" : "var(--status-err, #d64545)"} 7%,transparent);border-radius:3px;`)}>
+                  <div style={css(`font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:${fxResult.ready ? "var(--status-ok)" : "var(--status-err, #d64545)"};`)}>
+                    {fxResult.ready ? "readiness passed \u00b7 case ready" : "readiness failed \u2014 project created, fix the analyzer and re-check"}
                   </div>
                   <div style={css("margin-top:7px;display:grid;grid-template-columns:96px 1fr;gap:5px 10px;font-size:11px;")}>
                     <span style={css("color:var(--text-faint);")}>project</span>
@@ -588,12 +650,32 @@ function IntakeWizard(
                     <span style={css("color:var(--text-primary);")}>{activePk?.l ?? ""}</span>
                     <span style={css("color:var(--text-faint);")}>analyzer</span>
                     <span style={css("color:var(--text-primary);")}>
-                      {machine} {"\u00b7"} {activeOs?.l ?? ""}
+                      {fxResult.system_name} {"\u00b7"} {activeOs?.l ?? ""}
                     </span>
                     <span style={css("color:var(--text-faint);")}>evidence</span>
                     <span style={css("color:var(--text-primary);word-break:break-all;")}>{evdir}</span>
                   </div>
+                  {fxResult.message ? (
+                    <div style={css("margin-top:7px;font-size:10.5px;color:var(--text-muted);line-height:1.45;")}>{fxResult.message}</div>
+                  ) : null}
                 </div>
+                <div style={css("font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);")}>tool checks</div>
+                {fxResult.tools.map((t) => {
+                  const ok = t.status === "ok" || t.status === "present" || t.status === "available";
+                  const stStyle = css(
+                    `font-size:9px;letter-spacing:0.08em;text-transform:uppercase;color:${ok ? "var(--status-ok)" : t.status === "missing" || t.status === "absent" ? "var(--status-err, #d64545)" : "var(--text-muted)"};`,
+                  );
+                  return (
+                    <div key={t.tool_name} style={css("display:flex;align-items:center;gap:10px;padding:9px 11px;border:1px solid var(--border-soft);background:var(--surface-sunk);border-radius:3px;")}>
+                      <span style={css(`width:9px;height:9px;flex:0 0 auto;border-radius:1px;background:${ok ? "var(--status-ok)" : "var(--status-err, #d64545)"};`)} />
+                      <span style={css("display:flex;flex-direction:column;flex:1;min-width:0;")}>
+                        <span style={css("font-size:11.5px;color:var(--text-primary);")}>{t.tool_name}{t.required ? "" : " (opt)"}</span>
+                        <span style={css("font-size:9px;color:var(--text-faint);")}>{t.version || t.message || ""}</span>
+                      </span>
+                      <span style={stStyle}>{t.status}</span>
+                    </div>
+                  );
+                })}
               </div>
             )}
 
@@ -602,8 +684,8 @@ function IntakeWizard(
               <button type="button" onClick={onCancel} style={backStyle}>cancel</button>
               <span style={css("flex:1;")} />
               {step === 0 && (
-                <button type="button" onClick={onCheck} style={checkStyle}>
-                  Create &amp; Check Readiness
+                <button type="button" onClick={onCheck} style={checkStyle} disabled={fxBusy}>
+                  {fxBusy ? "creating \u2026" : "Create &amp; Check Readiness"}
                 </button>
               )}
               {step >= 2 && (
