@@ -42,7 +42,7 @@ dependencies = [
   "reportlab==4.5.1",
   "asn1crypto==1.5.1",  # APK v2/v3 signing block (CMS/PKCS7) parsing in platform.apk
   "PyYAML==6.0.3",      # YAML parsing in platform code (imported unguarded)
-  "python-multipart==0.0.27",  # fastapi Form/File parsing (upload endpoints)
+  "python-multipart==0.0.31",  # fastapi Form/File parsing (upload endpoints)
   'python-magic==0.4.27; platform_system != "Windows"',
   'python-magic-bin==0.4.14; platform_system == "Windows"',
   # ──────────────────────────────────────────────────────────────
