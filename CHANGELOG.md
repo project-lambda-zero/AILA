@@ -7,6 +7,35 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.43] - 2026-08-21 -- Basic-mode chat, forensics intake, and report download fixes
+
+### Fixed
+
+- Basic mode console now renders the session message history. The client read a `messages` field, but the backend returns a paginated payload under `items`, so the thread always showed empty.
+- Assistant replies in basic-mode sessions now show the routed response. The handler read a `summary` field that does not exist on the platform response; the reply text lives in `message`, so every reply resolved empty and fell back to repeating the user's own input.
+- Sending the first message in a brand-new basic-mode session now posts that message. Previously the session was created and the typed text was cleared without being sent.
+- Forensics intake reads the created project id from the unwrapped response, so the readiness check targets the real project instead of an undefined id.
+- Forensics intake analyzer dropdown renders the separator glyph instead of a literal escape sequence.
+- Vulnerability report downloads read the raw response body, so PDF exports are no longer corrupted by text decoding. JSON and CSV exports were unaffected.
+
+## [0.5.42] - 2026-08-20 -- Frontend UX ergonomics, session wiring, and operator actions
+
+### Added
+
+- Basic mode in the central console now talks directly to the backend sessions API. Operators can run conversations with the platform assistant, view past turns, and create fresh sessions.
+- Operator outcome review actions in Malware X-Ray: added interactive accept and reject buttons that update outcome states directly.
+- Free-text search filter in vulnerability findings across CVE identifiers, package names, hosts, and versions.
+- Vulnerability radar system cards now include quick navigation buttons to view system findings and open scan workflows.
+- Declarative row actions for campaign stop on fuzz campaigns, account activation and deactivation on user lists, and immediate API key revocation.
+- Settings overlay connects directly to active session management.
+
+### Fixed
+
+- Vulnerability report exports now send Bearer authentication headers and download files cleanly without dropping credentials.
+- Forensics action toolbar and download handlers use inline status banners rather than modal alert dialogs.
+- Raised minimum typography across badges, panel bars, filter inputs, and action buttons to meet standard readable sizes.
+- Standardized click targets across data pages, inspectors, and drawer footers to 26px minimum height.
+
 ## [0.5.41] - 2026-08-19 -- Frontend usability layer and operator workflow fixes
 
 ### Added

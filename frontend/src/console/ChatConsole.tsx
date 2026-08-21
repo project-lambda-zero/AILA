@@ -9,6 +9,13 @@ import {
 } from "react";
 
 import { useMessages, usePostMessage } from "../api/hooks";
+import {
+  useCreateSession,
+  usePostSessionMessage,
+  useSessionMessages,
+  useSessions,
+  type SessionMessage,
+} from "../api/sessions";
 import type { Message } from "../api/types";
 import type { ChatConsoleProps } from "./contract";
 import { css } from "./css";
@@ -246,6 +253,20 @@ function renderRow(key: string, r: RowProps): JSX.Element {
 
 // Bind one live Message to a RowProps -- no fabrication: every value
 // comes off the payload we actually received.
+function bindSessionMessage(m: SessionMessage): RowProps {
+  const you = m.role === "user";
+  const chips: RowProps["chips"] = [];
+  if (m.run_id) chips.push({ label: `run ${m.run_id.slice(0, 8)}`, tone: "info" });
+  const meta = m.created_at ? new Date(m.created_at).toLocaleTimeString() : "";
+  return {
+    who: you ? "you" : "dante",
+    meta,
+    body: m.content,
+    chips,
+    card: null,
+  };
+}
+
 function bindMessage(m: Message): RowProps {
   const you = m.sender_kind === "operator";
   const payload: Record<string, unknown> = m.payload ?? {};
@@ -342,6 +363,7 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
   const adv = mode === "advanced";
 
   const [draft, setDraft] = useState<string>("");
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const threadRef = useRef<HTMLDivElement | null>(null);
   const seenLen = useRef<number | null>(null);
 
@@ -349,10 +371,25 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
   const postMessage = usePostMessage(investigationId);
   const messages: Message[] = messagesQuery.data ?? [];
 
-  // Reset the scroll baseline when the bound case changes.
+  const sessionsQ = useSessions();
+  const createSession = useCreateSession();
+
+  useEffect(() => {
+    if (!activeSessionId && sessionsQ.data?.items?.[0]) {
+      setActiveSessionId(sessionsQ.data.items[0].session_id);
+    }
+  }, [activeSessionId, sessionsQ.data?.items]);
+
+  const sessionMessagesQ = useSessionMessages(!adv ? activeSessionId : null);
+  const postSessionMessage = usePostSessionMessage(!adv ? activeSessionId : null);
+  const sessionMessages: SessionMessage[] = sessionMessagesQ.data?.items ?? [];
+
+  // Reset the scroll baseline when the bound case or session changes.
   useEffect(() => {
     seenLen.current = null;
-  }, [investigationId]);
+  }, [investigationId, activeSessionId, mode]);
+
+  const totalMessageCount = adv ? messages.length : sessionMessages.length;
 
   // The design opens with the greeting at the top of the thread. On first load
   // of a case we stay at the top; once new turns actually arrive we follow them
@@ -361,29 +398,37 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
     const el = threadRef.current;
     if (!el) return;
     if (seenLen.current === null) {
-      seenLen.current = messages.length;
+      seenLen.current = totalMessageCount;
       el.scrollTop = 0;
       return;
     }
-    if (messages.length > seenLen.current) el.scrollTop = el.scrollHeight;
-    seenLen.current = messages.length;
-  }, [messages.length]);
+    if (totalMessageCount > seenLen.current) el.scrollTop = el.scrollHeight;
+    seenLen.current = totalMessageCount;
+  }, [totalMessageCount]);
 
   const bindLabel = investigationId ? shortCaseId(moduleId, investigationId) : moduleId;
-  const panelSig = adv ? `bound \u00b7 ${bindLabel} case_state` : "";
+  const panelSig = adv
+    ? `bound \u00b7 ${bindLabel} case_state`
+    : activeSessionId
+      ? `session \u00b7 ${activeSessionId.slice(0, 8)}`
+      : "assistant \u00b7 ready";
 
   const promptGlyph = adv ? `${moduleId}:` : ">";
   const placeholder = adv
     ? `ask about ${bindLabel} \u2014 dissent, evidence, next action\u2026`
-    : "describe a target or paste a repo / CVE / binary\u2026";
+    : "describe a target or ask platform assistant\u2026";
   const modeLabel = adv ? "advanced \u25be" : "basic \u25be";
   const suggestions = adv ? ADV_SUGGESTIONS : BASIC_SUGGESTIONS;
 
   const trimmed = draft.trim();
+  const isSending = adv
+    ? postMessage.isPending
+    : postSessionMessage.isPending || createSession.isPending;
+
   const canSend =
     trimmed.length > 0 &&
     !(adv && !investigationId) &&
-    !postMessage.isPending;
+    !isSending;
 
   const doSend = (): void => {
     if (!canSend) return;
@@ -393,9 +438,29 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
       });
       return;
     }
-    // Basic mode has no real backend endpoint; clear the draft honestly
-    // rather than fake a reply.
-    setDraft("");
+    if (!activeSessionId) {
+      // Create the session, then post THIS message to it. Without the nested
+      // post the operator's first message is dropped (session made, draft
+      // cleared, nothing sent).
+      const content = trimmed;
+      createSession.mutate(
+        { title: content.slice(0, 40) },
+        {
+          onSuccess: (newSess) => {
+            setActiveSessionId(newSess.session_id);
+            setDraft("");
+            postSessionMessage.mutate({ content, sessionId: newSess.session_id });
+          },
+        },
+      );
+      return;
+    }
+    postSessionMessage.mutate(
+      { content: trimmed },
+      {
+        onSuccess: () => setDraft(""),
+      },
+    );
   };
 
   const onKey = (e: KeyboardEvent<HTMLInputElement>): void => {
@@ -498,6 +563,14 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
       ];
     } else {
       threadContent = [bootRow, ...messages.map((m) => renderRow(m.id, bindMessage(m)))];
+    }
+  } else if (!adv) {
+    if (sessionMessagesQ.isLoading && !sessionMessagesQ.data) {
+      threadContent = [bootRow, <div key="_load" style={emptyStyle}>connecting to assistant session...</div>];
+    } else if (sessionMessages.length === 0) {
+      threadContent = bootRow;
+    } else {
+      threadContent = [bootRow, ...sessionMessages.map((m) => renderRow(m.message_id, bindSessionMessage(m)))];
     }
   } else {
     threadContent = bootRow;

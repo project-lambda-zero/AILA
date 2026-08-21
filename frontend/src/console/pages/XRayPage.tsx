@@ -251,7 +251,7 @@ function Panel({
     >
       <div
         style={css(
-          "position:relative;flex:0 0 auto;display:flex;align-items:center;gap:10px;height:var(--panel-title-h,27px);padding:0 12px 0 28px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:9.5px;text-transform:uppercase;letter-spacing:0.14em;color:var(--text-muted);",
+          "position:relative;flex:0 0 auto;display:flex;align-items:center;gap:10px;height:var(--panel-title-h,30px);padding:0 12px 0 28px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;text-transform:uppercase;letter-spacing:0.14em;color:var(--text-muted);",
         )}
       >
         <span aria-hidden="true" style={css("position:absolute;left:12px;top:50%;transform:translateY(-50%);width:8px;height:8px;border-radius:1px;background:var(--accent);box-shadow:0 0 6px var(--accent);")} />
@@ -264,14 +264,14 @@ function Panel({
         ) : null}
         {right}
         {tag ? (
-          <span style={css("flex:0 0 auto;font-size:8px;letter-spacing:0.06em;color:var(--text-faint);border:1px solid var(--border-soft);padding:0 4px;border-radius:2px;")}>{tag}</span>
+          <span style={css("flex:0 0 auto;font-size:9.5px;letter-spacing:0.06em;color:var(--text-faint);border:1px solid var(--border-soft);padding:1px 6px;border-radius:2px;")}>{tag}</span>
         ) : null}
       </div>
       <div style={css("flex:1;min-height:0;overflow:auto;")}>{children}</div>
       {status ? (
         <div
           style={css(
-            "flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:0 14px;height:var(--panel-status-h,22px);border-top:1px solid var(--border-soft);background:var(--surface-chrome);font-family:var(--font-mono);font-size:9px;color:var(--text-faint);letter-spacing:0.06em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;",
+            "flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:0 14px;height:var(--panel-status-h,25px);border-top:1px solid var(--border-soft);background:var(--surface-chrome);font-family:var(--font-mono);font-size:10.5px;color:var(--text-faint);letter-spacing:0.06em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;",
           )}
         >
           {status}
@@ -968,7 +968,7 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
       onClick={enabled ? onClick : undefined}
       disabled={!enabled}
       style={css(
-        `flex:0 0 auto;font-family:var(--font-mono);font-size:8px;letter-spacing:0.1em;text-transform:uppercase;padding:2px 7px;border:1px solid var(--border-soft);border-radius:2px;background:transparent;color:var(--text-muted);cursor:${enabled ? "pointer" : "default"};${enabled ? "" : "opacity:0.4;"}`,
+        `flex:0 0 auto;font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;padding:4px 10px;height:26px;border:1px solid var(--border-soft);border-radius:2px;background:transparent;color:var(--text-muted);cursor:${enabled ? "pointer" : "default"};${enabled ? "" : "opacity:0.4;"}`,
       )}
     >
       {label}
@@ -1636,12 +1636,12 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
       </main>
 
       {/* status bar */}
-      <footer style={{ flex: "0 0 24px", height: 24, display: "flex", alignItems: "stretch", background: "var(--surface-chrome)", borderTop: "2px solid var(--border)", fontSize: 9.5, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-faint)" }}>
-        <span style={{ display: "flex", alignItems: "center", padding: "0 11px", background: "var(--status-ok)", color: "var(--text-on-accent)", fontWeight: 700, letterSpacing: "0.14em" }}>{inv.data?.status ?? "running"}</span>
+      <footer style={{ flex: "0 0 28px", height: 28, display: "flex", alignItems: "stretch", background: "var(--surface-chrome)", borderTop: "2px solid var(--border)", fontSize: 10.5, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-faint)" }}>
+        <span style={{ display: "flex", alignItems: "center", padding: "0 12px", background: "var(--status-ok)", color: "var(--text-on-accent)", fontWeight: 700, letterSpacing: "0.14em" }}>{inv.data?.status ?? "running"}</span>
         {VIEWS.map(([id, label], i) => {
           const on = id === view;
           return (
-            <button key={id} type="button" onClick={() => onNavigate(id)} style={css(`display:flex;align-items:center;padding:0 10px;background:${on ? "color-mix(in srgb,var(--accent) 16%,transparent)" : "transparent"};color:${on ? "var(--accent)" : "var(--text-faint)"};border:0;border-right:1px solid var(--border-soft);font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;`)}>{i + 1} {label}</button>
+            <button key={id} type="button" onClick={() => onNavigate(id)} style={css(`display:flex;align-items:center;padding:0 11px;background:${on ? "color-mix(in srgb,var(--accent) 16%,transparent)" : "transparent"};color:${on ? "var(--accent)" : "var(--text-faint)"};border:0;border-right:1px solid var(--border-soft);font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;`)}>{i + 1} {label}</button>
           );
         })}
         <span style={{ display: "flex", alignItems: "center", padding: "0 10px", color: "var(--accent)", letterSpacing: "0.1em" }}>focus {focus}{zoom ? " \u00b7 zoom" : ""}{pinned.length ? ` \u00b7 pin ${pinned.join("+")}` : ""}</span>

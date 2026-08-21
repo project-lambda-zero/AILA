@@ -105,6 +105,7 @@ export default function ForensicsProjectPage(props: ModulePageProps): JSX.Elemen
   const [readinessOpen, setReadinessOpen] = useState(false);
   const [readinessResult, setReadinessResult] = useState<ReadinessResult | null>(null);
   const [fullAnalysisResult, setFullAnalysisResult] = useState<TaskDispatch | null>(null);
+  const [notice, setNotice] = useState<{ tone: "ok" | "err" | "info"; msg: string } | null>(null);
 
   const readiness = useMutation({
     mutationFn: () =>
@@ -112,11 +113,12 @@ export default function ForensicsProjectPage(props: ModulePageProps): JSX.Elemen
     onSuccess: (res) => {
       setReadinessResult(res);
       setReadinessOpen(true);
+      setNotice({ tone: "ok", msg: "readiness check completed successfully." });
     },
     onError: (e: unknown) => {
       setReadinessResult(null);
       setReadinessOpen(true);
-      window.alert(`readiness-check failed: ${e instanceof Error ? e.message : "request failed"}`);
+      setNotice({ tone: "err", msg: `readiness-check failed: ${e instanceof Error ? e.message : "request failed"}` });
     },
   });
 
@@ -125,10 +127,10 @@ export default function ForensicsProjectPage(props: ModulePageProps): JSX.Elemen
       apiFetch<TaskDispatch>(`/forensics/projects/${projectId}/full-analysis`, { method: "POST" }),
     onSuccess: (res) => {
       setFullAnalysisResult(res);
-      window.alert(`full-analysis queued: task ${res.task_id} (${res.status}).`);
+      setNotice({ tone: "ok", msg: `full-analysis queued: task ${res.task_id} (${res.status}).` });
     },
     onError: (e: unknown) => {
-      window.alert(`full-analysis failed: ${e instanceof Error ? e.message : "request failed"}`);
+      setNotice({ tone: "err", msg: `full-analysis failed: ${e instanceof Error ? e.message : "request failed"}` });
     },
   });
 
@@ -239,13 +241,13 @@ export default function ForensicsProjectPage(props: ModulePageProps): JSX.Elemen
         <CtlBtn
           label="download writeups.md"
           tone="muted"
-          onClick={() => bearerDownload(`/forensics/projects/${projectId}/writeups.md`, `writeups-${(projectId ?? "").slice(0, 8)}.md`)}
+          onClick={() => bearerDownload(`/forensics/projects/${projectId}/writeups.md`, `writeups-${(projectId ?? "").slice(0, 8)}.md`, (msg) => setNotice({ tone: "err", msg }))}
           disabled={projectMissing}
         />
         <CtlBtn
           label="download directives.md"
           tone="muted"
-          onClick={() => bearerDownload(`/forensics/projects/${projectId}/directives.md`, `directives-${(projectId ?? "").slice(0, 8)}.md`)}
+          onClick={() => bearerDownload(`/forensics/projects/${projectId}/directives.md`, `directives-${(projectId ?? "").slice(0, 8)}.md`, (msg) => setNotice({ tone: "err", msg }))}
           disabled={projectMissing}
         />
         <span style={css("flex:1;")} />
@@ -253,6 +255,13 @@ export default function ForensicsProjectPage(props: ModulePageProps): JSX.Elemen
           <span style={css("font-size:9px;color:var(--text-faint);letter-spacing:0.05em;")}>
             last full-analysis task: {fullAnalysisResult.task_id} ({fullAnalysisResult.status})
           </span>
+        ) : null}
+        {notice ? (
+          <div style={css(`width:100%;display:flex;align-items:center;gap:8px;padding:4px 10px;margin-top:4px;border-radius:2px;font-size:10px;background:color-mix(in srgb,${notice.tone === "ok" ? "var(--status-ok)" : notice.tone === "err" ? "var(--status-warn)" : "var(--accent)"} 12%,transparent);border:1px solid ${notice.tone === "ok" ? "var(--status-ok)" : notice.tone === "err" ? "var(--status-warn)" : "var(--accent)"}55;color:${notice.tone === "ok" ? "var(--status-ok)" : notice.tone === "err" ? "var(--status-warn)" : "var(--accent)"};`)}>
+            <span>{notice.msg}</span>
+            <span style={css("flex:1;")} />
+            <button type="button" onClick={() => setNotice(null)} style={css("background:transparent;border:0;color:inherit;cursor:pointer;font-size:11px;")}>{"\u2715"}</button>
+          </div>
         ) : null}
       </div>
 
@@ -409,7 +418,7 @@ function renderTab(
 
 /* --- Bearer-authenticated file download (mirrors tabs.tsx) -------- */
 
-async function bearerDownload(path: string, filename: string): Promise<void> {
+async function bearerDownload(path: string, filename: string, onError?: (msg: string) => void): Promise<void> {
   try {
     const text = await apiFetch<string>(path);
     const blob = new Blob([text], { type: "text/markdown" });
@@ -420,7 +429,9 @@ async function bearerDownload(path: string, filename: string): Promise<void> {
     a.click();
     URL.revokeObjectURL(url);
   } catch (e) {
-    window.alert(`download failed: ${e instanceof Error ? e.message : "request failed"}`);
+    const msg = `download failed: ${e instanceof Error ? e.message : "request failed"}`;
+    if (onError) onError(msg);
+    else console.warn(msg);
   }
 }
 

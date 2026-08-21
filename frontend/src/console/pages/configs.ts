@@ -95,6 +95,14 @@ export const PAGE_CONFIGS = {
         whenStatus: ["created", "draft", "stopped", "failed"],
         confirm: "Launch this fuzz campaign on its analysis system?",
       },
+      {
+        label: "stop",
+        method: "PATCH",
+        endpoint: "/vr/fuzz/campaigns/{id}",
+        body: { status: "stopped" },
+        whenStatus: ["running", "active", "launching"],
+        confirm: "Stop this fuzz campaign?",
+      },
     ],
   },
   "vr:mcp-servers": {
@@ -207,6 +215,23 @@ export const PAGE_CONFIGS = {
     title: "admin \u00b7 users",
     endpoint: "/users",
     columns: [c("username"), c("email"), c("role"), c("team_id", "team"), c("is_active", "active"), c("last_login_at", "last login"), c("created_at", "created")],
+    actions: [
+      {
+        label: "deactivate",
+        method: "PATCH",
+        endpoint: "/users/{id}",
+        body: { is_active: false },
+        whenStatus: ["true", "active", "1"],
+        confirm: "Deactivate this user account?",
+      },
+      {
+        label: "activate",
+        method: "PATCH",
+        endpoint: "/users/{id}",
+        body: { is_active: true },
+        whenStatus: ["false", "inactive", "0"],
+      },
+    ],
   },
   "admin:teams": {
     title: "admin \u00b7 teams",
@@ -217,7 +242,17 @@ export const PAGE_CONFIGS = {
     title: "admin \u00b7 api keys",
     endpoint: "/auth/keys",
     itemsKey: "keys",
+    idField: "key_id",
     columns: [c("key_prefix", "prefix"), c("role"), c("label"), c("created_by", "by"), c("created_at", "created"), c("revoked_at", "revoked")],
+    actions: [
+      {
+        label: "revoke",
+        method: "DELETE",
+        endpoint: "/auth/keys/{id}",
+        destructive: true,
+        confirm: "Revoke this API key? This cannot be undone.",
+      },
+    ],
   },
   "admin:oidc-providers": {
     title: "admin \u00b7 oidc providers",

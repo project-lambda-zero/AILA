@@ -333,7 +333,11 @@ function Console() {
 
         <section style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", position: "relative" }}>
           {settingsOpen ? (
-            <SettingsOverlay user={user} onClose={() => setSettingsOpen(false)} />
+            <SettingsOverlay
+              user={user}
+              onClose={() => setSettingsOpen(false)}
+              onOpenPage={(mod, page, title) => openNamedPage(mod, page, title ?? page)}
+            />
           ) : null}
           {intakeOpen ? (
             <IntakeWizard
