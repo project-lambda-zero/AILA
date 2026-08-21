@@ -12,7 +12,7 @@ export interface SessionMessage {
 
 export interface SessionSummary {
   session_id: string;
-  user_id: number;
+  user_id: string;
   title: string;
   created_at: string;
   last_message_at?: string | null;
@@ -27,14 +27,19 @@ export interface SessionListResponse {
 
 export interface SessionResponse {
   session_id: string;
-  user_id: number;
+  user_id: string;
   title: string;
   created_at: string;
 }
 
+/** GET /sessions/{id}/messages -- backend returns PaginatedResponse[SessionMessageResponse].
+ *  Messages live under `items`, NOT a `messages` key. */
 export interface SessionMessagesResponse {
-  session_id: string;
-  messages: SessionMessage[];
+  total: number;
+  page: number;
+  page_size: number;
+  pages: number;
+  items: SessionMessage[];
 }
 
 export function useSessions() {
@@ -71,14 +76,18 @@ export function useCreateSession() {
 
 export function usePostSessionMessage(sessionId: string | null) {
   const qc = useQueryClient();
-  return useMutation<SessionMessage, Error, { content: string }>({
+  return useMutation<SessionMessage, Error, { content: string; sessionId?: string }>({
+    // `sessionId` override lets the caller post to a session that was just
+    // created in the same tick, before the hook re-binds to the new id.
+    // Backend SessionMessageRequest forbids extra fields, so send only content.
     mutationFn: (body) =>
-      apiFetch<SessionMessage>(`/sessions/${sessionId}/messages`, {
+      apiFetch<SessionMessage>(`/sessions/${body.sessionId ?? sessionId}/messages`, {
         method: "POST",
-        body: JSON.stringify(body),
+        body: JSON.stringify({ content: body.content }),
       }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["sessions", sessionId, "messages"] });
+    onSuccess: (_data, vars) => {
+      const sid = vars.sessionId ?? sessionId;
+      qc.invalidateQueries({ queryKey: ["sessions", sid, "messages"] });
       qc.invalidateQueries({ queryKey: ["sessions"] });
     },
   });

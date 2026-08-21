@@ -382,7 +382,7 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
 
   const sessionMessagesQ = useSessionMessages(!adv ? activeSessionId : null);
   const postSessionMessage = usePostSessionMessage(!adv ? activeSessionId : null);
-  const sessionMessages: SessionMessage[] = sessionMessagesQ.data?.messages ?? [];
+  const sessionMessages: SessionMessage[] = sessionMessagesQ.data?.items ?? [];
 
   // Reset the scroll baseline when the bound case or session changes.
   useEffect(() => {
@@ -439,12 +439,17 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
       return;
     }
     if (!activeSessionId) {
+      // Create the session, then post THIS message to it. Without the nested
+      // post the operator's first message is dropped (session made, draft
+      // cleared, nothing sent).
+      const content = trimmed;
       createSession.mutate(
-        { title: trimmed.slice(0, 40) },
+        { title: content.slice(0, 40) },
         {
           onSuccess: (newSess) => {
             setActiveSessionId(newSess.session_id);
             setDraft("");
+            postSessionMessage.mutate({ content, sessionId: newSess.session_id });
           },
         },
       );

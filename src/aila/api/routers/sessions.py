@@ -45,6 +45,16 @@ __all__ = ["router"]
 
 _log = logging.getLogger(__name__)
 
+# Defensive fallback for the rare case where PlatformResponse.message resolves
+# empty. The real reply text lives in PlatformResponse.message (there is no
+# `.summary` attribute); the old handler read `.summary`, which never existed,
+# so getattr always returned "" and the reply either echoed the user's input
+# (`or req.content`) or rendered blank. This constant only fires if a genuine
+# response carries no message.
+EMPTY_RESPONSE_TEXT = (
+    "The model returned an empty response. Try again, or rephrase the request."
+)
+
 router = APIRouter(
     prefix="/sessions",
     tags=["sessions"],
@@ -291,8 +301,10 @@ async def _sync_message(
         # user's own text) and keeps a pooled connection off the long run (#63).
         try:
             platform_response = await platform.handle(query=req.content, team_id=auth.team_id)
-            response_text = str(getattr(platform_response, "summary", "") or req.content)
-            response_run_id = getattr(platform_response, "run_id", None)
+            response_text = (platform_response.message or "").strip()
+            response_run_id = platform_response.run_id
+            if not response_text:
+                response_text = EMPTY_RESPONSE_TEXT
         except Exception:
             _log.exception("Platform handle() failed for session %s", session_id)
             response_text = "I encountered an error processing your request."
@@ -404,11 +416,14 @@ async def _stream_message(
             run_id_val: str | None = None
             try:
                 resp = await platform.handle(query=req.content, team_id=auth.team_id)
-                full_text = str(getattr(resp, "summary", "") or "")
-                run_id_val = getattr(resp, "run_id", None)
+                full_text = (resp.message or "").strip()
+                run_id_val = resp.run_id
             except Exception:
                 _log.exception("Platform error during SSE streaming for session %s", session_id)
                 full_text = "I encountered an error processing your request."
+
+            if not full_text:
+                full_text = EMPTY_RESPONSE_TEXT
 
             if full_text:
                 yield f"data: {json.dumps({'token': full_text, 'type': 'token'})}\n\n"

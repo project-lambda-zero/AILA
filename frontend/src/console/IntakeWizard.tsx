@@ -409,7 +409,9 @@ function IntakeWizard(
       setStep(1);
       // Real create, then a real readiness check. The readiness stages the
       // wizard used to animate are replaced by the backend's tool checks.
-      apiFetch<{ data: { id: string; name: string } }>("/forensics/projects", {
+      // apiFetch already strips the {data:...} DataEnvelope, so read the
+      // unwrapped object directly -- NOT `.data.id` / `.data`.
+      apiFetch<{ id: string; name: string }>("/forensics/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -422,18 +424,16 @@ function IntakeWizard(
         }),
       })
         .then(async (created) => {
-          const projectId = created.data.id;
+          const projectId = created.id;
           setFxProjectId(projectId);
           const res = await apiFetch<{
-            data: {
-              ready: boolean;
-              system_name: string;
-              analyzer_os: string;
-              tools: Array<{ tool_name: string; required: boolean; status: string; version: string | null; message: string | null }>;
-              message: string;
-            };
+            ready: boolean;
+            system_name: string;
+            analyzer_os: string;
+            tools: Array<{ tool_name: string; required: boolean; status: string; version: string | null; message: string | null }>;
+            message: string;
           }>(`/forensics/projects/${projectId}/readiness-check`, { method: "POST" });
-          setFxResult(res.data);
+          setFxResult(res);
           setStep(2);
         })
         .catch((err: unknown) => {
@@ -550,7 +550,7 @@ function IntakeWizard(
                   >
                     <option value="">{"Select a system\u2026"}</option>
                     {fxSystems.map((s) => (
-                      <option key={s.id} value={String(s.id)}>{s.name} \u00b7 {s.distro || s.host}</option>
+                      <option key={s.id} value={String(s.id)}>{s.name}{" \u00b7 "}{s.distro || s.host}</option>
                     ))}
                   </select>
                   {fxSystems.length === 0 ? (

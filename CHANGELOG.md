@@ -7,6 +7,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.43] - 2026-08-21 -- Basic-mode chat, forensics intake, and report download fixes
+
+### Fixed
+
+- Basic mode console now renders the session message history. The client read a `messages` field, but the backend returns a paginated payload under `items`, so the thread always showed empty.
+- Assistant replies in basic-mode sessions now show the routed response. The handler read a `summary` field that does not exist on the platform response; the reply text lives in `message`, so every reply resolved empty and fell back to repeating the user's own input.
+- Sending the first message in a brand-new basic-mode session now posts that message. Previously the session was created and the typed text was cleared without being sent.
+- Forensics intake reads the created project id from the unwrapped response, so the readiness check targets the real project instead of an undefined id.
+- Forensics intake analyzer dropdown renders the separator glyph instead of a literal escape sequence.
+- Vulnerability report downloads read the raw response body, so PDF exports are no longer corrupted by text decoding. JSON and CSV exports were unaffected.
+
 ## [0.5.42] - 2026-08-20 -- Frontend UX ergonomics, session wiring, and operator actions
 
 ### Added
