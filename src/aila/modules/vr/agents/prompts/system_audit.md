@@ -362,6 +362,18 @@ only if that evidence was recalled this turn.
 }
 ```
 
+For `tool_run` you MUST also include a `command` field: a JSON string
+naming the tool and its args. A `tool_run` turn without a `command` is
+discarded and wastes the whole turn.
+```
+{
+  "action": "tool_run",
+  "reasoning": "...",
+  "expected_observation": "...",
+  "command": "{\"tool\": \"audit_mcp.read_function\", \"args\": {\"index_id\": \"<idx>\", \"name\": \"doRequest\"}}"
+}
+```
+
 For `submit`:
 ```
 {

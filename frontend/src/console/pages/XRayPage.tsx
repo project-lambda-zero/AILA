@@ -68,6 +68,16 @@ function personaTone(name: string): string {
 
 const pad2 = (n: number): string => (n < 10 ? "0" : "") + n;
 
+// Ledger / message rows carry an ISO `created_at`. Render it as a compact
+// local HH:MM:SS clock for the timeline columns. Empty on a missing or
+// unparseable stamp so a bad value degrades to blank, never "Invalid Date".
+function clockTime(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
 function turnType(kind: string): string {
   if (kind === "tool_call") return "tool_run";
   if (kind === "text") return "text";
@@ -144,6 +154,11 @@ function turnProse(m: Message): string {
   }
   if (kind === "xref_view") return readStr(p, "bridge_note") ?? "xrefs";
   if (kind === "taint_flow") return `taint ${readStr(p, "source") ?? "?"} -> ${readStr(p, "target") ?? "?"}`;
+  if (kind === "poc_script") {
+    const lang = readStr(p, "language") ?? "python";
+    const st = readStr(p, "status");
+    return `proof-of-concept ${lang} script${st ? ` (${st})` : ""}`;
+  }
   return readStr(p, "text") ?? kind;
 }
 
@@ -410,6 +425,14 @@ function turnDetail(m: Message): ReactNode {
     if (vote) rows.push(["vote", vote]);
     const reasoning = readStr(p, "reasoning");
     if (reasoning) rows.push(["reasoning", reasoning]);
+  } else if (kind === "poc_script") {
+    const lang = readStr(p, "language") ?? "python";
+    const st = readStr(p, "status");
+    if (st) rows.push(["status", st]);
+    const reason = readStr(p, "reason");
+    if (reason && reason.trim()) rows.push(["note", reason]);
+    const src = readStr(p, "script_content") ?? readStr(p, "code");
+    if (src && src.trim()) code = { file: "poc", lang, text: src };
   }
 
   if (!toolName && !code && rows.length === 0) {
@@ -535,6 +558,9 @@ function TurnRow({
           <span style={css("font-size:8.5px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);")}>{role}</span>
         ) : null}
         <span style={css("flex:1;")} />
+        {clockTime(primary.created_at) ? (
+          <span style={css("font-size:9px;color:var(--text-faint);font-variant-numeric:tabular-nums;letter-spacing:0.04em;")}>{clockTime(primary.created_at)}</span>
+        ) : null}
         <span style={css("font-size:9px;color:var(--text-faint);letter-spacing:0.06em;")}>{turnNo}</span>
         <span style={css(`font-size:8px;letter-spacing:0.1em;text-transform:uppercase;padding:1px 6px;border:1px solid ${badge}66;color:${badge};background:${badge}14;border-radius:2px;`)}>{type}</span>
         <span style={css("font-size:9px;color:var(--text-faint);width:10px;text-align:center;flex:0 0 auto;")}>{open ? "\u25be" : "\u25b8"}</span>
@@ -655,6 +681,7 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
   const [openDrawer, setOpenDrawer] = useState<string | null>(null);
   const [openTurn, setOpenTurn] = useState<string | null>(null);
   const [ledgerSel, setLedgerSel] = useState<LedgerRow | null>(null);
+  const [showAudit, setShowAudit] = useState(false);
   const [hypSel, setHypSel] = useState<Hypothesis | null>(null);
   const [detail, setDetail] = useState<{ title: string; rows?: [string, string][]; body?: string } | null>(null);
   const [focus, setFocus] = useState("transcript");
@@ -910,6 +937,21 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
   // until the per-investigation endpoint is live.
   const ledgerData: LedgerRow[] = ledgerRows.data ?? [];
   const requestRows = useMemo(() => ledgerData.filter((r) => r.kind === "request"), [ledgerData]);
+  // kind=recovery rows are the platform's operator/audit trail (every stale-
+  // cursor GC, re-enqueue and crash-heal the resilience layer journals). They
+  // are not investigation narrative -- a single reconcile sweep can append
+  // hundreds -- so they are split out of the main ledger list and hidden
+  // behind a toggle, leaving the discovery / decision / objective narrative
+  // legible. See ResilienceLayer.emit_recovery_event.
+  const narrativeLedger = useMemo(
+    () => ledgerData.filter((r) => r.kind !== "recovery"),
+    [ledgerData],
+  );
+  const auditLedger = useMemo(
+    () => ledgerData.filter((r) => r.kind === "recovery"),
+    [ledgerData],
+  );
+  const visibleLedger = showAudit ? ledgerData : narrativeLedger;
   const mcpData: McpCall[] = mcpCallLog.data ?? [];
 
   const caseId = invId ? shortCaseId("vr", invId) : "--";
@@ -1199,19 +1241,36 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
   } else if (view === "records") {
     body = (
       <div style={grid2}>
-        <Panel {...pv("ledger")} title="ledger" tag="L" signature="append-only" right={<span style={css("font-size:9px;color:var(--text-faint);")}>{ledgerData.length} entries</span>}>
-          {ledgerData.length === 0 ? (
-            <div style={emptyNote}>no ledger entries yet &mdash; append-only.</div>
+        <Panel {...pv("ledger")} title="ledger" tag="L" signature="append-only" right={
+          <span style={css("display:flex;align-items:center;gap:8px;font-size:9px;color:var(--text-faint);")}>
+            <span>{narrativeLedger.length} entries</span>
+            {auditLedger.length > 0 ? (
+              <span
+                onClick={(ev) => { ev.stopPropagation(); setShowAudit((v) => !v); }}
+                style={css(`cursor:pointer;padding:1px 6px;border-radius:2px;letter-spacing:0.06em;text-transform:uppercase;border:1px solid ${showAudit ? H.amber + "88" : "var(--border-faint)"};color:${showAudit ? H.amber : "var(--text-faint)"};`)}
+                title={showAudit ? "hide recovery / audit events" : "show recovery / audit events"}
+              >{auditLedger.length} audit</span>
+            ) : null}
+          </span>
+        }>
+          {visibleLedger.length === 0 ? (
+            <div style={emptyNote}>
+              {auditLedger.length > 0
+                ? `no narrative ledger entries yet - ${auditLedger.length} recovery/audit events hidden (use the "audit" toggle above).`
+                : "no ledger entries yet - append-only."}
+            </div>
           ) : (
-            ledgerData.map((e) => {
+            visibleLedger.map((e) => {
               const who = (branchMap.get(e.author_branch_id ?? "")?.persona_voice ?? "").toUpperCase();
+              const isAudit = e.kind === "recovery";
               return (
                 <div
                   key={e.id}
                   onClick={() => setLedgerSel(e)}
-                  style={css(`display:flex;align-items:center;gap:9px;padding:7px 11px;border-bottom:1px solid var(--border-faint);cursor:pointer;${ledgerSel?.id === e.id ? "background:color-mix(in srgb,var(--accent) 8%,transparent);" : ""}`)}
+                  style={css(`display:flex;align-items:center;gap:9px;padding:7px 11px;border-bottom:1px solid var(--border-faint);cursor:pointer;${isAudit ? "opacity:0.55;" : ""}${ledgerSel?.id === e.id ? "background:color-mix(in srgb,var(--accent) 8%,transparent);" : ""}`)}
                 >
-                  <span style={css(`flex:0 0 auto;font-size:8px;letter-spacing:0.08em;text-transform:uppercase;min-width:64px;color:${e.kind === "request" ? H.lav : e.kind === "decision" ? H.mint : e.kind === "objective" ? H.amber : H.cream};`)}>{e.intent ? e.intent.replace(/_/g, " ") : e.kind}</span>
+                  <span style={css("flex:0 0 auto;min-width:52px;font-size:8.5px;font-variant-numeric:tabular-nums;color:var(--text-faint);")}>{clockTime(e.created_at) || "\u2014"}</span>
+                  <span style={css(`flex:0 0 auto;font-size:8px;letter-spacing:0.08em;text-transform:uppercase;min-width:64px;color:${e.kind === "request" ? H.lav : e.kind === "decision" ? H.mint : e.kind === "objective" ? H.amber : isAudit ? "var(--text-faint)" : H.cream};`)}>{e.intent ? e.intent.replace(/_/g, " ") : e.kind}</span>
                   <span style={css(`flex:0 0 auto;min-width:50px;font-size:8.5px;font-weight:700;letter-spacing:0.06em;color:${who ? personaTone(who) : "var(--text-faint)"};`)}>{who || "\u2014"}</span>
                   <span style={css("flex:1;min-width:0;font-size:11px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{ledgerText(e.text)}</span>
                   {e.status ? <span style={css("flex:0 0 auto;font-size:8px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-faint);")}>{e.status}</span> : null}
@@ -1224,6 +1283,7 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
           {ledgerSel ? (
             <div style={kv}>
               <span style={kLabel}>kind</span><span style={kVal}>{ledgerSel.kind}</span>
+              {ledgerSel.created_at ? (<><span style={kLabel}>when</span><span style={kVal}>{clockTime(ledgerSel.created_at) || ledgerSel.created_at}</span></>) : null}
               {ledgerSel.intent ? (<><span style={kLabel}>intent</span><span style={kVal}>{ledgerSel.intent.replace(/_/g, " ")}</span></>) : null}
               <span style={kLabel}>by</span><span style={css(`color:${personaTone((branchMap.get(ledgerSel.author_branch_id ?? "")?.persona_voice ?? "").toUpperCase())};font-weight:700;letter-spacing:0.06em;`)}>{(branchMap.get(ledgerSel.author_branch_id ?? "")?.persona_voice ?? "unknown").toUpperCase()}</span>
               {ledgerSel.owner_branch_id ? (<><span style={kLabel}>owner</span><span style={kVal}>{(branchMap.get(ledgerSel.owner_branch_id)?.persona_voice ?? ledgerSel.owner_branch_id).toUpperCase()}</span></>) : null}
@@ -1237,8 +1297,8 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
               <div style={css("font-size:11px;color:var(--text-muted);")}>Select an entry on the left.</div>
               <div style={css("margin-top:11px;")}>
                 <div style={kv}>
-                  <span style={kLabel}>entries</span><span style={kVal}>{ledgerData.length}</span>
-                  <span style={kLabel}>kinds</span><span style={kVal}>discovery, request, decision, objective, note</span>
+                  <span style={kLabel}>entries</span><span style={kVal}>{narrativeLedger.length} narrative, {auditLedger.length} audit</span>
+                  <span style={kLabel}>kinds</span><span style={kVal}>discovery, request, decision, objective, note, recovery</span>
                 </div>
               </div>
             </div>

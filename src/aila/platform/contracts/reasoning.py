@@ -492,12 +492,18 @@ class ReasoningTurnDecision(BaseModel):
     reasoning: str
     action: ReasoningAction = "reasoning"
     expected_observation: str = ""
+    # command/script_content are hoisted directly after
+    # expected_observation so the dispatch is emitted BEFORE the
+    # token-heavy reasoning/hypotheses/observables fields. Schema-ordered
+    # structured output would otherwise starve `command` on long turns and
+    # yield action="tool_run" with command=None. A tool_run turn is useless
+    # without command.
+    command: str | None = None
+    script_content: str | None = None
     contract: ReasoningContract | None = None
     hypotheses: list[Hypothesis] = Field(default_factory=list)
     rejected: list[RejectedHypothesis] = Field(default_factory=list)
     observables: ObservablesDict = Field(default_factory=dict)
-    script_content: str | None = None
-    command: str | None = None
     # Names observable keys the engine MUST pull into the next turn's
     # prompt with their full uncapped body. Populated only when
     # ``action == "recall"``. Copy keys verbatim from the tool-readings

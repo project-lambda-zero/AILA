@@ -1008,11 +1008,10 @@ class HonestInvestigator:
             )
         elapsed = time.monotonic() - t0
         # Pass ``turn_number`` so absorb stamps ``opened_at_turn`` on
-        # newly-live hypotheses and can raise ``_directive.stale_hypotheses``
-        # once a hypothesis crosses ``platform.reasoning_hyp_stale_turns``
-        # (issue #175: aging discipline already lives in the shared engine
-        # -- forensics was simply calling absorb without a turn number,
-        # so the directive never fired).
+        # newly-live hypotheses and advances the case-model turn counter.
+        # The per-turn staleness nag ("[alive N turns]") was removed: an
+        # unresolved hypothesis is now pressured only at the submit gate
+        # (_maybe_reject_submit_with_unresolved_hypotheses), not by age.
         case_state = self.reasoning_engine.absorb(
             case_state, decision, turn_number=turn,
         )

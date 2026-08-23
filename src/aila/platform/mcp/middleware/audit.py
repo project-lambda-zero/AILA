@@ -293,6 +293,16 @@ def _search_by_basename(
     """Bounded ``os.walk`` under ``root`` collecting repo-relative POSIX
     paths whose basename equals ``leaf``.
 
+    Exact basename matches always win. When the walk finds ZERO exact
+    matches it falls back to a leading-underscore-insensitive compare
+    (``name.lstrip("_") == leaf.lstrip("_")``) so a request for
+    ``genshi.py`` still resolves the real ``_genshi.py`` -- a common
+    transcription slip where the model drops the private-module
+    underscore that ``read_function`` reported. Exact hits are never
+    diluted by the fuzzy pass, and the caller only auto-resolves on a
+    UNIQUE hit, so an ambiguous ``foo.py`` / ``_foo.py`` pair yields
+    suggestions rather than a wrong file.
+
     Prunes :data:`_WALK_SKIP_DIRS` in place so heavy trees (npm
     dependencies, VCS metadata, JADX ``resources/`` mirror) don't
     balloon the scan. Stops at ``cap`` matches or after scanning
@@ -303,29 +313,36 @@ def _search_by_basename(
     """
     if not leaf:
         return []
+    leaf_key = leaf.lstrip("_")
     root_str = str(root)
-    matches: list[str] = []
+    exact: list[str] = []
+    fuzzy: list[str] = []
     scanned = 0
     try:
         for dirpath, dirnames, filenames in os.walk(root_str):
             dirnames[:] = [d for d in dirnames if d not in _WALK_SKIP_DIRS]
             for name in filenames:
                 scanned += 1
-                if name == leaf:
+                is_exact = name == leaf
+                is_near = not is_exact and name.lstrip("_") == leaf_key
+                if is_exact or is_near:
                     rel = os.path.relpath(
                         os.path.join(dirpath, name), root_str,
                     ).replace("\\", "/")
-                    matches.append(rel)
-                    if len(matches) >= cap:
-                        return matches
+                    if is_exact:
+                        exact.append(rel)
+                        if len(exact) >= cap:
+                            return exact
+                    elif len(fuzzy) < cap:
+                        fuzzy.append(rel)
                 if scanned >= max_scan:
-                    return matches
+                    return exact or fuzzy
     except OSError as exc:
         _log.warning(
             "_search_by_basename: walk aborted at %s (leaf=%r): %s",
             root, leaf, exc,
         )
-    return matches
+    return exact or fuzzy
 
 
 def _looks_like_jadx(root: Path) -> bool:
@@ -776,30 +793,46 @@ class AuditMcpMiddleware:
 
         # Generic-name pre-refuse for read_function. Turns a retryable
         # error into a "use a different tool" terminal response so the
-        # agent doesn't loop 800+ times on ``name='init'``.
+        # agent doesn't loop 800+ times on the BARE ``name='init'`` case.
+        #
+        # ONLY refuse when the name is generic AND no ``file_path`` was
+        # supplied. A file_path fully disambiguates the method: there is
+        # normally one ``run`` in GetPropertyValue.java, so
+        # read_function(name='run', file_path='.../GetPropertyValue.java')
+        # is a precise, answerable lookup and must go through. The bare
+        # ``read_function(name='run')`` with no file is what has no way to
+        # disambiguate; that stays refused. Refusing the file-scoped form
+        # blocked the agent from reading exact methods it had already
+        # located (e.g. the CVE-2024-36401 GetPropertyValue.run sink).
         if action == "read_function":
             requested_name = normalized_kwargs.get("name") or ""
+            scoping_path = normalized_kwargs.get("file_path") or ""
+            has_scope = isinstance(scoping_path, str) and bool(
+                scoping_path.strip(),
+            )
             if (
                 isinstance(requested_name, str)
                 and requested_name.strip() in _GENERIC_JAVA_NAMES
+                and not has_scope
             ):
                 clean = requested_name.strip()
                 return {
                     "status": "error",
                     "error": (
                         f"audit_mcp.read_function rejected: {clean!r} is a "
-                        f"generic Java method/constructor name that exists "
-                        f"on hundreds of classes in any Android app -- the "
-                        f"function index can't disambiguate. Possible "
-                        f"next moves:\n"
-                        f"  (1) audit_mcp.search_functions(pattern='\\\\b{clean}\\\\b') "
+                        f"generic method/constructor name that exists on "
+                        f"many classes -- with no file_path the function "
+                        f"index can't disambiguate. Possible next moves:\n"
+                        f"  (1) audit_mcp.read_function(name={clean!r}, "
+                        f"file_path=...) once you know which file's "
+                        f"{clean} you want;\n"
+                        f"  (2) audit_mcp.search_functions(pattern='\\\\b{clean}\\\\b') "
                         f"to enumerate every class that defines {clean};\n"
-                        f"  (2) audit_mcp.extract_class(file_path=...) when "
-                        f"you already know which class's {clean} you want;\n"
                         f"  (3) audit_mcp.read_lines(file_path=..., start=, end=) "
                         f"to read the body directly.\n"
                         f"Do NOT retry read_function with the bare name "
-                        f"{clean!r} -- the result will be identical."
+                        f"{clean!r} and no file_path -- the result will be "
+                        f"identical."
                     ),
                     "_bridge_policy": "generic_name_blocked",
                 }

@@ -800,9 +800,41 @@ class DurableStateMachine:
         duration_ms: int,
     ) -> State:
         """Timeout path (D-16): write ``exited:timeout`` and transition to
-        failure in one atomic commit."""
-        next_state = spec.on_failure or RESERVED_CRASHED
+        failure in one atomic commit.
+
+        fix §91 (single-liveness-authority) -- when ``spec.timeout_retriable``
+        and the per-state budget is not exhausted, a timeout RESUMES the same
+        state (bounded by ``max_retries``) instead of crashing. Agent-loop
+        handlers reload their durable ledger/checkpoint each turn, so
+        re-entering the state continues the run from the last persisted
+        position rather than dead-ending in ``__crashed__``. A completed turn
+        transitions forward and resets ``retries_in_state`` to 0, so the bound
+        only trips on consecutive timeouts with no forward progress between.
+        """
         error_class = type(exc).__name__
+        if spec.timeout_retriable and state.retries_in_state < spec.max_retries:
+            return await cls._commit_transition(
+                run_id=run_id,
+                definition=definition,
+                loaded_state=state,
+                new_state=State(
+                    current=state.current,
+                    input=state.input,
+                    retries_in_state=state.retries_in_state + 1,
+                    version=state.version + 1,
+                ),
+                audit_from=state.current,
+                audit_to=state.current,
+                audit_event="exited:timeout_retry",
+                audit_output=None,
+                audit_duration_ms=duration_ms,
+                audit_error_class=error_class,
+                audit_error_message=(
+                    "handler exceeded spec.timeout_s -- resuming state "
+                    f"(retry {state.retries_in_state + 1}/{spec.max_retries})"
+                ),
+            )
+        next_state = spec.on_failure or RESERVED_CRASHED
         return await cls._commit_transition(
             run_id=run_id,
             definition=definition,

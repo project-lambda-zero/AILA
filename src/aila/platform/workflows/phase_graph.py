@@ -206,9 +206,28 @@ class PhaseSpec:
     condition: GateFn | None = None
     capability: str | None = None
     trust: str = "confirmed"
-    timeout_s: float = 3600.0
+    # Dispatch-graph terminal catch-all (``build_dispatch_workflow``). An
+    # unconditional phase declared last that a module uses as its open-ended
+    # terminal (VR's ``continued_hunt``). Once it has been visited, the hub
+    # treats the run as complete: remaining unvisited condition-gated phases
+    # (kind-mismatched or discovery-pending) are no longer a premature stall,
+    # so the hub emits ``hub_complete`` instead of ``hub_stalled``. It is
+    # entered once like any other phase -- this flag only changes the
+    # terminal exit label, never re-dispatch. Graphs with no catch-all phase
+    # are behavior-identical.
+    catch_all: bool = False
+    # fix §91 (single-liveness-authority) -- generous, resumable per-turn
+    # wall. On a slow inference node one agent turn (large prompt +
+    # generation + tool round-trips) can run well past an hour; the old
+    # 3600s NON-retriable wall sent the phase straight to __crashed__ and the
+    # run dead-ended (then the reconciler deleted the cursor). 9000s (2.5h)
+    # covers the worst observed turn while staying under the ARQ job wall,
+    # and timeout_retriable makes an expiry RESUME the phase -- bounded by
+    # max_retries, reset by any completed turn -- instead of crashing.
+    timeout_s: float = 9000.0
     on_failure: str | None = None
-    max_retries: int = 0
+    max_retries: int = 2
+    timeout_retriable: bool = True
 
     def __post_init__(self) -> None:
         if self.next is not None and self.router is not None:
@@ -307,6 +326,7 @@ def build_phase_workflow(
             timeout_s=phase.timeout_s,
             on_failure=phase.on_failure,
             max_retries=phase.max_retries,
+            timeout_retriable=phase.timeout_retriable,
         )
         if phase.entry_gate is not None:
             states[phase.name] = StateSpec(
@@ -330,6 +350,7 @@ def make_dispatch_router(
     phases: tuple[PhaseSpec, ...],
     *,
     escalation_models: DispatchEscalationModels | None = None,
+    index_readiness_fn: Callable[[str], Awaitable[tuple[bool, str]]] | None = None,
 ) -> HandlerFn:
     """Build the dispatch-hub handler over *phases* (activation, not decision).
 
@@ -585,12 +606,52 @@ def make_dispatch_router(
         visited = set(state_input.get("_dispatch_visited") or [])
         branch_capability = state_input.get("_branch_capability")
         investigation_id = state_input.get("investigation_id")
+        # Index-readiness gate at the HUB (operator-requested): never
+        # activate ANY phase while the bound code index is still building.
+        # Without this, the hub activates the first phase, the phase loop
+        # defers (``waiting_for_index``, zero turns) but the phase is
+        # already marked visited, and the next hub tick finds only
+        # condition-gated later phases that cannot activate without
+        # findings -> ``hub_stalled`` -> the investigation is flipped
+        # STALLED and its branches closed/wiped one second after creation
+        # (empty chat). Deferring here BEFORE ``_pick`` keeps the visited
+        # set empty, emits ``waiting_for_index`` (which resolve_final_status
+        # maps to None -> status untouched; emit re-enqueues bounded by
+        # _MAX_INDEX_WAIT_CYCLES), so the investigation sits ALIVE on the
+        # queue until the index is ready, then activates its first phase
+        # fresh. Fail-open: a probe fault reports ready. Unreachable unless
+        # the module threaded ``index_readiness_fn`` (default None), so
+        # modules that did not opt in stay behavior-identical.
+        if index_readiness_fn is not None and investigation_id:
+            try:
+                _idx_ready, _idx_detail = await index_readiness_fn(
+                    str(investigation_id),
+                )
+            except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+                _idx_ready, _idx_detail = True, f"probe-error:{type(exc).__name__}"
+            if not _idx_ready:
+                _log.info(
+                    "dispatch_hub WAITING_FOR_INDEX inv=%s (%s) -- deferring, "
+                    "no phase activated",
+                    investigation_id, _idx_detail,
+                )
+                return StateResult(
+                    next_state=EMIT_STATE,
+                    output={**state_input, "exit_reason": "waiting_for_index"},
+                )
         if investigation_id:
             await _apply_ratified_requests(str(investigation_id))
         phase, reason = await _pick(state_input, visited, branch_capability)
         if phase is not None:
             return _activate(state_input, visited, phase, reason)
-        blocked = [
+        # Once the module's terminal catch-all phase has run, remaining
+        # unvisited condition-gated phases (kind-mismatched / discovery-
+        # pending) are not a premature stall -- the hub has done its
+        # mandatory work, so complete cleanly rather than escalate.
+        catch_all_done = any(
+            p.catch_all for p in phases if p.name in visited
+        )
+        blocked = [] if catch_all_done else [
             p.name for p in phases
             if p.name not in visited and p.condition is not None
         ]
@@ -657,6 +718,7 @@ def build_dispatch_workflow(
     emit_handler: HandlerFn,
     allow_phase_handoff: bool = False,
     escalation_models: DispatchEscalationModels | None = None,
+    index_readiness_fn: Callable[[str], Awaitable[tuple[bool, str]]] | None = None,
 ) -> WorkflowDefinition:
     """Expand a discovery-driven phase graph into an engine WorkflowDefinition.
 
@@ -696,6 +758,7 @@ def build_dispatch_workflow(
         DISPATCH_STATE: StateSpec(
             handler=make_dispatch_router(
                 phases, escalation_models=escalation_models,
+                index_readiness_fn=index_readiness_fn,
             ),
             timeout_s=30.0,
         ),
@@ -706,6 +769,7 @@ def build_dispatch_workflow(
             timeout_s=phase.timeout_s,
             on_failure=phase.on_failure,
             max_retries=phase.max_retries,
+            timeout_retriable=phase.timeout_retriable,
         )
     states[EMIT_STATE] = StateSpec(handler=emit_handler, timeout_s=120.0)
     return WorkflowDefinition(

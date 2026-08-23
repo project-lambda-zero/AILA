@@ -7,6 +7,41 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.45] - 2026-08-24 -- Outage-robust dispatch: no empty self-complete, no requeue storm
+
+### Fixed
+
+- Investigations no longer self-terminate as an empty completed run during a model-node outage. When the language model was unreachable, the dispatch hub walked every phase with zero turns and the run finalized as completed with no finding. The finalizer now demotes a hub-complete run that produced no outcome to stalled when the model node has been unhealthy in the trailing 10 minutes, so the run stays resumable and the stall-recovery sweep resumes it once the node answers again. A genuine no-finding run on a healthy node still completes.
+- The state reconciler no longer requeues an investigation whose worker task is still executing. On a slow node a task status column could desync to a stale terminal while the arq job kept running; the reconciler read only that column, requeued the live run under the same job id, and spawned a duplicate loop that flipped branches abandoned about once per second and crashed the worker on a job-tracking key error. The reconciler now captures the in-progress lock for every task before it reconciles and refuses to requeue while that lock is held.
+- The stall-recovery sweep no longer resubmits investigations into a model node that is down. A resubmit while the node was unreachable ran one empty turn and was demoted straight back to stalled, once per one-minute tick. The sweep now skips its tick while the model has been unhealthy in the trailing 10 minutes with no more-recent success, and resumes on the first tick after the node answers a health probe.
+- audit-mcp `read_lines` now resolves a target file whose basename contains an underscore, so verbatim source reads by `(file, start, end)` no longer miss on those paths.
+
+### Changed
+
+- The open-ended continued-hunt phase is entered once and resumed through a retriable per-state timeout across the investigation wall clock, replacing a loopable design that could hot-loop the dispatch hub during an outage and hit the per-job step limit. A catch-all terminal phase marks the run complete once it has run, so later kind-gated phases that never applied are not treated as a premature stall.
+- The recon directive names the high-value entry surface per target class: request and config parsers and protocol handling for web servers and network daemons, demuxers and decoders for media and codec libraries, exported functions and device-IO handlers for native binaries and drivers, and request routing, deserialization, and template evaluation for application frameworks. Recon still advances by posting discoveries and does not submit a terminal finding.
+
+### Added
+
+- The exploit outcome emits a runnable proof-of-concept script as its own message when the agent produces one, so the X-Ray view shows the actual PoC instead of only a text summary.
+
+## [0.5.44] - 2026-08-23 -- Single task-liveness authority for turns and branches
+
+### Fixed
+
+- Long agent turns are no longer killed mid-run by the per-state workflow timeout. A state that exceeds its wall now re-enters the same state and resumes, instead of crashing to a non-resumable terminal, so a single slow-inference turn that runs past the wall keeps its progress. The resume budget is bounded, so a genuinely stuck state still crashes eventually.
+- Investigation branches are no longer abandoned or hard-deleted while a turn is running on them. The stale-branch sweep and the persona-spawn cleanup judged a branch dead from `turn_count` and `updated_at`, both of which stay frozen for the whole of a long turn, so a branch mid-turn was abandoned and then hard-deleted. That delete broke the foreign key on the turn's in-flight message write and crashed the run. Both deciders now consult one shared liveness predicate and leave a branch alone while a worker is running a turn on it.
+- Running tasks stamp a heartbeat at attempt start, so a task's first long turn is no longer read as a zombie and reaped before its first state commit.
+
+### Added
+
+- `aila.platform.tasks.liveness`: one predicate for "is a turn in flight", shared by the branch garbage collectors and defined the same way the task reaper defines a live running row, so the reaper and the branch GC never disagree.
+- `aila.tools.liveness_guard`: an AST guard, wired into `make check` and CI, that keeps task-liveness and branch-GC decisions inside a reviewed allowlist of authority modules. A new abandon or delete decider outside that allowlist fails the check.
+
+### Changed
+
+- The per-state workflow wall for agent-loop phases is now resumable with a bounded retry budget. The ARQ job wall sits above it so a turn is never truncated by the job timeout before the engine's own wall.
+
 ## [0.5.43] - 2026-08-21 -- Basic-mode chat, forensics intake, and report download fixes
 
 ### Fixed

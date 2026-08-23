@@ -54,7 +54,7 @@ _NAMESPACE = "vr"
 _CAP_DEFAULTS: dict[str, int | float] = {
     "investigation_turn_cap": 300,
     "investigation_message_cap": 1000,
-    "investigation_wall_clock_hours": 6.0,
+    "investigation_wall_clock_hours": 144.0,
     "wall_clock_idle_grace_s": 900.0,
 }
 

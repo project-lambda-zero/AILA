@@ -66,6 +66,7 @@ from aila.platform.services.resilience import (
     InfraDeathClassifier,
     get_default_resilience_layer,
 )
+from aila.platform.tasks.liveness import live_investigation_ids
 from aila.platform.uow import UnitOfWork
 
 # Module-level singleton -- the classifier is stateless. Sourced from the
@@ -662,12 +663,29 @@ async def abandon_stale_branches_impl(
     frozen_cutoff = now - timedelta(minutes=frozen_min)
     halted_cutoff = now - timedelta(minutes=halted_min)
 
-    frozen_result = await uow.session.exec(
+    # §92 single-liveness-authority -- never abandon a branch whose
+    # investigation has a live running task. ``turn_count`` and
+    # ``updated_at`` only advance when a turn commits, so a branch
+    # mid-first-turn on the slow node looks frozen for the whole turn
+    # (measured tens of minutes). The reaper-shared liveness predicate is
+    # the one truthful "a worker is running this right now" signal; a
+    # live investigation's turn chain is not broken, so its branches are
+    # not stale. When nothing is live (a genuinely stalled investigation)
+    # the set is empty and abandonment proceeds exactly as before.
+    live_ids = await live_investigation_ids(uow.session)
+
+    frozen_stmt = (
         update(branch)
         .where(branch.status == BranchStatus.ACTIVE.value)
         .where(branch.turn_count < 5)
         .where(branch.updated_at < frozen_cutoff)
-        .values(
+    )
+    if live_ids:
+        frozen_stmt = frozen_stmt.where(
+            branch.investigation_id.not_in(list(live_ids)),  # type: ignore[union-attr]
+        )
+    frozen_result = await uow.session.exec(
+        frozen_stmt.values(
             status=BranchStatus.ABANDONED.value,
             closed_reason=f"stale_no_progress_frozen_{frozen_min}min",
             closed_at=now,
@@ -676,12 +694,18 @@ async def abandon_stale_branches_impl(
     )
     frozen_count = getattr(frozen_result, "rowcount", 0) or 0
 
-    halted_result = await uow.session.exec(
+    halted_stmt = (
         update(branch)
         .where(branch.status == BranchStatus.ACTIVE.value)
         .where(branch.turn_count >= 5)
         .where(branch.updated_at < halted_cutoff)
-        .values(
+    )
+    if live_ids:
+        halted_stmt = halted_stmt.where(
+            branch.investigation_id.not_in(list(live_ids)),  # type: ignore[union-attr]
+        )
+    halted_result = await uow.session.exec(
+        halted_stmt.values(
             status=BranchStatus.ABANDONED.value,
             closed_reason=f"stale_no_progress_halted_{halted_min}min",
             closed_at=now,

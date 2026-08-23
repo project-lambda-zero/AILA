@@ -101,6 +101,38 @@ async def test_chaining_discovery_enables_later_phase() -> None:
     assert (await hub({"_dispatch_visited": ["a"]}, None)).next_state == EMIT_STATE
 
 
+async def test_unconditional_terminal_phase_runs_once_then_emits() -> None:
+    # An unconditional terminal phase (VR's continued_hunt shape) is walked
+    # once, last, then the hub emits -- the "go to the wall" work happens
+    # INSIDE that phase's turn loop, not by re-dispatching it (which would
+    # accrue state transitions against MAX_STEPS_PER_JOB).
+    hub = make_dispatch_router((PhaseSpec("a"), PhaseSpec("hunt")))
+    assert (await hub({}, None)).next_state == "a"
+    assert (await hub({"_dispatch_visited": ["a"]}, None)).next_state == "hunt"
+    r = await hub({"_dispatch_visited": ["a", "hunt"]}, None)
+    assert r.next_state == EMIT_STATE
+    assert r.output["exit_reason"] == "hub_complete"
+
+
+async def test_catch_all_visited_completes_despite_blocked_phases() -> None:
+    # Once a catch_all terminal phase is visited, remaining condition-gated
+    # phases that never activated (kind-mismatch / no discovery) are not a
+    # premature stall: blocked is emptied so the hub emits hub_complete (and
+    # never reaches the DB-backed stall path) even with an investigation_id.
+    phases = (
+        PhaseSpec("recon"),
+        PhaseSpec("gated", condition=_needs("found")),
+        PhaseSpec("hunt", catch_all=True),
+    )
+    hub = make_dispatch_router(phases)
+    r = await hub(
+        {"investigation_id": "i1", "_dispatch_visited": ["recon", "hunt"]}, None,
+    )
+    assert r.next_state == EMIT_STATE
+    assert r.output["exit_reason"] == "hub_complete"
+    assert "stalled" not in r.output
+
+
 # --- PhaseSpec validation ---------------------------------------------------
 
 

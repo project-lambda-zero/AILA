@@ -158,6 +158,15 @@ def _summarize_message_payload(
         answer = (payload.get("answer") or "")[:240]
         confidence = payload.get("confidence") or ""
         return f"confidence={confidence}; answer_head={answer}"
+    if payload_kind == "poc_script":
+        lang = payload.get("language") or "python"
+        status = payload.get("status") or ""
+        code = payload.get("script_content") or payload.get("code") or ""
+        nlines = len(str(code).splitlines())
+        return (
+            f"drafted proof-of-concept {lang} script "
+            f"({nlines} lines, status={status})"
+        )
     return json.dumps(payload)[:200]
 
 

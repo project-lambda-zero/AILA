@@ -441,20 +441,6 @@ class PlatformConfigSchema(BaseModel):
     # runs unbounded again) and is intended for tests only.
     reasoning_context_budget_tokens: int = 180_000
 
-    # Age (in turns) at which a live hypothesis becomes stale and
-    # ``CyberReasoningEngine.absorb`` writes the
-    # ``_directive.stale_hypotheses`` observable naming the offending
-    # ids so the agent resolves, rejects, or explicitly defers them
-    # instead of letting them linger and block convergence. Read via
-    # ``_resolve_platform_int`` (env AILA_PLATFORM_REASONING_HYP_STALE_TURNS
-    # -> DB -> this default) so an operator override lands on the next
-    # absorb without a worker restart. A value <= 0 disables the
-    # directive (no staleness nudge) and matches the render-side
-    # STALE age heuristic in ``render_case_model`` at 10; the default
-    # here fires slightly earlier (8) so the directive nudges before
-    # the render marker flips to STALE.
-    reasoning_hyp_stale_turns: int = 8
-
     # #60 global SSE connection ceiling. The platform emits SSE from at
     # least seven endpoints (events, tasks, scans, sessions, forensics
     # investigation + readiness, vr investigation + messages, malware
