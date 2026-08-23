@@ -182,6 +182,36 @@ class VRConfigSchema(ModuleConfigBase):
             "large monorepos; smaller targets finish long before."
         ),
     )
+    stage_capability_profile_timeout_s: float = Field(
+        default=7200.0,
+        ge=300.0,
+        le=86400.0,
+        description=(
+            "Per-stage reaper timeout for the CAPABILITY_PROFILE stage, "
+            "in seconds. Large native binaries (e.g. driver DLLs the size "
+            "of nvcuda.dll / nvapi64.dll) hold IDA callgraph + audit-mcp "
+            "signal collection well past the historical 30-min cap; a "
+            "stage running past this bound is reaped to FAILED:timeout "
+            "and requires ``POST /vr/targets/{id}/resume-analysis`` to "
+            "retry. Read live via ConfigRegistry (env "
+            "AILA_VR_STAGE_CAPABILITY_PROFILE_TIMEOUT_S -> DB -> this "
+            "default) so PUT /config lands on the next reaper tick "
+            "without a worker restart."
+        ),
+    )
+    stage_function_ranking_timeout_s: float = Field(
+        default=7200.0,
+        ge=300.0,
+        le=86400.0,
+        description=(
+            "Per-stage reaper timeout for the FUNCTION_RANKING stage, "
+            "in seconds. Cold-cache CSR ranking on firefox / chromium / "
+            "large driver DLLs runs beyond 30 min; a stage running past "
+            "this bound is reaped to FAILED:timeout and requires "
+            "``POST /vr/targets/{id}/resume-analysis`` to retry. Env: "
+            "AILA_VR_STAGE_FUNCTION_RANKING_TIMEOUT_S."
+        ),
+    )
     max_turns_per_task: int = Field(
         default=70,
         ge=1,

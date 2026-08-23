@@ -38,6 +38,7 @@ from aila.modules.vr.services.stage_tracker import (
     StageAlreadyDoneError,
     StageInFlightError,
     StageTracker,
+    resolve_stage_timeout_s,
 )
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.target_stages import StageName
@@ -171,8 +172,13 @@ class FunctionRankingDispatcher:
             operator can resume via POST /vr/targets/:id/resume-analysis.
         Returns None when skipped (already DONE or in flight).
         """
+        stage_timeout_s = await resolve_stage_timeout_s(StageName.FUNCTION_RANKING)
         try:
-            async with StageTracker(target_id, StageName.FUNCTION_RANKING) as tracker:
+            async with StageTracker(
+                target_id,
+                StageName.FUNCTION_RANKING,
+                stage_timeout_s=stage_timeout_s,
+            ) as tracker:
                 target_row = await self._load(target_id)
                 handles = json.loads(target_row.mcp_handles_json or "{}")
 

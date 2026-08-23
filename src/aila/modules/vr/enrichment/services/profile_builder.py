@@ -45,6 +45,7 @@ from aila.modules.vr.services.stage_tracker import (
     StageAlreadyDoneError,
     StageInFlightError,
     StageTracker,
+    resolve_stage_timeout_s,
 )
 from aila.platform.contracts.target_stages import StageName
 from aila.platform.uow import UnitOfWork
@@ -262,8 +263,13 @@ class CapabilityProfileBuilder:
         None when the stage is skipped (already DONE or in flight) so
         the caller can detect a no-op vs a fresh build.
         """
+        stage_timeout_s = await resolve_stage_timeout_s(StageName.CAPABILITY_PROFILE)
         try:
-            async with StageTracker(target_id, StageName.CAPABILITY_PROFILE) as tracker:
+            async with StageTracker(
+                target_id,
+                StageName.CAPABILITY_PROFILE,
+                stage_timeout_s=stage_timeout_s,
+            ) as tracker:
                 target_row = await self._load(target_id)
                 handles = json.loads(target_row.mcp_handles_json or "{}")
                 descriptor = json.loads(target_row.descriptor_json or "{}")

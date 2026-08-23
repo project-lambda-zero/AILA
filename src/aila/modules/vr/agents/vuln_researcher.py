@@ -506,6 +506,54 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                     .order_by(VRInvestigationOutcomeRecord.created_at.desc())
                     .limit(1),
                 )).first()
+                # Recent activity -- last N engine-authored messages for
+                # the sibling branch, most-recent-first. Case_state alone
+                # cannot signal "sibling has been posting" when the
+                # sibling's turn_count is stuck (e.g. a mid-turn retry
+                # storm) or when successive turns rewrite the same
+                # hypothesis in place: hypotheses/observables look
+                # identical between turns and the reader infers silence.
+                # Wall-clock timestamps + tool identifiers survive both
+                # failure modes, so a peer that posted repeatedly at
+                # frozen turn=N is still visibly active.
+                recent_msg_rows = (await uow.session.exec(
+                    _select(VRInvestigationMessageRecord)
+                    .where(VRInvestigationMessageRecord.branch_id == s.id)
+                    .where(VRInvestigationMessageRecord.sender_kind == SenderKind.ENGINE.value)
+                    .order_by(VRInvestigationMessageRecord.created_at.desc())
+                    .limit(6),
+                )).all()
+                recent_activity: list[dict[str, Any]] = []
+                for m in recent_msg_rows:
+                    try:
+                        mp = json.loads(m.payload_json or "{}")
+                    except (ValueError, TypeError):
+                        mp = {}
+                    tool_name = ""
+                    summary = ""
+                    is_error = False
+                    if m.payload_kind == PayloadKind.TOOL_CALL.value:
+                        raw_cmd = mp.get("command")
+                        if isinstance(raw_cmd, str) and raw_cmd:
+                            try:
+                                cmd = json.loads(raw_cmd)
+                            except (ValueError, TypeError):
+                                cmd = {}
+                            if isinstance(cmd, dict):
+                                tool_name = str(cmd.get("tool") or "")
+                    else:
+                        is_error = bool(mp.get("is_error"))
+                        text = mp.get("text")
+                        if isinstance(text, str):
+                            summary = text.strip().splitlines()[0][:200] if text.strip() else ""
+                    recent_activity.append({
+                        "at_turn": m.at_turn,
+                        "created_at": m.created_at.isoformat() if m.created_at else "",
+                        "payload_kind": m.payload_kind,
+                        "tool_name": tool_name,
+                        "summary": summary,
+                        "is_error": is_error,
+                    })
                 cs = decode_case_state(s.case_state_json)
                 t_payload: dict[str, Any] | None = None
                 if terminal is not None:
@@ -553,6 +601,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                     "rejected": rej,
                     "key_observables": key_obs,
                     "tool_observables": tool_obs,
+                    "recent_activity": recent_activity,
                     "terminal_outcome": t_payload,
                 })
             return out
@@ -2070,6 +2119,26 @@ def _render_sibling_context_section(
             for k, v in list(tool_obs.items())[:5]:
                 v_str = str(v)[:500]
                 lines.append(f"  - {k}: {v_str}")
+        activity = s.get("recent_activity") or []
+        if activity:
+            lines.append(
+                "Recent activity (wall-clock -- persists even when the "
+                "sibling's turn counter is stuck):",
+            )
+            # Chronological order (oldest -> newest) is easier for the
+            # reader; the loader fetches DESC + LIMIT for cheap pagination.
+            for a in list(reversed(activity)):
+                ts = str(a.get("created_at") or "")[:19]
+                turn = a.get("at_turn")
+                turn_str = f"t{turn}" if turn is not None else "t?"
+                kind = a.get("payload_kind") or ""
+                if kind == PayloadKind.TOOL_CALL.value:
+                    tn = a.get("tool_name") or "(unknown-tool)"
+                    lines.append(f"  - {ts} {turn_str} tool_call {tn}")
+                else:
+                    err = " [error]" if a.get("is_error") else ""
+                    summ = a.get("summary") or ""
+                    lines.append(f"  - {ts} {turn_str} tool_result{err}: {summ}")
         term = s.get("terminal_outcome")
         if term:
             lines.append(
