@@ -206,6 +206,16 @@ class PhaseSpec:
     condition: GateFn | None = None
     capability: str | None = None
     trust: str = "confirmed"
+    # Dispatch-graph terminal catch-all (``build_dispatch_workflow``). An
+    # unconditional phase declared last that a module uses as its open-ended
+    # terminal (VR's ``continued_hunt``). Once it has been visited, the hub
+    # treats the run as complete: remaining unvisited condition-gated phases
+    # (kind-mismatched or discovery-pending) are no longer a premature stall,
+    # so the hub emits ``hub_complete`` instead of ``hub_stalled``. It is
+    # entered once like any other phase -- this flag only changes the
+    # terminal exit label, never re-dispatch. Graphs with no catch-all phase
+    # are behavior-identical.
+    catch_all: bool = False
     # fix §91 (single-liveness-authority) -- generous, resumable per-turn
     # wall. On a slow inference node one agent turn (large prompt +
     # generation + tool round-trips) can run well past an hour; the old
@@ -634,7 +644,14 @@ def make_dispatch_router(
         phase, reason = await _pick(state_input, visited, branch_capability)
         if phase is not None:
             return _activate(state_input, visited, phase, reason)
-        blocked = [
+        # Once the module's terminal catch-all phase has run, remaining
+        # unvisited condition-gated phases (kind-mismatched / discovery-
+        # pending) are not a premature stall -- the hub has done its
+        # mandatory work, so complete cleanly rather than escalate.
+        catch_all_done = any(
+            p.catch_all for p in phases if p.name in visited
+        )
+        blocked = [] if catch_all_done else [
             p.name for p in phases
             if p.name not in visited and p.condition is not None
         ]

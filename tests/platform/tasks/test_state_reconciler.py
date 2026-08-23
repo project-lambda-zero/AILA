@@ -25,6 +25,7 @@ Coverage:
 """
 from __future__ import annotations
 
+import json
 import os
 from datetime import timedelta
 from uuid import uuid4
@@ -444,3 +445,141 @@ class TestIdempotency:
         # cursor still absent and takes no action.
         second = await r.reconcile(task_id)
         assert second.healed is False
+
+
+# ---------------------------------------------------------------------------
+# Investigation-scoped in-flight guard (VR-8FD8)
+# ---------------------------------------------------------------------------
+
+
+async def _seed_vr_investigation(status: str = "running") -> str:
+    from aila.modules.vr.db_models import (
+        VRInvestigationRecord,
+        VRTargetRecord,
+        VRWorkspaceRecord,
+    )
+    async with async_session_scope() as session:
+        ws = VRWorkspaceRecord(name="rc", slug="rc", description="",
+                               theme="custom", team_id="admin")
+        session.add(ws)
+        await session.flush()
+        tgt = VRTargetRecord(
+            workspace_id=ws.id, team_id="admin", display_name="t",
+            kind="source_repo",
+            descriptor_json=json.dumps({"repo": "x"}),
+            primary_language=None, secondary_languages_json="[]",
+            tags_json="[]", mcp_handles_json="{}", status="active",
+            capability_profile_json="{}",
+        )
+        session.add(tgt)
+        await session.flush()
+        inv = VRInvestigationRecord(
+            target_id=tgt.id, team_id="admin", kind="variant_hunt", title="t",
+            initial_question="q", status=status, auto_pilot=False,
+            strategy_family="vulnerability_research.variant_hunt",
+            cost_budget_usd=50.0,
+        )
+        session.add(inv)
+        await session.commit()
+        return inv.id
+
+
+async def _seed_inv_task(inv_id: str, *, status: str) -> str:
+    task_id = f"task-{uuid4().hex[:8]}"
+    now = utc_now()
+    async with async_session_scope() as session:
+        session.add(WorkflowRunRecord(
+            id=task_id, query_text="t", action_id="t", module_id="vr",
+            status="running",
+        ))
+        session.add(TaskRecord(
+            id=task_id, track="vr",
+            fn_path="aila.modules.vr.workflow.task.run_vr_investigate",
+            fn_module="vr", user_id="u", group_id="operator",
+            status=status,
+            kwargs_json=json.dumps({"investigation_id": inv_id}),
+            started_at=now - timedelta(minutes=90),
+        ))
+        await session.commit()
+    return task_id
+
+
+async def _seed_inv_cursor(task_id: str, inv_id: str, current_state: str) -> None:
+    async with async_session_scope() as session:
+        session.add(WorkflowStateCursor(
+            run_id=task_id, current_state=current_state, state_input={},
+            definition_id="vr.investigate.hub", investigation_id=inv_id,
+        ))
+        await session.commit()
+
+
+def _vr_binding():
+    from aila.modules.vr.db_models import VRInvestigationRecord
+    from aila.platform.tasks.state_reconciler import (
+        InvestigationRecoveryBinding,
+    )
+
+    async def _submit_one(inv_id: str) -> None:
+        del inv_id
+
+    return InvestigationRecoveryBinding(
+        module_id="vr",
+        investigations_table="vr_investigations",
+        track="vr",
+        fn_path_pattern="%run_vr_investigate%",
+        inv_model=VRInvestigationRecord,
+        submit_one=_submit_one,
+        branch_model=None,
+        branch_status_active=None,
+    )
+
+
+class TestInvestigationInFlightGuard:
+    """VR-8FD8: a RUNNING investigation whose task status desynced to a
+    stale terminal while the arq job is still executing (slow 27B node)
+    must NOT be requeued -- the in-progress lock held at entry is the
+    ground truth that a worker is driving the run."""
+
+    async def test_inflight_lock_blocks_requeue(
+        self, test_db, monkeypatch,
+    ) -> None:
+        del test_db
+        requeues: list[str] = []
+
+        async def _fake_requeue(run_id: str, *, track: str | None = None) -> bool:
+            del track
+            requeues.append(run_id)
+            return True
+
+        monkeypatch.setattr(reconciler_mod, "requeue_same_job_id", _fake_requeue)
+        inv_id = await _seed_vr_investigation("running")
+        task_id = await _seed_inv_task(inv_id, status=TaskStatus.CANCELLED.value)
+        await _seed_inv_cursor(task_id, inv_id, "recon")
+
+        r = _NoLockReconciler(lock_present=True)
+        report = await r.reconcile_investigation(inv_id, binding=_vr_binding())
+
+        assert requeues == []  # in-flight lock -> guard held, no requeue storm
+        assert report.investigation_action is None
+
+    async def test_dead_run_without_lock_requeues(
+        self, test_db, monkeypatch,
+    ) -> None:
+        del test_db
+        requeues: list[str] = []
+
+        async def _fake_requeue(run_id: str, *, track: str | None = None) -> bool:
+            del track
+            requeues.append(run_id)
+            return True
+
+        monkeypatch.setattr(reconciler_mod, "requeue_same_job_id", _fake_requeue)
+        inv_id = await _seed_vr_investigation("running")
+        task_id = await _seed_inv_task(inv_id, status=TaskStatus.CANCELLED.value)
+        await _seed_inv_cursor(task_id, inv_id, "recon")
+
+        r = _NoLockReconciler(lock_present=False)
+        report = await r.reconcile_investigation(inv_id, binding=_vr_binding())
+
+        assert requeues == [task_id]  # no lock -> genuinely dead, requeue resumes
+        assert report.investigation_action == "requeued_run"

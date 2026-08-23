@@ -278,3 +278,74 @@ async def test_proposer_hooks_fire_when_bound() -> None:
     )
 
     assert fired == [f"pattern:{inv_id}", f"playbook:{inv_id}"]
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_hub_complete_during_llm_outage_demotes_to_stalled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # During an LLM outage every turn dies at after_turn=0 and the hub walks
+    # its once-only phases to hub_complete on empty turns. Emitting COMPLETED
+    # then buries a live run as "completed, no finding" and blocks resume
+    # (self-terminating behavior reported on VR-8FD8). The outage guard must
+    # demote to STALLED so the run stays resumable.
+    monkeypatch.setattr(
+        "aila.platform.workflows.investigation_emit_base."
+        "is_llm_recently_unhealthy",
+        lambda window_s=600.0: True,
+    )
+    inv_id, br_id = await _seed(InvestigationStatus.RUNNING, turn_count=0)
+    fake = _FakeQueue()
+    handler = state_investigation_emit(
+        _bindings(fake, _DEFAULT_CAPS), InvestigationStateHooks(),
+    )
+
+    result = await handler(
+        {"investigation_id": inv_id, "branch_id": br_id,
+         "exit_reason": "hub_complete", "outcome_id": None},
+        SimpleNamespace(),
+    )
+
+    assert result.output["status"] == InvestigationStatus.STALLED.value
+    assert result.output["exit_reason"] == "hub_stalled_outage"
+    async with UnitOfWork() as uow:
+        inv = (await uow.session.exec(
+            select(VRInvestigationRecord).where(
+                VRInvestigationRecord.id == inv_id,
+            ),
+        )).first()
+    assert inv.status == InvestigationStatus.STALLED.value
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_hub_complete_when_healthy_still_completes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The outage guard must NOT fire when the LLM is healthy: a genuine
+    # hub_complete with no outcome is a real (no-finding) completion and
+    # must still flip the investigation to COMPLETED.
+    monkeypatch.setattr(
+        "aila.platform.workflows.investigation_emit_base."
+        "is_llm_recently_unhealthy",
+        lambda window_s=600.0: False,
+    )
+    inv_id, br_id = await _seed(InvestigationStatus.RUNNING, turn_count=5)
+    fake = _FakeQueue()
+    handler = state_investigation_emit(
+        _bindings(fake, _DEFAULT_CAPS), InvestigationStateHooks(),
+    )
+
+    result = await handler(
+        {"investigation_id": inv_id, "branch_id": br_id,
+         "exit_reason": "hub_complete", "outcome_id": None},
+        SimpleNamespace(),
+    )
+
+    assert result.output["status"] == InvestigationStatus.COMPLETED.value
+    async with UnitOfWork() as uow:
+        inv = (await uow.session.exec(
+            select(VRInvestigationRecord).where(
+                VRInvestigationRecord.id == inv_id,
+            ),
+        )).first()
+    assert inv.status == InvestigationStatus.COMPLETED.value

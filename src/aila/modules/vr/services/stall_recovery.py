@@ -11,10 +11,12 @@ task functions (``run_vr_investigate`` + ``run_vr_nday``) with the
 can be imported from the worker boot path without pulling the module
 loader / task queue surface.
 
-``sweep_stalled_investigations`` is a module-level ``functools.partial``
-so the periodic-sweep registry (which keys re-registration on callable
-identity) sees a stable object across re-imports -- mirrors the pattern
-in ``branch_reaper.py``.
+``sweep_stalled_investigations`` is a module-level ``async def`` that
+gates the bound platform sweep on model-node health (skip the tick
+while the node is down, see VR-8FD8) and forwards any kwargs through.
+The periodic-sweep registry keys re-registration on callable identity,
+so a stable module-level name is what it needs -- the bound sweep it
+delegates to lives in ``_stall_sweep_bound``.
 
 Rate model, eligibility semantics, and the recovery rationale are
 documented on the platform sweep -- see
@@ -28,6 +30,7 @@ Env-var knobs (operator-tunable, unchanged from pre-lift):
 """
 from __future__ import annotations
 
+import logging
 from functools import partial
 from typing import Any
 
@@ -44,6 +47,8 @@ __all__ = [
     "SubmitFn",
     "sweep_stalled_investigations",
 ]
+
+_log = logging.getLogger(__name__)
 
 # Kinds the sweep handles. ``masvs_audit`` is intentionally absent:
 # parent_reconciler owns its lifecycle. The parent's child
@@ -109,7 +114,7 @@ async def _default_submit_fn(
     )
 
 
-sweep_stalled_investigations = partial(
+_stall_sweep_bound = partial(
     _platform_sweep,
     submit_fn=_default_submit_fn,
     sweepable_kinds=_SWEEPABLE_KINDS,
@@ -118,3 +123,35 @@ sweep_stalled_investigations = partial(
     investigations_table="vr_investigations",
     branches_table="vr_investigation_branches",
 )
+
+
+async def sweep_stalled_investigations(**overrides: Any) -> StallRecoveryResult:
+    """VR stall-recovery tick, gated on model-node health (VR-8FD8).
+
+    The VR investigate loop makes zero progress while the model node is
+    down: a resubmit into a dead node burns one empty turn, exits
+    ``after_turn=0``, and the emit path demotes the row straight back to
+    ``stalled`` (see the OUTAGE_HOLD guard in
+    ``investigation_emit_base``). Firing that resubmit on every 1-minute
+    reaper tick during an outage is pure churn. Skip the tick while the
+    model has been unhealthy in the trailing 10 minutes with no
+    more-recent success; the first tick after the node answers a health
+    probe resumes recovery. Mirrors the outage guards in
+    ``investigation_emit_base`` + ``investigation_finalizers``.
+
+    ``**overrides`` forwards to the bound platform sweep unchanged, so
+    the reaper's zero-arg call and the test suite's kwargs-override
+    calls (``submit_fn=``, ``idle_minutes=``, ``rate_per_tick=``) both
+    keep working. Passing ``submit_fn`` overrides the production
+    submitter as before.
+    """
+    from aila.platform.llm.client import is_llm_recently_unhealthy
+
+    if is_llm_recently_unhealthy(600.0):
+        _log.info(
+            "vr.stall_recovery: skipping tick -- model node unhealthy in "
+            "trailing 10min with no more-recent success; deferring "
+            "resubmit until the node recovers",
+        )
+        return StallRecoveryResult()
+    return await _stall_sweep_bound(**overrides)

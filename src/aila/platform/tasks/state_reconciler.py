@@ -921,6 +921,25 @@ class StateReconciler:
             for r in cursor_rows
         ]
 
+        # Slow-node in-flight capture (VR-8FD8). Probe the arq
+        # ``arq:in-progress:<task_id>`` lock for every enumerated task
+        # BEFORE the per-task reconcile loop runs -- that loop's Case C
+        # (task terminal + lock present) DROPS a lock it reads as a ghost
+        # slot, which erases the one signal that tells us a worker is
+        # actively transitioning states for this investigation right now.
+        # On the slow 27B node a run's TaskRecord.status can desync to a
+        # stale ``cancelled`` while the arq job is still executing; a lock
+        # held here means "a worker is driving this run", and requeuing it
+        # spawns a duplicate loop instance (the branch_status_flipped:
+        # abandoned ~1/sec storm) that then crashes arq on
+        # ``del self.job_tasks[job_id]``. Captured now, consumed by the
+        # invariant guard below.
+        lock_present_at_entry = False
+        for task_id in task_ids:
+            if await self._probe_lock(task_id):
+                lock_present_at_entry = True
+                break
+
         # 2. Per-task healing (each report is journaled individually by
         #    :meth:`reconcile`).
         task_reports: list[ReconcileReport] = []
@@ -972,6 +991,27 @@ class StateReconciler:
             )
         has_live_task = live_row is not None
         has_resumable_cursor = resumable_row is not None
+
+        # Slow-node in-flight guard (VR-8FD8). ``has_live_task`` above is
+        # read purely from ``TaskRecord.status``. On a slow/flaky model the
+        # TaskRecord can desync -- a run whose status is a stale
+        # ``cancelled`` while the arq job is STILL executing inside a worker
+        # slot. ``lock_present_at_entry`` captured the arq in-progress lock
+        # before the per-task loop could drop it, and is the ground truth
+        # for "a worker is driving this run right now". When it was held,
+        # treat the investigation as having a live task and refuse to
+        # requeue: the job is alive, just slow. Requeuing it would spawn a
+        # duplicate loop instance (the branch_status_flipped:abandoned storm)
+        # and crash arq on ``del self.job_tasks[job_id]``.
+        if not has_live_task and lock_present_at_entry:
+            has_live_task = True
+            _log.info(
+                "state_reconciler.reconcile_investigation inv=%s: no live "
+                "TaskRecord status but an ARQ in-progress lock was held at "
+                "entry -- a worker is driving this run (slow node); skipping "
+                "requeue to avoid a duplicate-loop storm",
+                investigation_id,
+            )
 
         investigation_action: str | None = None
         if not has_live_task:

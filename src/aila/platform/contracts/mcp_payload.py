@@ -40,3 +40,4 @@ class PayloadKind(StrEnum):
     OUTCOME_PENDING = "outcome_pending"
     OUTCOME_REVIEW = "outcome_review"
     OUTCOME_EDIT = "outcome_edit"
+    POC_SCRIPT = "poc_script"

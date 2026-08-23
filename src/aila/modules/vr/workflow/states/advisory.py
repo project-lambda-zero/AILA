@@ -24,8 +24,12 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from sqlmodel import select as _select
+
 from aila.modules.vr.contracts.finding import CrashType
-from aila.modules.vr.db_models import VRFindingRecord
+from aila.modules.vr.db_models import VRFindingRecord, VRInvestigationMessageRecord
+from aila.platform.contracts.enums import SenderKind
+from aila.platform.contracts.mcp_payload import PayloadKind
 from aila.platform.exceptions import AILAError
 from aila.platform.llm.correlation import (
     correlation_scope,
@@ -203,11 +207,68 @@ async def _persist_finding(
         return None
 
 
+async def _emit_poc_message(poc: dict[str, Any]) -> None:
+    """Surface the generated PoC script as a first-class investigation
+    message so the X-Ray "proof of concept" panel renders the real
+    exploit script instead of leaving the operator with the raw ``poc``
+    envelope. The panel scans messages for a multi-line ``script_content``
+    /``code`` payload; without this emit no PoC ever reaches it, because
+    the script only lands in ``VRFindingRecord.poc_code``.
+
+    Best-effort: a transport failure logs and returns so the advisory
+    still emits. Idempotent per branch -- a re-run of the terminal state
+    does not duplicate the PoC message.
+    """
+    code = str(poc.get("code") or "").strip()
+    # Mirror the frontend pocMsg gate (multi-line, > 20 chars) so we never
+    # emit an empty or one-line stub the panel would reject anyway.
+    if len(code) <= 20 or "\n" not in code:
+        return
+    inv, branch, turn = current_join_keys()
+    if not inv or not branch:
+        return
+    payload = {
+        "script_content": code,
+        "code": code,
+        "language": str(poc.get("language") or "python"),
+        "status": str(poc.get("status") or "untested"),
+        "reason": str(poc.get("reason") or ""),
+    }
+    try:
+        async with UnitOfWork() as uow:
+            existing = (
+                await uow.session.exec(
+                    _select(VRInvestigationMessageRecord.id).where(
+                        VRInvestigationMessageRecord.investigation_id == inv,
+                        VRInvestigationMessageRecord.branch_id == branch,
+                        VRInvestigationMessageRecord.payload_kind
+                        == PayloadKind.POC_SCRIPT.value,
+                    ).limit(1)
+                )
+            ).first()
+            if existing:
+                return
+            uow.session.add(
+                VRInvestigationMessageRecord(
+                    investigation_id=inv,
+                    branch_id=branch,
+                    sender_kind=SenderKind.ENGINE.value,
+                    payload_kind=PayloadKind.POC_SCRIPT.value,
+                    payload_json=json.dumps(payload),
+                    at_turn=turn,
+                )
+            )
+            await uow.commit()
+    except (OSError, RuntimeError, AILAError) as exc:
+        _log.warning("poc message emit failed: %s", exc)
+
+
 async def state_advisory(input: dict[str, Any], services: Any) -> StateResult:
     """Compute CVSS / CWE, build the advisory, and persist a VRFindingRecord."""
     project_id = str(input.get("project_id") or "")
     research = input.get("research") or {}
     poc = input.get("poc") or {}
+    await _emit_poc_message(poc)
     crash_type = _resolve_crash_type(research, poc)
 
     cvss_result = await services.advisory_builder.forward(

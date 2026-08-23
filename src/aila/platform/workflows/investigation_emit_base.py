@@ -35,6 +35,7 @@ from sqlmodel import select as _select
 
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.enums import BranchStatus, InvestigationStatus
+from aila.platform.llm.client import is_llm_recently_unhealthy
 from aila.platform.services.branch_cleanup import close_orphan_branches_on_terminal
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.services.ledger import LedgerService
@@ -490,6 +491,34 @@ def state_investigation_emit(
             )
 
         final_status = resolve_final_status(exit_reason)
+
+        # Outage hold. A hub-terminal exit (hub_complete / hub_budget_exhausted
+        # / etc.) that would flip the investigation to COMPLETED with NO
+        # outcome, while the LLM has been unhealthy inside the last 10 min, is
+        # outage fallout: every turn died at after_turn=0 and the hub walked
+        # its once-only phases straight to a terminal exit on empty turns.
+        # Marking it COMPLETED here buries a live run as "completed, no
+        # finding" and blocks resume -- the exact self-terminating behavior
+        # reported on VR-8FD8. Mirror the finalizer guards
+        # (synthesize_no_finding / abandon_stale_branches, both keyed on
+        # is_llm_recently_unhealthy(600.0)) and demote to STALLED so the run
+        # stays resumable and stall_recovery re-enqueues it once the node
+        # recovers, instead of self-completing empty.
+        if (
+            final_status == InvestigationStatus.COMPLETED.value
+            and outcome_id is None
+            and exit_reason in _NON_CONTINUE_EXIT_REASONS
+            and is_llm_recently_unhealthy(600.0)
+        ):
+            _log.warning(
+                "investigation_emit OUTAGE_HOLD inv=%s exit_reason=%s -- LLM "
+                "unhealthy within last 10 min and no outcome; demoting "
+                "COMPLETED->STALLED so the run resumes instead of self-"
+                "terminating empty",
+                investigation_id, exit_reason,
+            )
+            final_status = InvestigationStatus.STALLED.value
+            exit_reason = "hub_stalled_outage"
 
         # Investigation-level caps (turns/messages/wall-clock). If exceeded,
         # halt ALL active branches + flip investigation to COMPLETED with a

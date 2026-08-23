@@ -79,7 +79,16 @@ _HUB_RECON_DIRECTIVE = (
     "points and surface the most promising audit targets. For each "
     "promising surface, raise a concrete hypothesis naming the entry point "
     "and the sink you suspect -- the hub turns your recon hypotheses into "
-    "shared discoveries that route the panel to the deep audit phase. Do "
+    "shared discoveries that route the panel to the deep audit phase. "
+    "Name the entry surface that fits this target class. For a web server "
+    "or network daemon, that is the request and config parsers, the "
+    "protocol state machine, and header, URI, and module-dispatch handling. "
+    "For a media or codec library, it is the demuxers, decoders, and "
+    "container-format parsers that consume untrusted bytes. For a native "
+    "binary or driver, it is the exported functions, the ioctl and "
+    "device-IO handlers, and any parse of an externally supplied structure. "
+    "For an application framework, it is request routing, deserialization, "
+    "template or expression evaluation, and file upload. Do "
     "NOT submit a terminal finding in this phase, and do NOT start a "
     "systematic audit or a PoC yet: recon hands off automatically once you "
     "have surfaced discoveries."
@@ -146,6 +155,33 @@ _MOBILE_AUDIT_DIRECTIVE = (
     "the MASVS controls -- storage, crypto, network, platform interaction "
     "-- and confirm each gap with evidence. Submit the MASVS findings."
 )
+# Terminal open-ended hunt phase. The scoped audit phases each complete in
+# a few turns and exhaust in ~15-25 turns, well under the turn budget. This
+# phase is entered ONCE, last, and runs the agent's adaptive loop with its
+# max_turns defaulting to the overall turn cap: the loop only exits on a
+# finding submission (terminal_submit -> poc_development), a terminal
+# branch/investigation state, or the turn cap -- so a single activation
+# keeps hunting toward the budget as one workflow step (turns are loop
+# iterations inside one state, not state transitions, so this never
+# accrues the per-job step count that MAX_STEPS_PER_JOB guards). Its
+# retriable per-state timeout resumes it across jobs so the run reaches
+# the wall clock. Operator directive: go to the wall, never stop early.
+_CONTINUED_HUNT_DIRECTIVE = (
+    "CONTINUED HUNT PHASE. The scoped audit phases have run; the turn "
+    "budget still holds. Objective: keep hunting for a real, current "
+    "vulnerability. Pick angles the prior phases did not close: deepen the "
+    "strongest live hypothesis with fresh evidence (read the sink body, "
+    "trace the untrusted-input path end to end, check the guards), then "
+    "attack a vulnerability class not yet examined. Do not repeat a "
+    "completed line of analysis and do not declare the target clean "
+    "without exhausting the reachable input-to-sink paths. Submit only a "
+    "confirmed finding, with the evidence that proves it."
+)
+# continued_hunt resumes on each retriable per-state timeout (default
+# 9000s == 2.5h). Sized so those resumes span the 144h investigation wall
+# clock (144 / 2.5 ~= 58) rather than the phase retry budget ending the
+# hunt first; the wall clock and turn budget stay the true terminals.
+_CONTINUED_HUNT_MAX_RETRIES = 60
 
 # Audit-phase activation keys off the target's kind (RFC-13 #68 hub
 # routing). Gating on shared-ledger discoveries alone stalled the hub
@@ -319,6 +355,23 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         capability="exploit-dev",
         trust="confirmed",
         allowed_servers=("audit_mcp", "ida_headless"),
+    ),
+    # Terminal open-ended hunt. Unconditional (no ``condition``) so it
+    # activates for any target kind once every scoped phase above has been
+    # visited, and declared LAST so the hub reaches it only after the scoped
+    # phases (the hub returns the first eligible unvisited phase). Entered
+    # ONCE: its max_turns defaults to the overall turn cap, so one activation
+    # runs the agent's loop toward the budget as a single step; the retriable
+    # per-state timeout (timeout_retriable) resumes it across jobs, and a
+    # high max_retries lets those resumes span the investigation wall clock
+    # instead of the phase retry budget capping the run early.
+    PhaseSpec(
+        name="continued_hunt",
+        directive=_CONTINUED_HUNT_DIRECTIVE,
+        capability=None,
+        allowed_servers=("audit_mcp", "ida_headless"),
+        max_retries=_CONTINUED_HUNT_MAX_RETRIES,
+        catch_all=True,
     ),
 )
 

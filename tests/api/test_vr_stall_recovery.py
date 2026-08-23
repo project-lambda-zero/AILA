@@ -427,3 +427,59 @@ async def test_stall_recovery_full_matrix() -> None:
     assert result4.enqueued == 0
     assert result4.by_kind_enqueued == {}
     assert result4.investigations_recovered == []
+
+
+# ----------------------------------------------------------------------
+# Model-node health gate (VR-8FD8) -- DB-free: the gate short-circuits
+# before any DB access, so no test_db fixture is required.
+# ----------------------------------------------------------------------
+
+
+async def test_stall_recovery_skips_tick_during_model_outage(monkeypatch) -> None:
+    """When the model node is unhealthy, the sweep must NOT invoke the
+    bound platform sweep -- a resubmit into a dead node is pure churn
+    (VR-8FD8). It returns an empty result and touches nothing."""
+    import aila.platform.llm.client as llm_client
+    from aila.modules.vr.services import stall_recovery as sr
+
+    monkeypatch.setattr(
+        llm_client, "is_llm_recently_unhealthy", lambda window_s=600.0: True,
+    )
+    invoked: list[dict] = []
+
+    async def _sentinel(**kwargs):
+        invoked.append(kwargs)
+        return sr.StallRecoveryResult(enqueued=99)
+
+    monkeypatch.setattr(sr, "_stall_sweep_bound", _sentinel)
+
+    result = await sr.sweep_stalled_investigations(rate_per_tick=15)
+
+    assert invoked == []  # bound sweep never called during outage
+    assert result.enqueued == 0
+    assert result.examined == 0
+
+
+async def test_stall_recovery_runs_and_forwards_kwargs_when_healthy(
+    monkeypatch,
+) -> None:
+    """When the node is healthy, the sweep delegates to the bound
+    platform sweep and forwards its kwargs unchanged."""
+    import aila.platform.llm.client as llm_client
+    from aila.modules.vr.services import stall_recovery as sr
+
+    monkeypatch.setattr(
+        llm_client, "is_llm_recently_unhealthy", lambda window_s=600.0: False,
+    )
+    invoked: list[dict] = []
+
+    async def _sentinel(**kwargs):
+        invoked.append(kwargs)
+        return sr.StallRecoveryResult(enqueued=3)
+
+    monkeypatch.setattr(sr, "_stall_sweep_bound", _sentinel)
+
+    result = await sr.sweep_stalled_investigations(rate_per_tick=7)
+
+    assert invoked == [{"rate_per_tick": 7}]  # forwarded through untouched
+    assert result.enqueued == 3
