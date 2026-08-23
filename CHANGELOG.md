@@ -7,7 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.5.48] - 2026-08-24 -- A no-finding investigation stays resumable instead of self-completing
+## [0.5.49] - 2026-08-24 -- The stage reaper no longer crashes on an unseeded timeout key
+
+### Fixed
+
+- The per-target stage reaper no longer crashes on every sweep tick. The operator-tunable per-stage timeout keys resolve to no value in a worker where their rows were never seeded and the schema default does not resolve, so the float coercion raised and the reaper sweep died each tick, leaving stuck ingestion and enrichment stages un-reaped and blocking the retry path. The resolver now returns no override in that case, logs the miss, and the reaper falls back to the platform default. The default per-stage timeout for the capability-profile and function-ranking stages is raised from thirty minutes to two hours to match the intended bound, so a large native binary whose profiling legitimately runs past thirty minutes is not reaped as timed out.
 
 ### Fixed
 
