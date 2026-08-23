@@ -464,7 +464,11 @@ class StageTracker:
 # ---------------------------------------------------------------------
 
 
-async def reap_stuck_stages(*, target_model: Any) -> int:
+async def reap_stuck_stages(
+    *,
+    target_model: Any,
+    stage_timeouts: dict[StageName, float] | None = None,
+) -> int:
     """Find target rows with any RUNNING stage past its timeout, flip
     those stages to FAILED with a ``timeout`` error message.
 
@@ -472,7 +476,17 @@ async def reap_stuck_stages(*, target_model: Any) -> int:
     the periodic worker cron (1-minute interval is fine -- each call
     is a single SELECT for candidates + one targeted UPDATE per
     offending row, each in its own UoW).
+
+    ``stage_timeouts`` overlays the per-stage cap over
+    :data:`_DEFAULT_TIMEOUTS`. Module bindings resolve operator-tunable
+    values via ConfigRegistry and pass the merged dict on each sweep
+    call so a ``PUT /config/<ns>/<key>`` lands on the next tick without
+    a worker restart. Keys absent from the overlay fall back to the
+    platform default.
     """
+    effective_timeouts: dict[StageName, float] = dict(_DEFAULT_TIMEOUTS)
+    if stage_timeouts:
+        effective_timeouts.update(stage_timeouts)
     # fix §325 -- snapshot candidate ids in a short read-only UoW, then
     # process each row in its OWN UoW. Previously a single deferred
     # commit at the end of the loop meant one bad row dropped every
@@ -535,12 +549,12 @@ async def reap_stuck_stages(*, target_model: Any) -> int:
                     # fix §117 -- same runtime guard as StageTracker.__init__;
                     # an unregistered stage drift surfaces in the reaper log
                     # instead of silently inheriting the 30-min cap.
-                    if stage_name not in _DEFAULT_TIMEOUTS:
+                    if stage_name not in effective_timeouts:
                         raise RuntimeError(
                             f"stage_tracker.reaper: no _DEFAULT_TIMEOUTS entry "
                             f"for {stage_name!r}; add one to _DEFAULT_TIMEOUTS",
                         )
-                    timeout_s = _DEFAULT_TIMEOUTS[stage_name]
+                    timeout_s = effective_timeouts[stage_name]
                     started = status.started_at
                     if started is None:
                         continue

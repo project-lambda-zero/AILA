@@ -142,11 +142,21 @@ async def orchestrate_target_enrichment(
     track="vr",
     module_id="vr",
     max_tries=2,
-    # profile-build alone is 900s, ranking alone is 600s. Sequenced, worst
-    # case is ~1500s of MCP work plus DB / bridge overhead; 1800s gives
-    # roughly a 20% slack margin without letting a wedged bridge camp on
-    # a worker slot for hours.
-    timeout_s=1800.0,
+    # ARQ hard cap on the enrichment worker slot. Sized to bound the sum
+    # of both operator-tunable per-stage reaper caps
+    # (``stage_capability_profile_timeout_s`` + ``stage_function_ranking_timeout_s``,
+    # each defaulting to 7200s in ``vr/config_schema.py``) plus DB /
+    # bridge overhead so large native binaries -- e.g. driver DLLs the
+    # size of nvcuda.dll / nvapi64.dll -- don't get pre-empted mid-flight
+    # by the ARQ job_timeout before the reaper has a chance to notice
+    # (the historical 1800s cap tripped simultaneously with the stage
+    # reaper's own 1800s cap and produced FAILED:timeout rows the
+    # operator had to resume by hand). This is a wall-clock safety net,
+    # not the operator's steering knob; that lives on the stage
+    # timeouts in the VR config schema. 4h matches
+    # ``ingestion_poll_timeout_s`` so the two enrichment stages get the
+    # same operator envelope as the ingestion stage they follow.
+    timeout_s=14400.0,
 )
 async def run_target_enrichment(
     ctx: TaskContext,

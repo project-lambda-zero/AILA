@@ -1284,18 +1284,6 @@ class AgentTurnRunnerBase:
                     response=decision.model_dump(mode="json"),
                 )
 
-            msg = self._message_model(
-                investigation_id=self.investigation_id,
-                branch_id=self.branch_id,
-                sender_kind=SenderKind.ENGINE.value,
-                sender_id="engine",
-                payload_kind=payload_kind.value,
-                payload_json=json.dumps(payload),
-                at_turn=turn_number,
-                evidence_refs_json="[]",
-            )
-            uow.session.add(msg)
-
             # fix #180 -- lock the branch row for the duration of this
             # UoW so a double-dispatch race (two turn runners on the
             # same branch, reachable via #121) serializes on the
@@ -1306,6 +1294,22 @@ class AgentTurnRunnerBase:
             # Mirrors the FOR UPDATE pattern in
             # ``services/outcome_review.evaluate_quorum`` and
             # ``BranchPool.fork`` / ``BranchPool._load_branch``.
+            #
+            # Turn-count regression fix: ``turn_number`` was derived at
+            # run_turn entry from a stale ``_load()`` read that predates
+            # the 30-minute LLM call. When a reaped-and-requeued sibling
+            # run finishes its LLM after a concurrent run already
+            # committed the same slot -- observed live when the ARQ
+            # heartbeat reaper requeues under the same job id 6+ times
+            # per run -- assigning that stale ``turn_number`` back into
+            # the row under the lock either regresses ``turn_count`` or
+            # writes the same value that is already there, so the branch
+            # freezes at at_turn=1 across every dispatch. Re-derive the
+            # authoritative turn from the freshly locked row and stamp
+            # the message, case-state, outcome, closed_reason, and the
+            # returned ``result.turn`` off THAT value; the pre-UoW
+            # ``turn_number`` is left alone because it is the key the
+            # idempotency cache and the LLM prompt were built against.
             branch_row = (await uow.session.exec(
                 _select(self._branch_model).where(
                     self._branch_model.id == self.branch_id,
@@ -1315,11 +1319,37 @@ class AgentTurnRunnerBase:
                 raise self._error_cls(
                     f"branch {self.branch_id} disappeared during turn",
                 )
-            branch_row.turn_count = turn_number
+            persisted_turn = int(branch_row.turn_count or 0) + 1
+            if persisted_turn != turn_number:
+                _log.info(
+                    "%s TURN persisted_turn_number diverges from entry "
+                    "turn_number inv=%s branch=%s entry=%d persisted=%d "
+                    "(stale _load() view superseded by concurrent commit)",
+                    self._LOG_LABEL, self.investigation_id, self.branch_id,
+                    turn_number, persisted_turn,
+                )
+
+            msg = self._message_model(
+                investigation_id=self.investigation_id,
+                branch_id=self.branch_id,
+                sender_kind=SenderKind.ENGINE.value,
+                sender_id="engine",
+                payload_kind=payload_kind.value,
+                payload_json=json.dumps(payload),
+                at_turn=persisted_turn,
+                evidence_refs_json="[]",
+            )
+            uow.session.add(msg)
+
+            branch_row.turn_count = persisted_turn
             branch_row.updated_at = utc_now()
+            # Re-stamp the durable case-state turn so the render layer's
+            # staleness ages (current_turn - opened_at_turn) compute off
+            # the persisted turn rather than the stale entry-time value.
+            new_case_state.current_turn = persisted_turn
 
             await self._post_ledger_writes(
-                decision, turn_number, uow.session, case_state,
+                decision, persisted_turn, uow.session, case_state,
             )
             await self._post_ledger_approvals(decision, uow.session)
 
@@ -1336,7 +1366,7 @@ class AgentTurnRunnerBase:
                 # auto-closed rather than reasoned-through.
                 auto_resolve_live_on_terminal(
                     new_case_state,
-                    turn=turn_number,
+                    turn=persisted_turn,
                     outcome_kind=outcome_kind.value,
                 )
                 outcome_id = await self._upsert_canonical_outcome(
@@ -1347,7 +1377,7 @@ class AgentTurnRunnerBase:
                     new_outcome_kind=outcome_kind.value,
                     new_confidence=new_confidence,
                     new_payload=new_payload,
-                    at_turn=turn_number,
+                    at_turn=persisted_turn,
                     # fix §173 -- explicit terminal-submit contract marker.
                     # _upsert_canonical_outcome is the ONE canonical-outcome
                     # write path and asserts this value at function entry;
@@ -1362,7 +1392,7 @@ class AgentTurnRunnerBase:
                 # the branch as done rather than perpetually active.
                 branch_row.status = BranchStatus.COMPLETED.value
                 branch_row.closed_reason = (
-                    f"terminal_submit:turn_{turn_number}:{outcome_kind.value}"
+                    f"terminal_submit:turn_{persisted_turn}:{outcome_kind.value}"
                 )
                 branch_row.closed_at = utc_now()
 
@@ -1451,14 +1481,19 @@ class AgentTurnRunnerBase:
         _log.info(
             "%s TURN inv=%s branch=%s turn=%d action=%s terminal=%s "
             "review_state=%s edit_state=%s",
-            self._LOG_LABEL, self.investigation_id, self.branch_id, turn_number,
-            decision.action, terminal, review_state or "-", edit_state or "-",
+            self._LOG_LABEL, self.investigation_id, self.branch_id,
+            persisted_turn, decision.action, terminal,
+            review_state or "-", edit_state or "-",
         )
 
+        # ``result.turn`` drives the tool_executor's ``at_turn`` stamp on
+        # the tool-result message written after this method returns, so
+        # it MUST match the branch row's committed turn_count rather than
+        # the stale entry-time ``turn_number``.
         return self._result_cls(
             investigation_id=self.investigation_id,
             branch_id=self.branch_id,
-            turn=turn_number,
+            turn=persisted_turn,
             decision=decision,
             message_id=msg.id,
             outcome_id=outcome_id,

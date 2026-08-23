@@ -7,7 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.5.46] - 2026-08-24 -- Remove the sbd_nfr module
+## [0.5.47] - 2026-08-24 -- Investigations hold on a not-ready target and count turns once
+
+### Fixed
+
+- An investigation whose target failed binary profiling no longer burns turns against an index that is not ready. The readiness gate fail-opened for native binaries: with no audit-mcp graph to probe it reported ready, so a run dispatched turn after turn that each hit a not-ready status from the binary analysis backend and produced no finding. The gate is now composite. It holds the run while the target analysis state is not ready, probes the binary analysis backend for binary, kernel, APK, IPA, and JAR targets, and keeps the graph and semble probe for source and mobile-package targets. A probe fault fails open so a transient backend error does not wedge a healthy target, and an operator config flag can disable the gate per workspace. A held run waits in a resumable state instead of stopping.
+- Turn numbers no longer pile up at one across a branch. When the task heartbeat reaper requeued a running turn under its own job id, two workers executed the turn at once and both derived the next turn number from the same stale row, so every message committed at turn one and siblings could not tell turns apart. The turn number is now derived from the row read under a row lock, and the entry turn number stays only as the idempotency key.
+- A sibling persona whose turn counter was frozen is no longer read as silent by its peers. The sibling context was built only from case state and submitted outcomes, both of which stay frozen for the whole of a long turn, so a sibling rendered byte-identical each turn and peers inferred it had not spoken. The context now includes the last few engine messages the sibling posted, so recent activity is visible even while the turn counter has not advanced.
+- Large binary targets no longer fail profiling at the thirty-minute mark. The per-stage reaper timeout and the matching task cap were hardcoded to 1800 seconds, so a profiling stage on a large binary was killed before it finished and the target settled failed. Per-stage timeouts are now config-backed with a two-hour default and the task cap is raised to four hours; a failed stage retries through the resume-analysis route.
 
 ### Removed
 
