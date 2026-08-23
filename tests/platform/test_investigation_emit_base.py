@@ -318,12 +318,15 @@ async def test_hub_complete_during_llm_outage_demotes_to_stalled(
 
 
 @pytest.mark.usefixtures("test_db")
-async def test_hub_complete_when_healthy_still_completes(
+async def test_hub_complete_no_outcome_when_healthy_demotes_to_stalled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The outage guard must NOT fire when the LLM is healthy: a genuine
-    # hub_complete with no outcome is a real (no-finding) completion and
-    # must still flip the investigation to COMPLETED.
+    # A healthy node that walked the phase graph to hub_complete with NO
+    # outcome is not a real completion -- it is a hunt with open leads.
+    # Sealing it as "completed, no finding" is the premature self-terminate
+    # observed on an actively-progressing run that got flipped during a
+    # worker restart. The no-outcome hold must demote to STALLED so the run
+    # stays resumable and keeps hunting to the wall-clock cap.
     monkeypatch.setattr(
         "aila.platform.workflows.investigation_emit_base."
         "is_llm_recently_unhealthy",
@@ -338,6 +341,43 @@ async def test_hub_complete_when_healthy_still_completes(
     result = await handler(
         {"investigation_id": inv_id, "branch_id": br_id,
          "exit_reason": "hub_complete", "outcome_id": None},
+        SimpleNamespace(),
+    )
+
+    assert result.output["status"] == InvestigationStatus.STALLED.value
+    assert result.output["exit_reason"] == "hub_complete_no_outcome"
+    async with UnitOfWork() as uow:
+        inv = (await uow.session.exec(
+            select(VRInvestigationRecord).where(
+                VRInvestigationRecord.id == inv_id,
+            ),
+        )).first()
+    assert inv.status == InvestigationStatus.STALLED.value
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_hub_budget_exhausted_when_healthy_still_completes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The no-outcome hold is scoped to hub_complete. A genuine terminal that
+    # spent a real budget (hub_budget_exhausted) on a healthy node is not a
+    # premature self-terminate and must still flip to COMPLETED, so the
+    # demotion does not turn every no-finding terminal into an endless
+    # resume loop.
+    monkeypatch.setattr(
+        "aila.platform.workflows.investigation_emit_base."
+        "is_llm_recently_unhealthy",
+        lambda window_s=600.0: False,
+    )
+    inv_id, br_id = await _seed(InvestigationStatus.RUNNING, turn_count=5)
+    fake = _FakeQueue()
+    handler = state_investigation_emit(
+        _bindings(fake, _DEFAULT_CAPS), InvestigationStateHooks(),
+    )
+
+    result = await handler(
+        {"investigation_id": inv_id, "branch_id": br_id,
+         "exit_reason": "hub_budget_exhausted", "outcome_id": None},
         SimpleNamespace(),
     )
 

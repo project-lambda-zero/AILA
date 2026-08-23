@@ -7,7 +7,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.5.47] - 2026-08-24 -- Investigations hold on a not-ready target and count turns once
+## [0.5.48] - 2026-08-24 -- A no-finding investigation stays resumable instead of self-completing
+
+### Fixed
+
+- An investigation that reaches a hub terminal with no finding no longer seals itself as a completed, empty run. The dispatch hub walked its phase graph to a terminal, and with no outcome the finalizer flipped the run to completed, no finding, even while the model node was healthy. The prior release only caught this during a model-node outage. An actively-progressing run could be sealed empty when its in-flight task was reaped, for example during a worker restart, discarding a hunt that had real progress against live code. A hub-complete terminal with no outcome now demotes to stalled so the run stays resumable and the stall-recovery sweep keeps hunting toward the wall-clock cap. A run that submits a real finding still completes, and a run that spends a real turn, message, or wall-clock budget still completes through the cap path; only an empty phase-graph exhaustion is held open.
 
 ### Fixed
 
