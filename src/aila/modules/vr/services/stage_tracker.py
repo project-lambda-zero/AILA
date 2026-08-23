@@ -17,6 +17,7 @@ defined once at module scope and re-registered as a no-op on hot import.
 """
 from __future__ import annotations
 
+import logging
 from functools import partial
 from typing import ClassVar
 
@@ -77,6 +78,7 @@ _STAGE_TIMEOUT_CONFIG_KEYS: dict[StageName, str] = {
 }
 
 _cfg = ModuleConfigReader("vr")
+_log = logging.getLogger(__name__)
 
 
 async def resolve_stage_timeout_s(stage: StageName) -> float | None:
@@ -88,11 +90,27 @@ async def resolve_stage_timeout_s(stage: StageName) -> float | None:
     ConfigRegistry (env AILA_VR_<KEY> -> DB -> schema default) so a
     ``PUT /config/vr/<key>`` picks up on the next call without a worker
     restart.
+
+    Returns ``None`` (never raises) when the key does not resolve in this
+    process -- observed when the reaper runs in a worker where these rows
+    were never seeded and the schema default did not resolve, so
+    ``get_float`` coerced ``None`` and raised. A config read must never
+    crash the reaper sweep; ``None`` lets the caller use the platform
+    ``_DEFAULT_TIMEOUTS`` entry, which carries the same 2h bound.
     """
     key = _STAGE_TIMEOUT_CONFIG_KEYS.get(stage)
     if key is None:
         return None
-    return await _cfg.get_float(key)
+    try:
+        return await _cfg.get_float(key)
+    except (TypeError, ValueError) as exc:
+        _log.debug(
+            "resolve_stage_timeout_s: config key vr/%s did not resolve to a "
+            "number in this process (%s); falling back to the platform "
+            "_DEFAULT_TIMEOUTS entry for stage %s",
+            key, type(exc).__name__, stage,
+        )
+        return None
 
 
 async def _resolve_stage_timeouts_overlay() -> dict[StageName, float]:

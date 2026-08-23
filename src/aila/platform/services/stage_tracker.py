@@ -94,8 +94,8 @@ _log = logging.getLogger(__name__)
 # pre-empted by the reaper mid-flight.
 _DEFAULT_TIMEOUTS: dict[StageName, float] = {
     StageName.INGESTION: 14400.0,
-    StageName.CAPABILITY_PROFILE: 1800.0,
-    StageName.FUNCTION_RANKING: 1800.0,  # 30 min  covers cold-CSR firefox-scale rank + retry slack
+    StageName.CAPABILITY_PROFILE: 7200.0,  # 2h  large native binaries (driver DLLs) hold IDA callgraph + audit-mcp signal collection well past 30 min
+    StageName.FUNCTION_RANKING: 7200.0,  # 2h  cold-CSR ranking on firefox / chromium / large driver DLLs runs beyond 30 min
     # Android stages -- PRD §C-20 + F-3. apktool + jadx both pay a cold
     # JVM start and are dominated by resource/dex complexity rather than
     # raw APK size, so a mid-size APK can exceed the earlier 5/15-min
