@@ -7,6 +7,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.46] - 2026-08-24 -- Remove the sbd_nfr module
+
+### Removed
+
+- Removed the Security by Design NFR (sbd_nfr) module in full: its Python package, frontend, and bundled data workbook are deleted, and a forward migration drops the twelve tables it owned (session, answer, activity, question, question option, question subtask map, resolution result, schema version, section, session system, subgroup, and subtask component records). The module was already unreferenced by the platform, module auto-discovery skipped its gutted directory, and it declared no active workflow or worker queue, so its removal changes no live route, workflow, or queue. The migration guards each drop with IF EXISTS so a database built from the current model set, which no longer includes the module, upgrades cleanly; it is irreversible because the model definitions that described the tables are deleted.
+
 ## [0.5.45] - 2026-08-24 -- Outage-robust dispatch: no empty self-complete, no requeue storm
 
 ### Fixed
