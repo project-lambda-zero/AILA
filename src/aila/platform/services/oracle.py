@@ -297,7 +297,20 @@ class Oracle:
                 "applied": True, "intent": intent,
                 "capability": payload.get("target_capability"),
             }
-        raise OracleError(f"unknown request intent {intent!r}")
+        # An unroutable request intent (None or an unknown string) is a
+        # corrupt/legacy ledger row -- e.g. a malformed replan request left
+        # by an earlier stall. Raising here crashed the ENTIRE dispatch hub
+        # on every visit, wedging the investigation permanently. Skip it
+        # instead: log the miss and return a non-applied result. The caller
+        # (apply_ratified_request) then marks it applied so it never
+        # re-routes, and apply_all_ratified drops it (only ``applied`` rows
+        # are collected). One bad ledger row can no longer stall a run.
+        _log.warning(
+            "oracle: skipping unroutable request intent=%r inv=%s -- "
+            "marking applied so it does not re-crash dispatch",
+            intent, investigation_id,
+        )
+        return {"applied": False, "intent": intent, "skipped": "unknown_intent"}
 
     async def ratified_specialist_capabilities(
         self,

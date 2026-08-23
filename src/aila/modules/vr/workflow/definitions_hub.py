@@ -28,6 +28,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
     VRTargetRecord,
 )
+from aila.modules.vr.services.index_readiness import vr_index_readiness
 from aila.modules.vr.workflow.definitions import _build_services
 from aila.modules.vr.workflow.states.investigation_emit import (
     state_investigation_emit,
@@ -333,4 +334,5 @@ VR_INVESTIGATE_HUB = build_dispatch_workflow(
         message_model=VRInvestigationMessageRecord,
         branch_model=VRInvestigationBranchRecord,
     ),
+    index_readiness_fn=vr_index_readiness,
 )

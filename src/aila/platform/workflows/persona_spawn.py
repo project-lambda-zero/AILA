@@ -34,6 +34,7 @@ from sqlmodel import select as _select
 
 from aila.platform.contracts import utc_now
 from aila.platform.exceptions import WorkerUnreachableError
+from aila.platform.tasks.liveness import branch_has_live_task
 from aila.platform.uow import UnitOfWork
 
 if TYPE_CHECKING:
@@ -265,11 +266,35 @@ async def spawn_persona_siblings(
                         "(turn_count + case_state + breaker reset to fresh)",
                         b.persona_voice, b.id,
                     )
+            elif (
+                b.turn_count == 0
+                and b.status == "abandoned"
+                and await branch_has_live_task(uow.session, b.id)
+            ):
+                # §92 single-liveness-authority -- this zero-turn
+                # abandoned loser has a live worker task running a turn on
+                # it RIGHT NOW. Its turn_count is still 0 only because the
+                # first turn on the slow node has not committed yet, and
+                # the stale-branch sweep flipped it to ``abandoned``
+                # mid-turn. Hard-deleting it here would DELETE its rows
+                # out from under the in-flight message write, raising a
+                # ForeignKeyViolationError that crashes the live turn to
+                # ``__crashed__``. Leave the row; a later spawn pass with
+                # no live task on the branch GCs it. Same reaper-shared
+                # liveness signal the stale-branch sweep now consults.
+                result.abandoned.append(b.id)
+                _log.info(
+                    "auto_deliberation: SKIP hard-delete of zero-turn "
+                    "abandoned %s branch %s -- a live task is running a "
+                    "turn on it (keeping row to avoid FK-crashing the "
+                    "in-flight message write)",
+                    b.persona_voice, b.id,
+                )
             elif b.turn_count == 0 and b.status == "abandoned":
                 # Zero-turn abandoned branch from a prior stall/reopen
-                # cycle -- hard-delete so branches don't accumulate
-                # across cycles. Messages (if any from setup) are
-                # removed first to satisfy FK constraints.
+                # cycle with NO live task on it -- hard-delete so branches
+                # don't accumulate across cycles. Messages (if any from
+                # setup) are removed first to satisfy FK constraints.
                 _bt = branch_model.__tablename__
                 await uow.session.execute(
                     _sql_text(

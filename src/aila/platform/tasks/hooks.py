@@ -31,6 +31,7 @@ import structlog
 from arq import create_pool as _create_pool
 from arq.connections import RedisSettings as _RedisSettings
 from sqlalchemy import update as sa_update
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 
 from aila.api.metrics import TASK_DEAD_LETTER_TOTAL
@@ -156,9 +157,27 @@ async def _on_job_start(ctx: dict[str, Any]) -> None:
         # measures the CURRENT attempt's lifetime, not the original
         # submission. Without this, retry N inherits attempt 1's
         # started_at and gets reaped immediately as a stale RUNNING row.
+        #
+        # fix §90 -- also stamp heartbeat_at at attempt start so a RUNNING
+        # task is NEVER null-heartbeat while alive. Previously heartbeat_at
+        # was written only when a state transition committed
+        # (engine._commit_transition). A fresh or requeued attempt runs its
+        # FIRST turn -- a single long LLM call -- before that first commit,
+        # so heartbeat_at stayed None for the whole turn. On a slow inference
+        # node that first turn measured 30-141 min, so both the periodic
+        # 55-min started_at fallback and the worker-boot orphan sweep
+        # (reap_null_heartbeat=True, 30s grace) reaped the LIVE turn as a
+        # zombie, requeued it under the same job id (which resets
+        # heartbeat_at=None, queue.py), and restarted turn 1 from scratch --
+        # a loop that never converged (156 of 225 reaped VR tasks were
+        # null-heartbeat). Stamping heartbeat_at here routes liveness through
+        # the 24h heartbeat window instead; genuinely dead workers are still
+        # reaped via the lock_missing sweep, and hung turns via the ARQ job
+        # timeout.
         values: dict[str, Any] = {
             "updated_at": utc_now(),
             "started_at": utc_now(),
+            "heartbeat_at": utc_now(),
         }
         if job_try == 1:
             values["status"] = TaskStatus.RUNNING
@@ -198,9 +217,27 @@ async def _on_job_start(ctx: dict[str, Any]) -> None:
                         .values(
                             plan_json=_serialize_definition(platform_task.definition),
                         )
-                    )
+                        )
 
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            # §72 partial UNIQUE index on input_hash (status IN queued/
+            # running/waiting) rejected marking this row RUNNING: a sibling
+            # run with identical fn+kwargs is already active. This job is a
+            # redundant duplicate -- a stale re-enqueue of a row whose live
+            # twin is already executing. Roll back the status transition so
+            # the worker survives; the job body finds a non-active row and
+            # the platform_task wrapper no-ops it. Leaving the row in its
+            # prior state is correct -- the live twin owns the work.
+            await session.rollback()
+            _log.warning(
+                "on_job_start: TaskRecord %s could not enter RUNNING -- "
+                "active duplicate input_hash already present; skipping "
+                "status transition (job body will no-op).",
+                task_id,
+            )
+            return
 
         structlog.contextvars.bind_contextvars(
             task_id=task_id,

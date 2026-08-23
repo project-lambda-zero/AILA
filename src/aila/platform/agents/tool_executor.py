@@ -611,6 +611,7 @@ class ToolExecutorHelpersBase:
         args: dict[str, Any],
         raw: dict[str, Any],
         at_turn: int | None,
+        observables_delta: dict[str, Any] | None = None,
     ) -> None:
         """Hook: a tool call dispatched cleanly (RFC #137).
 
@@ -628,7 +629,7 @@ class ToolExecutorHelpersBase:
         observation-write failure MUST only log.
         """
         del investigation_id, branch_id, server_id, tool_name  # base no-op
-        del args, raw, at_turn
+        del args, raw, at_turn, observables_delta
         return None
 
     async def _on_tool_failure(
@@ -1580,6 +1581,7 @@ class ToolExecutorHelpersBase:
                 args=args,
                 raw=raw if isinstance(raw, dict) else {},
                 at_turn=at_turn,
+                observables_delta=sanitized_delta,
             )
         except (OSError, RuntimeError, ValueError, TypeError, AttributeError, SQLAlchemyError) as exc:
             _log.warning(

@@ -144,7 +144,19 @@ class StateSpec:
     ``handler`` is the async function invoked by the engine for this state.
     ``timeout_s`` wraps the handler in ``asyncio.wait_for``; on timeout the
     engine records ``exited:timeout`` and treats the state as non-retriable
-    (D-16).
+    (D-16) UNLESS ``timeout_retriable`` is set.
+
+    ``timeout_retriable`` (fix §91, single-liveness-authority): when True,
+    a timeout re-enters the SAME state (a resume, since agent-loop handlers
+    reload their durable ledger/checkpoint each turn) with
+    ``retries_in_state`` incremented, bounded by ``max_retries``. A completed
+    turn transitions forward and resets ``retries_in_state`` to 0, so the
+    bound only trips on consecutive timeouts with no progress between them.
+    When retries are exhausted (or the flag is False) the timeout falls
+    through to the historical ``on_failure``/``__crashed__`` path. This is
+    what lets a slow inference node run a long turn without the run
+    dead-ending: the engine owns the wall, and expiry resumes rather than
+    crashes.
 
     ``retriable_on`` must be a ``tuple`` of ``BaseException`` subclasses
     (D-39). The engine uses ``isinstance(exc, retriable_on)`` so subclass
@@ -177,6 +189,7 @@ class StateSpec:
     terminal: bool = False
     backoff: Callable[[int], float] | None = None
     output_schema: type[BaseModel] | None = None
+    timeout_retriable: bool = False
 
     def __post_init__(self) -> None:
         # D-39: retriable_on must be a tuple of BaseException subclasses.

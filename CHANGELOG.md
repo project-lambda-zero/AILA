@@ -7,6 +7,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.44] - 2026-08-23 -- Single task-liveness authority for turns and branches
+
+### Fixed
+
+- Long agent turns are no longer killed mid-run by the per-state workflow timeout. A state that exceeds its wall now re-enters the same state and resumes, instead of crashing to a non-resumable terminal, so a single slow-inference turn that runs past the wall keeps its progress. The resume budget is bounded, so a genuinely stuck state still crashes eventually.
+- Investigation branches are no longer abandoned or hard-deleted while a turn is running on them. The stale-branch sweep and the persona-spawn cleanup judged a branch dead from `turn_count` and `updated_at`, both of which stay frozen for the whole of a long turn, so a branch mid-turn was abandoned and then hard-deleted. That delete broke the foreign key on the turn's in-flight message write and crashed the run. Both deciders now consult one shared liveness predicate and leave a branch alone while a worker is running a turn on it.
+- Running tasks stamp a heartbeat at attempt start, so a task's first long turn is no longer read as a zombie and reaped before its first state commit.
+
+### Added
+
+- `aila.platform.tasks.liveness`: one predicate for "is a turn in flight", shared by the branch garbage collectors and defined the same way the task reaper defines a live running row, so the reaper and the branch GC never disagree.
+- `aila.tools.liveness_guard`: an AST guard, wired into `make check` and CI, that keeps task-liveness and branch-GC decisions inside a reviewed allowlist of authority modules. A new abandon or delete decider outside that allowlist fails the check.
+
+### Changed
+
+- The per-state workflow wall for agent-loop phases is now resumable with a bounded retry budget. The ARQ job wall sits above it so a turn is never truncated by the job timeout before the engine's own wall.
+
 ## [0.5.43] - 2026-08-21 -- Basic-mode chat, forensics intake, and report download fixes
 
 ### Fixed

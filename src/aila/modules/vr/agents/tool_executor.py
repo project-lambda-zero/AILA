@@ -52,6 +52,12 @@ from aila.platform.mcp.middleware.audit import bind_index_id
 from aila.platform.services.knowledge import KnowledgeService
 from aila.platform.uow import UnitOfWork
 
+# Cap on the real tool-body text burned into the workspace-scoped
+# observation RAG bucket per read. ~6000 chars (~1500 tokens) carries the
+# substantive head of a function / search-result set for semantic retrieval
+# without embedding a whole large file on every read.
+_OBS_BODY_MAX_CHARS = 6000
+
 __all__ = [
     "ToolExecutionResult",
     "ToolExecutor",
@@ -425,6 +431,38 @@ class ToolExecutor(ToolExecutorHelpersBase):
                 return value.strip()[:200]
         return tool_name
 
+    def _observation_body_from_delta(
+        self, delta: dict[str, Any] | None,
+    ) -> str:
+        """Flatten the adapted observables delta into the real body text.
+
+        The success hook receives the sanitized observables delta -- the
+        SAME rendered content the turn stores in working memory (a
+        read_function body, semantic_search chunks, a read_lines slice).
+        String values ride verbatim; dict/list values (structured tool
+        results) are JSON-dumped so their identifiers survive for
+        retrieval. Empty when the delta carried no embeddable payload,
+        which the caller treats as "store nothing" rather than falling
+        back to a content-free marker.
+        """
+        if not delta:
+            return ""
+        parts: list[str] = []
+        for value in delta.values():
+            if isinstance(value, str):
+                if value.strip():
+                    parts.append(value.strip())
+            elif isinstance(value, (dict, list)):
+                try:
+                    parts.append(
+                        json.dumps(value, default=str, ensure_ascii=False),
+                    )
+                except (TypeError, ValueError):
+                    continue
+            elif value is not None:
+                parts.append(str(value))
+        return "\n".join(parts)
+
     @staticmethod
     def _raw_body_is_empty(raw: dict[str, Any]) -> bool:
         """True when the bridge response carries no result payload.
@@ -458,6 +496,7 @@ class ToolExecutor(ToolExecutorHelpersBase):
         args: dict[str, Any],
         raw: dict[str, Any],
         at_turn: int | None,
+        observables_delta: dict[str, Any] | None = None,
     ) -> None:
         workspace_id, _team_id = await self._resolve_workspace_scope(
             investigation_id,
@@ -468,11 +507,23 @@ class ToolExecutor(ToolExecutorHelpersBase):
         empty = self._raw_body_is_empty(raw)
         subject = self._observation_subject(tool_name, args)
         if is_read and not empty:
+            # Burn the REAL rendered body (the function source, the
+            # semantic-search chunks, the read_lines slice) into the RAG
+            # store -- NOT a "returned a body for X" marker. Retrieval on
+            # this bucket must surface the actual code/evidence so a
+            # later branch semantic-searching the target matches on
+            # content, not on a content-free record that a tool ran.
+            body = self._observation_body_from_delta(observables_delta)
+            if not body:
+                # Nothing substantive to embed (adapter produced no
+                # string body). Do NOT regress to a content-free marker
+                # -- store nothing.
+                return
             polarity = ObservationPolarity.POSITIVE
             kind = ObservationKind.READ_HIT.value
             content = (
-                f"{server_id}.{tool_name} returned a body for {subject!r} "
-                f"in workspace {workspace_id[:8]}."
+                f"{server_id}.{tool_name} :: {subject}\n"
+                f"{body[:_OBS_BODY_MAX_CHARS]}"
             )
         elif empty:
             polarity = ObservationPolarity.NEGATIVE
@@ -502,71 +553,17 @@ class ToolExecutor(ToolExecutorHelpersBase):
             writer=writer,
         )
 
-    async def _on_tool_failure(
-        self,
-        *,
-        investigation_id: str,
-        branch_id: str,
-        server_id: str,
-        tool_name: str,
-        args: dict[str, Any],
-        error: str,
-        at_turn: int | None,
-    ) -> None:
-        workspace_id, _team_id = await self._resolve_workspace_scope(
-            investigation_id,
-        )
-        if not workspace_id:
-            return
-        subject = self._observation_subject(tool_name, args)
-        lc = error.lower()
-        # Dead-end error classes -- the resource itself is confirmed
-        # absent from the target (not indexed, not found, unknown
-        # index). Recording these lets a sibling branch / later turn
-        # retrieve "identifier X is not present in this workspace's
-        # index" without re-issuing the failing call.
-        dead_end = any(
-            marker in lc
-            for marker in (
-                "not indexed",
-                "not found",
-                "no such",
-                "unknown index",
-                "does not exist",
-            )
-        )
-        if dead_end:
-            polarity = ObservationPolarity.NEGATIVE
-            kind = ObservationKind.DEAD_END.value
-            content = (
-                f"{server_id}.{tool_name} confirmed {subject!r} is absent "
-                f"from workspace {workspace_id[:8]}: "
-                f"{error.strip().splitlines()[0][:400]}"
-            )
-        else:
-            polarity = ObservationPolarity.NEGATIVE
-            kind = ObservationKind.TOOL_FAILURE.value
-            content = (
-                f"{server_id}.{tool_name} failed for {subject!r} in "
-                f"workspace {workspace_id[:8]}: "
-                f"{error.strip().splitlines()[0][:400]}"
-            )
-        writer = await self._ensure_obs_writer()
-        await record_observation(
-            PlatformObservation(
-                module="vr",
-                workspace_id=workspace_id,
-                subject=f"{server_id}.{tool_name}:{subject}",
-                kind=kind,
-                polarity=polarity,
-                content=content,
-                investigation_id=investigation_id,
-                branch_id=branch_id,
-                turn_number=at_turn,
-                extra={"server_id": server_id, "tool_name": tool_name},
-            ),
-            writer=writer,
-        )
+    # VR deliberately does NOT override _on_tool_failure. A tool error
+    # (transient index-build, timeout, wrong-path "file not found",
+    # "not indexed") is never RAG-worthy: recording it either poisons the
+    # corpus with a false "resource absent" fact (a wrong path resolves to
+    # "X is absent from the target") or stores raw error narration a future
+    # retrieval learns nothing from. Genuine negatives come from the
+    # SUCCESS path (a tool that ran and returned 0 results -> DEAD_END).
+    # The base-class no-op handles failures: nothing is written to the RAG
+    # store. The agent still sees the augmented error text + circuit
+    # breaker on the main dispatch path; that pressure does not need a
+    # knowledge-store row.
 
     def _augment_tool_error(
         self, server_id: str, tool_name: str, args: dict[str, Any],

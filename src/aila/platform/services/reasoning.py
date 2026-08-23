@@ -122,15 +122,6 @@ _KILL_CRITERION_MIN_TOKEN_LEN: int = 4
 # once at module load; every absorb() call reuses it.
 _KC_TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
 
-# Fallback staleness threshold (in turns) at which absorb writes the
-# ``_directive.stale_hypotheses`` observable naming a live hypothesis
-# so the agent resolves it, rejects it, or explicitly defers with a
-# reason on this turn. Production paths resolve the live value via
-# ``self._resolve_platform_int("reasoning_hyp_stale_turns", ...)``; the
-# schema default matches this literal so behavior is preserved for
-# callers that never override. A value <= 0 disables the directive.
-_DEFAULT_HYP_STALE_TURNS: int = 8
-
 # Marker body injected under a recalled key when the durable message
 # history cannot supply the body (no fetcher wired, or the fetcher
 # returned None). Keeps the render pipeline consistent -- the agent
@@ -712,49 +703,16 @@ class CyberReasoningEngine:
         # lead is not dropped by a timer. Cleared on the same call when
         # no stale live hypotheses remain, so a resolved directive never
         # persists into a later turn.
-        effective_turn = turn_number or case_state.current_turn
-        stale_threshold = self._resolve_platform_int(
-            "reasoning_hyp_stale_turns", _DEFAULT_HYP_STALE_TURNS,
-        )
-        stale: list[tuple[str, str, int]] = []
-        if stale_threshold > 0 and effective_turn > 0:
-            for h in merged_live:
-                if not h.opened_at_turn:
-                    continue
-                age = effective_turn - h.opened_at_turn
-                if age >= stale_threshold:
-                    stale.append((h.id or "?", h.claim, age))
-        if stale:
-            lines = [
-                "*** STALE LIVE HYPOTHESES ***",
-                (
-                    f"{len(stale)} live hypothesis(es) have been open for "
-                    f">= {stale_threshold} turns without a resolution:"
-                ),
-                "",
-            ]
-            for hid, claim, age in stale:
-                lines.append(f"  - {hid}: {claim[:200]} [alive {age} turns]")
-            lines.extend([
-                "",
-                "This turn you MUST for EACH id above pick one:",
-                "  (a) resolve it: add it to `decision.rejected[]` with a",
-                "      concrete evidence-citing reason (file:line, tool",
-                "      output, or a sibling's rejection you concur with),",
-                "      OR fold it into a submit whose answer names the id",
-                "      and shows the settling evidence.",
-                "  (b) explicitly defer: keep it live and post a",
-                "      one-sentence reason in `reasoning` naming the",
-                "      concrete blocker (e.g. \"waiting on read_function",
-                "      body from audit_mcp\"). Silent aging keeps the",
-                "      panel from converging.",
-            ])
-            observables["_directive.stale_hypotheses"] = "\n".join(lines)
-        else:
-            # Clear on the same call so a resolved directive never
-            # persists into a later turn (would otherwise scold the
-            # agent for a stale id it already closed).
-            observables.pop("_directive.stale_hypotheses", None)
+        # Per-turn stale-hypothesis nagging removed. The "[alive N turns]"
+        # age callouts re-rendered every turn -- mutating even for
+        # unchanged hypotheses -- which nagged the panel continuously AND
+        # defeated llama.cpp prefix caching (the case-model text changed
+        # every turn on an age counter alone). The pressure to resolve a
+        # dangling hypothesis now lands ONCE, at the graceful-stop gate
+        # (_maybe_reject_submit_with_unresolved_hypotheses): a branch
+        # cannot submit/terminate while any live hypothesis is unresolved.
+        # Clear any directive a prior build wrote so it never persists.
+        observables.pop("_directive.stale_hypotheses", None)
 
         # Kill-criterion directive (RFC #201): for each live hypothesis
         # carrying a non-empty ``kill_criterion``, tokenize the criterion
@@ -946,18 +904,8 @@ class CyberReasoningEngine:
             elif live_count >= 4:
                 header_suffix = "  (aging - prefer closing over adding)"
             parts.append(f"Live hypotheses ({live_count}):{header_suffix}")
-            current_turn = case_state.current_turn or 0
             for hypothesis in case_state.hypotheses:
-                age_marker = ""
-                if hypothesis.opened_at_turn and current_turn:
-                    age = current_turn - hypothesis.opened_at_turn
-                    if age >= 10:
-                        age_marker = f" [alive {age} turns - STALE, RESOLVE OR REJECT]"
-                    elif age >= 5:
-                        age_marker = f" [alive {age} turns - aging]"
-                    elif age > 0:
-                        age_marker = f" [alive {age} turns]"
-                parts.append(f"  - {hypothesis.id or '?'}: {hypothesis.claim}{age_marker}")
+                parts.append(f"  - {hypothesis.id or '?'}: {hypothesis.claim}")
                 if hypothesis.why_plausible:
                     parts.append(f"      why: {hypothesis.why_plausible}")
                 if hypothesis.kill_criterion:

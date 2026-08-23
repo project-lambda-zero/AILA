@@ -349,7 +349,23 @@ async def requeue_same_job_id(task_id: str, *, track: str | None = None) -> bool
         )
         current.updated_at = datetime.now(UTC)
         session.add(current)
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            # §72 partial UNIQUE index on input_hash (status IN queued/
+            # running/waiting) rejected the reset: another active row with
+            # the same fn+kwargs is already queued/running. Resetting this
+            # row to QUEUED would create a second active duplicate. Roll
+            # back and treat the requeue as a no-op -- the live twin owns
+            # the work. The ARQ job enqueued above will find a non-runnable
+            # row and quietly no-op.
+            await session.rollback()
+            _log.info(
+                "queue.requeue_same_job_id(%s): reset skipped -- active "
+                "duplicate input_hash already present; leaving row as-is",
+                task_id,
+            )
+            return False
     _log.info(
         "queue.requeue_same_job_id(%s): re-enqueued under same id track=%s",
         task_id, effective_track,

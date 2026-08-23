@@ -69,7 +69,10 @@ _MAX_AUTO_CONTINUE_CYCLES: int = 30
 # re-enqueue forever. Each wait re-enqueue fires ZERO agent turns; the
 # TaskQueue's same-investigation fairness defer spaces them out. At the
 # bound the run finalizes as FAILED (exit_reason ``index_wait_timeout``).
-_MAX_INDEX_WAIT_CYCLES: int = 240
+# Raised to cover the operator wall-clock budget (up to 144h): a large-repo
+# semble build can OOM-restart and take a long time, and the investigation
+# must sit ALIVE on the queue waiting rather than be failed early.
+_MAX_INDEX_WAIT_CYCLES: int = 5760
 
 # RFC-13 wiring audit: exit_reasons that mean "the branch or hub is DONE,
 # do NOT auto-continue". phase_graph.make_dispatch_router emits the four

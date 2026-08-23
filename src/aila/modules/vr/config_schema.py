@@ -210,21 +210,44 @@ class VRConfigSchema(ModuleConfigBase):
     # prior code read raw VR_* env vars at import; those names are retired,
     # replaced by the standard AILA_VR_<KEY> env form.
     variant_hunt_reject_cap: int = Field(
-        default=3,
+        default=8,
         ge=1,
         description=(
             "Consecutive variant-hunt submit rejections on a branch before "
             "the gate forces the submit through with a variant_hunt_advisory "
-            "flag stamped on the payload."
+            "flag stamped on the payload. Raised from 3 to 8: the prior cap "
+            "let a submit-happy agent exit after ~2-3 probes; branches were "
+            "measured emitting ~4 empty submits per real tool call. The extra "
+            "runway keeps the branch active long enough to reach the "
+            "investigation depth floor below."
+        ),
+    )
+    variant_hunt_min_tool_investigations: int = Field(
+        default=8,
+        ge=0,
+        description=(
+            "Minimum number of successful audit/binary tool probes "
+            "(audit_mcp / ida_headless / knowledge readings recorded on the "
+            "branch case_state) a variant-hunt branch is expected to have run "
+            "before a no-finding / empty-orders submit is credible. Below "
+            "this floor the submit gate injects an INVESTIGATION-TOO-SHALLOW "
+            "directive naming the current probe count and instructing the "
+            "agent's next action to be a concrete tool_run on an unprobed "
+            "candidate. It does not hard-block (the reject_cap force-through "
+            "still bounds the loop); it re-weights the agent away from "
+            "premature exit. 0 disables the depth check."
         ),
     )
     unresolved_hyp_reject_cap: int = Field(
-        default=3,
+        default=10,
         ge=1,
         description=(
             "Consecutive unresolved-live-hypothesis submit rejections before "
-            "the gate forces the submit through, stamping the surviving "
-            "hypothesis ids on the payload as an advisory."
+            "the graceful-stop gate forces the submit through, stamping the "
+            "surviving hypothesis ids on the payload as an advisory. Raised "
+            "from 3 to 10: a branch must not be able to stop by out-waiting "
+            "the gate -- the escape is to resolve each hypothesis (reject "
+            "with evidence or fold into the finding), not to retry submit."
         ),
     )
     draft_pending_reject_cap: int = Field(
@@ -310,9 +333,9 @@ class VRConfigSchema(ModuleConfigBase):
         ),
     )
     investigation_wall_clock_hours: float = Field(
-        default=6.0,
+        default=144.0,
         ge=0.5,
-        le=72.0,
+        le=336.0,
         description=(
             "Investigation-wide wall-clock budget in hours before the "
             "finalize chokepoint flips the investigation to a cap-exceeded "

@@ -113,13 +113,16 @@ typecheck:
 honesty:
 	python -m aila.tools.honesty_audit src/aila --whitelist honesty_whitelist.py
 
+liveness-guard:
+	python -m aila.tools.liveness_guard src/aila
+
 build:
 	pnpm --filter @aila/shell run build
 
 compile:
 	python -m compileall -q src/aila
 
-check: lint honesty compile typecheck
+check: lint honesty liveness-guard compile typecheck
 	@echo "All gates passed."
 
 # ── Security ──

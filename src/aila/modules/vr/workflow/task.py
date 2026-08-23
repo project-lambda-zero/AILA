@@ -122,7 +122,17 @@ async def run_vr_nday(
     track="vr",
     module_id="vr",
     max_tries=1,
-    timeout_s=7800.0,  # 2h+ -- covers a full investigation_loop run
+    # fix §91 (single-liveness-authority) -- the ARQ job wall must sit
+    # ABOVE the engine per-state wall (PhaseSpec.timeout_s default 9000s)
+    # so the workflow ENGINE, not ARQ, owns turn liveness. When the ARQ
+    # wall was 7800s it fired BELOW the per-state wall and truncated a
+    # legitimate long turn mid-flight (the run then idled). 14400s (4h)
+    # lets any single turn either complete or hit the engine's own 9000s
+    # wall (which now RESUMES rather than crashes); the job still ends at
+    # 4h and the cursor is re-enqueued to continue the investigation
+    # across job boundaries. ARQ no longer makes an independent kill
+    # decision before the engine does.
+    timeout_s=14400.0,
     # fix §142 -- explicit retriable_on so the single retry budget is
     # only spent on transport-class transients. VR_INVESTIGATE_HUB's
     # investigation_setup state opens a DB session + does CVE-intel

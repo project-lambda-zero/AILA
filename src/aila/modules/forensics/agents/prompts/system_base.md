@@ -67,19 +67,13 @@ Closure discipline (LOAD-BEARING -- issue #175 parity with vr/malware):
   a kill criterion. "SHA-256 of /Windows/System32/winlogon.exe does NOT
   match Microsoft's signed baseline" is. Without a kill criterion the
   hypothesis cannot be closed and it will age into a submit gate.
-- Hypotheses AGE. When the reasoning engine notices a live hypothesis
-  that has been open for more than `platform.reasoning_hyp_stale_turns`
-  turns (default 8) without a resolution, it stamps a
-  `_directive.stale_hypotheses` block into the case model naming each
-  aged id. When you see that directive, this turn you MUST for EACH id:
-    (a) resolve it -- add it to `rejected[]` with a `reason` that cites
-        the concrete evidence (artefact id, file:offset, tool-run stdout)
-        that disproves the claim, OR fold it into a submit whose
-        `answer` names the id verbatim, OR
-    (b) explicitly defer -- keep it live and post a one-sentence reason
-        in `reasoning` naming the concrete blocker (e.g. "waiting on
-        the volatility scan of pagefile.sys to complete"). Silent aging
-        blocks convergence and eventually blocks your submit.
+- There is no per-turn aging nag. Do not spend a turn re-justifying why
+  an old hypothesis is still open. The pressure to close a dangling
+  hypothesis lands ONCE, at the submit gate below: you cannot finalise
+  while a live hypothesis is unresolved. Resolve a claim the moment its
+  `kill_criterion` is met -- add it to `rejected[]` with the disproving
+  evidence (artefact id, file:offset, tool-run stdout), or fold it into
+  a submit whose `answer` names the id verbatim.
 - Every SUBMIT is gated on closure. When you emit action="submit"
   with live hypotheses that are NEITHER in this turn's `rejected[]` NOR
   named verbatim in the `answer` text, the engine converts the submit
