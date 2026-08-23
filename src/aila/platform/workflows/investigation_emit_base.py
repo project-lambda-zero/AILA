@@ -508,17 +508,41 @@ def state_investigation_emit(
             final_status == InvestigationStatus.COMPLETED.value
             and outcome_id is None
             and exit_reason in _NON_CONTINUE_EXIT_REASONS
-            and is_llm_recently_unhealthy(600.0)
         ):
-            _log.warning(
-                "investigation_emit OUTAGE_HOLD inv=%s exit_reason=%s -- LLM "
-                "unhealthy within last 10 min and no outcome; demoting "
-                "COMPLETED->STALLED so the run resumes instead of self-"
-                "terminating empty",
-                investigation_id, exit_reason,
-            )
-            final_status = InvestigationStatus.STALLED.value
-            exit_reason = "hub_stalled_outage"
+            if is_llm_recently_unhealthy(600.0):
+                _log.warning(
+                    "investigation_emit OUTAGE_HOLD inv=%s exit_reason=%s -- LLM "
+                    "unhealthy within last 10 min and no outcome; demoting "
+                    "COMPLETED->STALLED so the run resumes instead of self-"
+                    "terminating empty",
+                    investigation_id, exit_reason,
+                )
+                final_status = InvestigationStatus.STALLED.value
+                exit_reason = "hub_stalled_outage"
+            elif exit_reason == "hub_complete":
+                # No-outcome hold. A healthy node still self-terminated:
+                # the dispatch hub walked its phase graph to a terminal
+                # with no finding. Same operator invariant as hub_stalled
+                # above -- a no-outcome run is not a completion, it is a
+                # hunt with open leads. Sealing it as "completed, no
+                # finding" is the premature self-terminate reported on
+                # actively-progressing runs (a t2 audit on live RCE
+                # surface flipped to completed-empty during a worker
+                # restart). STALLED keeps it resumable so stall_recovery
+                # re-enqueues it to keep hunting. The genuine terminal is
+                # the turn / message / wall-clock cap block below, which
+                # still flips to COMPLETED when a real budget is spent; a
+                # hub_budget_exhausted or tool_loop_blocked exit is left
+                # to complete as before.
+                _log.warning(
+                    "investigation_emit NO_OUTCOME_HOLD inv=%s exit_reason=%s "
+                    "-- hub reached a terminal with no outcome on a healthy "
+                    "node; demoting COMPLETED->STALLED so the run stays "
+                    "resumable and keeps hunting to the wall-clock cap",
+                    investigation_id, exit_reason,
+                )
+                final_status = InvestigationStatus.STALLED.value
+                exit_reason = "hub_complete_no_outcome"
 
         # Investigation-level caps (turns/messages/wall-clock). If exceeded,
         # halt ALL active branches + flip investigation to COMPLETED with a
