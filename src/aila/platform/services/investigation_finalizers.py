@@ -104,6 +104,7 @@ async def synthesize_no_finding_outcomes(
     no_finding_outcome_kind: str,
     build_no_finding_payload: Callable[..., dict[str, Any]],
     only_id: str | None = None,
+    orphan_terminal_status: str = InvestigationStatus.FAILED.value,
 ) -> int:
     """Synthesize a no-finding outcome for orphaned investigations.
 
@@ -125,9 +126,13 @@ async def synthesize_no_finding_outcomes(
 
     Two terminal shapes are written for the orphan case:
 
-      - ``total_turns == 0`` -- mark investigation ``FAILED`` with
-        ``reason='zero_turn_no_progress'`` on the branch cleanup.
-        No outcome row is written; the investigation is retryable.
+      - ``total_turns == 0`` -- mark investigation
+        ``orphan_terminal_status`` (default ``FAILED``; VR binds
+        ``STALLED``) with ``reason='zero_turn_no_progress'`` on the
+        branch cleanup. No outcome row is written. When the status is
+        ``STALLED`` the row stays resumable: stall_recovery flips it
+        back to ``running`` and, finding no active branches, does an
+        inv-level submit that re-runs setup and respawns a branch.
       - ``total_turns > 0``  -- write one outcome row using
         ``no_finding_outcome_kind`` + the payload from
         ``build_no_finding_payload``, mark investigation
@@ -218,6 +223,7 @@ async def synthesize_no_finding_outcomes(
                     build_no_finding_payload=build_no_finding_payload,
                     now=now,
                     now_iso=now_iso,
+                    orphan_terminal_status=orphan_terminal_status,
                 ):
                     synthesized += 1
         except (SQLAlchemyError, RuntimeError) as exc:
@@ -250,6 +256,7 @@ async def _synthesize_one_no_finding(
     build_no_finding_payload: Callable[..., dict[str, Any]],
     now: Any,
     now_iso: str,
+    orphan_terminal_status: str = InvestigationStatus.FAILED.value,
 ) -> bool:
     """Synthesize a no-finding outcome for one investigation.
 
@@ -339,7 +346,7 @@ async def _synthesize_one_no_finding(
             .where(inv.id == inv_id)
             .where(inv.status == InvestigationStatus.RUNNING.value)
             .values(
-                status=InvestigationStatus.FAILED.value,
+                status=orphan_terminal_status,
                 stopped_at=now,
                 updated_at=now,
             ),
@@ -349,9 +356,10 @@ async def _synthesize_one_no_finding(
             reason="zero_turn_no_progress", now=now,
         )
         _log.info(
-            "synthesize_no_finding: inv=%s marked FAILED (0 turns "
+            "synthesize_no_finding: inv=%s marked %s (0 turns "
             "across %d branches -- never ran, not synthesizing a "
-            "no-finding outcome)", inv_id, len(unwrapped),
+            "no-finding outcome)",
+            inv_id, orphan_terminal_status.upper(), len(unwrapped),
         )
         return True
 
@@ -382,7 +390,7 @@ async def _synthesize_one_no_finding(
             .where(inv.id == inv_id)
             .where(inv.status == InvestigationStatus.RUNNING.value)
             .values(
-                status=InvestigationStatus.FAILED.value,
+                status=orphan_terminal_status,
                 stopped_at=now,
                 updated_at=now,
             ),
@@ -392,11 +400,11 @@ async def _synthesize_one_no_finding(
             reason="auto_closed_infra", now=now,
         )
         _log.warning(
-            "synthesize_no_finding: inv=%s downgraded to FAILED "
+            "synthesize_no_finding: inv=%s downgraded to %s "
             "(infra_death: %d turns across %d branches; "
             "recent_errors=%s llm_unhealthy=%s -- retryable via "
             "reopen / re-enqueue)",
-            inv_id, total_turns, len(unwrapped),
+            inv_id, orphan_terminal_status.upper(), total_turns, len(unwrapped),
             ",".join(recent_turn_errors) or "none",
             llm_unhealthy_at_close,
         )
@@ -764,12 +772,15 @@ async def synthesize_no_finding_for_investigation(
     outcome_table: str,
     no_finding_outcome_kind: str,
     build_no_finding_payload: Callable[..., dict[str, Any]],
+    orphan_terminal_status: str = InvestigationStatus.FAILED.value,
 ) -> int:
     """Per-id wrapper for :func:`synthesize_no_finding_outcomes`.
 
     Returns 1 when a no-finding outcome was written (or a zero-turn
-    FAILED close was performed), 0 when the orphan condition didn't
-    hold.
+    resumable close was performed), 0 when the orphan condition didn't
+    hold. ``orphan_terminal_status`` controls the terminal status for
+    the zero-turn / infra-death orphan close (default FAILED; VR binds
+    STALLED so stall_recovery re-dispatches instead of hard-failing).
     """
     async with UnitOfWork() as uow:
         wrote = await synthesize_no_finding_outcomes(
@@ -781,6 +792,7 @@ async def synthesize_no_finding_for_investigation(
             no_finding_outcome_kind=no_finding_outcome_kind,
             build_no_finding_payload=build_no_finding_payload,
             only_id=investigation_id,
+            orphan_terminal_status=orphan_terminal_status,
         )
         await uow.commit()
     return wrote

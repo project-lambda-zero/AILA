@@ -7,6 +7,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.50] - 2026-08-24 -- A never-ran investigation waits and resumes instead of hard-failing
+
+### Fixed
+
+- An investigation that never ran a single turn is no longer marked failed. When many investigations share one busy model node, a branch can wait in the queue past the stale threshold and get abandoned before it ever reaches a turn. The reconciler then saw an investigation whose every branch was terminal with zero turns and flipped it to failed, a hard dead-end that needs a manual reopen. Under a large backlog this drained a whole batch of investigations to failed faster than the single node could run them, collapsing the queue. The zero-turn orphan close now demotes the investigation to stalled, which is resumable: the stall-recovery sweep flips it back to running and, finding no active branch, does an investigation-level resubmit that re-runs setup and respawns a branch, so the run waits for a node slot instead of dying. The infra-death orphan close, which fires when the trailing branch closures look like a model outage or stale abandonment rather than a real audit, is demoted the same way. The platform default for both paths is unchanged at failed; the vulnerability-research module binds them to stalled.
+
 ## [0.5.49] - 2026-08-24 -- The stage reaper no longer crashes on an unseeded timeout key
 
 ### Fixed

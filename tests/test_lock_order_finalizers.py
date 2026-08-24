@@ -52,6 +52,9 @@ from aila.modules.vr.db_models.outcome import VRInvestigationOutcomeRecord
 from aila.modules.vr.db_models.outcome_review import (
     VRInvestigationOutcomeReviewRecord,
 )
+from aila.modules.vr.services import (
+    investigation_finalizers as vr_investigation_finalizers,
+)
 from aila.platform.contracts import utc_now
 from aila.platform.eval import calibration as calibration_mod
 from aila.platform.eval import calibrator as calibrator_mod
@@ -525,3 +528,172 @@ class TestCalibrationProposerPersistLock:
             f"FOR UPDATE before superseding; got: {first_sql!r}"
         )
         assert "eval_calibration_proposals" in first_sql
+
+
+# ─────────────────────────────────────────────────────────────────
+# Operator mandate: a never-ran (zero-turn) or infra-death orphan
+# close is resumable, not a hard FAILED. The platform default stays
+# FAILED; the VR binding flips it to STALLED so stall_recovery
+# re-dispatches the investigation (inv-level submit -> setup respawns
+# a branch) instead of killing a hunt that simply never got a node
+# slot. Regression guard for the overnight mass zero-turn FAILED.
+# ─────────────────────────────────────────────────────────────────
+
+
+class _ZTResult:
+    """Result shim exposing ``first()`` / ``all()`` AND ``rowcount``.
+
+    ``close_orphan_branches_on_terminal`` reads ``result.rowcount``,
+    which the shared ``_RecordingResult`` does not carry.
+    """
+
+    def __init__(
+        self,
+        first: Any = None,
+        all_: list[Any] | None = None,
+        rowcount: int = 0,
+    ) -> None:
+        self._first = first
+        self._all = list(all_ or [])
+        self.rowcount = rowcount
+
+    def first(self) -> Any:
+        return self._first
+
+    def all(self) -> list[Any]:
+        return list(self._all)
+
+    def mappings(self) -> Any:
+        return self
+
+
+class _ZeroTurnSession:
+    """Drives ``_synthesize_one_no_finding`` down the zero-turn path.
+
+    Step 1 (FOR UPDATE lock select) -> a running inv with no primary
+    outcome. Step 2 (branch rollup select) -> one branch, turn_count=0
+    so ``total_turns == 0`` selects the zero-turn close. Every later
+    exec (the inv status UPDATE + the branch-cleanup UPDATE) returns an
+    empty ``rowcount=0`` result so the cascade no-ops without a DB.
+    """
+
+    def __init__(self) -> None:
+        self.executed: list[Any] = []
+        self._step = 0
+
+    async def exec(self, stmt: Any, **_kw: Any) -> Any:  # noqa: A003
+        self.executed.append(stmt)
+        self._step += 1
+        if self._step == 1:
+            inv_row = types.SimpleNamespace(
+                id="inv-Z", status="running", primary_outcome_id=None,
+            )
+            return _ZTResult(first=inv_row)
+        if self._step == 2:
+            # (id, persona_voice, turn_count, closed_reason, status)
+            return _ZTResult(all_=[("br-1", "halvar", 0, None, "abandoned")])
+        return _ZTResult()
+
+    async def execute(self, stmt: Any, **_kw: Any) -> Any:
+        return await self.exec(stmt, **_kw)
+
+    def add(self, _row: Any) -> None:
+        return None
+
+    async def commit(self) -> None:
+        return None
+
+    async def rollback(self) -> None:
+        return None
+
+    async def refresh(self, _row: Any) -> None:
+        return None
+
+    def begin_nested(self) -> Any:
+        @contextlib.asynccontextmanager
+        async def _noop() -> Any:
+            yield None
+        return _noop()
+
+
+def _inv_status_update_sql(session: _ZeroTurnSession) -> str:
+    """Return the literal-bound SQL of the inv-row status UPDATE.
+
+    Filters the recorded statements to the UPDATE that targets the
+    ``vr_investigations`` table (not the ``vr_investigation_branches``
+    cleanup) and compiles it with literal binds so the ``status``
+    value lands in the SQL text.
+    """
+    for stmt in session.executed:
+        try:
+            sql = str(
+                stmt.compile(
+                    dialect=postgresql.dialect(),
+                    compile_kwargs={"literal_binds": True},
+                ),
+            )
+        except (AttributeError, TypeError, NotImplementedError):
+            continue
+        if not sql.upper().lstrip().startswith("UPDATE"):
+            continue
+        if "vr_investigations" in sql and "vr_investigation_branches" not in sql:
+            return sql
+    raise AssertionError(
+        "zero-turn path must issue a status UPDATE on the vr_investigations row",
+    )
+
+
+async def _run_zero_turn(orphan_terminal_status: str | None) -> str:
+    session = _ZeroTurnSession()
+    uow = _FakeUoW(session)  # type: ignore[arg-type]
+    now = utc_now()
+    kwargs: dict[str, Any] = {
+        "inv_id": "inv-Z",
+        "investigation_model": VRInvestigationRecord,
+        "branch_model": VRInvestigationBranchRecord,
+        "branch_table": "vr_investigation_branches",
+        "outcome_table": "vr_investigation_outcomes",
+        "no_finding_outcome_kind": "audit_memo",
+        "build_no_finding_payload": lambda **_k: {},
+        "now": now,
+        "now_iso": now.isoformat(),
+    }
+    if orphan_terminal_status is not None:
+        kwargs["orphan_terminal_status"] = orphan_terminal_status
+    ok = await _synthesize_one_no_finding(uow, **kwargs)  # type: ignore[arg-type]
+    assert ok is True, "zero-turn orphan close must report it acted"
+    return _inv_status_update_sql(session)
+
+
+class TestOrphanTerminalStatus:
+    """Zero-turn orphan close honors ``orphan_terminal_status``."""
+
+    @pytest.mark.asyncio
+    async def test_zero_turn_defaults_to_failed(self) -> None:
+        sql = await _run_zero_turn(None)
+        assert "'failed'" in sql, (
+            f"platform default zero-turn close must set status='failed'; got {sql!r}"
+        )
+        assert "'stalled'" not in sql
+
+    @pytest.mark.asyncio
+    async def test_zero_turn_stalled_when_param_set(self) -> None:
+        sql = await _run_zero_turn("stalled")
+        assert "'stalled'" in sql, (
+            f"orphan_terminal_status='stalled' must set status='stalled'; got {sql!r}"
+        )
+        assert "'failed'" not in sql
+
+    def test_vr_binding_uses_stalled(self) -> None:
+        # The VR partials must bind orphan_terminal_status=STALLED so a
+        # never-ran investigation is resumable, not hard-failed. A
+        # revert that drops the kwarg fails here.
+        for name in (
+            "synthesize_no_finding_outcomes",
+            "synthesize_no_finding_for_investigation",
+        ):
+            partial_obj = getattr(vr_investigation_finalizers, name)
+            assert (
+                partial_obj.keywords.get("orphan_terminal_status") == "stalled"
+            ), f"VR {name} must bind orphan_terminal_status='stalled'"
+

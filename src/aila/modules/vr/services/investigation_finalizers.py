@@ -29,6 +29,7 @@ from aila.modules.vr.db_models.outcome_review import (
     VRInvestigationOutcomeReviewRecord,
 )
 from aila.platform.config_base import ModuleConfigReader
+from aila.platform.contracts.enums import InvestigationStatus
 from aila.platform.services.investigation_finalizers import (
     abandon_stale_branches as _platform_abandon_stale_branches,
 )
@@ -98,6 +99,12 @@ synthesize_no_finding_outcomes = partial(
     outcome_table=_VR_OUTCOME_TABLE,
     no_finding_outcome_kind=_VR_NO_FINDING_OUTCOME_KIND,
     build_no_finding_payload=_build_vr_no_finding_payload,
+    # Operator mandate: an investigation that never ran a turn (branches
+    # abandoned while queued on the saturated single node) or died on
+    # infra signals is NOT a failure -- it waits and retries. STALLED is
+    # resumable: stall_recovery flips it back to running and re-runs
+    # setup, which respawns a branch. FAILED would be a hard dead-end.
+    orphan_terminal_status=InvestigationStatus.STALLED.value,
 )
 
 close_rejected_outcomes = partial(
@@ -130,6 +137,7 @@ synthesize_no_finding_for_investigation = partial(
     outcome_table=_VR_OUTCOME_TABLE,
     no_finding_outcome_kind=_VR_NO_FINDING_OUTCOME_KIND,
     build_no_finding_payload=_build_vr_no_finding_payload,
+    orphan_terminal_status=InvestigationStatus.STALLED.value,
 )
 
 abandon_stale_branches = partial(
