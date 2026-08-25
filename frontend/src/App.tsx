@@ -118,6 +118,26 @@ function Console() {
     setFocusedId(id);
   };
 
+  // Ctrl+Backquote cycles keyboard focus across open (non-minimized) windows in
+  // z-order, wrapping from the front window back to the back one. Bare Ctrl only:
+  // Shift/Alt/Meta variants fall through so the chord does not shadow other
+  // shortcuts. ConsoleWindow's own shortcut handler early-returns on ctrlKey, so
+  // this host-level cycle is the single owner of the chord (see the primitive's
+  // header comment). With fewer than two open windows there is nothing to cycle,
+  // so the event is left untouched.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.shiftKey || e.altKey || e.metaKey || e.code !== "Backquote") return;
+      const open = windows.filter((w) => !w.minimized);
+      if (open.length < 2) return;
+      e.preventDefault();
+      const idx = open.findIndex((w) => w.id === focusedId);
+      focusWindow(open[(idx + 1) % open.length].id);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [windows, focusedId]);
+
   // Open a registered surface as a window. Re-opening the focused page surface
   // (same registry key + entity) updates it in place instead of stacking a
   // duplicate; anything else pushes a new window and focuses it.
