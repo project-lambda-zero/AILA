@@ -23,6 +23,7 @@ import { useSubmitVulnScan } from "../api/vulnerability";
 import type { ChatConsoleProps } from "./contract";
 import { css } from "./css";
 import { shortCaseId } from "./ids";
+import { primaryWizardIdForModule, wizardsForModule } from "./wizards";
 
 /*
  * ChatConsole -- center panel of the console scene, ported verbatim from
@@ -444,11 +445,14 @@ function bindMessage(m: Message): RowProps {
 /* ---------------------------------- root ---------------------------------- */
 
 export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
-  const { mode, moduleId, investigationId, onToggleMode, onOpenIntake, onOpenXray, dockOpen } =
+  const { mode, moduleId, investigationId, onToggleMode, onOpenIntake, onOpenWizard, onOpenXray, dockOpen } =
     props;
   const adv = mode === "advanced";
 
   const [draft, setDraft] = useState<string>("");
+  // Chat's `+ open wizard \u25be` picker toggle. Closed by default; closes on
+  // selection or when the operator clicks the button again.
+  const [pickerOpen, setPickerOpen] = useState<boolean>(false);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   // Separate dante session for advanced mode: dante replies land here and
   // render in the chat panel WITHOUT being written to the investigation
@@ -608,10 +612,11 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
   // to the same hook the operator would trigger by hand elsewhere in the UI.
   const onAction = (a: DanteAction, messageId?: string): void => {
     if (a.kind === "open_wizard") {
-      onOpenIntake({
-        moduleId: a.module_id,
-        targetId: a.target_id ?? undefined,
-      });
+      // Resolve via the registry so dante can never propose a wizard that has
+      // no working surface. Falls through silently when the module has no
+      // registered primary wizard.
+      const wid = primaryWizardIdForModule(a.module_id ?? moduleId);
+      if (wid) onOpenWizard(wid, { targetId: a.target_id ?? undefined });
       return;
     }
     if (a.kind === "enqueue_scan") {
@@ -813,6 +818,45 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
             <button key="_new" type="button" onClick={() => onOpenIntake()} style={newInvBtn}>
               {"\uff0b new investigation"}
             </button>
+          ) : null}
+          {wizardsForModule(moduleId).length > 0 ? (
+            <span key="_wizpick" style={{ position: "relative", display: "inline-flex" }}>
+              <button
+                type="button"
+                aria-haspopup="menu"
+                aria-expanded={pickerOpen}
+                onClick={() => setPickerOpen((v) => !v)}
+                style={newInvBtn}
+              >
+                {"\uff0b open wizard \u25be"}
+              </button>
+              {pickerOpen ? (
+                <div
+                  role="menu"
+                  style={css(
+                    "position:absolute;left:0;top:calc(100% + 4px);z-index:6;min-width:260px;padding:5px;background:var(--surface-chrome);border:1px solid var(--border);border-radius:3px;box-shadow:0 10px 30px rgba(0,0,0,0.55);display:flex;flex-direction:column;gap:2px;",
+                  )}
+                >
+                  {wizardsForModule(moduleId).map((w) => (
+                    <button
+                      key={w.id}
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setPickerOpen(false);
+                        onOpenWizard(w.id);
+                      }}
+                      style={css(
+                        "display:flex;flex-direction:column;align-items:flex-start;gap:2px;padding:7px 9px;background:transparent;border:0;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;letter-spacing:0.02em;cursor:pointer;text-align:left;border-radius:2px;",
+                      )}
+                    >
+                      <span style={{ color: "var(--accent)", letterSpacing: "0.06em" }}>{w.label}</span>
+                      <span style={{ color: "var(--text-muted)", fontSize: 10, letterSpacing: "0.02em" }}>{w.purpose}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </span>
           ) : null}
           {suggestions.map((s) => (
             <button

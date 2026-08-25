@@ -63,6 +63,10 @@ export interface ChatConsoleProps {
   investigationTitle: string | null;
   onToggleMode: () => void;
   onOpenIntake: (opts?: { moduleId?: string; targetId?: string }) => void;
+  /** Open a wizard by its registry id (see console/wizards). Chat's picker
+   * uses `wizardsForModule` to enumerate; dante's `open_wizard` action
+   * resolves through `primaryWizardIdForModule` before calling this. */
+  onOpenWizard: (wizardId: string, opts?: { targetId?: string }) => void;
   onOpenXray?: () => void;
   /** True while a minimized page dock occupies the bottom of the center column.
    * The composer reserves space for it so it stays clickable. */

@@ -13,6 +13,8 @@ import NotificationsCenter from "./console/NotificationsCenter";
 import { resolvePage } from "./console/pages/registry";
 import SettingsOverlay from "./console/SettingsOverlay";
 import ChatConsole from "./console/ChatConsole";
+import { ConsoleWindow } from "./console/window";
+import { resolveWizard } from "./console/wizards";
 import { FaultyTerminal } from "./desktop/FaultyTerminal";
 
 // Faithful port of the `AILA Console` design page. Two modes: basic (console
@@ -39,10 +41,6 @@ function Console() {
   const [pagesOpen, setPagesOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // Intake overlay state. Carries the effective module + optional target id
-  // to preselect in the wizard picker (used when dante proposes an
-  // open_wizard action targeting a specific asset).
-  const [intake, setIntake] = useState<{ module: string; targetId: string | null } | null>(null);
   // Multi-window host: an ordered back-to-front stack plus the focused id.
   // `page`/`overlay` surfaces form the center-column drill stack (only the top
   // non-minimized one renders); `floater` surfaces (added by later reqs) render
@@ -122,7 +120,7 @@ function Console() {
   // Open a registered surface as a window. Re-opening the focused page surface
   // (same registry key + entity) updates it in place instead of stacking a
   // duplicate; anything else pushes a new window and focuses it.
-  const openWindow = (spec: { kind: WindowKind; module: string; registryKey: string; title: string; section: string; investigationId: string | null }) => {
+  const openWindow = (spec: { kind: WindowKind; module: string; registryKey: string; title: string; section: string | null; investigationId: string | null }) => {
     if (
       focused &&
       (focused.kind === "page" || focused.kind === "overlay") &&
@@ -146,22 +144,48 @@ function Console() {
     openWindow({ kind: "page", module: moduleKey, registryKey: key, title: `${moduleKey} \u00b7 ${label}`, section, investigationId });
   };
 
+  // Intake wizards live in the same windows[] stack as every other page, as
+  // `overlay` windows keyed on "wizard:intake". Reusing WindowState means the
+  // intake participates in the dock, z-order, and fullscreen chrome instead
+  // of floating as a bespoke overlay outside the host.
+  const openIntakeWindow = (module: string, targetId: string | null): void => {
+    openWindow({
+      kind: "overlay",
+      module,
+      registryKey: "wizard:intake",
+      title: `${module} \u00b7 new investigation`,
+      section: null,
+      investigationId: targetId,
+    });
+  };
+
+  // Registry-driven wizard opener. Intake wizards hit `openIntakeWindow`; page
+  // wizards route through `openNamedPage`. Chat's picker + dante's open_wizard
+  // action both funnel through here so the console never offers a wizard the
+  // registry doesn't back with a real surface.
+  const openWizard = (wizardId: string, opts?: { targetId?: string }): void => {
+    const w = resolveWizard(wizardId);
+    if (!w) return;
+    if (w.open.kind === "intake") {
+      openIntakeWindow(w.module, opts?.targetId ?? null);
+      return;
+    }
+    openNamedPage(w.open.moduleKey, w.open.section, w.label, null);
+  };
+
   // LeftRail's "+" is module-aware: for vulnerability it opens the Systems
   // registry with an auto-open create form, matching the SystemForm invoked
   // from the Systems tab's "+ register system" button (there is no duplicate
-  // IntakeWizard variant for that module). Every other module keeps the
-  // existing generic IntakeWizard.
-  // Opts may arrive from dante (an open_wizard action carrying a module_id +
-  // optional target_id) or from the LeftRail / ChatConsole "+ new
-  // investigation" affordance (no args, defers to the current module).
-  const requestIntake = (opts?: { moduleId?: string; targetId?: string }) => {
+  // IntakeWizard variant for that module). Every other module opens its
+  // IntakeWizard as an overlay window.
+  const requestIntake = (opts?: { moduleId?: string; targetId?: string }): void => {
     const effectiveModule = opts?.moduleId ?? moduleId;
     const targetId = opts?.targetId ?? null;
-    if (effectiveModule === "vulnerability" && !targetId) {
+    if (effectiveModule === "vulnerability") {
       openNamedPage("vulnerability", "systems:new", "register system");
       return;
     }
-    setIntake({ module: effectiveModule, targetId });
+    openIntakeWindow(effectiveModule, targetId);
   };
 
   // Opening a rail row binds it and raises the module's detail window. For
@@ -210,9 +234,41 @@ function Console() {
   const activePage = [...pageWindows].reverse().find((w) => !w.minimized) ?? null;
   const minimizedWindows = windows.filter((w) => w.minimized);
 
-  // A drill window (or full viewport when fullscreen). Resolved from the page
-  // registry by its registry key; the page returns its own <ConsoleWindow>.
+  // A drill window (or full viewport when fullscreen). Intake-wizard windows
+  // are hosted inline (wrapped in <ConsoleWindow> so they share the dock /
+  // z-order / fullscreen chrome); every other key resolves through the page
+  // registry, where the page returns its own <ConsoleWindow>.
   const renderPage = (w: WindowState) => {
+    if (w.registryKey === "wizard:intake") {
+      return (
+        <ConsoleWindow
+          id={w.id}
+          title={w.title}
+          kind="overlay"
+          isFocused={focusedId === w.id}
+          isFullscreen={w.fullscreen}
+          isMinimized={w.minimized}
+          onFocus={() => focusWindow(w.id)}
+          onClose={() => closeWindow(w.id)}
+          onMinimize={() => setMinimized(w.id, true)}
+          onToggleFullscreen={() => toggleFullscreen(w.id)}
+        >
+          <IntakeWizard
+            moduleId={w.module}
+            prefill={{ targetId: w.investigationId ?? undefined }}
+            onClose={() => closeWindow(w.id)}
+            onBind={(inv) => {
+              closeWindow(w.id);
+              openInvestigation(inv);
+            }}
+            onRequestUpload={() => {
+              closeWindow(w.id);
+              openNamedPage(w.module, "new-target", "upload target");
+            }}
+          />
+        </ConsoleWindow>
+      );
+    }
     const entry = resolvePage(w.registryKey);
     const shared: ModulePageProps = {
       section: w.section,
@@ -417,22 +473,6 @@ function Console() {
               onOpenPage={(mod, page, title) => openNamedPage(mod, page, title ?? page)}
             />
           ) : null}
-          {intake ? (
-            <IntakeWizard
-              moduleId={intake.module}
-              prefill={{ targetId: intake.targetId ?? undefined }}
-              onClose={() => setIntake(null)}
-              onBind={(inv) => {
-                setIntake(null);
-                openInvestigation(inv);
-              }}
-              onRequestUpload={() => {
-                const m = intake.module;
-                setIntake(null);
-                openNamedPage(m, "new-target", "upload target");
-              }}
-            />
-          ) : null}
           {!activePage ? (
             <ChatConsole
               mode={mode}
@@ -441,6 +481,7 @@ function Console() {
               investigationTitle={bound?.title ?? null}
               onToggleMode={() => setMode(adv ? "basic" : "advanced")}
               onOpenIntake={requestIntake}
+              onOpenWizard={openWizard}
               onOpenXray={bound ? () => openInvestigation(bound) : undefined}
               dockOpen={minimizedWindows.length > 0}
             />
