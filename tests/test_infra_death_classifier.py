@@ -26,7 +26,7 @@ from aila.modules.vr.services.investigation_finalizers import (
 )
 from aila.platform.contracts.enums import BranchStatus, InvestigationStatus
 from aila.platform.services import investigation_finalizers as platform_fin
-from aila.platform.services.infra_death import (
+from aila.platform.services.resilience import (
     RETRYABLE_INFRA_CLASSES,
     InfraDeathClassifier,
 )
