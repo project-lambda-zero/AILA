@@ -1063,6 +1063,7 @@ export const PAGE_CONFIGS = {
       c("sample_count", "samples"),
       c("actor"),
       c("created_at", "created"),
+      c("superseded_by", "superseded by"),
     ],
     filters: [
       { name: "task_type", label: "task type", type: "select" },
