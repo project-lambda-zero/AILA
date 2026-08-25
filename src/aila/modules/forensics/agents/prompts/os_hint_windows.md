@@ -1,9 +1,15 @@
 
+# Windows OS Hint
+
+## Environment and tool inventory
+
 Target OS: Windows analyzer. Python 3 is available (dissect.target importable),
 plus volatility3, tshark, Sysinternals strings.exe, certutil -hashfile,
 FLOSS, capa, PowerShell. Use raw strings (r"C:\\...") for paths. Do NOT
 call target-query as a CLI -- it is not on PATH. Use Python dissect.target
 directly.
+
+## Disk lane -- dissect.target filesystem API
 
 dissect.target FILESYSTEM API -- READ BEFORE WRITING A SINGLE LINE:
   Opening the evidence image (MANDATORY -- copy this exactly):
@@ -64,6 +70,8 @@ dissect.target FILESYSTEM API -- READ BEFORE WRITING A SINGLE LINE:
       t.fs.rglob(pattern)       # rglob does NOT exist on RootFilesystem
       Target(path)              # WRONG: use Target.open(path)
 
+## Disk lane -- dissect.target registry API
+
 dissect.target REGISTRY API -- the #1 source of script failures:
   The registry on a mounted Windows disk image is accessed via t.registry.
   Registry keys are dissect.regf.RegistryKey objects (NOT dict-like).
@@ -114,6 +122,8 @@ dissect.target REGISTRY API -- the #1 source of script failures:
       - Use backslashes in raw strings: r"HKLM\SYSTEM\..."
       - Or forward slashes: "HKLM/SYSTEM/..."
 
+## Script quality guardrails
+
 SCRIPT QUALITY (CRITICAL -- scripts with syntax errors waste a turn):
   Before emitting script_content, mentally verify:
   1. Every indentation level uses exactly 4 spaces (no tabs, no 2-space).
@@ -122,6 +132,8 @@ SCRIPT QUALITY (CRITICAL -- scripts with syntax errors waste a turn):
   4. No mixing of f-strings and .format() in the same expression.
   If you are uncertain about indentation, write FLAT code with no nesting.
 
+
+## Binary lane -- capa (capabilities analysis)
 
 capa (capabilities analysis -- OPERATIONAL, 1000+ rules installed):
   capa is the FLARE team's static capability matcher. The rules and
@@ -160,6 +172,8 @@ capa (capabilities analysis -- OPERATIONAL, 1000+ rules installed):
   If capa returns zero rules matched, do NOT assume "no injection" --
   try FLOSS first to deobfuscate strings, then re-run capa; most
   injection samples pack their API names until first execution.
+
+## Binary lane -- suspicious-file deep analysis
 
 Suspicious-file deep analysis (generic framework):
   Identifying a file's format is pre-work, not analysis. Any question
@@ -383,6 +397,8 @@ Suspicious-file deep analysis (generic framework):
       the final writeup cites a concrete artifact (file, offset,
       string, packet, or decoded value).
 
+## Non-Windows disks opened from a Windows analyzer
+
 Tips when dissect.target opens a non-Windows disk (e.g. Linux) from this
 Windows analyzer:
 - The analyzer is Windows but the evidence image can be any OS. Trust
@@ -393,6 +409,8 @@ Windows analyzer:
 - For Linux disk images from Windows, iterate /lib/modules for kernel
   modules, /etc/systemd, /etc/cron*, /root/.bash_history, /home/*/
   .bash_history, /var/log -- see Linux hints above.
+
+## Tampered / anti-forensics filesystem pivot
 
 Tampered / anti-forensics filesystem (CRITICAL pivot -- DO NOT give up):
 - NTFS tamper indicators: $MFT entries with zero'd FILE record, orphaned
@@ -433,6 +451,8 @@ Tampered / anti-forensics filesystem (CRITICAL pivot -- DO NOT give up):
   snapshot recovery, memory carving} has run against the evidence and
   produced zero candidates.
 - Bound scans to ~20 GiB per turn. Multiple turns can cover the rest.
+
+## Mandatory pivot trigger (disk-image questions)
 
 MANDATORY PIVOT TRIGGER (applies to every disk-image question):
 - If ANY two of your prior turns on the same evidence path produced
@@ -522,6 +542,8 @@ MANDATORY PIVOT TRIGGER (applies to every disk-image question):
 - Do NOT submit without running at least one raw-byte-scan turn when the
   signals above were seen. A guess from Windows-disk artefacts is NOT
   provenance for a Linux-disk question.
+
+## Mandatory archive extraction
 
 MANDATORY ARCHIVE EXTRACTION (highest-priority pivot for any Windows
 sample question):

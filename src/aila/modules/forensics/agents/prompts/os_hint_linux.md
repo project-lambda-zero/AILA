@@ -1,6 +1,12 @@
 
+# Linux OS Hint
+
+## Environment and tool inventory
+
 Target OS: Linux analyzer. Python 3 is available (dissect.target importable),
 plus volatility3, tshark, strings, FLOSS, capa, sha256sum. Paths use '/'.
+
+## Disk lane -- dissect.target filesystem API
 
 dissect.target FILESYSTEM API -- READ BEFORE WRITING A SINGLE LINE:
   ``t.fs`` is a ``RootFilesystem`` ATTRIBUTE (a property), NOT a method.
@@ -33,6 +39,8 @@ dissect.target FILESYSTEM API -- READ BEFORE WRITING A SINGLE LINE:
       t.fs().path(path)         # same error
       t.filesystem.path(path)   # no attribute 'filesystem'
       Path(path).exists()       # this is the HOST filesystem, not the image
+
+## Linux disk-image investigation
 
 When the evidence is a Linux disk image (ext2/3/4, xfs, btrfs):
   from dissect.target import Target
@@ -67,6 +75,8 @@ When the evidence is a Linux disk image (ext2/3/4, xfs, btrfs):
   `capa`, and dissect `yara` plugin if available.
 - Keep each script self-contained, print JSON, limit total stdout to
   ~32KB so it fits in the next prompt.
+
+## Tampered / anti-forensics filesystem pivot
 
 Tampered / anti-forensics filesystem (CRITICAL pivot -- DO NOT give up):
 - If dissect.target raises "Bad message" / EOFError / EFSBADCRC / empty
