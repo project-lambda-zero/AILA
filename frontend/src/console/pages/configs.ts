@@ -1,7 +1,8 @@
 import { createElement } from "react";
 
 import { css } from "../css";
-import { StatusBadge } from "./badges";
+import { AuditEventDetail } from "./AuditEventDetail";
+import { SeverityBadge, StatusBadge } from "./badges";
 import type { PageColumn, PageConfig } from "./DataPage";
 import { LlmChatTranscript, llmPreviewLine } from "./LlmLogEntry";
 
@@ -39,6 +40,26 @@ const c = (field: string, label?: string): PageColumn => ({
   label: label ?? field.replace(/_/g, " "),
   kind: KIND_FIELDS[field],
 });
+
+/** Actions on the auth surface that read as medium severity even when they
+ * succeed -- minting, revoking, or issuing a credential is a security-relevant
+ * event worth surfacing above routine activity. */
+const AUDIT_MEDIUM_ACTIONS: Record<string, true> = {
+  create_api_key: true,
+  revoke_api_key: true,
+  token_issue: true,
+  token_refresh: true,
+};
+
+/** Audit severity is a read-time projection of (action, status), NOT a stored
+ * column: a failed event is high, an auth-surface action is medium, everything
+ * else is low. Named `severity` so the chip reads through the same tone map as
+ * every other severity chip on the console (badges.tsx SEVERITY_TONE). */
+function auditSeverity(row: Record<string, unknown>): "high" | "medium" | "low" {
+  if (String(row["status"] ?? "").toLowerCase() === "failed") return "high";
+  if (AUDIT_MEDIUM_ACTIONS[String(row["action"] ?? "")]) return "medium";
+  return "low";
+}
 
 /** One DataPage config per left-rail item, keyed `${moduleId}:${pageId}`.
  * Endpoints + fields are the real backend contract (mapped from the routers).
@@ -508,8 +529,33 @@ export const PAGE_CONFIGS = {
     // PaginatedResponse envelope (schemas/common.py:24), so server-side
     // pagination works exactly.
     pagination: true,
-    columns: [c("created_at", "when"), c("stage"), c("action"), c("status"), c("target"), c("user_id", "user"), c("run_id", "run")],
-    filters: [{ name: "target", label: "target", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "when", type: "date-range" }],
+    // Derived `severity` is a read-time projection of (action, status), never a
+    // stored column (auditSeverity). The five backend filters ride the req 28
+    // primitive server-side so they compose with pagination + true total: the
+    // multi-selects post repeated params (OR within a field), `search` maps to
+    // the target ILIKE, and the `created_at` range posts created_at_since /
+    // created_at_until -- all consumed by GET /audit/events.
+    columns: [
+      c("created_at", "when"),
+      c("stage"),
+      c("action"),
+      c("status"),
+      { field: "severity", label: "severity", render: (_v, row) => createElement(SeverityBadge, { value: auditSeverity(row) }) },
+      c("target"),
+      c("user_id", "user"),
+      c("run_id", "run"),
+    ],
+    filters: [
+      { name: "stage", label: "stage", type: "multi-select", server: true },
+      { name: "action", label: "action", type: "multi-select", server: true },
+      { name: "status", label: "status", type: "multi-select", server: true },
+      { name: "user_id", label: "user", type: "multi-select", server: true },
+      { name: "search", label: "target", type: "text", server: true },
+      { name: "created_at", label: "when", type: "date-range", server: true },
+    ],
+    detailRenderers: {
+      details: (v, row) => createElement(AuditEventDetail, { value: v, row }),
+    },
   },
   "admin:llm-log": {
     title: "admin \u00b7 llm log",
