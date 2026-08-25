@@ -5,6 +5,12 @@
  * so managing it lives next to the systems it governs rather than as a
  * standalone admin page. All three endpoints require the admin role; render
  * this modal only for admins.
+ *
+ * The manager body renders inside the shared WizardShell as one step so it
+ * carries the same guided chrome + invalid-field summary every other
+ * chat-reachable wizard uses (chat-console-wizards.md AC1). The single step's
+ * primary control adds a new tag key; the issues list enforces the tag_key
+ * format rule before the add can fire.
  */
 import { useState, type JSX } from "react";
 
@@ -15,8 +21,17 @@ import {
   useTagVocabulary,
 } from "../../../api/systems";
 import { css } from "../../css";
+import { WizardShell, type WizardFieldIssue } from "../../wizards";
 
 const TAG_KEY_RE = /^[a-z0-9_-]+$/;
+
+/** Validate the pending tag key. Empty or off-pattern keys block the add. */
+function computeIssues(tagKey: string): WizardFieldIssue[] {
+  const key = tagKey.trim();
+  if (!key) return [{ label: "tag key", reason: "required" }];
+  if (!TAG_KEY_RE.test(key)) return [{ label: "tag key", reason: "must match ^[a-z0-9_-]+$" }];
+  return [];
+}
 
 interface Props {
   onClose: () => void;
@@ -28,23 +43,14 @@ export default function TagVocabularyModal(props: Props): JSX.Element {
   const del = useDeleteVocabEntry();
   const [tagKey, setTagKey] = useState<string>("");
   const [description, setDescription] = useState<string>("");
-  const [formError, setFormError] = useState<string | null>(null);
 
   const entries = vocabQ.data ?? [];
+  const issues = computeIssues(tagKey);
 
   const doAdd = (): void => {
-    const key = tagKey.trim();
-    if (!key) {
-      setFormError("tag key is required");
-      return;
-    }
-    if (!TAG_KEY_RE.test(key)) {
-      setFormError("tag key must match ^[a-z0-9_-]+$");
-      return;
-    }
-    setFormError(null);
+    if (issues.length > 0) return;
     create.mutate(
-      { tag_key: key, description: description.trim() },
+      { tag_key: tagKey.trim(), description: description.trim() },
       {
         onSuccess: () => {
           setTagKey("");
@@ -64,34 +70,39 @@ export default function TagVocabularyModal(props: Props): JSX.Element {
       <div
         onClick={(e) => e.stopPropagation()}
         style={css(
-          "width:100%;max-width:560px;max-height:100%;overflow:auto;background:var(--surface-card);border:1px solid var(--border);border-radius:4px;box-shadow:0 12px 60px rgba(0,0,0,0.6);display:flex;flex-direction:column;",
+          "width:100%;max-width:560px;height:min(640px,calc(100vh - 48px));background:var(--surface-card);border:1px solid var(--border);border-radius:4px;box-shadow:0 12px 60px rgba(0,0,0,0.6);display:flex;flex-direction:column;position:relative;",
         )}
       >
-        <div
-          style={css(
-            "display:flex;align-items:center;gap:8px;padding:11px 14px;background:var(--surface-chrome);border-bottom:1px solid var(--border);background-image:repeating-linear-gradient(135deg,var(--border-soft) 0 1px,transparent 1px 4px);",
-          )}
+        <button
+          type="button"
+          onClick={props.onClose}
+          aria-label="close"
+          style={{
+            ...css("width:24px;height:24px;display:flex;align-items:center;justify-content:center;background:transparent;border:0;color:var(--text-muted);cursor:pointer;font-size:12px;"),
+            position: "absolute",
+            top: 8,
+            right: 8,
+            zIndex: 2,
+          }}
         >
-          <span style={css("width:8px;height:8px;background:var(--accent);box-shadow:0 0 6px var(--accent);")} />
-          <span style={css("font-family:var(--font-mono);font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-primary);")}>
-            tag vocabulary
-          </span>
-          <span style={css("flex:1;")} />
-          <button
-            type="button"
-            onClick={props.onClose}
-            style={css("width:24px;height:24px;display:flex;align-items:center;justify-content:center;background:transparent;border:0;color:var(--text-muted);cursor:pointer;font-size:12px;")}
-          >
-            {"\u2715"}
-          </button>
-        </div>
-
-        <div style={css("padding:16px 18px;display:flex;flex-direction:column;gap:14px;")}>
-          <span style={css("font-size:11px;color:var(--text-muted);line-height:1.5;")}>
-            Tag keys an operator may assign to a system. Add a key here before it
-            can be assigned {"\u2014"} an unknown key is rejected at assignment time.
-          </span>
-
+          {"\u2715"}
+        </button>
+        <WizardShell
+          heading="tag vocabulary"
+          steps={[{
+            id: "vocab",
+            title: "manage tag keys",
+            purpose: "tag keys an operator may assign to a system; an unknown key is rejected at assignment time.",
+          }]}
+          current={0}
+          issues={issues}
+          onBack={() => {}}
+          onNext={() => {}}
+          onFinish={doAdd}
+          finishLabel="add tag key"
+          busy={create.isPending}
+          error={create.isError ? "server: " + apiErrDetail(create.error) : null}
+        >
           <div>
             <div style={css("font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);margin-bottom:6px;")}>
               vocabulary {entries.length ? "(" + entries.length + ")" : ""}
@@ -143,7 +154,7 @@ export default function TagVocabularyModal(props: Props): JSX.Element {
               <input
                 type="text"
                 value={tagKey}
-                onChange={(e) => { setTagKey(e.target.value); setFormError(null); }}
+                onChange={(e) => setTagKey(e.target.value)}
                 placeholder="lowercase alphanumeric + underscore/hyphen"
                 style={css("background:var(--surface-sunk);border:1px solid var(--border-soft);outline:none;padding:9px 11px;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;border-radius:3px;")}
               />
@@ -158,20 +169,8 @@ export default function TagVocabularyModal(props: Props): JSX.Element {
                 style={css("resize:vertical;background:var(--surface-sunk);border:1px solid var(--border-soft);outline:none;padding:9px 11px;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;line-height:1.45;border-radius:3px;")}
               />
             </label>
-            {formError ? <div style={css("font-size:11px;color:var(--status-warn);")}>{formError}</div> : null}
-            {create.isError ? <div style={css("font-size:11px;color:var(--status-warn);")}>{"server: " + apiErrDetail(create.error)}</div> : null}
-            <div style={css("display:flex;justify-content:flex-end;")}>
-              <button
-                type="button"
-                onClick={doAdd}
-                disabled={create.isPending}
-                style={css("padding:0 14px;height:30px;font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-on-accent);background:var(--accent);border:1px solid var(--accent);border-radius:3px;cursor:pointer;")}
-              >
-                {create.isPending ? "adding \u2026" : "add tag key"}
-              </button>
-            </div>
           </div>
-        </div>
+        </WizardShell>
       </div>
     </div>
   );
