@@ -104,7 +104,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
   return (
     <aside
       style={css(
-        `height:100%;display:flex;flex-direction:column;overflow:hidden;background:color-mix(in srgb,var(--surface-card) 72%,transparent);border-right:1px solid var(--border-soft);`,
+        `height:100%;display:flex;flex-direction:column;overflow:hidden;background:transparent;border-right:1px solid var(--border-soft);`,
       )}
     >
       {/* 1. module header */}

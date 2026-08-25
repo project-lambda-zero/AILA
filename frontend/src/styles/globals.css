@@ -42,8 +42,8 @@
   --aila-bg-hover: #131314;
 
   /* --- Foreground (warm cream ramp) --- */
-  --aila-cream: #ffd7af;
-  --aila-cream-muted: #af8c6c;
+  --aila-cream: #fff1e0;
+  --aila-cream-muted: #d8c3a8;
   --aila-cream-faint: #6b563f;
 
   /* --- Accent (hot pink) --- */
@@ -59,7 +59,7 @@
   --aila-amber: #ffb85f;
 
   /* --- Rules & borders --- */
-  --aila-rule: #2a2a2a;
+  --aila-rule: #ad5454;
   --aila-rule-bright: #3a3a3a;
   --aila-rule-faint: #1f1f1f;
 
@@ -142,10 +142,10 @@
 
 [data-theme="midnight-cloud-8"] {
   --aila-bg: #131314; --aila-bg-sunk: #131314; --aila-bg-raised: #131314; --aila-bg-chrome: #131314; --aila-bg-hover: #131314;
-  --aila-cream: #ffd7af; --aila-cream-muted: #af8c6c; --aila-cream-faint: #6b563f;
+  --aila-cream: #fff1e0; --aila-cream-muted: #d8c3a8; --aila-cream-faint: #6b563f;
   --aila-pink: #ff5f87; --aila-pink-bright: #ff7a9c; --aila-pink-sunk: #c8487a; --aila-pink-fg: #1a0a12;
   --aila-mint: #97dbbe; --aila-lavender: #af87d7; --aila-amber: #ffb85f; --aila-soft-pink: #f0a8c7;
-  --aila-rule: #2a2a2a; --aila-rule-bright: #3a3a3a; --aila-rule-faint: #1f1f1f;
+  --aila-rule: #ad5454; --aila-rule-bright: #3a3a3a; --aila-rule-faint: #1f1f1f;
 }
 
 [data-theme="frutiger-aero"] {
