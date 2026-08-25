@@ -29,6 +29,9 @@ function transitionAction(moduleId: string, target: string, sources: string[]): 
 const mwTransition = (target: string, sources: string[]): PageAction =>
   transitionAction("malware", target, sources);
 
+const vrTransition = (target: string, sources: string[]): PageAction =>
+  transitionAction("vr", target, sources);
+
 /** Column shorthand: field + auto-labelled from the field name. */
 // Auto-assign a shared semantic renderer (badges.tsx) for fields whose names
 // carry status/severity/timestamp/cost semantics, so every table reads state
@@ -244,8 +247,21 @@ export const PAGE_CONFIGS = {
     // (api_router.py:1665+), so offset-mode pagination reads the true total.
     pagination: true,
     paginationParams: "offset",
-    columns: [c("crash_type", "crash"), c("vulnerable_function", "function"), c("disclosure_status", "disclosure"), c("assigned_cve_id", "cve"), c("cvss_score", "cvss"), c("cwe_id", "cwe"), c("evidence_count", "evidence")],
-    filters: [{ name: "crash_type", label: "crash type", type: "text" }],
+    columns: [
+      c("crash_type", "crash"),
+      c("vulnerable_function", "function"),
+      {
+        field: "workflow_state",
+        label: "state",
+        render: (v) => createElement(WorkflowStateBadge, { value: v ?? "new" }),
+      },
+      c("disclosure_status", "disclosure"),
+      c("assigned_cve_id", "cve"),
+      c("cvss_score", "cvss"),
+      c("cwe_id", "cwe"),
+      c("evidence_count", "evidence"),
+    ],
+    filters: [{ name: "crash_type", label: "crash type", type: "text" }, { name: "workflow_state", label: "state", type: "select" }],
     // Enrich a finding in place: writers leave triage/classification fields
     // NULL for stub and direct-dispatch findings, so the operator fills them
     // through the pre-flight modal (fields prefill from the row where present).
@@ -266,6 +282,17 @@ export const PAGE_CONFIGS = {
           { name: "evidence_refs", label: "evidence refs", type: "tags", placeholder: "message / outcome ids or source citations" },
         ],
       },
+      // Workflow transitions. Each row calls POST /findings/{id}/transition
+      // with module_id="vr" and the target state; whenStatus gates the button
+      // by the row's current workflow_state so only legal edges appear. The
+      // graph mirrors module.py workflow_definitions() (base triage +
+      // vr.false_positive / vr.accepted_risk) -- keep in lockstep.
+      vrTransition("investigating", ["new", "mitigated", "vr.false_positive", "vr.accepted_risk"]),
+      vrTransition("mitigated", ["investigating"]),
+      vrTransition("verified", ["mitigated"]),
+      vrTransition("closed", ["verified"]),
+      vrTransition("vr.false_positive", ["investigating"]),
+      vrTransition("vr.accepted_risk", ["investigating"]),
     ],
   },
   "vr:disclosures": {
