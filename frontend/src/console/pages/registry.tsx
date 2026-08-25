@@ -12,12 +12,12 @@ import ForensicsProjectPage from "./forensics/ForensicsProjectPage";
 import FuzzCampaignDetail from "./FuzzCampaignDetail";
 import KnowledgePage from "./KnowledgePage";
 import MalwareHealthPanel from "./MalwareHealthPanel";
+import MalwareTargetDetail from "./MalwareTargetDetail";
 import MalwareXRayPage from "./MalwareXRayPage";
 import { McpInstanceToolsDetail } from "./McpInstanceToolsDetail";
 import NdayProjectForm, { CveReproduceDetail } from "./NdayProjectForm";
 import PersonaModelRoutingPage from "./PersonaModelRoutingPage";
 import SandboxPage from "./SandboxPage";
-import TargetInvestigations from "./TargetInvestigations";
 import { TeamCrossDetail } from "./TeamCrossDetail";
 import UploadForm from "./UploadForm";
 import VRTargetDetail from "./VRTargetDetail";
@@ -270,9 +270,8 @@ const BESPOKE: Record<string, PageEntry> = {
         {...p}
         onNewClick={() => p.onOpenPage?.("malware", "new-target", "upload target")}
         detailBody={(row) => (
-          <TargetInvestigations
-            targetId={String(row.id ?? "")}
-            endpoint="/malware/investigations"
+          <MalwareTargetDetail
+            row={row}
             onOpenXray={(inv) => p.onOpenPage?.("malware", "xray", `malware \u00b7 x-ray`, inv.id)}
           />
         )}

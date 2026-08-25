@@ -1070,7 +1070,9 @@ const DELETES: Record<string, { delete: string; idField?: string }> = {
   "vr:disclosures": { delete: "/vr/disclosures/{id}" },
   "vr:fuzz-campaigns": { delete: "/vr/fuzz/campaigns/{id}" },
   "malware:workspaces": { delete: "/malware/workspaces/{id}" },
-  "malware:targets": { delete: "/malware/targets/{id}" },
+  // malware:targets delete lives in the bespoke MalwareTargetDetail action
+  // toolbar (soft-archive + state-aware siblings), so no generic header
+  // delete here -- mirrors vr:targets above.
   "malware:investigations": { delete: "/malware/investigations/{id}" },
   "malware:patterns": { delete: "/malware/patterns/{id}" },
   "malware:findings": { delete: "/malware/findings/{id}" },
