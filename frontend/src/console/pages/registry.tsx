@@ -8,6 +8,7 @@ import AutomationWizard, { AutomationActionDetail } from "./AutomationWizard";
 import { PAGE_CONFIGS } from "./configs";
 import CostReportingPage from "./cost/CostReportingPage";
 import DataPage from "./DataPage";
+import DocsPage from "./DocsPage";
 import ForensicsProjectPage from "./forensics/ForensicsProjectPage";
 import FuzzCampaignDetail from "./FuzzCampaignDetail";
 import KnowledgePage from "./KnowledgePage";
@@ -37,6 +38,7 @@ export interface PageEntry {
 // target-upload wizards, the forensics project-detail window, and the designed
 // Vulnerability sub-views. Everything else is a declarative DataPage.
 const BESPOKE: Record<string, PageEntry> = {
+  "platform:docs": { title: "docs", render: (p) => <DocsPage {...p} /> },
   xray: { title: "x-ray", render: (p) => <XRayPage {...p} /> },
   // Registry alias so `onOpenPage("vr", "xray", ...)` (row-activate from the
   // investigations/targets pages) resolves the same X-Ray renderer that the

@@ -91,7 +91,7 @@ function Console() {
   const nav: { label: string; on: boolean; onClick: () => void }[] = [
     { label: "console", on: !adv, onClick: () => setMode("basic") },
     { label: "workspace", on: adv, onClick: () => setMode("advanced") },
-    { label: "docs", on: false, onClick: () => {} },
+    { label: "docs", on: windows.some((w) => w.id === focusedId && w.registryKey === "platform:docs" && !w.minimized), onClick: () => openNamedPage("platform", "docs", "docs") },
   ];
 
   // Open any registered page (left-rail page / admin item) as a window. An

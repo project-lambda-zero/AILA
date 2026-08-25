@@ -758,6 +758,11 @@ def create_app() -> FastAPI:
     from aila.api.routers.audit import router as audit_router
     application.include_router(audit_router)
 
+    # Req 29: platform docs surface -- operator-facing read-only view over the
+    # allow-listed repo docs/ set that backs the console Docs page.
+    from aila.api.routers.docs import router as docs_router
+    application.include_router(docs_router)
+
     from aila.api.routers.config import router as config_router
     application.include_router(config_router)
 
