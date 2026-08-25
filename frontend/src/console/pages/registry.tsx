@@ -22,6 +22,7 @@ import { TeamCrossDetail } from "./TeamCrossDetail";
 import UploadForm from "./UploadForm";
 import VrPatternsPage from "./VrPatternsPage";
 import VulnerabilityPage from "./VulnerabilityPage";
+import { WorkflowTransitionsDetail } from "./WorkflowTransitionsDetail";
 import WorkspaceTargets from "./WorkspaceTargets";
 import XRayPage from "./XRayPage";
 
@@ -153,6 +154,22 @@ const BESPOKE: Record<string, PageEntry> = {
             }
           />
         )}
+      />
+    ),
+  },
+  // Workflows: the read-only cursor list (columns + run/definition/state/date
+  // filters from configs.ts) plus a bespoke detail body that drills a row into
+  // its full transition history via GET /admin/workflows/runs/{run_id}/
+  // transitions -- an ordered timeline with repeat-retry runs collapsed. The
+  // detail replaces the generic field grid, so the component owns the header.
+  "admin:workflows": {
+    title: PAGE_CONFIGS["admin:workflows"].title,
+    render: (p) => (
+      <DataPage
+        config={PAGE_CONFIGS["admin:workflows"]}
+        configKey="admin:workflows"
+        {...p}
+        detailBody={(row) => <WorkflowTransitionsDetail row={row} />}
       />
     ),
   },

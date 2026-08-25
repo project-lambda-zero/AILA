@@ -662,7 +662,12 @@ export const PAGE_CONFIGS = {
     title: "admin \u00b7 workflows",
     endpoint: "/admin/workflows/runs",
     columns: [c("run_id", "run"), c("current_state", "state"), c("definition_id", "definition"), c("retries_in_state", "retries"), c("version"), c("updated_at", "updated")],
-    filters: [{ name: "definition_id", label: "definition", type: "text" }, { name: "updated_at", label: "updated", type: "date-range" }],
+    filters: [
+      { name: "run_id", label: "run", type: "text" },
+      { name: "definition_id", label: "definition", type: "text", server: true },
+      { name: "current_state", label: "state", type: "select", server: true },
+      { name: "updated_at", label: "updated", type: "date-range" },
+    ],
   },
   "admin:scheduled-reports": {
     title: "admin \u00b7 scheduled reports",
