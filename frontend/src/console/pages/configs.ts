@@ -132,6 +132,24 @@ export const PAGE_CONFIGS = {
         { value: "masvs_audit", label: "masvs audit" },
         { value: "apk_static_audit", label: "apk static audit" },
       ] },
+      // targets label uses `display_name` because VRTargetSummary has no
+      // `name` field. `has_outcomes` offers only the `true` option since an
+      // empty select reads as any. Polarity and verifier verdict are
+      // enumerable sets, so they are `select`, not free text.
+      { name: "target_id", label: "target", type: "select", server: true, optionsFrom: "/vr/targets", optionsValueField: "id", optionsLabelField: "display_name" },
+      { name: "workspace_id", label: "workspace", type: "select", server: true, optionsFrom: "/vr/workspaces", optionsValueField: "id", optionsLabelField: "name" },
+      { name: "project_id", label: "project", type: "select", server: true, optionsFrom: "/vr/projects", optionsValueField: "id", optionsLabelField: "name" },
+      { name: "has_outcomes", label: "outcomes", type: "select", server: true, options: [{ value: "true", label: "with outcomes" }] },
+      { name: "primary_outcome_polarity", label: "verdict polarity", type: "select", server: true, options: [
+        { value: "finding", label: "finding" },
+        { value: "no_finding", label: "no finding" },
+        { value: "inconclusive", label: "inconclusive" },
+      ] },
+      { name: "verifier_verdict", label: "verdict", type: "select", server: true, options: [
+        { value: "confirmed", label: "confirmed" },
+        { value: "refuted", label: "refuted" },
+        { value: "inconclusive", label: "inconclusive" },
+      ] },
     ],
     // Result-first columns. `kind` is the operator's classification of the
     // investigation (discovery / variant_hunt / triage / n_day / audit);

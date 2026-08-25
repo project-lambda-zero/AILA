@@ -21,7 +21,9 @@ import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from sqlalchemy import exists as sa_exists
 from sqlalchemy import func as sa_func
+from sqlalchemy import or_ as sa_or
 from sqlalchemy import text as sa_text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select
@@ -4451,22 +4453,40 @@ def create_vr_router() -> APIRouter:
     @router.get(
         "/investigations",
         response_model=DataEnvelope[list[VRInvestigationSummary]],
-        summary="List investigations (filterable by target_id, kind, status, q).",
+        summary=(
+            "List investigations (filterable by target_id, project_id, "
+            "workspace_id, kind, status, q, favorites, has_outcomes, "
+            "primary_outcome_polarity, verifier_verdict)."
+        ),
     )
     @limiter.limit("60/minute")
     async def list_investigations(
         request: Request,
         auth: AuthContext = Depends(require_auth),
         target_id: str | None = Query(default=None),
+        project_id: str | None = Query(default=None),
+        workspace_id: str | None = Query(default=None),
         kind: str | None = Query(default=None),
         investigation_status: str | None = Query(default=None, alias="status"),
         q: str | None = Query(default=None, description="Case-insensitive title substring filter."),
         favorites: bool = Query(default=False, description="Restrict to is_favorite=true rows."),
+        has_outcomes: bool = Query(
+            default=False,
+            description="Restrict to investigations with at least one outcome row.",
+        ),
+        primary_outcome_polarity: str | None = Query(
+            default=None,
+            description="Filter by persisted primary_outcome_polarity (finding / no_finding / inconclusive).",
+        ),
+        verifier_verdict: str | None = Query(
+            default=None,
+            description="Filter by persisted verifier_verdict (confirmed / refuted / inconclusive).",
+        ),
         offset: int = Query(default=0, ge=0),
         limit: int = Query(default=50, ge=1, le=500),
     ) -> DataEnvelope[list[VRInvestigationSummary]]:
         del request
-        from .db_models import VRInvestigationRecord
+        from .db_models import VRInvestigationRecord, VRProjectRecord, VRTargetRecord
 
         async with UnitOfWork() as uow:
             base = _team_filter(select(VRInvestigationRecord), VRInvestigationRecord, auth)
@@ -4477,6 +4497,49 @@ def create_vr_router() -> APIRouter:
             if target_id is not None:
                 base = base.where(VRInvestigationRecord.target_id == target_id)
                 count_base = count_base.where(VRInvestigationRecord.target_id == target_id)
+            if project_id is not None:
+                base = base.where(VRInvestigationRecord.project_id == project_id)
+                count_base = count_base.where(VRInvestigationRecord.project_id == project_id)
+            if workspace_id is not None:
+                # An investigation belongs to a workspace when its
+                # target_id is a vr_targets row scoped to that workspace
+                # OR its project_id resolves through vr_projects.target_id
+                # to such a target. vr_projects has no direct workspace_id
+                # column, so the project side needs the join hop.
+                ws_targets = select(VRTargetRecord.id).where(
+                    VRTargetRecord.workspace_id == workspace_id,
+                )
+                ws_projects = (
+                    select(VRProjectRecord.id)
+                    .join(VRTargetRecord, VRTargetRecord.id == VRProjectRecord.target_id)
+                    .where(VRTargetRecord.workspace_id == workspace_id)
+                )
+                ws_cond = sa_or(
+                    VRInvestigationRecord.target_id.in_(ws_targets),
+                    VRInvestigationRecord.project_id.in_(ws_projects),
+                )
+                base = base.where(ws_cond)
+                count_base = count_base.where(ws_cond)
+            if has_outcomes:
+                oc_exists = sa_exists().where(
+                    VRInvestigationOutcomeRecord.investigation_id == VRInvestigationRecord.id,
+                )
+                base = base.where(oc_exists)
+                count_base = count_base.where(oc_exists)
+            if primary_outcome_polarity is not None:
+                base = base.where(
+                    VRInvestigationRecord.primary_outcome_polarity == primary_outcome_polarity,
+                )
+                count_base = count_base.where(
+                    VRInvestigationRecord.primary_outcome_polarity == primary_outcome_polarity,
+                )
+            if verifier_verdict is not None:
+                base = base.where(
+                    VRInvestigationRecord.verifier_verdict == verifier_verdict,
+                )
+                count_base = count_base.where(
+                    VRInvestigationRecord.verifier_verdict == verifier_verdict,
+                )
             if kind is not None:
                 base = base.where(VRInvestigationRecord.kind == kind)
                 count_base = count_base.where(VRInvestigationRecord.kind == kind)
@@ -5405,6 +5468,12 @@ def create_vr_router() -> APIRouter:
             # history but the inv pointer is reset.
             prior_outcome_id = inv.primary_outcome_id
             inv.primary_outcome_id = None
+            # Clear the denormalized filter columns too so a reopened
+            # investigation drops out of primary_outcome_polarity /
+            # verifier_verdict scoped queries until the next primary
+            # outcome lands.
+            inv.primary_outcome_polarity = None
+            inv.verifier_verdict = None
             uow.session.add(inv)
 
             # Abandon any prior halvar branches still in a non-terminal

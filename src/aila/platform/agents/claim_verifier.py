@@ -472,6 +472,21 @@ class ClaimVerifierAgentBase:
         del orig_payload
         raise NotImplementedError
 
+    async def _after_verifier_report_persisted(
+        self, uow: Any, outcome_row: Any, payload: dict[str, Any],
+    ) -> None:
+        """Module hook: sync any denormalized investigation columns
+        derived from the now-final verifier report. Base is a no-op;
+        VR overrides to keep the investigations-list filter columns
+        (``primary_outcome_polarity``, ``verifier_verdict``) in sync
+        with the freshly-persisted verifier report. Called inside the
+        same ``UnitOfWork`` block that wrote the outcome update, before
+        the enclosing commit, so the investigation update commits
+        atomically with the outcome.
+        """
+        del uow, outcome_row, payload
+        return None
+
     # ---- Hooks with defaults (VR-shaped) that subclasses may override ----
 
     def _check_verifiable_outcome_kind(
@@ -747,6 +762,7 @@ class ClaimVerifierAgentBase:
             payload["verifier_report"] = verifier_report
             row.payload_json = json.dumps(payload)
             uow.session.add(row)
+            await self._after_verifier_report_persisted(uow, row, payload)
             await uow.commit()
 
         # Auto-promote on verifier-confirmed positive findings.

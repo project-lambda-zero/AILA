@@ -55,7 +55,10 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
 )
 from aila.modules.vr.services.mcp_call_logger import record_call
-from aila.modules.vr.services.outcome_polarity import derive_outcome_polarity
+from aila.modules.vr.services.outcome_polarity import (
+    derive_outcome_polarity,
+    derive_verifier_verdict,
+)
 from aila.modules.vr.services.outcome_review import (
     OUTCOME_STATE_APPROVED,
     OUTCOME_STATE_DRAFT,
@@ -3104,6 +3107,10 @@ async def _upsert_canonical_outcome(
         )).first()
         if inv is not None:
             inv.primary_outcome_id = row.id
+            inv.primary_outcome_polarity = derive_outcome_polarity(
+                new_outcome_kind, seed_payload,
+            )
+            inv.verifier_verdict = derive_verifier_verdict(seed_payload)
             inv.updated_at = now
             uow.session.add(inv)
         return row.id
@@ -3241,9 +3248,18 @@ async def _upsert_canonical_outcome(
             VRInvestigationRecord.id == investigation_id,
         )
     )).first()
-    if inv is not None and inv.primary_outcome_id != existing.id:
-        inv.primary_outcome_id = existing.id
-        inv.updated_at = now
+    if inv is not None:
+        if inv.primary_outcome_id != existing.id:
+            inv.primary_outcome_id = existing.id
+            inv.updated_at = now
+        # Re-derive both axes unconditionally: the canonical outcome
+        # payload may have changed (verifier verdict landing, kind
+        # rank promoted, no-finding marker added) without the
+        # primary_outcome_id pointer moving.
+        inv.primary_outcome_polarity = derive_outcome_polarity(
+            existing.outcome_kind, old_payload,
+        )
+        inv.verifier_verdict = derive_verifier_verdict(old_payload)
         uow.session.add(inv)
 
     _ = changed  # tracked for log later; same row id either way

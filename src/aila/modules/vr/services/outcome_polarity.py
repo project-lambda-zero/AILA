@@ -42,7 +42,11 @@ from __future__ import annotations
 
 from typing import Literal
 
-__all__ = ["derive_outcome_polarity"]
+__all__ = [
+    "derive_outcome_polarity",
+    "derive_verifier_verdict",
+    "investigation_outcome_axes",
+]
 
 _Polarity = Literal["finding", "no_finding", "inconclusive"]
 
@@ -69,3 +73,34 @@ def derive_outcome_polarity(
     if outcome_kind == "audit_memo" and payload.get("verdict") == "no_finding":
         return "no_finding"
     return "inconclusive"
+
+
+def derive_verifier_verdict(payload: dict) -> str | None:
+    """Return the raw verifier verdict string, or None when absent.
+
+    Reads ``payload['verifier_report']['verdict']``; safe against a
+    missing or non-dict ``verifier_report`` and against a non-string
+    verdict field. Used to keep the denormalized ``verifier_verdict``
+    filter column on ``VRInvestigationRecord`` in sync with the
+    verifier report the claim verifier stamps on the canonical outcome.
+    """
+    report = payload.get("verifier_report")
+    if isinstance(report, dict):
+        v = report.get("verdict")
+        if isinstance(v, str) and v:
+            return v
+    return None
+
+
+def investigation_outcome_axes(
+    outcome_kind: str, payload: dict,
+) -> tuple[_Polarity | None, str | None]:
+    """Return ``(primary_outcome_polarity, verifier_verdict)`` for
+    the given canonical outcome kind + payload. Composed helper used
+    by the investigation write hooks to update both denormalized
+    filter columns in one shot.
+    """
+    return (
+        derive_outcome_polarity(outcome_kind, payload),
+        derive_verifier_verdict(payload),
+    )

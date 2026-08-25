@@ -26,6 +26,8 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from sqlmodel import select as _select
+
 from aila.modules.vr.agents.outcome_dispatcher import OutcomeDispatcher
 from aila.modules.vr.contracts import OutcomeDispatchStatus, OutcomeKind
 from aila.modules.vr.db_models import (
@@ -34,6 +36,10 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
 )
 from aila.modules.vr.services.mcp_call_logger import record_call
+from aila.modules.vr.services.outcome_polarity import (
+    derive_outcome_polarity,
+    derive_verifier_verdict,
+)
 from aila.modules.vr.services.outcome_review import OUTCOME_STATE_APPROVED
 from aila.platform.agents.claim_verifier import (
     ClaimVerifierAgentBase,
@@ -149,3 +155,26 @@ class ClaimVerifierAgent(ClaimVerifierAgentBase):
     ) -> str:
         """The auto-promote negative-claim gate reads ``payload["answer"]``."""
         return str(orig_payload.get("answer") or "")
+
+    async def _after_verifier_report_persisted(
+        self, uow: Any, outcome_row: Any, payload: dict[str, Any],
+    ) -> None:
+        """Sync ``VRInvestigationRecord.primary_outcome_polarity`` and
+        ``verifier_verdict`` on the investigation whose primary outcome
+        is the row that just gained a verifier report. Called inside
+        the same ``UnitOfWork`` as the outcome write; the enclosing
+        commit lands both updates atomically. When no investigation
+        points at this outcome as primary, the update is a no-op.
+        """
+        inv = (await uow.session.exec(
+            _select(self._investigation_model).where(
+                self._investigation_model.primary_outcome_id == outcome_row.id,
+            )
+        )).first()
+        if inv is None:
+            return
+        inv.primary_outcome_polarity = derive_outcome_polarity(
+            outcome_row.outcome_kind, payload,
+        )
+        inv.verifier_verdict = derive_verifier_verdict(payload)
+        uow.session.add(inv)
