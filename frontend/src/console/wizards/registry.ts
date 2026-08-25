@@ -69,16 +69,24 @@ export const WIZARDS: readonly WizardDef[] = [
   },
   {
     id: "admin-automation",
-    module: "admin",
+    // Picker scope `platform`, not a console module: the automation wizard is a
+    // platform-wide surface (chat-console-wizards.md req 53 lists it under the
+    // "platform" catalog bucket). The chat is always bound to one of the four
+    // console modules, never "platform", so wizardsForModule surfaces every
+    // platform-scoped entry in every module's picker (additive).
+    module: "platform",
     label: "new automation",
     purpose: "schedule a recurring platform automation.",
     open: { kind: "page", moduleKey: "admin", section: "new-automation" },
   },
 ];
 
-/** Wizards offered by the picker for a given console module. */
+/** Wizards offered by the picker for a given console module. Includes the
+ * module's own entries plus every `platform`-scoped wizard: platform surfaces
+ * (e.g. the automation scheduler) have no console-module home, so they render
+ * in every module's picker rather than being unreachable from the chat. */
 export function wizardsForModule(moduleId: string): WizardDef[] {
-  return WIZARDS.filter((w) => w.module === moduleId);
+  return WIZARDS.filter((w) => w.module === moduleId || w.module === "platform");
 }
 
 export function resolveWizard(id: string): WizardDef | null {
