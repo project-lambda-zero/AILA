@@ -1299,6 +1299,15 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         non-terminal placeholder, force-through stamps the payload.
         """
         outcome_kind = self._terminal_outcome_kind(decision)
+        if outcome_kind == OutcomeKind.CAMPAIGN_LAUNCH:
+            # CAMPAIGN_LAUNCH is inconclusive by design (see
+            # outcome_polarity) but represents a dispatch to the fuzz
+            # engine, not a verdict on a sibling's hypothesis. Blocking
+            # it on an open sibling hyp would starve the panel of
+            # fuzz-campaign dispatches; clear the gate counter/directive
+            # and let the submit through unchanged.
+            self._clear_sibling_open_hyp_gate_state(case_state)
+            return decision
         payload = self._outcome_payload(decision)
         polarity = derive_outcome_polarity(outcome_kind.value, payload)
         if polarity not in ("no_finding", "inconclusive"):
@@ -2835,8 +2844,21 @@ def _terminal_outcome_kind(decision: ReasoningTurnDecision) -> OutcomeKind:
     confident non-finding. Otherwise: confidence >= strong -> DirectFinding,
     else AssessmentReport.
     """
+    payload = decision.payload if isinstance(decision.payload, dict) else {}
+    requested_kind = payload.get("outcome_kind")
+    if (
+        isinstance(requested_kind, str)
+        and requested_kind.strip().lower() == OutcomeKind.CAMPAIGN_LAUNCH.value
+    ):
+        # Explicit agent request to emit a fuzz-campaign launch outcome.
+        # CAMPAIGN_LAUNCH is inconclusive by design (a job dispatch, not
+        # a verdict) so it bypasses the polarity/confidence classifier.
+        # Only this one kind is honored -- other requested strings fall
+        # through to the existing routing so agents cannot request e.g.
+        # DIRECT_FINDING to bypass the negative-answer gate.
+        return OutcomeKind.CAMPAIGN_LAUNCH
     answer = str(
-        (decision.payload or {}).get("answer") or decision.answer or "",
+        payload.get("answer") or decision.answer or "",
     )
     if is_negative_finding_claim(answer):
         return OutcomeKind.AUDIT_MEMO

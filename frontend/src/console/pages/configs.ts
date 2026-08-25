@@ -808,42 +808,6 @@ export const PAGE_CONFIGS = {
       { name: "source", label: "source", type: "select" },
     ],
   },
-  "vr:fuzz-proposals": {
-    title: "vr \u00b7 fuzz proposals",
-    endpoint: "/vr/fuzz/proposals",
-    columns: [],
-    detailLinks: {
-      target_id: { module: "vr", section: "targets", label: "target" },
-      source_investigation_id: { module: "vr", section: "investigations", label: "investigation" },
-    },
-    actions: [
-      {
-        label: "accept",
-        method: "POST",
-        endpoint: "/vr/fuzz/proposals/{id}/accept",
-        whenStatus: ["pending", "submitted"],
-        confirm: "Accept this proposal? It will write the harness, build, and create a campaign.",
-      },
-      {
-        label: "reject",
-        method: "POST",
-        endpoint: "/vr/fuzz/proposals/{id}/reject",
-        whenStatus: ["pending", "submitted"],
-        destructive: true,
-        confirm: "Reject this proposal?",
-      },
-    ],
-  },
-  "vr:crashes": {
-    title: "vr \u00b7 fuzz crashes",
-    endpoint: "/vr/fuzz/crashes",
-    columns: [],
-    detailLinks: {
-      campaign_id: { module: "vr", section: "fuzz-campaigns", label: "campaign" },
-      target_id: { module: "vr", section: "targets", label: "target" },
-      source_investigation_id: { module: "vr", section: "investigations", label: "investigation" },
-    },
-  },
 
   // ---- Malware: additional ---------------------------------------------
   "malware:projects": {

@@ -8,6 +8,7 @@ import AutomationWizard, { AutomationActionDetail } from "./AutomationWizard";
 import { PAGE_CONFIGS } from "./configs";
 import DataPage from "./DataPage";
 import ForensicsProjectPage from "./forensics/ForensicsProjectPage";
+import FuzzCampaignDetail from "./FuzzCampaignDetail";
 import KnowledgePage from "./KnowledgePage";
 import MalwareHealthPanel from "./MalwareHealthPanel";
 import MalwareXRayPage from "./MalwareXRayPage";
@@ -144,6 +145,24 @@ const BESPOKE: Record<string, PageEntry> = {
             targetId={String(row.id ?? "")}
             endpoint="/vr/investigations"
             onOpenXray={(inv) => p.onOpenPage?.("vr", "xray", `vr \u00b7 x-ray`, inv.id)}
+          />
+        )}
+      />
+    ),
+  },
+  // Fuzz campaigns own the merged detail: proposals for the campaign's target
+  // + crashes for the campaign itself, in one collapsible drill-down.
+  "vr:fuzz-campaigns": {
+    title: PAGE_CONFIGS["vr:fuzz-campaigns"].title,
+    render: (p) => (
+      <DataPage
+        config={PAGE_CONFIGS["vr:fuzz-campaigns"]}
+        configKey="vr:fuzz-campaigns"
+        {...p}
+        detailBody={(row) => (
+          <FuzzCampaignDetail
+            campaignId={String(row.id ?? "")}
+            targetId={String(row.target_id ?? "")}
           />
         )}
       />

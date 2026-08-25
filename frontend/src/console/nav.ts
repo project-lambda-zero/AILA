@@ -35,8 +35,6 @@ export const MODULES: ModuleDef[] = [
       page("disclosures"),
       page("disclosure tracks"),
       page("fuzz campaigns"),
-      page("fuzz proposals"),
-      page("crashes"),
       page("mcp servers"),
       page("mcp call log"),
     ],

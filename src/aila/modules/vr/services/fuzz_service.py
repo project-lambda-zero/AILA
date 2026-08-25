@@ -1279,7 +1279,27 @@ class FuzzCampaignService:
                 # the triage verdict surfaced (the operator already saw it).
                 return _crash_record_to_summary(existing)
 
-            head_hex, head_size = _read_reproducer_head(body.reproducer_path)
+            inline_head_hex = (body.reproducer_head_hex or "").strip()
+            if inline_head_hex:
+                # Caller supplied bytes inline (e.g. the fuzz worker
+                # posting a small minimised reproducer directly). Skip
+                # the config-gated local-root read entirely; store the
+                # provided hex, truncated to the same
+                # ``_REPRODUCER_HEAD_LIMIT`` byte budget as the on-disk
+                # path so the HexView never renders more than the
+                # engineered ceiling.
+                max_hex_chars = _REPRODUCER_HEAD_LIMIT * 2
+                original_hex_len = len(inline_head_hex)
+                if original_hex_len > max_hex_chars:
+                    head_hex = inline_head_hex[:max_hex_chars]
+                    head_size = original_hex_len // 2
+                else:
+                    head_hex = inline_head_hex
+                    head_size = original_hex_len // 2
+            else:
+                head_hex, head_size = _read_reproducer_head(
+                    body.reproducer_path,
+                )
             llm_summary = _compose_crash_summary(
                 body.crash_type, body.stack_trace,
             )
