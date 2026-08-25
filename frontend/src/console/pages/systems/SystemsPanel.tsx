@@ -7,7 +7,11 @@
  *
  * SystemsSection renders standalone: no visible gating (its own page owns
  * layout), no auto-open create plumbing (its own "+ register system" button
- * is the sole entry). Adds a free-text role filter, a "refresh connectivity"
+ * is the sole entry). The wizard registry's tag-vocabulary entry opens the
+ * page with section "systems:tags"; SystemsRegistryPage passes that down as
+ * initialVocabOpen, so the vocab modal raises on mount (or when the section
+ * lands on an already-open window). Adds a free-text role filter, a
+ * "refresh connectivity"
  * button that forces a live SSH probe pass (probe=true) over the current
  * page, and a role column + last-checked_at hint next to the connectivity
  * chip. Every other affordance (detail, tags, heartbeat, create/edit) is
@@ -55,7 +59,7 @@ const roleRank = (role: string | undefined): number =>
 
 /* =============================== SYSTEMS ================================= */
 
-function SystemsSection(): JSX.Element {
+function SystemsSection({ initialVocabOpen = false }: { initialVocabOpen?: boolean }): JSX.Element {
   const [roleFilter, setRoleFilter] = useState<string>("");
   // `probe` toggles a live-heartbeat pass on the list endpoint. Setting it
   // true changes the react-query key, so the query refetches with probe=true;
@@ -68,6 +72,13 @@ function SystemsSection(): JSX.Element {
   const role = useAuth((s) => s.user?.role);
   const isAdmin = roleRank(role) >= ROLE_RANK.admin;
   const [vocabOpen, setVocabOpen] = useState<boolean>(false);
+
+  // Wizard-registry entry (tag-vocabulary, chat picker) opens this page with
+  // section "systems:tags"; raise the modal when that section lands, whether
+  // on a fresh mount or an in-place section update on an open window.
+  useEffect(() => {
+    if (initialVocabOpen) setVocabOpen(true);
+  }, [initialVocabOpen]);
 
   useEffect(() => {
     if (probe && !systemsQ.isFetching) setProbe(false);

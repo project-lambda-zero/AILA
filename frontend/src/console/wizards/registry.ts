@@ -6,11 +6,11 @@
  *   - `intake` -> the IntakeWizard window host (module-aware: vr / malware /
  *     forensics),
  *   - `page`   -> a registered page window opened via openNamedPage
- *     (register-system form, launch-scan, upload-target, new-automation).
- *
- * Not listed: a standalone tag-vocabulary wizard. That surface is a modal
- * inside SystemsPanel (no registered page), so offering it here would violate
- * the structural-honesty rule; it stays deferred to the tag-vocabulary spec. */
+ *     (register-system form, launch-scan, upload-target, new-automation,
+ *     tag-vocabulary). The tag-vocabulary surface is a modal inside the
+ *     admin systems panel, so its entry opens that page with the
+ *     `systems:tags` section, which SystemsRegistryPage consumes to raise
+ *     the modal -- end-to-end reachable, never a dead picker row. */
 
 import type { WizardDef } from "./types";
 
@@ -78,6 +78,19 @@ export const WIZARDS: readonly WizardDef[] = [
     label: "new automation",
     purpose: "schedule a recurring platform automation.",
     open: { kind: "page", moduleKey: "admin", section: "new-automation" },
+  },
+  {
+    id: "tag-vocabulary",
+    // Picker scope `platform` like admin-automation: the vocabulary editor
+    // is a platform-wide surface (chat-console-wizards.md req 53 lists it
+    // under the "platform" catalog bucket). The editor is a modal inside
+    // the admin systems panel, not a standalone page; opening section
+    // "systems:tags" on that page raises it (SystemsRegistryPage passes
+    // it down as SystemsSection's initialVocabOpen).
+    module: "platform",
+    label: "manage tag vocabulary",
+    purpose: "edit the asset-tag vocabulary that governs system tagging.",
+    open: { kind: "page", moduleKey: "admin", section: "systems:tags" },
   },
 ];
 

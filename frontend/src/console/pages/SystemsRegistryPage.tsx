@@ -15,6 +15,7 @@ import SystemsSection from "./systems/SystemsPanel";
 
 export default function SystemsRegistryPage(props: ModulePageProps): JSX.Element {
   const {
+    section,
     windowId,
     title,
     isFocused,
@@ -84,7 +85,7 @@ export default function SystemsRegistryPage(props: ModulePageProps): JSX.Element
           position: "relative",
         }}
       >
-        <SystemsSection />
+        <SystemsSection initialVocabOpen={section === "systems:tags"} />
       </main>
     </ConsoleWindow>
   );
