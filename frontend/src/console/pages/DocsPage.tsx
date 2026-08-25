@@ -44,8 +44,22 @@ const errNote: CSSProperties = css(
   "flex:1;display:flex;align-items:center;justify-content:center;padding:20px;font-family:var(--font-mono);font-size:11px;color:var(--status-err,#ff6b6b);letter-spacing:0.04em;text-align:center;",
 );
 const monoBlock: CSSProperties = css(
-  "margin:0;padding:14px 16px;font-family:var(--font-mono);font-size:11.5px;line-height:1.55;color:var(--text-primary);white-space:pre-wrap;word-break:break-word;",
+  "margin:0;padding:0 16px;font-family:var(--font-mono);font-size:11.5px;line-height:1.55;color:var(--text-primary);white-space:pre-wrap;word-break:break-word;",
 );
+const docBody: CSSProperties = css("padding:12px 0;");
+// Heading lines lift into the display face. The Apoc Revelations @font-face set
+// ships only 300/400 weights (globals.css), so weight stays 400 -- a heavier
+// value forces a synthesized fake-bold that diverges from every other console
+// title.
+const HEADING_SIZES = [0, 17, 15, 13.5, 12.5, 12, 11.5] as const;
+function docHeadingStyle(level: number): CSSProperties {
+  const top = level <= 2 ? 16 : 12;
+  return css(
+    `margin:${top}px 0 5px;padding:0 16px;font-family:var(--font-display);` +
+      `font-weight:400;font-size:${HEADING_SIZES[level]}px;` +
+      `letter-spacing:0.02em;color:var(--text-primary);`,
+  );
+}
 const topicBtnBase: CSSProperties = css(
   "display:block;width:100%;text-align:left;padding:7px 12px;border:none;border-bottom:1px solid var(--border-faint);background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.04em;cursor:pointer;",
 );
@@ -59,6 +73,42 @@ function errMessage(err: unknown): string {
   if (err instanceof ApiError) return err.message || `HTTP ${err.status}`;
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+const HEADING_RE = /^(#{1,6})\s+(.*)$/;
+
+// No markdown renderer ships in the workspace (docs-page.md req 29: no new dep
+// for v1), so the body renders as a monospace pre-block with a heading pass:
+// ATX `#`-prefixed lines lift into the display face; every other line stays
+// verbatim so code blocks and indentation survive.
+function renderDocBody(text: string): JSX.Element[] {
+  const out: JSX.Element[] = [];
+  let buf: string[] = [];
+  let key = 0;
+  const flush = (): void => {
+    if (buf.length === 0) return;
+    out.push(
+      <pre key={`t${key++}`} style={monoBlock}>
+        {buf.join("\n")}
+      </pre>,
+    );
+    buf = [];
+  };
+  for (const line of text.split("\n")) {
+    const m = HEADING_RE.exec(line);
+    if (m) {
+      flush();
+      out.push(
+        <div key={`h${key++}`} style={docHeadingStyle(m[1].length)}>
+          {m[2]}
+        </div>,
+      );
+    } else {
+      buf.push(line);
+    }
+  }
+  flush();
+  return out;
 }
 
 /* --------------------------------- page ---------------------------------- */
@@ -143,7 +193,7 @@ export default function DocsPage(props: ModulePageProps): JSX.Element {
         ) : body.isError ? (
           <div style={errNote}>{errMessage(body.error)}</div>
         ) : body.data ? (
-          <pre style={monoBlock}>{body.data.body}</pre>
+          <div style={docBody}>{renderDocBody(body.data.body)}</div>
         ) : (
           <div style={emptyNote}>no content</div>
         )}
