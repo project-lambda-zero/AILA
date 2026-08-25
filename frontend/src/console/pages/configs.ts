@@ -706,12 +706,6 @@ export const PAGE_CONFIGS = {
     endpoint: "/vr/disclosure-tracks",
     columns: [],
   },
-  "malware:health": {
-    title: "malware \u00b7 health",
-    endpoint: "/malware/health",
-    blurb: "module health snapshot",
-    columns: [],
-  },
   "admin:teams-cross-view": {
     title: "admin \u00b7 teams cross-view",
     endpoint: "/admin/teams/cross-view",

@@ -7,6 +7,7 @@ import { PAGE_CONFIGS } from "./configs";
 import DataPage from "./DataPage";
 import ForensicsProjectPage from "./forensics/ForensicsProjectPage";
 import KnowledgePage from "./KnowledgePage";
+import MalwareHealthPanel from "./MalwareHealthPanel";
 import MalwareXRayPage from "./MalwareXRayPage";
 import PersonaModelRoutingPage from "./PersonaModelRoutingPage";
 import SandboxPage from "./SandboxPage";
@@ -31,6 +32,7 @@ const BESPOKE: Record<string, PageEntry> = {
   // left-rail bound-investigation open uses (bare "xray").
   "vr:xray": { title: "vr \u00b7 x-ray", render: (p) => <XRayPage {...p} /> },
   "malware:xray": { title: "malware \u00b7 x-ray", render: (p) => <MalwareXRayPage {...p} /> },
+  "malware:health": { title: "malware \u00b7 health", render: (p) => <MalwareHealthPanel {...p} /> },
   "vr:new-target": { title: "vr \u00b7 upload target", render: (p) => <UploadForm module="vr" {...p} /> },
   "malware:new-target": { title: "malware \u00b7 upload target", render: (p) => <UploadForm module="malware" {...p} /> },
   "forensics:project": { title: "forensics \u00b7 project", render: (p) => <ForensicsProjectPage {...p} /> },
