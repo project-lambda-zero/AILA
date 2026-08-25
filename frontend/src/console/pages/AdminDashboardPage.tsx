@@ -371,7 +371,7 @@ export default function AdminDashboardPage(props: ModulePageProps): JSX.Element 
             boxShadow: "0 0 7px var(--accent)",
           }}
         />
-        <span style={{ color: "var(--text-primary)", fontWeight: 700, letterSpacing: "0.16em" }}>
+        <span style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)", fontWeight: 400, letterSpacing: "0.16em" }}>
           admin &middot; dashboard
         </span>
         <span style={{ color: "var(--text-faint)", textTransform: "none", letterSpacing: "0.04em" }}>
