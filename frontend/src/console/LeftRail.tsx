@@ -102,9 +102,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
       ? "no advisories -- use the pages above"
       : moduleId === "forensics"
         ? "no cases yet"
-        : moduleId === "malware"
-          ? "no reports yet"
-          : "no investigations yet";
+        : "no investigations yet";
 
   return (
     <aside
@@ -168,35 +166,50 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
               `max-height:150px;overflow:auto;flex-direction:column;padding:0 7px 6px;gap:2px;display:${pagesOpen ? "flex" : "none"};`,
             )}
           >
-            {activeModule.pages.map((p) => {
+            {activeModule.pages.map((p, i) => {
               // Every page now resolves to a real window (a DataPage or a
               // bespoke screen), so all page rows are clickable.
               const enabled = true;
+              // A workflow group renders a small label before its first page.
+              // Flat (group-less) page lists show no separators, so ungrouped
+              // modules render exactly as before.
+              const prevGroup = i > 0 ? activeModule.pages[i - 1]?.group : undefined;
+              const showGroup = p.group != null && p.group !== prevGroup;
               const style = css(
                 `display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:2px;font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.03em;color:${enabled ? "var(--text-muted)" : "var(--text-faint)"};text-align:left;text-decoration:none;border:1px solid transparent;background:var(--surface-card);cursor:${enabled ? "pointer" : "default"};opacity:${enabled ? "1" : "0.55"};`,
               );
               return (
-                <button
-                  key={p.id}
-                  type="button"
-                  disabled={!enabled}
-                  onClick={
-                    enabled
-                      ? () => {
-                          const section = p.href ? p.href.split("#")[1] ?? p.id : p.id;
-                          onOpenPage(activeModule.id, section, p.label);
-                        }
-                      : undefined
-                  }
-                  style={style}
-                >
-                  <span
-                    style={css(
-                      `width:5px;height:5px;flex:0 0 auto;background:${enabled ? "var(--accent)" : "var(--text-faint)"};`,
-                    )}
-                  />
-                  {p.label}
-                </button>
+                <Fragment key={p.id}>
+                  {showGroup ? (
+                    <div
+                      style={css(
+                        `padding:${i === 0 ? "0" : "7px"} 8px 3px;font-family:var(--font-display);font-weight:400;font-size:8px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-faint);`,
+                      )}
+                    >
+                      {p.group}
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    disabled={!enabled}
+                    onClick={
+                      enabled
+                        ? () => {
+                            const section = p.href ? p.href.split("#")[1] ?? p.id : p.id;
+                            onOpenPage(activeModule.id, section, p.label);
+                          }
+                        : undefined
+                    }
+                    style={style}
+                  >
+                    <span
+                      style={css(
+                        `width:5px;height:5px;flex:0 0 auto;background:${enabled ? "var(--accent)" : "var(--text-faint)"};`,
+                      )}
+                    />
+                    {p.label}
+                  </button>
+                </Fragment>
               );
             })}
           </div>

@@ -325,12 +325,6 @@ export const PAGE_CONFIGS = {
     ],
   },
   // ---- Malware (prefix /malware) ---------------------------------------
-  "malware:malware-analysis": {
-    title: "malware \u00b7 analysis",
-    endpoint: "/malware/investigations",
-    columns: [c("title"), c("kind"), c("status"), c("strategy_family", "strategy"), c("branch_count", "branches"), c("outcome_count", "outcomes"), c("cost_actual_usd", "cost $"), c("created_at", "created")],
-    filters: [{ name: "title", label: "title", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
-  },
   "malware:workspaces": {
     title: "malware \u00b7 workspaces",
     endpoint: "/malware/workspaces",
@@ -986,13 +980,6 @@ export const PAGE_CONFIGS = {
     ],
   },
 
-  // ---- Malware: additional ---------------------------------------------
-  "malware:projects": {
-    title: "malware \u00b7 projects",
-    endpoint: "/malware/projects",
-    columns: [],
-  },
-
   // ---- Vulnerability: reports (DataPage; scan/findings/radar/viz are bespoke) --
   "vulnerability:reports": {
     title: "vulnerability \u00b7 reports",
@@ -1078,7 +1065,6 @@ const DELETES: Record<string, { delete: string; idField?: string }> = {
   "malware:findings": { delete: "/malware/findings/{id}" },
   "malware:families": { delete: "/malware/families/{id}" },
   "malware:playbooks": { delete: "/malware/playbooks/{id}" },
-  "malware:projects": { delete: "/malware/projects/{id}" },
   "admin:teams": { delete: "/admin/teams/{id}" },
   "admin:oidc-providers": { delete: "/auth/oidc/providers/{id}" },
   "admin:automation": { delete: "/automation/schedules/{id}" },

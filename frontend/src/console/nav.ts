@@ -5,6 +5,10 @@ export interface PageDef {
   id: string;
   label: string;
   href: string | null;
+  /** Optional workflow group label. When set, LeftRail renders a small group
+   * separator before the first page of each contiguous group. Generic across
+   * modules -- a flat (group-less) page list renders exactly as before. */
+  group?: string;
 }
 
 export interface ModuleDef {
@@ -19,6 +23,12 @@ const page = (label: string, href: string | null = null): PageDef => ({
   label,
   href,
 });
+
+/** Build a run of href-less pages under one workflow group label. LeftRail
+ * renders a separator before each group's first page. Keeps grouped nav blocks
+ * readable and is reusable by any module that wants a grouped rail. */
+const grouped = (group: string, ...labels: string[]): PageDef[] =>
+  labels.map((label) => ({ id: label.replace(/\s+/g, "-"), label, href: null, group }));
 
 export const MODULES: ModuleDef[] = [
   {
@@ -68,22 +78,19 @@ export const MODULES: ModuleDef[] = [
   {
     id: "malware",
     label: "malware analysis",
-    noun: "reports",
+    noun: "investigations",
+    // Workflow-first rail (req 18 / malware-navigation-ia): the pages read as
+    // the reverse-engineering job -- pick a workspace, upload a target, run an
+    // investigation, then review evidence and durable knowledge. The server
+    // enforces the analyze spine (a target needs a workspace, an investigation
+    // needs a target), so the nav reads in dependency order. Health is module
+    // infra and sits at the tail. Investigations is a single entry whose row
+    // activation opens the X-Ray cockpit (registry.tsx bespoke override).
     pages: [
-      // workflow
-      page("malware analysis"),
-      page("workspaces"),
-      page("targets"),
-      page("projects"),
-      page("investigations"),
-      // artifacts
-      page("observations"),
-      page("patterns"),
-      page("findings"),
-      page("families"),
-      page("playbooks"),
-      // utility
-      page("health"),
+      ...grouped("analyze", "workspaces", "targets", "investigations"),
+      ...grouped("evidence", "observations"),
+      ...grouped("knowledge", "findings", "patterns", "families", "playbooks"),
+      ...grouped("module admin", "health"),
     ],
   },
 ];
