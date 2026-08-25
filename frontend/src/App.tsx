@@ -351,8 +351,8 @@ function Console() {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 12px", borderRight: "1px solid var(--border-soft)" }}>
-          <span style={{ width: 9, height: 9, background: "var(--accent)", boxShadow: "0 0 8px var(--accent)" }} />
-          <span style={{ fontWeight: 700, letterSpacing: "0.2em" }}>AILA</span>
+          <img src="/aila-monogram.svg" alt="" style={{ height: 16, width: "auto", display: "block" }} />
+          <span style={{ fontFamily: "var(--font-display)", letterSpacing: "0.2em" }}>AILA</span>
         </div>
         <nav style={{ display: "flex", alignItems: "stretch" }}>
           {nav.map((n) => (
