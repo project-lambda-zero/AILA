@@ -260,18 +260,6 @@ export const PAGE_CONFIGS = {
       },
     ],
   },
-  "vr:mcp-servers": {
-    title: "vr \u00b7 mcp servers",
-    endpoint: "/vr/mcp/servers",
-    columns: [c("name"), c("base_url", "url"), c("status"), c("latency_ms", "latency"), c("tool_count", "tools"), c("last_probed_at", "probed")],
-    filters: [{ name: "name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "last_probed_at", label: "probed", type: "date-range" }],
-  },
-  "vr:mcp-call-log": {
-    title: "vr \u00b7 mcp call log",
-    endpoint: "/vr/mcp/calls",
-    columns: [c("server_id", "server"), c("action"), c("status"), c("http_status", "http"), c("latency_ms", "latency"), c("error_excerpt", "error"), c("called_at", "called")],
-    filters: [{ name: "action", label: "action", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "called_at", label: "called", type: "date-range" }],
-  },
   // ---- Malware (prefix /malware) ---------------------------------------
   "malware:malware-analysis": {
     title: "malware \u00b7 analysis",
@@ -366,25 +354,6 @@ export const PAGE_CONFIGS = {
         confirm: "Run this playbook now?",
       },
     ],
-  },
-  "malware:mcp-servers": {
-    title: "malware \u00b7 mcp servers",
-    endpoint: "/malware/mcp/servers",
-    columns: [c("name"), c("base_url", "url"), c("status"), c("latency_ms", "latency"), c("tool_count", "tools")],
-    filters: [{ name: "name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }],
-    actions: [
-      {
-        label: "re-probe",
-        method: "POST",
-        endpoint: "/malware/mcp/servers/{id}/probe",
-      },
-    ],
-  },
-  "malware:mcp-call-log": {
-    title: "malware \u00b7 mcp call log",
-    endpoint: "/malware/mcp/call-log",
-    columns: [c("called_at", "when"), c("server_id", "server"), c("action"), c("status"), c("http_status", "http"), c("latency_ms", "latency"), c("error_excerpt", "error")],
-    filters: [{ name: "action", label: "action", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "called_at", label: "when", type: "date-range" }],
   },
 
   // ---- Forensics (prefix /forensics) -----------------------------------
@@ -779,23 +748,134 @@ export const PAGE_CONFIGS = {
   "admin:mcp-instances": {
     title: "admin \u00b7 mcp instances",
     endpoint: "/platform/mcp/instances",
+    // Server-side pagination + filters: the platform router accepts
+    // module_scope / transport / approval_state / enabled (comma-OR),
+    // `search` (ILIKE on name+endpoint) and offset/limit with meta.total.
+    // Row detail (registered in registry.tsx) opens the live tools schema
+    // from GET /platform/mcp/instances/{id}/tools so drift is visible without
+    // hitting the bridge by hand.
+    pagination: true,
+    paginationParams: "offset",
     columns: [c("name"), c("transport"), c("endpoint"), c("enabled"), c("module_scope", "module"), c("approval_state", "approval"), c("created_at", "created")],
-    filters: [{ name: "name", label: "name", type: "text" }, { name: "transport", label: "transport", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
+    filters: [
+      { name: "search", label: "search", type: "text", server: true },
+      { name: "module_scope", label: "module", type: "select", server: true, options: [
+        { value: "vr", label: "vr" },
+        { value: "malware", label: "malware" },
+      ] },
+      { name: "transport", label: "transport", type: "select", server: true, options: [
+        { value: "http", label: "http" },
+        { value: "stdio", label: "stdio" },
+      ] },
+      { name: "approval_state", label: "approval", type: "select", server: true, options: [
+        { value: "pending", label: "pending" },
+        { value: "approved", label: "approved" },
+        { value: "revoked", label: "revoked" },
+      ] },
+      { name: "enabled", label: "enabled", type: "select", server: true, options: [
+        { value: "true", label: "true" },
+        { value: "false", label: "false" },
+      ] },
+    ],
     actions: [
       {
         label: "approve",
         method: "POST",
         endpoint: "/platform/mcp/instances/{id}/approve",
-        whenStatus: ["pending", "pending_approval"],
+        // Approve is legal for any row not already approved. `whenField`
+        // reads approval_state (not status/is_active) via the shared gate.
+        whenField: "approval_state",
+        whenStatus: ["pending", "revoked"],
+        confirm: "Approve this MCP instance? Its current tool schema hash is pinned.",
       },
       {
         label: "revoke",
         method: "POST",
         endpoint: "/platform/mcp/instances/{id}/revoke",
+        whenField: "approval_state",
         whenStatus: ["approved"],
         destructive: true,
-        confirm: "Revoke this MCP instance? Its tools become unavailable.",
+        // McpInstanceRevokeRequest.reason: Field(min_length=1); the modal
+        // enforces the same rule client-side via `required`.
+        fields: [
+          { name: "reason", label: "reason", type: "textarea", required: true, placeholder: "why this instance is being revoked (recorded on the approval-change record)" },
+        ],
       },
+    ],
+  },
+  "admin:mcp-servers": {
+    title: "admin \u00b7 mcp servers",
+    endpoint: "/platform/mcp/servers",
+    // Row id is the composite `<module_scope>:<server_id>`; the platform
+    // route uses it verbatim for the PATCH URL. `idField: "id"` matches the
+    // envelope shape.
+    idField: "id",
+    columns: [
+      c("module_scope", "module"),
+      c("server_id", "server"),
+      c("base_url", "url"),
+      c("status"),
+      c("latency_ms", "latency"),
+      c("tool_count", "tools"),
+      c("last_probed_at", "probed"),
+      c("error"),
+    ],
+    filters: [
+      { name: "module_scope", label: "module", type: "select", server: true, options: [
+        { value: "vr", label: "vr" },
+        { value: "malware", label: "malware" },
+      ] },
+      { name: "status", label: "status", type: "select", server: true, options: [
+        { value: "reachable", label: "reachable" },
+        { value: "unreachable", label: "unreachable" },
+      ] },
+    ],
+    actions: [
+      {
+        // PATCH /platform/mcp/servers/{id} writes the new base_url to the
+        // ConfigRegistry key the descriptor declares and re-probes the one
+        // server; the returned row shape matches the list projection so the
+        // table refresh reflects the new state.
+        label: "edit url",
+        method: "PATCH",
+        endpoint: "/platform/mcp/servers/{id}",
+        fields: [
+          { name: "base_url", label: "base url", type: "text", required: true, fromRow: "base_url", placeholder: "https://host:port" },
+        ],
+        confirm: "Update this MCP server base URL and re-probe?",
+      },
+    ],
+  },
+  "admin:mcp-call-log": {
+    title: "admin \u00b7 mcp call log",
+    endpoint: "/platform/mcp/calls",
+    // Server-paginated by offset/limit (meta.total). Every filter is
+    // server:true so the backend narrows the consolidated call-log table.
+    pagination: true,
+    paginationParams: "offset",
+    columns: [
+      c("module_scope", "module"),
+      c("server_id", "server"),
+      c("action"),
+      c("status"),
+      c("http_status", "http"),
+      c("latency_ms", "latency"),
+      c("error_excerpt", "error"),
+      c("called_at", "called"),
+    ],
+    filters: [
+      { name: "module_scope", label: "module", type: "select", server: true, options: [
+        { value: "vr", label: "vr" },
+        { value: "malware", label: "malware" },
+      ] },
+      { name: "server_id", label: "server", type: "text", server: true },
+      { name: "status", label: "status", type: "select", server: true, options: [
+        { value: "ok", label: "ok" },
+        { value: "http_error", label: "http_error" },
+        { value: "transport_error", label: "transport_error" },
+        { value: "timeout", label: "timeout" },
+      ] },
+      { name: "called_at", label: "called", type: "date-range", server: true },
     ],
   },
   "admin:specialist-agents": {

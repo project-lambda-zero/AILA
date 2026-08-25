@@ -92,6 +92,51 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except (OSError, TimeoutError, RuntimeError, ValueError, LookupError) as exc:
         _log.warning("Module prompt seeding skipped: %s", exc)
 
+    # Req 40 -- reconcile every module-declared MCP descriptor into the
+    # ``mcp_server_instances`` catalog on boot so the admin surface always
+    # lists at least one row per declared server. Idempotent: absent rows
+    # land as ``approval_state=pending, enabled=true`` (operator approves
+    # via the admin router); present rows have only ``transport`` +
+    # ``endpoint`` refreshed -- ``approval_state`` / ``enabled`` /
+    # ``capability_tags`` stay operator-owned. Best-effort: a reconcile
+    # fault degrades to whatever rows the operator explicitly wrote and
+    # must never abort startup.
+    try:
+        import sqlalchemy.exc as _sa_exc_recon
+
+        from aila.platform.mcp.capability_registry import (
+            default_capability_registry as _default_capability_registry,
+        )
+        from aila.platform.mcp.instance_catalog import (
+            McpInstanceCatalog as _McpInstanceCatalog,
+        )
+
+        _catalog = _McpInstanceCatalog()
+        _reconciled = 0
+        for _decl in _default_capability_registry().declarations():
+            try:
+                await _catalog.ensure_instance(
+                    module_scope=_decl.module_scope,
+                    name=_decl.descriptor.name,
+                    transport=_decl.descriptor.transport,
+                    endpoint=_decl.descriptor.default_url,
+                    capability_tags=list(_decl.descriptor.capability_tags),
+                )
+                _reconciled += 1
+            except (
+                OSError, RuntimeError, ValueError, _sa_exc_recon.SQLAlchemyError,
+            ) as _exc:
+                _log.warning(
+                    "MCP catalog reconcile for %s/%s failed: %s",
+                    _decl.module_scope, _decl.descriptor.name, _exc,
+                )
+        if _reconciled:
+            _log.info(
+                "MCP catalog reconciled %d declared descriptor(s)", _reconciled,
+            )
+    except (OSError, RuntimeError, ImportError) as _exc:
+        _log.warning("MCP catalog reconcile skipped: %s", _exc)
+
     if not _os.getenv("AILA_JWT_SECRET_KEY"):
         _log.warning(
             "AILA_JWT_SECRET_KEY is not set. JWT secret was auto-generated. "
@@ -675,6 +720,13 @@ def create_app() -> FastAPI:
     # RFC-11: Admin MCP instance catalog router (god-tier admin -- CRUD server rows)
     from aila.api.routers.mcp_instances import router as mcp_instances_router
     application.include_router(mcp_instances_router)
+
+    # Req 10 / 40: platform-owned MCP server health + call-log audit trail.
+    # Collapses the pre-req-10 per-module operator MCP surfaces into one
+    # platform surface backed by the module-declared descriptor set and the
+    # consolidated ``mcp_call_log`` table.
+    from aila.api.routers.platform_mcp import router as platform_mcp_router
+    application.include_router(platform_mcp_router)
 
     # RFC-08: Admin eval-harness router (god-tier admin -- score candidate + gate promotion)
     from aila.api.routers.admin_eval import router as admin_eval_router

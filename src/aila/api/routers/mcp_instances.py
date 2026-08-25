@@ -33,18 +33,23 @@ from typing import Any
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import func as sa_func
+from sqlalchemy import or_
 from sqlalchemy.exc import IntegrityError
+from sqlmodel import select
 
 from aila.api.auth import AuthContext, require_user_or_api_key
 from aila.api.constants import ROLE_ADMIN
 from aila.api.limiter import limiter
-from aila.api.schemas.envelope import DataEnvelope
+from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
 from aila.platform.mcp.factory import make_bridge
 from aila.platform.mcp.instance_catalog import (
     TRANSPORT_HTTP,
     TRANSPORT_STDIO,
     McpInstanceCatalog,
+    McpServerInstance,
 )
+from aila.storage.database import async_session_scope
 
 __all__ = ["router"]
 
@@ -155,31 +160,82 @@ def _project(row: Any) -> McpInstanceResponse:
     return McpInstanceResponse(**payload)
 
 
+def _flatten(values: list[str] | None) -> list[str] | None:
+    """Collapse repeated + comma-OR query params into one filter list.
+
+    Mirrors the helper in :mod:`aila.api.routers.audit`: repeated
+    ``?key=v`` params AND a single ``?key=a,b`` value flatten identically
+    to a stripped, de-duplicated, order-preserving list.
+    """
+    if not values:
+        return None
+    out: list[str] = []
+    for raw in values:
+        for part in raw.split(","):
+            token = part.strip()
+            if token and token not in out:
+                out.append(token)
+    return out or None
+
+
 @router.get("")
 @limiter.limit("60/minute")
 async def list_instances(
     request: Request,
-    module_scope: str | None = Query(default=None, max_length=64),
-    include_disabled: bool = Query(default=True),
-    approved_only: bool = Query(default=False),
+    module_scope: list[str] | None = Query(default=None),
+    transport: list[str] | None = Query(default=None),
+    approval_state: list[str] | None = Query(default=None),
+    enabled: bool | None = Query(default=None),
+    search: str | None = Query(default=None, max_length=256),
+    limit: int = Query(default=50, ge=1, le=250),
+    offset: int = Query(default=0, ge=0),
     ctx: AuthContext = Depends(_require_admin),
 ) -> DataEnvelope[list[McpInstanceResponse]]:
-    """List catalog rows.
+    """List catalog rows with comma-OR filters + offset pagination.
 
-    ``module_scope`` filters to a single namespace. ``include_disabled``
-    defaults true so the operator sees temporarily-disabled rows.
-    ``approved_only`` filters to rows in the ``approved`` trust state
-    (the same filter live dispatch uses on the resolve path); admins
-    see every row by default so pending / revoked instances stay
-    visible for review.
+    Every multi-value filter (``module_scope`` / ``transport`` /
+    ``approval_state``) accepts repeated params AND a comma-joined value
+    (see :func:`_flatten`). ``search`` is a case-insensitive substring
+    match on both ``name`` and ``endpoint``. ``enabled`` narrows to a
+    single boolean when supplied; omitted returns rows regardless of
+    enable state. Response ``meta`` carries the pre-page ``total`` so
+    the console can paginate.
     """
     del request, ctx
-    rows = await _CATALOG.list_instances(
-        module_scope=module_scope,
-        include_disabled=include_disabled,
-        approved_only=approved_only,
+    scopes = _flatten(module_scope)
+    transports = _flatten(transport)
+    approvals = _flatten(approval_state)
+    search_term = search.strip() if search and search.strip() else None
+    async with async_session_scope() as session:
+        base = select(McpServerInstance)
+        if scopes is not None:
+            base = base.where(McpServerInstance.module_scope.in_(scopes))  # type: ignore[union-attr]
+        if transports is not None:
+            base = base.where(McpServerInstance.transport.in_(transports))  # type: ignore[union-attr]
+        if approvals is not None:
+            base = base.where(McpServerInstance.approval_state.in_(approvals))  # type: ignore[union-attr]
+        if enabled is not None:
+            base = base.where(McpServerInstance.enabled.is_(enabled))
+        if search_term:
+            pattern = f"%{search_term}%"
+            base = base.where(
+                or_(
+                    McpServerInstance.name.ilike(pattern),  # type: ignore[union-attr]
+                    McpServerInstance.endpoint.ilike(pattern),  # type: ignore[union-attr]
+                ),
+            )
+        count_stmt = select(sa_func.count()).select_from(base.subquery())
+        total = int((await session.exec(count_stmt)).one() or 0)
+        stmt = (
+            base.order_by(McpServerInstance.module_scope, McpServerInstance.name)
+            .offset(offset)
+            .limit(limit)
+        )
+        rows = (await session.exec(stmt)).all()
+    return DataEnvelope(
+        data=[_project(r) for r in rows],
+        meta=PaginatedMeta(total=total, offset=offset, limit=limit).model_dump(),
     )
-    return DataEnvelope(data=[_project(r) for r in rows])
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)

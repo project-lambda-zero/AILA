@@ -13,6 +13,7 @@ import FuzzCampaignDetail from "./FuzzCampaignDetail";
 import KnowledgePage from "./KnowledgePage";
 import MalwareHealthPanel from "./MalwareHealthPanel";
 import MalwareXRayPage from "./MalwareXRayPage";
+import { McpInstanceToolsDetail } from "./McpInstanceToolsDetail";
 import NdayProjectForm, { CveReproduceDetail } from "./NdayProjectForm";
 import PersonaModelRoutingPage from "./PersonaModelRoutingPage";
 import SandboxPage from "./SandboxPage";
@@ -108,6 +109,20 @@ const BESPOKE: Record<string, PageEntry> = {
         configKey="admin:automation"
         {...p}
         onNewClick={() => p.onOpenPage?.("admin", "new-automation", "new automation schedule")}
+      />
+    ),
+  },
+  // The mcp-instances page gets a bespoke detail body so a row click
+  // renders the live tools schema + drift chip from
+  // GET /platform/mcp/instances/{id}/tools alongside the row's fields.
+  "admin:mcp-instances": {
+    title: PAGE_CONFIGS["admin:mcp-instances"].title,
+    render: (p) => (
+      <DataPage
+        config={PAGE_CONFIGS["admin:mcp-instances"]}
+        configKey="admin:mcp-instances"
+        {...p}
+        detailBody={(row) => <McpInstanceToolsDetail row={row} />}
       />
     ),
   },

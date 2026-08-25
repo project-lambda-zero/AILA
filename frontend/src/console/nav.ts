@@ -35,8 +35,6 @@ export const MODULES: ModuleDef[] = [
       page("disclosures"),
       page("disclosure tracks"),
       page("fuzz campaigns"),
-      page("mcp servers"),
-      page("mcp call log"),
     ],
   },
   {
@@ -77,8 +75,6 @@ export const MODULES: ModuleDef[] = [
       page("findings"),
       page("families"),
       page("playbooks"),
-      page("mcp servers"),
-      page("mcp call log"),
     ],
   },
 ];
@@ -86,7 +82,7 @@ export const MODULES: ModuleDef[] = [
 /** Collapsible ADMIN SETTINGS categories -- verbatim from the mock adminCats. */
 export const ADMIN_CATS: { cat: string; items: string[] }[] = [
   { cat: "access", items: ["users", "teams", "teams cross-view", "api keys", "oidc providers"] },
-  { cat: "operations", items: ["task queue", "queue depth", "dead letter", "health", "automation", "automation actions", "workflows", "scheduled reports", "mcp instances", "eval calibrators"] },
+  { cat: "operations", items: ["task queue", "queue depth", "dead letter", "health", "automation", "automation actions", "workflows", "scheduled reports", "mcp instances", "mcp servers", "mcp call log", "eval calibrators"] },
   { cat: "platform", items: ["dashboard", "systems", "sessions", "specialist agents", "persona routing", "platform corpus", "knowledge", "sandbox", "widget layout"] },
   { cat: "cost & reporting", items: ["cost"] },
   { cat: "data & config", items: ["config", "tools", "finding states"] },

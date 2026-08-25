@@ -1194,6 +1194,10 @@ from aila.platform.lifecycle.assignments import LifecycleCanaryAssignment
 from aila.platform.lifecycle.models import LifecycleTransitionRecord
 from aila.platform.llm.cost_record import LLMCostRecord
 
+# RFC-04 phase 2: consolidated platform MCP call-log table. Imported so
+# create_all / Alembic autogen register the ``mcp_call_log`` table.
+from aila.platform.mcp.call_log_record import McpCallLogRecord
+
 # RFC-11 step 1: MCP server instance catalog. Imported so create_all
 # and Alembic autogen see the mcp_server_instances table.
 from aila.platform.mcp.instance_catalog import McpServerInstance

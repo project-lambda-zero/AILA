@@ -10,7 +10,6 @@ from aila.modules.malware.db_models.investigation import MalwareInvestigationRec
 from aila.modules.malware.db_models.investigation_target import (
     MalwareInvestigationTargetRecord,
 )
-from aila.modules.malware.db_models.mcp_call_log import MalwareMcpCallLogRecord
 from aila.modules.malware.db_models.message import MalwareInvestigationMessageRecord
 from aila.modules.malware.db_models.pattern import MalwarePatternRecord
 from aila.modules.malware.db_models.project import MalwareProjectRecord
@@ -22,7 +21,6 @@ from aila.modules.malware.db_models.workspace import MalwareWorkspaceRecord
 from aila.modules.vr.db_models.branch import VRInvestigationBranchRecord
 from aila.modules.vr.db_models.investigation import VRInvestigationRecord
 from aila.modules.vr.db_models.investigation_target import VRInvestigationTargetRecord
-from aila.modules.vr.db_models.mcp_call_log import VRMcpCallLogRecord
 from aila.modules.vr.db_models.message import VRInvestigationMessageRecord
 from aila.modules.vr.db_models.outcome import VRInvestigationOutcomeRecord
 from aila.modules.vr.db_models.outcome_review import VRInvestigationOutcomeReviewRecord
@@ -36,6 +34,7 @@ from aila.platform.contracts.investigation_target_base import (
     InvestigationTargetRecordBase,
 )
 from aila.platform.contracts.mcp_call_log_base import McpCallLogRecordBase
+from aila.platform.mcp.call_log_record import McpCallLogRecord
 from aila.platform.contracts.message_base import MessageRecordBase
 from aila.platform.contracts.outcome_base import OutcomeRecordBase
 from aila.platform.contracts.outcome_review_base import OutcomeReviewRecordBase
@@ -65,8 +64,9 @@ def test_converted_concretes_subclass_bases() -> None:
     assert issubclass(VRInvestigationBranchRecord, BranchRecordBase)
     assert issubclass(VRInvestigationOutcomeReviewRecord, OutcomeReviewRecordBase)
     assert issubclass(VRInvestigationTargetRecord, InvestigationTargetRecordBase)
-    assert issubclass(VRMcpCallLogRecord, McpCallLogRecordBase)
-    assert issubclass(MalwareMcpCallLogRecord, McpCallLogRecordBase)
+    # RFC-04 phase 2: the consolidated platform ``McpCallLogRecord`` is the
+    # only concrete now; the per-module tables retired in migration 136.
+    assert issubclass(McpCallLogRecord, McpCallLogRecordBase)
 
 
 def test_derived_unique_constraint_names() -> None:
@@ -86,11 +86,11 @@ def test_outcome_review_cascade_preserved() -> None:
 
 
 def test_mcp_call_log_carries_join_keys() -> None:
-    # RFC-04 Phase 1 hoisted the #39 join-keys to McpCallLogRecordBase; both
-    # modules now carry investigation_id / branch_id / turn_number.
-    keys = {"investigation_id", "branch_id", "turn_number"}
-    assert keys <= set(VRMcpCallLogRecord.model_fields)
-    assert keys <= set(MalwareMcpCallLogRecord.model_fields)
+    # RFC-04 Phase 1 hoisted the #39 join-keys to McpCallLogRecordBase; the
+    # consolidated platform record carries investigation_id / branch_id /
+    # turn_number and adds ``module_scope`` for the operator-facing slice.
+    keys = {"investigation_id", "branch_id", "turn_number", "module_scope"}
+    assert keys <= set(McpCallLogRecord.model_fields)
 
 
 def test_domain_concretes_subclass_bases() -> None:
@@ -188,8 +188,7 @@ def test_concrete_mro_preserves_team_scoped_order() -> None:
         (MalwareInvestigationOutcomeRecord, OutcomeRecordBase),
         (VRInvestigationOutcomeReviewRecord, OutcomeReviewRecordBase),
         (MalwareInvestigationOutcomeReviewRecord, OutcomeReviewRecordBase),
-        (VRMcpCallLogRecord, McpCallLogRecordBase),
-        (MalwareMcpCallLogRecord, McpCallLogRecordBase),
+        (McpCallLogRecord, McpCallLogRecordBase),
         (VRInvestigationTargetRecord, InvestigationTargetRecordBase),
         (MalwareInvestigationTargetRecord, InvestigationTargetRecordBase),
         (VRPatternRecord, PatternRecordBase),

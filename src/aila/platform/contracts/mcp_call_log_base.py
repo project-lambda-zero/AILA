@@ -1,25 +1,27 @@
-"""MCP call-log record base shared by the investigation engine (RFC-01).
+"""MCP call-log record base shared by every concrete call-log table (RFC-01).
 
-Zero-domain table: the vr and malware MCP call-log tables share the operator
-audit-trail columns. One row per ``AuditMcpBridgeTool.forward()`` /
-``IDABridgeTool.forward()`` invocation, capturing the action, latency,
-outcome, and an excerpt of the error message when the call failed.
+Zero-domain table: the platform-consolidated call-log
+(:class:`aila.platform.mcp.call_log_record.McpCallLogRecord`) and the
+``_template`` scaffold share the operator audit-trail columns. One row per
+``AuditMcpBridgeTool.forward()`` / ``IDABridgeTool.forward()`` invocation,
+capturing the action, latency, outcome, and an excerpt of the error message
+when the call failed.
 
 Bodies are NOT persisted (use worker logs for those). The point of this
 table is operator visibility: ``what was just called, did it work, how
 long did it take``.
 
-A concrete module call-log collapses to::
+A concrete call-log collapses to::
 
-    class MalwareMcpCallLogRecord(McpCallLogRecordBase, table=True):
-        __tablename__ = "malware_mcp_call_log"
+    class McpCallLogRecord(McpCallLogRecordBase, table=True):
+        __tablename__ = "mcp_call_log"
+        module_scope: str | None = Field(default=None, max_length=64, index=True)
 
 Shared column set includes the observability join-keys ``investigation_id``
-/ ``branch_id`` / ``turn_number`` (issue #39). They were vr-only until
-RFC-04 Phase 1 unified the MCP call logger; both modules now carry them so a
-call-log row joins back to the investigation, branch, and turn that made it.
-Migration 082 added them to ``vr_mcp_call_log``; a later migration adds them
-to ``malware_mcp_call_log``.
+/ ``branch_id`` / ``turn_number`` (issue #39) so a call-log row joins back
+to the investigation, branch, and turn that made it. Migration 082 added
+them to the pre-consolidation table; migration 136 consolidates every module
+call-log into the platform ``mcp_call_log`` table.
 
 No FKs live on the base: the concrete columns declare only ``target_id`` /
 ``team_id`` as opaque string references, matching the operator audit-trail

@@ -2370,7 +2370,7 @@ def create_vr_router() -> APIRouter:
             "Delete a target. Refuses with 409 if any investigations or "
             "findings reference it. Cascade-deletes stub/log dependents "
             "(vr_projects, vr_target_tag_index, vr_investigation_targets, "
-            "vr_mcp_call_log, vr_fuzz_campaign_proposals) in the same "
+            "mcp_call_log, vr_fuzz_campaign_proposals) in the same "
             "transaction so a stale operator-created project stub does not "
             "block the delete with an FK violation."
         ),
@@ -2431,7 +2431,7 @@ def create_vr_router() -> APIRouter:
             # evidence -- vr_projects is operator-created scaffolding,
             # vr_target_tag_index is denormalized tag lookup,
             # vr_investigation_targets is a join row (already guarded
-            # by the inv_count check above), vr_mcp_call_log is historical
+            # by the inv_count check above), mcp_call_log is historical
             # audit trail keyed by target, and vr_fuzz_campaign_proposals
             # are auto-generated. Same transaction so partial failure
             # rolls back. Tables that don't exist on this deployment are
@@ -2440,7 +2440,7 @@ def create_vr_router() -> APIRouter:
                 "vr_projects",
                 "vr_target_tag_index",
                 "vr_investigation_targets",
-                "vr_mcp_call_log",
+                "mcp_call_log",
                 "vr_fuzz_campaign_proposals",
             ):
                 try:
@@ -6501,7 +6501,7 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[list[dict]]:
         del request
-        from .db_models import VRMcpCallLogRecord
+        from aila.platform.mcp.call_log_record import McpCallLogRecord
 
         inv = await _load_investigation(investigation_id, auth)
         if inv is None:
@@ -6512,9 +6512,10 @@ def create_vr_router() -> APIRouter:
 
         async with UnitOfWork() as uow:
             rows = (await uow.session.exec(
-                select(VRMcpCallLogRecord)
-                .where(VRMcpCallLogRecord.investigation_id == investigation_id)
-                .order_by(VRMcpCallLogRecord.called_at.asc())  # type: ignore[union-attr]
+                select(McpCallLogRecord)
+                .where(McpCallLogRecord.module_scope == "vr")
+                .where(McpCallLogRecord.investigation_id == investigation_id)
+                .order_by(McpCallLogRecord.called_at.asc())  # type: ignore[union-attr]
                 .limit(500)
             )).all()
 
@@ -8737,101 +8738,5 @@ def create_vr_router() -> APIRouter:
                 detail=f"CVE {cve_id} not found.",
             )
         return DataEnvelope(data=summary)
-
-    # ─── MCP server health + config (operator surface) ────────────────────
-    #
-    # AILA is orchestration only -- every analysis call is forwarded to one
-    # of these external MCP servers. The operator needs visibility into
-    # which ones are reachable and an ability to retarget them at a
-    # different workstation without editing env vars (D-33).
-
-    @router.get(
-        "/mcp/servers",
-        summary="List configured MCP servers with live health probes.",
-    )
-    @limiter.limit("60/minute")
-    async def list_mcp_servers(
-        request: Request,
-        auth: AuthContext = Depends(require_auth),
-    ) -> DataEnvelope[list[dict[str, Any]]]:
-        del request
-        from aila.modules.vr.services import McpRegistryService
-
-        servers = await McpRegistryService().probe_all()
-        return DataEnvelope(data=servers)
-
-    @router.patch(
-        "/mcp/servers/{server_id}",
-        summary="Update an MCP server's base_url. Re-probes immediately.",
-    )
-    @limiter.limit("30/minute")
-    async def update_mcp_server(
-        request: Request,
-        server_id: str,
-        body: dict[str, Any],
-        auth: AuthContext = Depends(require_auth),
-    ) -> DataEnvelope[dict[str, Any]]:
-        del request
-        from aila.modules.vr.services import McpRegistryService
-
-        base_url = (body or {}).get("base_url")
-        if not isinstance(base_url, str) or not base_url.strip():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="base_url (string) required.",
-            )
-        result = await McpRegistryService().update_base_url(server_id, base_url.strip())
-        if result is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"MCP server {server_id!r} not registered.",
-            )
-        return DataEnvelope(data=result)
-
-    @router.get(
-        "/mcp/calls",
-        summary=(
-            "List recent MCP call log entries (most recent first). "
-            "Operator-facing audit trail of every forward() through the "
-            "audit-mcp and ida-headless bridges."
-        ),
-    )
-    @limiter.limit("60/minute")
-    async def list_mcp_calls(
-        request: Request,
-        auth: AuthContext = Depends(require_auth),
-        server_id: str | None = Query(default=None),
-        status_filter: str | None = Query(default=None, alias="status"),
-        offset: int = Query(default=0, ge=0),
-        limit: int = Query(default=50, ge=1, le=200),
-    ) -> DataEnvelope[list[dict[str, Any]]]:
-        del request
-        from .db_models import VRMcpCallLogRecord
-
-        async with UnitOfWork() as uow:
-            stmt = select(VRMcpCallLogRecord)
-            stmt = _team_filter(stmt, VRMcpCallLogRecord, auth)
-            if server_id:
-                stmt = stmt.where(VRMcpCallLogRecord.server_id == server_id)
-            if status_filter:
-                stmt = stmt.where(VRMcpCallLogRecord.status == status_filter)
-            stmt = stmt.order_by(VRMcpCallLogRecord.called_at.desc()).offset(offset).limit(limit)  # type: ignore[union-attr]
-            rows = (await uow.session.exec(stmt)).all()
-
-        items = [
-            {
-                "id": r.id,
-                "server_id": r.server_id,
-                "base_url": r.base_url,
-                "action": r.action,
-                "status": r.status,
-                "http_status": r.http_status,
-                "latency_ms": r.latency_ms,
-                "error_excerpt": r.error_excerpt,
-                "called_at": r.called_at.isoformat() if r.called_at else None,
-            }
-            for r in rows
-        ]
-        return DataEnvelope(data=items)
 
     return router

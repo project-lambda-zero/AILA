@@ -65,7 +65,6 @@ def _import_remaining():
     from aila.modules.vr.db_models.investigation_target import (
         VRInvestigationTargetRecord,
     )
-    from aila.modules.vr.db_models.mcp_call_log import VRMcpCallLogRecord
     from aila.modules.vr.db_models.message import VRInvestigationMessageRecord
     from aila.modules.vr.db_models.outcome import VRInvestigationOutcomeRecord
     from aila.modules.vr.db_models.outcome_review import (
@@ -79,6 +78,7 @@ def _import_remaining():
         InvestigationTargetRecordBase,
     )
     from aila.platform.contracts.mcp_call_log_base import McpCallLogRecordBase
+    from aila.platform.mcp.call_log_record import McpCallLogRecord
     from aila.platform.contracts.message_base import MessageRecordBase
     from aila.platform.contracts.outcome_base import OutcomeRecordBase
     from aila.platform.contracts.outcome_review_base import OutcomeReviewRecordBase
@@ -97,7 +97,10 @@ def _import_remaining():
         ),
         (OutcomeRecordBase, VRInvestigationOutcomeRecord, set()),
         (OutcomeReviewRecordBase, VRInvestigationOutcomeReviewRecord, set()),
-        (McpCallLogRecordBase, VRMcpCallLogRecord, set()),
+        # RFC-04 phase 2: the platform-consolidated ``McpCallLogRecord``
+        # replaces the pre-consolidation ``VRMcpCallLogRecord`` here; it
+        # adds one residue column ``module_scope`` on top of the base.
+        (McpCallLogRecordBase, McpCallLogRecord, {"module_scope"}),
         (InvestigationTargetRecordBase, VRInvestigationTargetRecord, set()),
     ]
 
