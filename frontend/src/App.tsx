@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { useAuth } from "./api/auth";
 import { useInvestigations } from "./api/hooks";
 import type { BoundInvestigation, ModulePageProps } from "./console/contract";
+import type { WindowKind, WindowState } from "./console/window";
 import { shortCaseId } from "./console/ids";
 import IntakeWizard from "./console/IntakeWizard";
 import LeftRail from "./console/LeftRail";
@@ -19,15 +20,6 @@ import { FaultyTerminal } from "./desktop/FaultyTerminal";
 // module pages / x-ray open as an overlay in the center column. All data is live.
 
 const pad = (n: number): string => (n < 10 ? "0" : "") + n;
-
-// A module page raised inside the console's center column as an overlay window.
-interface OpenPage {
-  /** Registry key: "xray", "vulnerability:findings", "vr:targets", "admin:users", ... */
-  kind: string;
-  title: string;
-  investigationId: string | null;
-  section: string;
-}
 
 export default function App() {
   const status = useAuth((s) => s.status);
@@ -47,14 +39,13 @@ function Console() {
   const [adminOpen, setAdminOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [intakeOpen, setIntakeOpen] = useState(false);
-  const [openPage, setOpenPage] = useState<OpenPage | null>(null);
-  // Drill-down trail so a page's "back" returns to where it was opened from
-  // (x-ray -> the investigations table -> the console) instead of always
-  // dropping straight to the console. Bounded so a long session can't grow it
-  // without limit.
-  const [pageHistory, setPageHistory] = useState<OpenPage[]>([]);
-  const [pageMin, setPageMin] = useState(false);
-  const [pageFull, setPageFull] = useState(false);
+  // Multi-window host: an ordered back-to-front stack plus the focused id.
+  // `page`/`overlay` surfaces form the center-column drill stack (only the top
+  // non-minimized one renders); `floater` surfaces (added by later reqs) render
+  // concurrently. Closing a window falls back to the previously focused one.
+  const [windows, setWindows] = useState<WindowState[]>([]);
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  const winSeq = useRef(0);
   const [clock, setClock] = useState("");
 
   // Open on the case that best fills the design: the most branches, which give
@@ -113,13 +104,34 @@ function Console() {
   // Raise a page window, pushing whatever page is currently open onto the
   // history trail first (only when the target is a genuinely different page,
   // so an in-place section change never self-stacks). "back" walks this trail.
-  const pushAndOpen = (next: OpenPage) => {
-    if (openPage && (openPage.kind !== next.kind || openPage.investigationId !== next.investigationId)) {
-      setPageHistory((h) => [...h, openPage].slice(-25));
+  const focused = windows.find((w) => w.id === focusedId) ?? null;
+
+  // Raise a window to the top of the z-stack and give it keyboard focus.
+  const focusWindow = (id: string) => {
+    setWindows((cur) => {
+      const w = cur.find((x) => x.id === id);
+      return w ? [...cur.filter((x) => x.id !== id), w] : cur;
+    });
+    setFocusedId(id);
+  };
+
+  // Open a registered surface as a window. Re-opening the focused page surface
+  // (same registry key + entity) updates it in place instead of stacking a
+  // duplicate; anything else pushes a new window and focuses it.
+  const openWindow = (spec: { kind: WindowKind; module: string; registryKey: string; title: string; section: string; investigationId: string | null }) => {
+    if (
+      focused &&
+      (focused.kind === "page" || focused.kind === "overlay") &&
+      !focused.minimized &&
+      focused.registryKey === spec.registryKey &&
+      (focused.investigationId ?? null) === spec.investigationId
+    ) {
+      setWindows(windows.map((w) => (w.id === focused.id ? { ...w, title: spec.title, section: spec.section } : w)));
+      return;
     }
-    setOpenPage(next);
-    setPageMin(false);
-    setPageFull(false);
+    const id = `w${(winSeq.current += 1)}`;
+    setWindows([...windows, { id, minimized: false, fullscreen: false, ...spec }]);
+    setFocusedId(id);
   };
 
   const openNamedPage = (moduleKey: string, section: string, label: string, investigationId: string | null = null) => {
@@ -127,7 +139,7 @@ function Console() {
     const baseSection = colon >= 0 ? section.slice(0, colon) : section;
     const key = `${moduleKey}:${baseSection}`;
     if (!resolvePage(key)) return;
-    pushAndOpen({ kind: key, title: `${moduleKey} \u00b7 ${label}`, investigationId, section });
+    openWindow({ kind: "page", module: moduleKey, registryKey: key, title: `${moduleKey} \u00b7 ${label}`, section, investigationId });
   };
 
   // LeftRail's "+" is module-aware: for vulnerability it opens the Systems
@@ -149,64 +161,68 @@ function Console() {
   const openInvestigation = (inv: BoundInvestigation) => {
     setBound(inv);
     if (moduleId === "vr") {
-      pushAndOpen({
-        kind: "xray",
-        title: `vr \u00b7 ${shortCaseId("vr", inv.id)} \u00b7 x-ray`,
-        investigationId: inv.id,
-        section: "overview",
-      });
+      openWindow({ kind: "page", module: "vr", registryKey: "xray", title: `vr \u00b7 ${shortCaseId("vr", inv.id)} \u00b7 x-ray`, section: "overview", investigationId: inv.id });
     } else if (moduleId === "malware") {
-      pushAndOpen({
-        kind: "malware:xray",
-        title: `malware \u00b7 ${shortCaseId("malware", inv.id)} \u00b7 x-ray`,
-        investigationId: inv.id,
-        section: "overview",
-      });
+      openWindow({ kind: "page", module: "malware", registryKey: "malware:xray", title: `malware \u00b7 ${shortCaseId("malware", inv.id)} \u00b7 x-ray`, section: "overview", investigationId: inv.id });
     } else if (moduleId === "forensics") {
       openNamedPage("forensics", "project", inv.title, inv.id);
     }
   };
 
-  const closePage = () => {
-    setOpenPage(null);
-    setPageHistory([]);
-    setPageMin(false);
-    setPageFull(false);
-  };
-
-  // Back = pop one level of the drill-down trail (e.g. x-ray -> the table that
-  // opened it); at the base of the trail there is nowhere left to go, so it
-  // closes the window back to the console.
-  const goBack = () => {
-    if (pageHistory.length > 0) {
-      const prev = pageHistory[pageHistory.length - 1];
-      setPageHistory((h) => h.slice(0, -1));
-      setOpenPage(prev);
-      setPageMin(false);
-      setPageFull(false);
-    } else {
-      closePage();
+  const closeWindow = (id: string) => {
+    const remaining = windows.filter((w) => w.id !== id);
+    setWindows(remaining);
+    if (focusedId === id) {
+      const next = [...remaining].reverse().find((w) => !w.minimized) ?? null;
+      setFocusedId(next ? next.id : null);
     }
   };
 
-  // The opened page renders inside the center-column overlay (or full viewport
-  // when fullscreen). Resolved from the page registry by its kind key.
-  const renderPage = (p: OpenPage) => {
-    const entry = resolvePage(p.kind);
+  const setMinimized = (id: string, minimized: boolean) => {
+    setWindows(windows.map((w) => (w.id === id ? { ...w, minimized } : w)));
+    if (minimized) {
+      if (focusedId === id) {
+        const next = [...windows].reverse().find((w) => w.id !== id && !w.minimized) ?? null;
+        setFocusedId(next ? next.id : null);
+      }
+    } else {
+      setFocusedId(id);
+    }
+  };
+
+  const toggleFullscreen = (id: string) => setWindows(windows.map((w) => (w.id === id ? { ...w, fullscreen: !w.fullscreen } : w)));
+  const updateSection = (id: string, section: string) => setWindows(windows.map((w) => (w.id === id ? { ...w, section } : w)));
+
+  // The focused non-minimized page/overlay renders in the center column; the
+  // page's own ConsoleWindow owns the chrome + fullscreen. Minimized windows
+  // collapse to the dock strip. Floater surfaces (later reqs) render
+  // concurrently on top -- their render branch lands with their consumer.
+  const pageWindows = windows.filter((w) => w.kind === "page" || w.kind === "overlay");
+  const activePage = [...pageWindows].reverse().find((w) => !w.minimized) ?? null;
+  const minimizedWindows = windows.filter((w) => w.minimized);
+
+  // A drill window (or full viewport when fullscreen). Resolved from the page
+  // registry by its registry key; the page returns its own <ConsoleWindow>.
+  const renderPage = (w: WindowState) => {
+    const entry = resolvePage(w.registryKey);
     const shared: ModulePageProps = {
-      section: p.section,
-      investigationId: p.investigationId,
-      onBack: goBack,
-      onMinimize: () => setPageMin(true),
-      onNavigate: (section: string) => setOpenPage({ ...p, section }),
-      isFullscreen: pageFull,
-      onToggleFullscreen: () => setPageFull((v) => !v),
+      section: w.section,
+      investigationId: w.investigationId,
+      windowId: w.id,
+      title: w.title,
+      isFocused: focusedId === w.id,
+      onFocus: () => focusWindow(w.id),
+      onBack: () => closeWindow(w.id),
+      onMinimize: () => setMinimized(w.id, true),
+      onNavigate: (section: string) => updateSection(w.id, section),
+      isFullscreen: w.fullscreen,
+      onToggleFullscreen: () => toggleFullscreen(w.id),
       onOpenPage: (m: string, s: string, l: string, invId?: string | null) => openNamedPage(m, s, l, invId ?? null),
     };
     if (!entry) {
       return (
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-faint)", fontFamily: "var(--font-mono)", fontSize: 12 }}>
-          page not available: {p.kind}
+          page not available: {w.registryKey}
         </div>
       );
     }
@@ -297,11 +313,11 @@ function Console() {
             </button>
           ))}
         </nav>
-        {openPage && !pageMin ? (
+        {activePage ? (
           <button
             type="button"
-            onClick={goBack}
-            title={pageHistory.length > 0 ? "back to the previous view" : "back to the console"}
+            onClick={() => closeWindow(activePage.id)}
+            title="close this window"
             style={{
               display: "flex",
               alignItems: "center",
@@ -405,7 +421,7 @@ function Console() {
               }}
             />
           ) : null}
-          {!(openPage && !pageMin) ? (
+          {!activePage ? (
             <ChatConsole
               mode={mode}
               moduleId={moduleId}
@@ -414,7 +430,7 @@ function Console() {
               onToggleMode={() => setMode(adv ? "basic" : "advanced")}
               onOpenIntake={requestIntake}
               onOpenXray={bound ? () => openInvestigation(bound) : undefined}
-              dockOpen={openPage !== null && pageMin}
+              dockOpen={minimizedWindows.length > 0}
             />
           ) : null}
 
@@ -423,14 +439,8 @@ function Console() {
               stay visible around it (the mock's embedded look). The page's own
               root is position:absolute;inset:0 with a transparent background, so
               the animated terminal shows through its panels. No top nav. */}
-          {openPage && !pageMin ? (
-            pageFull ? (
-              <div style={{ position: "fixed", inset: 0, zIndex: 45, background: "var(--surface-page)" }}>{renderPage(openPage)}</div>
-            ) : (
-              renderPage(openPage)
-            )
-          ) : null}
-          {openPage && pageMin ? (
+          {activePage ? renderPage(activePage) : null}
+          {minimizedWindows.length > 0 ? (
             <div
               style={{
                 position: "fixed",
@@ -440,64 +450,72 @@ function Console() {
                 zIndex: 31,
                 display: "flex",
                 alignItems: "center",
-                gap: 9,
+                gap: 8,
                 padding: "9px 14px",
                 background: "var(--surface-chrome)",
                 borderTop: "1px solid var(--border)",
                 boxShadow: "0 -8px 30px rgba(0,0,0,0.5)",
+                overflowX: "auto",
               }}
             >
-              <span style={{ width: 7, height: 7, background: "var(--accent)", boxShadow: "0 0 7px var(--accent)", flex: "0 0 auto" }} />
-              <span
-                style={{
-                  fontSize: 10,
-                  letterSpacing: "0.1em",
-                  textTransform: "uppercase",
-                  color: "var(--text-primary)",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
-                {openPage.title}
-              </span>
-              <span style={{ fontSize: 9, color: "var(--text-faint)", letterSpacing: "0.06em", flex: "0 0 auto" }}>
+              <span style={{ fontSize: 9, color: "var(--text-faint)", letterSpacing: "0.1em", textTransform: "uppercase", flex: "0 0 auto" }}>
                 minimized
               </span>
-              <span style={{ flex: 1 }} />
-              <button
-                type="button"
-                onClick={() => setPageMin(false)}
-                style={{
-                  background: "transparent",
-                  border: "1px solid var(--border-soft)",
-                  color: "var(--text-muted)",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 9,
-                  letterSpacing: "0.08em",
-                  textTransform: "uppercase",
-                  padding: "2px 8px",
-                  borderRadius: 2,
-                  cursor: "pointer",
-                }}
-              >
-                restore
-              </button>
-              <button
-                type="button"
-                onClick={closePage}
-                style={{
-                  background: "transparent",
-                  border: 0,
-                  color: "var(--text-muted)",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 12,
-                  cursor: "pointer",
-                  padding: "0 4px",
-                }}
-              >
-                {"\u2715"}
-              </button>
+              {minimizedWindows.map((w) => (
+                <div
+                  key={w.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 7,
+                    padding: "3px 6px 3px 9px",
+                    background: "var(--surface-card)",
+                    border: "1px solid var(--border-soft)",
+                    borderRadius: 2,
+                    flex: "0 0 auto",
+                  }}
+                >
+                  <span style={{ width: 7, height: 7, background: "var(--accent)", boxShadow: "0 0 7px var(--accent)", flex: "0 0 auto" }} />
+                  <button
+                    type="button"
+                    onClick={() => setMinimized(w.id, false)}
+                    title="restore"
+                    style={{
+                      background: "transparent",
+                      border: 0,
+                      color: "var(--text-primary)",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 10,
+                      letterSpacing: "0.08em",
+                      textTransform: "uppercase",
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      maxWidth: 240,
+                    }}
+                  >
+                    {w.title}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => closeWindow(w.id)}
+                    title="close"
+                    style={{
+                      background: "transparent",
+                      border: 0,
+                      color: "var(--text-muted)",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 11,
+                      cursor: "pointer",
+                      padding: "0 3px",
+                      flex: "0 0 auto",
+                    }}
+                  >
+                    {"\u2715"}
+                  </button>
+                </div>
+              ))}
             </div>
           ) : null}
         </section>

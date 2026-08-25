@@ -33,6 +33,7 @@ import type {
 } from "../../api/intake";
 import type { ModulePageProps } from "../contract";
 import { css } from "../css";
+import { ConsoleWindow } from "../window";
 
 /* -------------------------------------------------------------------------- *
  * Per-kind spec
@@ -244,27 +245,12 @@ const inputStyle = css(
 );
 const selectStyle = inputStyle;
 
-function ctlBtn(label: string, title: string, onClick: () => void): JSX.Element {
-  return (
-    <button
-      type="button"
-      title={title}
-      onClick={onClick}
-      style={css(
-        "width:30px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;border:0;border-left:1px solid var(--border-soft);background:transparent;color:var(--text-muted);cursor:pointer;font-family:inherit;font-size:12px;",
-      )}
-    >
-      {label}
-    </button>
-  );
-}
-
 /* -------------------------------------------------------------------------- *
  * Component
  * -------------------------------------------------------------------------- */
 
 export default function UploadForm(props: UploadFormProps): JSX.Element {
-  const { module, onBack, onMinimize, isFullscreen, onToggleFullscreen, onDone } = props;
+  const { module, onBack, onMinimize, isFullscreen, onToggleFullscreen, onDone, windowId, title: windowTitle, isFocused, onFocus } = props;
   const kinds = module === "vr" ? VR_KINDS : MAL_KINDS;
   const groups = module === "vr" ? GROUPS_VR : GROUPS_MAL;
 
@@ -614,17 +600,55 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
   const kindLabel = spec.label;
   const title = `${module} \u00b7 upload target`;
 
+  const statusStrip = (
+    <>
+      <span
+        style={{
+          display: "flex",
+          alignItems: "center",
+          padding: "0 11px",
+          background: "var(--accent)",
+          color: "var(--text-on-accent)",
+          fontWeight: 700,
+          letterSpacing: "0.14em",
+        }}
+      >
+        {title}
+      </span>
+      <span
+        style={{
+          display: "flex",
+          alignItems: "center",
+          padding: "0 11px",
+          textTransform: "none",
+          letterSpacing: "0.03em",
+          color: "var(--text-muted)",
+        }}
+      >
+        {spec.mode === "vr-apk"
+          ? "single-shot POST /vr/targets/upload-apk"
+          : spec.mode === "vr-upload"
+            ? "POST /vr/targets \u2192 POST /vr/targets/{id}/upload"
+            : spec.mode === "vr-descriptor"
+              ? "POST /vr/targets (descriptor only)"
+              : "single-shot POST /malware/targets/upload"}
+      </span>
+      <span style={{ flex: 1 }} />
+    </>
+  );
+
   return (
-    <div
-      style={{
-        position: "absolute",
-        inset: 0,
-        display: "flex",
-        flexDirection: "column",
-        background: "transparent",
-        fontFamily: "var(--font-mono)",
-        color: "var(--text-primary)",
-      }}
+    <ConsoleWindow
+      id={windowId}
+      kind="page"
+      title={windowTitle}
+      isFullscreen={isFullscreen}
+      isFocused={isFocused}
+      onFocus={onFocus}
+      onClose={onBack}
+      onMinimize={onMinimize}
+      onToggleFullscreen={onToggleFullscreen}
+      footerExtras={statusStrip}
     >
       <main style={{ flex: 1, minHeight: 0, display: "flex", gap: 10, padding: 12 }}>
         {/* LEFT: kind grid */}
@@ -765,58 +789,6 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
           </div>
         </div>
       </main>
-      <footer
-        style={{
-          flex: "0 0 24px",
-          height: 24,
-          display: "flex",
-          alignItems: "stretch",
-          background: "var(--surface-chrome)",
-          borderTop: "2px solid var(--border)",
-          fontSize: 9.5,
-          letterSpacing: "0.1em",
-          textTransform: "uppercase",
-          color: "var(--text-faint)",
-        }}
-      >
-        <span
-          style={{
-            display: "flex",
-            alignItems: "center",
-            padding: "0 11px",
-            background: "var(--accent)",
-            color: "var(--text-on-accent)",
-            fontWeight: 700,
-            letterSpacing: "0.14em",
-          }}
-        >
-          {title}
-        </span>
-        <span
-          style={{
-            display: "flex",
-            alignItems: "center",
-            padding: "0 11px",
-            textTransform: "none",
-            letterSpacing: "0.03em",
-            color: "var(--text-muted)",
-          }}
-        >
-          {spec.mode === "vr-apk"
-            ? "single-shot POST /vr/targets/upload-apk"
-            : spec.mode === "vr-upload"
-              ? "POST /vr/targets \u2192 POST /vr/targets/{id}/upload"
-              : spec.mode === "vr-descriptor"
-                ? "POST /vr/targets (descriptor only)"
-                : "single-shot POST /malware/targets/upload"}
-        </span>
-        <span style={{ flex: 1 }} />
-        {onToggleFullscreen
-          ? ctlBtn(isFullscreen ? "\u2921" : "\u2922", isFullscreen ? "exit fullscreen" : "fullscreen", onToggleFullscreen)
-          : null}
-        {ctlBtn("\u2014", "minimize", onMinimize)}
-        {ctlBtn("\u2715", "close", onBack)}
-      </footer>
-    </div>
+    </ConsoleWindow>
   );
 }

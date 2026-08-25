@@ -25,7 +25,6 @@ import { css } from "../../css";
 import {
   CtlBtn,
   DictPanel,
-  IconBtn,
   KV,
   Panel,
   StatusBadge,
@@ -52,6 +51,7 @@ import {
 } from "./tabs";
 import type { ProjectSummary } from "./tabs";
 import { InvestigationSubView } from "./InvestigationSubView";
+import { ConsoleWindow } from "../../window";
 
 const TAB_DEFS: { id: string; label: string }[] = [
   { id: "overview", label: "overview" },
@@ -90,7 +90,7 @@ interface TaskDispatch {
 }
 
 export default function ForensicsProjectPage(props: ModulePageProps): JSX.Element {
-  const { investigationId: projectId, section, onBack, onMinimize, onNavigate, isFullscreen, onToggleFullscreen } = props;
+  const { investigationId: projectId, section, onBack, onMinimize, onNavigate, isFullscreen, onToggleFullscreen, windowId, title: windowTitle, isFocused, onFocus } = props;
 
   const { tab, invSubId } = useMemo(() => parseSection(section), [section]);
 
@@ -164,17 +164,49 @@ export default function ForensicsProjectPage(props: ModulePageProps): JSX.Elemen
   const projectMissing = !projectId;
   const busy = readiness.isPending || fullAnalysis.isPending;
 
+  const statusStrip = (
+    <>
+      <span
+        style={{
+          display: "flex",
+          alignItems: "center",
+          padding: "0 11px",
+          background: "var(--status-ok)",
+          color: "var(--text-on-accent)",
+          fontWeight: 700,
+          letterSpacing: "0.14em",
+        }}
+      >
+        {"forensics \u00b7 project"}
+      </span>
+      <span
+        style={{
+          display: "flex",
+          alignItems: "center",
+          padding: "0 11px",
+          textTransform: "none",
+          letterSpacing: "0.03em",
+          color: "var(--text-muted)",
+        }}
+      >
+        {invSubId ? `investigation ${invSubId.slice(0, 12)}` : `tab \u00b7 ${activeTab}`}
+      </span>
+      <span style={{ flex: 1 }} />
+    </>
+  );
+
   return (
-    <div
-      style={{
-        position: "absolute",
-        inset: 0,
-        display: "flex",
-        flexDirection: "column",
-        background: "transparent",
-        fontFamily: "var(--font-mono)",
-        color: "var(--text-primary)",
-      }}
+    <ConsoleWindow
+      id={windowId}
+      kind="page"
+      title={windowTitle}
+      isFullscreen={isFullscreen}
+      isFocused={isFocused}
+      onFocus={onFocus}
+      onClose={onBack}
+      onMinimize={onMinimize}
+      onToggleFullscreen={onToggleFullscreen}
+      footerExtras={statusStrip}
     >
       {/* HEADER BAND ------------------------------------------------- */}
       <div
@@ -292,54 +324,6 @@ export default function ForensicsProjectPage(props: ModulePageProps): JSX.Elemen
       {/* BODY ------------------------------------------------------- */}
       <main style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", padding: 12, gap: 10 }}>{body}</main>
 
-      {/* FOOTER ---------------------------------------------------- */}
-      <footer
-        style={{
-          flex: "0 0 24px",
-          height: 24,
-          display: "flex",
-          alignItems: "stretch",
-          background: "var(--surface-chrome)",
-          borderTop: "2px solid var(--border)",
-          fontSize: 9.5,
-          letterSpacing: "0.1em",
-          textTransform: "uppercase",
-          color: "var(--text-faint)",
-        }}
-      >
-        <span
-          style={{
-            display: "flex",
-            alignItems: "center",
-            padding: "0 11px",
-            background: "var(--status-ok)",
-            color: "var(--text-on-accent)",
-            fontWeight: 700,
-            letterSpacing: "0.14em",
-          }}
-        >
-          {"forensics \u00b7 project"}
-        </span>
-        <span
-          style={{
-            display: "flex",
-            alignItems: "center",
-            padding: "0 11px",
-            textTransform: "none",
-            letterSpacing: "0.03em",
-            color: "var(--text-muted)",
-          }}
-        >
-          {invSubId ? `investigation ${invSubId.slice(0, 12)}` : `tab \u00b7 ${activeTab}`}
-        </span>
-        <span style={{ flex: 1 }} />
-        {onToggleFullscreen ? (
-          <IconBtn label={isFullscreen ? "\u2921" : "\u2922"} title={isFullscreen ? "exit fullscreen" : "fullscreen"} onClick={onToggleFullscreen} />
-        ) : null}
-        <IconBtn label="\u2014" title="minimize" onClick={onMinimize} />
-        <IconBtn label="\u2715" title="close" onClick={onBack} />
-      </footer>
-
       {/* Investigation form modal (opened from toolbar) ------------ */}
       {investigateOpen && projectId ? (
         <InvestigateForm
@@ -353,7 +337,7 @@ export default function ForensicsProjectPage(props: ModulePageProps): JSX.Elemen
       {readinessOpen && readinessResult ? (
         <ReadinessModal result={readinessResult} onClose={() => setReadinessOpen(false)} />
       ) : null}
-    </div>
+    </ConsoleWindow>
   );
 }
 

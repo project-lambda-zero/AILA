@@ -31,6 +31,7 @@ import type { Branch, DispatchState, Hypothesis, LedgerRow, McpCall, Message } f
 import type { ModulePageProps } from "../contract";
 import { css } from "../css";
 import { shortCaseId } from "../ids";
+import { ConsoleWindow } from "../window";
 
 // Monaco is heavy; load it only when a code block is actually rendered.
 const CodeBlock = lazy(() => import("./CodeBlock"));
@@ -655,7 +656,7 @@ function hypTone(state: string): string {
 /* ---------------------------------- root ---------------------------------- */
 
 export default function XRayPage(props: ModulePageProps): JSX.Element {
-  const { section, investigationId, onBack, onMinimize, onNavigate, isFullscreen, onToggleFullscreen } = props;
+  const { section, investigationId, windowId, title, isFocused, onFocus, onBack, onMinimize, onNavigate, isFullscreen, onToggleFullscreen } = props;
   // section may carry a registry-slug prefix ("xray" from openNamedPage, or a
   // sub-intent like "xray:records"); validate the last segment against the
   // view vocabulary and fall back to the default overview.
@@ -711,11 +712,15 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
   const navRef = useRef(onNavigate);
   const controlRef = useRef(control);
   const statusRef = useRef("");
+  const zoomRef = useRef(zoom);
+  const helpRef = useRef(help);
   focusRef.current = focus;
   viewRef.current = view;
   navRef.current = onNavigate;
   controlRef.current = control;
   statusRef.current = (inv.data?.status ?? "").toLowerCase();
+  zoomRef.current = zoom;
+  helpRef.current = help;
 
   // Reset pane focus to the first pane whenever the layout changes.
   useEffect(() => {
@@ -749,8 +754,15 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
       }
       if (e.altKey || e.ctrlKey || e.metaKey) return;
       if (e.key === "Escape") {
-        setZoom(null);
-        setHelp(false);
+        // Only consume Esc when a local overlay owns it; otherwise let it reach
+        // the window primitive (which closes the window). Capture phase +
+        // stopImmediatePropagation guarantees this handler wins when it fires.
+        if (zoomRef.current || helpRef.current) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          setZoom(null);
+          setHelp(false);
+        }
         return;
       }
       if (e.key === "/") {
@@ -802,8 +814,8 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
         return;
       }
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
   }, []);
 
   const branchList: Branch[] = branches.data ?? [];
@@ -1676,8 +1688,35 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
 
   /* -------------------------------- render ------------------------------- */
 
+  const statusStrip = (
+    <>
+      <span style={{ display: "flex", alignItems: "center", padding: "0 12px", background: "var(--status-ok)", color: "var(--text-on-accent)", fontWeight: 700, letterSpacing: "0.14em" }}>{inv.data?.status ?? "running"}</span>
+      {VIEWS.map(([id, label], i) => {
+        const on = id === view;
+        return (
+          <button key={id} type="button" onClick={() => onNavigate(id)} style={css(`display:flex;align-items:center;padding:0 11px;background:${on ? "color-mix(in srgb,var(--accent) 16%,transparent)" : "transparent"};color:${on ? "var(--accent)" : "var(--text-faint)"};border:0;border-right:1px solid var(--border-soft);font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;`)}>{i + 1} {label}</button>
+        );
+      })}
+      <span style={{ display: "flex", alignItems: "center", padding: "0 10px", color: "var(--accent)", letterSpacing: "0.1em" }}>focus {focus}{zoom ? " \u00b7 zoom" : ""}{pinned.length ? ` \u00b7 pin ${pinned.join("+")}` : ""}</span>
+      <span style={{ flex: 1 }} />
+      <span style={{ display: "flex", alignItems: "center", padding: "0 11px", textTransform: "none", letterSpacing: "0.04em" }}>1-5 layout &#183; hjkl focus &#183; f zoom &#183; / find &#183; p pause &#183; ? keys</span>
+      <span style={{ display: "flex", alignItems: "center", padding: "0 11px", borderLeft: "1px solid var(--border-soft)", textTransform: "none" }}>{branchList.length} live loops</span>
+    </>
+  );
+
   return (
-    <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", background: "transparent", fontFamily: "var(--font-mono)", color: "var(--text-primary)" }}>
+    <ConsoleWindow
+      id={windowId}
+      kind="page"
+      title={title}
+      isFullscreen={isFullscreen}
+      isFocused={isFocused}
+      onFocus={onFocus}
+      onClose={onBack}
+      onMinimize={onMinimize}
+      onToggleFullscreen={onToggleFullscreen}
+      footerExtras={statusStrip}
+    >
 
       {/* body */}
       <main style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -1694,26 +1733,6 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
           <button type="button" onClick={doSteer} disabled={!invId || steer.trim().length === 0 || post.isPending} style={css(`flex:0 0 auto;padding:0 14px;height:28px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-on-accent);background:var(--accent);border:1px solid var(--accent);border-radius:2px;cursor:pointer;${!invId || steer.trim().length === 0 || post.isPending ? "opacity:0.45;cursor:not-allowed;" : ""}`)}>send</button>
         </div>
       </main>
-
-      {/* status bar */}
-      <footer style={{ flex: "0 0 28px", height: 28, display: "flex", alignItems: "stretch", background: "var(--surface-chrome)", borderTop: "2px solid var(--border)", fontSize: 10.5, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-faint)" }}>
-        <span style={{ display: "flex", alignItems: "center", padding: "0 12px", background: "var(--status-ok)", color: "var(--text-on-accent)", fontWeight: 700, letterSpacing: "0.14em" }}>{inv.data?.status ?? "running"}</span>
-        {VIEWS.map(([id, label], i) => {
-          const on = id === view;
-          return (
-            <button key={id} type="button" onClick={() => onNavigate(id)} style={css(`display:flex;align-items:center;padding:0 11px;background:${on ? "color-mix(in srgb,var(--accent) 16%,transparent)" : "transparent"};color:${on ? "var(--accent)" : "var(--text-faint)"};border:0;border-right:1px solid var(--border-soft);font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;`)}>{i + 1} {label}</button>
-          );
-        })}
-        <span style={{ display: "flex", alignItems: "center", padding: "0 10px", color: "var(--accent)", letterSpacing: "0.1em" }}>focus {focus}{zoom ? " \u00b7 zoom" : ""}{pinned.length ? ` \u00b7 pin ${pinned.join("+")}` : ""}</span>
-        <span style={{ flex: 1 }} />
-        <span style={{ display: "flex", alignItems: "center", padding: "0 11px", textTransform: "none", letterSpacing: "0.04em" }}>1-5 layout &#183; hjkl focus &#183; f zoom &#183; / find &#183; p pause &#183; ? keys</span>
-        <span style={{ display: "flex", alignItems: "center", padding: "0 11px", borderLeft: "1px solid var(--border-soft)", textTransform: "none" }}>{branchList.length} live loops</span>
-        {onToggleFullscreen ? (
-          <button type="button" onClick={onToggleFullscreen} title={isFullscreen ? "exit fullscreen" : "fullscreen"} style={css("width:30px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;border:0;border-left:1px solid var(--border-soft);background:transparent;color:var(--text-muted);cursor:pointer;font-family:inherit;font-size:12px;")}>{isFullscreen ? "\u2921" : "\u2922"}</button>
-        ) : null}
-        <button type="button" onClick={onMinimize} title="minimize" style={css("width:30px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;border:0;border-left:1px solid var(--border-soft);background:transparent;color:var(--text-muted);cursor:pointer;font-family:inherit;font-size:12px;")}>{"\u2014"}</button>
-        <button type="button" onClick={onBack} title="close" style={css("width:30px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;border:0;border-left:1px solid var(--border-soft);background:transparent;color:var(--text-muted);cursor:pointer;font-family:inherit;font-size:11px;")}>{"\u2715"}</button>
-      </footer>
 
       {/* command palette (/ or Ctrl-K; Esc / click-away closes) */}
       {palette ? (
@@ -1793,6 +1812,6 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
           </div>
         </div>
       ) : null}
-    </div>
+    </ConsoleWindow>
   );
 }

@@ -37,6 +37,7 @@ import type {
 } from "../../api/sandbox";
 import type { ModulePageProps } from "../contract";
 import { css } from "../css";
+import { ConsoleWindow } from "../window";
 import StructuredValue from "./StructuredValue";
 
 /* ------------------------------ constants -------------------------------- */
@@ -151,21 +152,6 @@ const configMeta: CSSProperties = css(
 );
 
 /* ----------------------------- helpers ---------------------------------- */
-
-function ctlBtn(label: string, title: string, onClick: () => void): JSX.Element {
-  return (
-    <button
-      type="button"
-      title={title}
-      onClick={onClick}
-      style={css(
-        "width:30px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;border:0;border-left:1px solid var(--border-soft);background:transparent;color:var(--text-muted);cursor:pointer;font-family:inherit;font-size:12px;",
-      )}
-    >
-      {label}
-    </button>
-  );
-}
 
 /** Sub-second durations render as ms, longer as seconds -- one glance
  *  reads either as a number an operator can compare to their timeout. */
@@ -812,19 +798,60 @@ function RecentExecutionsPanel(): JSX.Element {
 /* --------------------------------- page ---------------------------------- */
 
 export default function SandboxPage(props: ModulePageProps): JSX.Element {
-  const { onBack, onMinimize, isFullscreen, onToggleFullscreen } = props;
+  const {
+    onBack,
+    onMinimize,
+    isFullscreen,
+    onToggleFullscreen,
+    windowId,
+    title,
+    isFocused,
+    onFocus,
+  } = props;
+
+  const statusStrip = (
+    <>
+      <span
+        style={{
+          display: "flex",
+          alignItems: "center",
+          padding: "0 11px",
+          background: "var(--status-ok)",
+          color: "var(--text-on-accent)",
+          fontWeight: 700,
+          letterSpacing: "0.14em",
+        }}
+      >
+        admin &middot; sandbox
+      </span>
+      <span
+        style={{
+          display: "flex",
+          alignItems: "center",
+          padding: "0 11px",
+          textTransform: "none",
+          letterSpacing: "0.03em",
+          color: "var(--text-muted)",
+        }}
+      >
+        SandboxService &middot; nsjail &middot; firecracker &middot; SSH
+      </span>
+      <span style={{ flex: 1 }} />
+    </>
+  );
 
   return (
-    <div
-      style={{
-        position: "absolute",
-        inset: 0,
-        display: "flex",
-        flexDirection: "column",
-        background: "transparent",
-        fontFamily: "var(--font-mono)",
-        color: "var(--text-primary)",
-      }}
+    <ConsoleWindow
+      id={windowId}
+      kind="page"
+      title={title}
+      isFullscreen={isFullscreen}
+      isFocused={isFocused}
+      onFocus={onFocus}
+      onClose={onBack}
+      onMinimize={onMinimize}
+      onToggleFullscreen={onToggleFullscreen}
+      footerExtras={statusStrip}
     >
       <header
         style={{
@@ -876,56 +903,6 @@ export default function SandboxPage(props: ModulePageProps): JSX.Element {
         <RecentExecutionsPanel />
       </main>
 
-      <footer
-        style={{
-          flex: "0 0 24px",
-          height: 24,
-          display: "flex",
-          alignItems: "stretch",
-          background: "var(--surface-chrome)",
-          borderTop: "2px solid var(--border)",
-          fontSize: 9.5,
-          letterSpacing: "0.1em",
-          textTransform: "uppercase",
-          color: "var(--text-faint)",
-        }}
-      >
-        <span
-          style={{
-            display: "flex",
-            alignItems: "center",
-            padding: "0 11px",
-            background: "var(--status-ok)",
-            color: "var(--text-on-accent)",
-            fontWeight: 700,
-            letterSpacing: "0.14em",
-          }}
-        >
-          admin &middot; sandbox
-        </span>
-        <span
-          style={{
-            display: "flex",
-            alignItems: "center",
-            padding: "0 11px",
-            textTransform: "none",
-            letterSpacing: "0.03em",
-            color: "var(--text-muted)",
-          }}
-        >
-          SandboxService &middot; nsjail &middot; firecracker &middot; SSH
-        </span>
-        <span style={{ flex: 1 }} />
-        {onToggleFullscreen
-          ? ctlBtn(
-              isFullscreen ? "\u2921" : "\u2922",
-              isFullscreen ? "exit fullscreen" : "fullscreen",
-              onToggleFullscreen,
-            )
-          : null}
-        {ctlBtn("\u2014", "minimize", onMinimize)}
-        {ctlBtn("\u2715", "close", onBack)}
-      </footer>
-    </div>
+    </ConsoleWindow>
   );
 }

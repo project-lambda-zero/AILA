@@ -9,6 +9,7 @@ import type { FieldOption } from "../../api/mutations";
 import { asRecord, readArray } from "../../api/parse";
 import type { ModulePageProps } from "../contract";
 import { css } from "../css";
+import { ConsoleWindow } from "../window";
 import { semanticCell, statusRailColor, StatusBadge } from "./badges";
 import { EventTimeline } from "./EventTimeline";
 import FieldForm from "./FieldForm";
@@ -301,21 +302,6 @@ function cellText(v: unknown): string {
   return String(v);
 }
 
-function ctlBtn(label: string, title: string, onClick: () => void): JSX.Element {
-  return (
-    <button
-      type="button"
-      title={title}
-      onClick={onClick}
-      style={css(
-        "width:30px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;border:0;border-left:1px solid var(--border-soft);background:transparent;color:var(--text-muted);cursor:pointer;font-family:inherit;font-size:12px;",
-      )}
-    >
-      {label}
-    </button>
-  );
-}
-
 /** Turn a reveal action's response payload into ordered [label, value] pairs
  * for the one-shot reveal modal. Named `reveal.fields` win; otherwise every
  * top-level key of the payload object is shown. */
@@ -360,7 +346,7 @@ export default function DataPage(
     detailBody?: (row: Record<string, unknown>) => ReactNode;
   },
 ): JSX.Element {
-  const { config, configKey, onNewClick, onRowActivate, detailBody, onBack, onMinimize, isFullscreen, onToggleFullscreen, onOpenPage } = props;
+  const { config, configKey, onNewClick, onRowActivate, detailBody, onBack, onMinimize, isFullscreen, onToggleFullscreen, onOpenPage, windowId, title: windowTitle, isFocused, onFocus } = props;
   const createSpec: FormSpec | undefined = (CREATE_FORMS as Record<string, FormSpec>)[configKey];
   const editSpec: FormSpec | undefined = (EDIT_FORMS as Record<string, FormSpec>)[configKey];
   const idField = config.idField ?? "id";
@@ -1144,20 +1130,31 @@ export default function DataPage(
   const activeSpec: FormSpec | null =
     formMode === "create" ? createSpec ?? null : formMode === "edit" ? editSpec ?? null : null;
 
+  const statusStrip = (
+    <>
+      <span style={{ display: "flex", alignItems: "center", padding: "0 11px", background: "var(--status-ok)", color: "var(--text-on-accent)", fontWeight: 700, letterSpacing: "0.14em" }}>{config.title}</span>
+      {config.blurb ? (
+        <span style={{ display: "flex", alignItems: "center", padding: "0 11px", textTransform: "none", letterSpacing: "0.03em", color: "var(--text-muted)" }}>{config.blurb}</span>
+      ) : null}
+      <span style={{ flex: 1 }} />
+      <span style={{ display: "flex", alignItems: "center", padding: "0 11px", textTransform: "none" }}>{rows.length} records</span>
+    </>
+  );
+
   return (
-    <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", background: "transparent", fontFamily: "var(--font-mono)", color: "var(--text-primary)" }}>
+    <ConsoleWindow
+      id={windowId}
+      kind="page"
+      title={windowTitle}
+      isFullscreen={isFullscreen}
+      isFocused={isFocused}
+      onFocus={onFocus}
+      onClose={onBack}
+      onMinimize={onMinimize}
+      onToggleFullscreen={onToggleFullscreen}
+      footerExtras={statusStrip}
+    >
       <main style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>{body}</main>
-      <footer style={{ flex: "0 0 24px", height: 24, display: "flex", alignItems: "stretch", background: "var(--surface-chrome)", borderTop: "2px solid var(--border)", fontSize: 9.5, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-faint)" }}>
-        <span style={{ display: "flex", alignItems: "center", padding: "0 11px", background: "var(--status-ok)", color: "var(--text-on-accent)", fontWeight: 700, letterSpacing: "0.14em" }}>{config.title}</span>
-        {config.blurb ? (
-          <span style={{ display: "flex", alignItems: "center", padding: "0 11px", textTransform: "none", letterSpacing: "0.03em", color: "var(--text-muted)" }}>{config.blurb}</span>
-        ) : null}
-        <span style={{ flex: 1 }} />
-        <span style={{ display: "flex", alignItems: "center", padding: "0 11px", textTransform: "none" }}>{rows.length} records</span>
-        {onToggleFullscreen ? ctlBtn(isFullscreen ? "\u2921" : "\u2922", isFullscreen ? "exit fullscreen" : "fullscreen", onToggleFullscreen) : null}
-        {ctlBtn("\u2014", "minimize", onMinimize)}
-        {ctlBtn("\u2715", "close", onBack)}
-      </footer>
       {activeSpec ? (
         <div
           role="dialog"
@@ -1280,7 +1277,7 @@ export default function DataPage(
           </div>
         </div>
       ) : null}
-    </div>
+    </ConsoleWindow>
   );
 }
 

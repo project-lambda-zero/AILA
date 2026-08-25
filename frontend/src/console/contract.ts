@@ -29,6 +29,18 @@ export interface LeftRailProps {
 export interface ModulePageProps {
   section: string | null;
   investigationId?: string | null;
+  /** Host-assigned window id; a page spreads it into its `<ConsoleWindow id>`
+   * so the shell can track z-order, focus, and the minimize dock. */
+  windowId: string;
+  /** Window title the shell computed for this page; passed to `<ConsoleWindow
+   * title>` (used by the dock chip + aria labelling). */
+  title: string;
+  /** True when this is the focused (z-top) window; gates the primitive's
+   * keyboard shortcuts so only one window responds. */
+  isFocused?: boolean;
+  /** Raise this window in z-order + pass it keyboard focus (wired to
+   * `<ConsoleWindow onFocus>`). */
+  onFocus?: () => void;
   /** Close the window (back to the console). */
   onBack: () => void;
   /** Collapse the window to the dock, revealing the console behind it. */

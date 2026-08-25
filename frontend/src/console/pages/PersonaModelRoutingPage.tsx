@@ -30,6 +30,7 @@ import {
 } from "../../api/personaRouting";
 import type { ModulePageProps } from "../contract";
 import { css } from "../css";
+import { ConsoleWindow } from "../window";
 
 /* ------------------------------ constants -------------------------------- */
 
@@ -96,32 +97,6 @@ function apiErrMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
 }
-
-function ctlBtn(label: string, title: string, onClick: (() => void) | undefined): JSX.Element {
-  return (
-    <button
-      type="button"
-      title={title}
-      onClick={onClick}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        padding: "0 11px",
-        border: "none",
-        borderLeft: "1px solid var(--border)",
-        background: "transparent",
-        color: "var(--text-muted)",
-        fontFamily: "var(--font-mono)",
-        fontSize: 11,
-        cursor: "pointer",
-      }}
-    >
-      {label}
-    </button>
-  );
-}
-
-/* -------------------------------- editor --------------------------------- */
 
 function RoutingEditor(): JSX.Element {
   const q = usePersonaRoutingConfig();
@@ -311,19 +286,51 @@ function RoutingEditor(): JSX.Element {
 /* --------------------------------- page ---------------------------------- */
 
 export default function PersonaModelRoutingPage(props: ModulePageProps): JSX.Element {
-  const { onBack, onMinimize, isFullscreen, onToggleFullscreen } = props;
+  const { windowId, title, isFocused, onFocus, onBack, onMinimize, isFullscreen, onToggleFullscreen } = props;
+
+  const statusStrip = (
+    <>
+      <span
+        style={{
+          display: "flex",
+          alignItems: "center",
+          padding: "0 11px",
+          background: "var(--status-ok)",
+          color: "var(--text-on-accent)",
+          fontWeight: 700,
+          letterSpacing: "0.14em",
+        }}
+      >
+        admin &middot; agents
+      </span>
+      <span
+        style={{
+          display: "flex",
+          alignItems: "center",
+          padding: "0 11px",
+          textTransform: "none",
+          letterSpacing: "0.03em",
+          color: "var(--text-muted)",
+        }}
+      >
+        PersonaModelRouter &middot; platform.persona_model_role_map
+      </span>
+      <span style={{ flex: 1 }} />
+    </>
+  );
 
   return (
-    <div
-      style={{
-        position: "absolute",
-        inset: 0,
-        display: "flex",
-        flexDirection: "column",
-        background: "transparent",
-        fontFamily: "var(--font-mono)",
-        color: "var(--text-primary)",
-      }}
+    <ConsoleWindow
+      id={windowId}
+      kind="page"
+      title={title}
+      isFullscreen={isFullscreen}
+      isFocused={isFocused}
+      onFocus={onFocus}
+      onClose={onBack}
+      onMinimize={onMinimize}
+      onToggleFullscreen={onToggleFullscreen}
+      footerExtras={statusStrip}
     >
       <header
         style={{
@@ -368,56 +375,6 @@ export default function PersonaModelRoutingPage(props: ModulePageProps): JSX.Ele
         <RoutingEditor />
       </main>
 
-      <footer
-        style={{
-          flex: "0 0 24px",
-          height: 24,
-          display: "flex",
-          alignItems: "stretch",
-          background: "var(--surface-chrome)",
-          borderTop: "2px solid var(--border)",
-          fontSize: 9.5,
-          letterSpacing: "0.1em",
-          textTransform: "uppercase",
-          color: "var(--text-faint)",
-        }}
-      >
-        <span
-          style={{
-            display: "flex",
-            alignItems: "center",
-            padding: "0 11px",
-            background: "var(--status-ok)",
-            color: "var(--text-on-accent)",
-            fontWeight: 700,
-            letterSpacing: "0.14em",
-          }}
-        >
-          admin &middot; agents
-        </span>
-        <span
-          style={{
-            display: "flex",
-            alignItems: "center",
-            padding: "0 11px",
-            textTransform: "none",
-            letterSpacing: "0.03em",
-            color: "var(--text-muted)",
-          }}
-        >
-          PersonaModelRouter &middot; platform.persona_model_role_map
-        </span>
-        <span style={{ flex: 1 }} />
-        {onToggleFullscreen
-          ? ctlBtn(
-              isFullscreen ? "\u2921" : "\u2922",
-              isFullscreen ? "exit fullscreen" : "fullscreen",
-              onToggleFullscreen,
-            )
-          : null}
-        {ctlBtn("\u2014", "minimize", onMinimize)}
-        {ctlBtn("\u2715", "close", onBack)}
-      </footer>
-    </div>
+    </ConsoleWindow>
   );
 }
