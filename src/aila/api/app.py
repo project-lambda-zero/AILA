@@ -790,10 +790,6 @@ def create_app() -> FastAPI:
     from aila.api.routers.topology import router as topology_router
     application.include_router(topology_router)
 
-    # Plan 147-01: executive reporting router (EXEC-01, EXEC-03)
-    from aila.api.routers.executive import router as executive_router
-    application.include_router(executive_router)
-
     # Plan 175-03: LLM cost intelligence router (LLM-COST-01, LLM-COST-03 to LLM-COST-05)
     from aila.api.routers.cost import router as cost_router
     application.include_router(cost_router)

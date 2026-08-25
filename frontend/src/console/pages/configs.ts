@@ -461,20 +461,6 @@ export const PAGE_CONFIGS = {
     columns: [c("year_month", "month"), c("total_cost_usd", "cost $"), c("total_tokens", "tokens")],
     filters: [{ name: "year_month", label: "year month", type: "text" }],
   },
-  "admin:executive": {
-    title: "admin \u00b7 executive",
-    endpoint: "/executive/health",
-    blurb: "fleet finding + severity summary",
-    columns: [],
-    pageActions: [
-      {
-        label: "risk summary pdf",
-        method: "GET",
-        endpoint: "/executive/risk-summary-pdf",
-        download: true,
-      },
-    ],
-  },
   // ---- Admin: data & config --------------------------------------------
   "admin:tag-vocabulary": {
     title: "admin \u00b7 tag vocabulary",

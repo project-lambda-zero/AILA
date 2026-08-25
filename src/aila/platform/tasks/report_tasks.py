@@ -35,7 +35,6 @@ from email.mime.text import MIMEText
 
 from sqlmodel import select
 
-from aila.platform.runtime import get_worker_platform
 from aila.platform.tasks.context import TaskContext
 from aila.platform.tasks.template import platform_task
 from aila.storage.database import async_session_scope
@@ -94,7 +93,6 @@ async def generate_scheduled_report_job(
         report_type = record.report_type
         recipient_emails_raw = record.recipient_emails_json or "[]"
         report_name = record.name
-        report_team_id = record.team_id
 
     # Parse recipient emails (set by admin via API -- trusted source)
     try:
@@ -106,19 +104,7 @@ async def generate_scheduled_report_job(
 
     # Generate the report PDF bytes
     pdf_bytes: bytes | None = None
-    if report_type == "risk_summary":
-        try:
-            pdf_bytes = await _generate_risk_summary_pdf(report_team_id)
-        except Exception as exc:
-            _log.error(
-                "generate_scheduled_report_job: PDF generation failed for report_id=%r: %s",
-                report_id,
-                exc,
-                exc_info=True,
-            )
-            await _update_last_run_at(report_id)
-            return {"status": "failed", "reason": "pdf_generation_error", "report_id": report_id}
-    elif report_type == "compliance":
+    if report_type == "compliance":
         _log.info(
             "generate_scheduled_report_job: compliance reports are system-scoped; "
             "use the evidence-package endpoint for per-system exports. Skipping email."
@@ -216,23 +202,6 @@ async def generate_scheduled_report_job(
         "recipients": sent_count,
         "report_id": report_id,
     }
-
-
-async def _generate_risk_summary_pdf(team_id: str | None) -> bytes:
-    """Generate the risk summary PDF, scoped to the report's owning team.
-
-    Reuses the same logic as the executive API endpoint to avoid duplication.
-    Runs PDF conversion in a thread pool to avoid blocking the event loop.
-    team_id scopes findings to the report owner so a team's scheduled report
-    never includes another team's findings; None is a god-tier report (#36).
-    """
-    platform = await get_worker_platform()
-    module = platform.runtime.module_registry.first_with("build_risk_pdf_bytes")
-    if module is None:
-        raise RuntimeError("No registered module provides risk summary PDFs.")
-    async with async_session_scope() as session:
-        findings = await module.latest_findings(session, team_id=team_id)
-    return await asyncio.to_thread(module.build_risk_pdf_bytes, findings)
 
 
 async def _update_last_run_at(report_id: str) -> None:

@@ -14,7 +14,6 @@ from pydantic import BaseModel, Field, field_validator
 
 __all__ = [
     "DashboardResponse",
-    "ExecutiveHealthResponse",
     "FindingTransitionRequest",
     "FindingWorkflowHistoryResponse",
     "FindingWorkflowStateResponse",
@@ -211,20 +210,6 @@ class UnreadNotificationsResponse(BaseModel):
 class WorkflowStateDefinition(BaseModel):
     states: list[str]
     transitions: dict[str, list[str]]
-
-
-class ExecutiveHealthResponse(BaseModel):
-    """Fleet-wide risk posture summary for the executive dashboard."""
-
-    total_findings: int = Field(description="Total number of active findings across all systems")
-    severity_breakdown: dict[str, int] = Field(
-        description="Finding counts by severity level (Immediate, High, Moderate, Planned)",
-    )
-    last_scanned_at: str | None = Field(
-        default=None,
-        description="ISO-8601 timestamp of the most recent scan across all findings",
-    )
-    systems_with_findings: int = Field(description="Number of distinct systems with at least one finding")
 
 
 class OIDCAuthorizeResponse(BaseModel):
