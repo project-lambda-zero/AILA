@@ -373,7 +373,7 @@ export const PAGE_CONFIGS = {
       c("operator_notes", "notes"),
       c("created_at", "created"),
     ],
-    filters: [{ name: "kind", label: "kind", type: "text" }, { name: "kind", label: "kind", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
+    filters: [{ name: "kind", label: "kind", type: "text" }, { name: "workflow_state", label: "state", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
     // Workflow transitions. Each row calls POST /findings/{id}/transition with
     // module_id="malware" and the target state; whenStatus gates the button by
     // the row's current workflow_state so only legal edges appear. The graph
