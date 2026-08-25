@@ -293,6 +293,17 @@ export interface PageConfig {
     title: (row: Record<string, unknown>) => string;
     render: (row: Record<string, unknown>, close: () => void) => ReactNode;
   };
+  /** When set, the rendered (filtered, paginated) rows are partitioned into
+   * sections keyed by `row[groupBy]`. Group keys sort by localeCompare; within
+   * each group, active rows (`status`/`is_active` == "active") float to the
+   * top, then remaining rows sort by `created_at` ascending (oldest candidate
+   * first). Unset -> flat rendering, identical to today. */
+  groupBy?: string;
+  /** When set, a successful create via the typed FieldForm modal auto-selects
+   * the newest fetched row (rows are created_at DESC, so first of the fetched
+   * set) and opens the detail panel. No effect when the config has no
+   * `create` form or when creates come from a bespoke `onNewClick`. */
+  selectCreatedRow?: boolean;
 }
 
 const ROW_KEYS = ["items", "results", "rows", "entries", "records", "data", "findings", "investigations", "targets", "workspaces"];
@@ -553,6 +564,19 @@ export default function DataPage(
     refetchInterval: 15000,
   });
   const allRows = useMemo(() => toRows(q.data, config.itemsKey), [q.data, config.itemsKey]);
+  // config.selectCreatedRow: flag set on create-success; the effect below
+  // consumes it once the next fetched dataset lands and auto-selects the
+  // newest row (rows come back created_at DESC, so index 0 of the fetched
+  // set is the just-created record).
+  const [pendingSelectFirst, setPendingSelectFirst] = useState(false);
+  // Consume the create-success flag once the next fetched set lands. Clearing
+  // the flag before setSel avoids re-firing on the 15s poll.
+  useEffect(() => {
+    if (!pendingSelectFirst) return;
+    if (allRows.length === 0) return;
+    setPendingSelectFirst(false);
+    setSel(allRows[0]);
+  }, [pendingSelectFirst, allRows]);
   // Options for an option-bearing filter: static `options` win, then a live
   // `optionsFrom` list, else the distinct row values of the field (so a bare
   // `{type:"select"}` becomes an honest enum filter with no backend coupling).
@@ -857,64 +881,113 @@ export default function DataPage(
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row, i) => {
-                  const key = cellText(row[idField]) + i;
-                  const active = sel === row;
-                  // Status-toned left ribbon: a continuous vertical rail the eye
-                  // follows down the table, encoding each row's state at the
-                  // left edge. Rendered as an inset box-shadow (no layout shift)
-                  // so hover/active are free to use a background tint. Active
-                  // wins the ribbon in accent so the selected row still reads.
-                  const rail = active ? "var(--accent)" : statusRailColor(row["status"]) ?? "transparent";
-                  return (
-                    <tr
-                      key={key}
-                      onClick={(e) => {
-                        const target = e.target as HTMLElement;
-                        if (target.tagName === "INPUT") return; // checkbox click handled by its own onChange
-                        if (onRowActivate) onRowActivate(row);
-                        else setSel((cur) => (cur === row ? null : row));
-                      }}
-                      style={css(
-                        `cursor:pointer;border-bottom:1px solid var(--border-faint);box-shadow:inset 3px 0 0 ${rail};${active ? "background:color-mix(in srgb,var(--accent) 16%,transparent);" : ""}`,
-                      )}
-                    >
-                      {config.bulkActions && config.bulkActions.length > 0 ? (
-                        <td style={css("padding:6px 8px;width:28px;")}>
-                          <input
-                            type="checkbox"
-                            checked={selected.has(String(row[idField] ?? ""))}
-                            onChange={() => toggleRow(row)}
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        </td>
-                      ) : null}
-                      {columns.map((c, ci) => {
-                        const isNum = numericFields.has(c.field);
-                        const isTitle = ci === 0 && !c.kind;
-                        // Title column anchors the row (bright, semibold);
-                        // numeric columns get mono tabular figures; everything
-                        // else recedes to muted so the eye lands on the anchor
-                        // and the status color, not a wall of even text.
-                        const emphasis = isTitle
-                          ? "color:var(--text-primary);font-weight:600;"
-                          : isNum
-                            ? "color:var(--text-muted);font-family:var(--font-mono);font-variant-numeric:tabular-nums;"
-                            : "color:var(--text-muted);";
-                        return (
-                          <td
-                            key={c.field}
-                            style={css(
-                              `padding:7px 12px;max-width:${isTitle ? 460 : 320}px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:${isNum ? "right" : "left"};${emphasis}`,
-                            )}
-                          >
-                            {c.render ? c.render(row[c.field], row) : c.kind ? semanticCell(c.kind, row[c.field]) : cellText(row[c.field])}
+                {(() => {
+                  const renderRow = (row: Record<string, unknown>, i: number): JSX.Element => {
+                    const key = cellText(row[idField]) + i;
+                    const active = sel === row;
+                    // Status-toned left ribbon: a continuous vertical rail the eye
+                    // follows down the table, encoding each row's state at the
+                    // left edge. Rendered as an inset box-shadow (no layout shift)
+                    // so hover/active are free to use a background tint. Active
+                    // wins the ribbon in accent so the selected row still reads.
+                    const rail = active ? "var(--accent)" : statusRailColor(row["status"]) ?? "transparent";
+                    return (
+                      <tr
+                        key={key}
+                        onClick={(e) => {
+                          const target = e.target as HTMLElement;
+                          if (target.tagName === "INPUT") return; // checkbox click handled by its own onChange
+                          if (onRowActivate) onRowActivate(row);
+                          else setSel((cur) => (cur === row ? null : row));
+                        }}
+                        style={css(
+                          `cursor:pointer;border-bottom:1px solid var(--border-faint);box-shadow:inset 3px 0 0 ${rail};${active ? "background:color-mix(in srgb,var(--accent) 16%,transparent);" : ""}`,
+                        )}
+                      >
+                        {config.bulkActions && config.bulkActions.length > 0 ? (
+                          <td style={css("padding:6px 8px;width:28px;")}>
+                            <input
+                              type="checkbox"
+                              checked={selected.has(String(row[idField] ?? ""))}
+                              onChange={() => toggleRow(row)}
+                              onClick={(e) => e.stopPropagation()}
+                            />
                           </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })}
+                        ) : null}
+                        {columns.map((c, ci) => {
+                          const isNum = numericFields.has(c.field);
+                          const isTitle = ci === 0 && !c.kind;
+                          // Title column anchors the row (bright, semibold);
+                          // numeric columns get mono tabular figures; everything
+                          // else recedes to muted so the eye lands on the anchor
+                          // and the status color, not a wall of even text.
+                          const emphasis = isTitle
+                            ? "color:var(--text-primary);font-weight:600;"
+                            : isNum
+                              ? "color:var(--text-muted);font-family:var(--font-mono);font-variant-numeric:tabular-nums;"
+                              : "color:var(--text-muted);";
+                          return (
+                            <td
+                              key={c.field}
+                              style={css(
+                                `padding:7px 12px;max-width:${isTitle ? 460 : 320}px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:${isNum ? "right" : "left"};${emphasis}`,
+                              )}
+                            >
+                              {c.render ? c.render(row[c.field], row) : c.kind ? semanticCell(c.kind, row[c.field]) : cellText(row[c.field])}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  };
+                  const groupField = config.groupBy;
+                  if (!groupField) return rows.map(renderRow);
+                  // Group the visible rows by row[groupField]. Sort keys
+                  // localeCompare; within each group, active-first then
+                  // created_at ASC (oldest candidate first) per req 41 spec.
+                  const groups = new Map<string, Record<string, unknown>[]>();
+                  for (const row of rows) {
+                    const gk = String(row[groupField] ?? "");
+                    const bucket = groups.get(gk);
+                    if (bucket) bucket.push(row);
+                    else groups.set(gk, [row]);
+                  }
+                  const isActive = (r: Record<string, unknown>): boolean => {
+                    const s = String(r["status"] ?? r["is_active"] ?? "").toLowerCase();
+                    return s === "active";
+                  };
+                  const createdAt = (r: Record<string, unknown>): number => {
+                    const t = Date.parse(String(r["created_at"] ?? ""));
+                    return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
+                  };
+                  const keys = [...groups.keys()].sort((a, b) => a.localeCompare(b));
+                  const colSpan = columns.length + (config.bulkActions && config.bulkActions.length > 0 ? 1 : 0);
+                  const out: JSX.Element[] = [];
+                  let idx = 0;
+                  for (const gk of keys) {
+                    const bucket = [...(groups.get(gk) ?? [])].sort((a, b) => {
+                      const ax = isActive(a);
+                      const bx = isActive(b);
+                      if (ax !== bx) return ax ? -1 : 1;
+                      return createdAt(a) - createdAt(b);
+                    });
+                    out.push(
+                      <tr key={`__group_${gk}`} style={css("background:var(--surface-chrome);")}>
+                        <td
+                          colSpan={colSpan}
+                          style={css("padding:6px 12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-muted);")}
+                        >
+                          {gk || "\u2014"}
+                        </td>
+                      </tr>,
+                    );
+                    for (const row of bucket) {
+                      out.push(renderRow(row, idx));
+                      idx += 1;
+                    }
+                  }
+                  return out;
+                })()}
               </tbody>
             </table>
     );
@@ -1155,6 +1228,11 @@ export default function DataPage(
               ) : null}
               <button type="button" onClick={() => setSel(null)} style={css("background:transparent;border:0;color:var(--text-faint);cursor:pointer;font-size:13px;margin-left:4px;")}>{"\u2715"}</button>
             </div>
+            {action.isError ? (
+              <div style={css("padding:6px 12px;border-bottom:1px solid #d64545;background:color-mix(in srgb,#d64545 10%,transparent);color:#d64545;font-family:var(--font-mono);font-size:10px;letter-spacing:0.02em;text-transform:none;word-break:break-word;")}>
+                {action.error instanceof Error ? action.error.message : "action failed"}
+              </div>
+            ) : null}
             <div style={css("flex:1;min-height:0;overflow:auto;padding:12px 14px;display:grid;grid-template-columns:140px 1fr;gap:6px 12px;font-size:11px;align-content:start;")}>
               {detailBody ? (
                 detailBody(sel)
@@ -1243,7 +1321,12 @@ export default function DataPage(
             <FieldForm
               spec={activeSpec}
               initial={formMode === "edit" ? sel : null}
-              onDone={() => setFormMode(null)}
+              onDone={() => {
+                if (formMode === "create" && config.selectCreatedRow) {
+                  setPendingSelectFirst(true);
+                }
+                setFormMode(null);
+              }}
               onCancel={() => setFormMode(null)}
               invalidateKey={["datapage", effectiveEndpoint]}
             />

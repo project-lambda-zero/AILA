@@ -197,6 +197,24 @@ class CalibrationProposalPromoteInfo(BaseModel):
     actor: str
 
 
+class CalibrationProposalInfo(BaseModel):
+    id: str
+    outcome_kind: str
+    before_threshold: float
+    after_threshold: float
+    approve_count: int
+    reject_count: int
+    mean_confidence_reject: float
+    mean_confidence_approve: float
+    reasoning: str
+    evidence: dict[str, Any]
+    status: str
+    superseded_by: str | None
+    reverted_from: str | None
+    actor: str
+    created_at: datetime
+
+
 def _case_specs_to_dicts(cases: list[BenchmarkCaseSpec]) -> list[dict[str, object]]:
     """Convert BenchmarkCaseSpec entries to plain dicts for the runner."""
     out: list[dict[str, object]] = []
@@ -309,6 +327,38 @@ def _version_info(row: CalibratorVersionRecord) -> CalibratorVersionInfo:
     )
 
 
+def _proposal_info(row: CalibrationProposalRecord) -> CalibrationProposalInfo:
+    """Adapt a :class:`CalibrationProposalRecord` to the response contract."""
+    try:
+        evidence = json.loads(row.evidence_json or "{}")
+    except (json.JSONDecodeError, TypeError, ValueError):
+        _log.warning(
+            "admin_eval: evidence_json for calibration proposal id=%s is "
+            "malformed; returning empty evidence",
+            row.id,
+        )
+        evidence = {}
+    if not isinstance(evidence, dict):
+        evidence = {}
+    return CalibrationProposalInfo(
+        id=row.id,
+        outcome_kind=row.outcome_kind,
+        before_threshold=row.before_threshold,
+        after_threshold=row.after_threshold,
+        approve_count=row.approve_count,
+        reject_count=row.reject_count,
+        mean_confidence_reject=row.mean_confidence_reject,
+        mean_confidence_approve=row.mean_confidence_approve,
+        reasoning=row.reasoning,
+        evidence=evidence,
+        status=row.status,
+        superseded_by=row.superseded_by,
+        reverted_from=row.reverted_from,
+        actor=row.actor,
+        created_at=row.created_at,
+    )
+
+
 @router.post("/calibrators/train", status_code=status.HTTP_201_CREATED)
 @limiter.limit("10/minute")
 async def train_calibrator(
@@ -384,6 +434,27 @@ async def list_calibrators(
         ).limit(limit)
         rows = (await session.exec(stmt)).all()
     return DataEnvelope(data=[_version_info(r) for r in rows])
+
+
+@router.get("/calibration-proposals")
+@limiter.limit("60/minute")
+async def list_calibration_proposals(
+    request: Request,
+    outcome_kind: str | None = Query(default=None, max_length=64),
+    limit: int = Query(default=100, ge=1, le=500),
+    ctx: AuthContext = Depends(_require_admin),
+) -> DataEnvelope[list[CalibrationProposalInfo]]:
+    """List calibration-threshold proposals, optionally scoped to ``outcome_kind``."""
+    del request, ctx
+    async with async_session_scope() as session:
+        stmt = select(CalibrationProposalRecord)
+        if outcome_kind:
+            stmt = stmt.where(CalibrationProposalRecord.outcome_kind == outcome_kind)
+        stmt = stmt.order_by(
+            CalibrationProposalRecord.created_at.desc(),  # type: ignore[attr-defined]
+        ).limit(limit)
+        rows = (await session.exec(stmt)).all()
+    return DataEnvelope(data=[_proposal_info(r) for r in rows])
 
 
 @router.post("/calibration-proposals/{proposal_id}/promote")

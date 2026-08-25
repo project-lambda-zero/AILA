@@ -1007,7 +1007,77 @@ export const PAGE_CONFIGS = {
   "admin:eval-calibrators": {
     title: "admin \u00b7 eval calibrators",
     endpoint: "/admin/eval/calibrators",
-    columns: [],
+    blurb: "a calibrator maps raw model confidence to an empirical accept rate for a task_type; training fits isotonic + temperature from that task's accept/reject history and keeps the lower ECE; promoting flips a candidate to active behind an ECE-beats-baseline + quorum gate. benchmark registration + run scoring live at /admin/eval/benchmarks and /admin/eval/runs.",
+    columns: [
+      c("task_type", "task type"),
+      c("method"),
+      c("status"),
+      c("ece_before"),
+      c("ece_after"),
+      {
+        field: "ece_after",
+        label: "\u0394 ece",
+        render: (_v, row) => {
+          const b = Number(row.ece_before);
+          const a = Number(row.ece_after);
+          if (Number.isNaN(b) || Number.isNaN(a)) return "\u2014";
+          return (b - a).toFixed(4);
+        },
+      },
+      c("sample_count", "samples"),
+      c("actor"),
+      c("created_at", "created"),
+    ],
+    filters: [
+      { name: "task_type", label: "task type", type: "select" },
+      { name: "status", label: "status", type: "select" },
+      { name: "method", label: "method", type: "text" },
+    ],
+    groupBy: "task_type",
+    selectCreatedRow: true,
+    actions: [
+      {
+        label: "promote",
+        method: "POST",
+        endpoint: "/admin/eval/calibrators/{id}/promote",
+        whenField: "status",
+        whenStatus: ["candidate"],
+        fields: [
+          { name: "approver_ids", label: "approver ids", type: "tags", required: true, placeholder: "space/comma separated approver ids" },
+        ],
+      },
+    ],
+  },
+  "admin:calibration-proposals": {
+    title: "admin \u00b7 calibration proposals",
+    endpoint: "/admin/eval/calibration-proposals",
+    blurb: "a proposal maps a raw confidence threshold to a promoted one per outcome_kind; promoting writes into live config platform.calibration_threshold_{outcome_kind} behind a quorum gate.",
+    columns: [
+      c("outcome_kind", "outcome kind"),
+      c("before_threshold", "before"),
+      c("after_threshold", "after"),
+      c("approve_count", "approves"),
+      c("reject_count", "rejects"),
+      c("status"),
+      c("actor"),
+      c("created_at", "created"),
+    ],
+    filters: [
+      { name: "outcome_kind", label: "outcome kind", type: "select" },
+      { name: "status", label: "status", type: "select" },
+    ],
+    actions: [
+      {
+        label: "promote",
+        method: "POST",
+        endpoint: "/admin/eval/calibration-proposals/{id}/promote",
+        whenField: "status",
+        whenStatus: ["active"],
+        fields: [
+          { name: "approver_ids", label: "approver ids", type: "tags", required: true, placeholder: "space/comma separated approver ids" },
+        ],
+      },
+    ],
   },
 
   // ---- Final coverage: stats / reference endpoints ---------------------
