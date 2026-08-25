@@ -17,9 +17,12 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+import os
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.exc import SQLAlchemyError
+from sqlmodel import select
 
 from aila.api.auth import AuthContext, require_user_or_api_key
 from aila.api.constants import ROLE_ADMIN
@@ -33,7 +36,9 @@ from aila.platform.services.sandbox import (
     SandboxSpec,
     SandboxUnavailableError,
 )
-from aila.platform.services.sandbox.service import SandboxService
+from aila.platform.services.sandbox.service import SandboxProbe, SandboxService
+from aila.storage.database import async_session_scope
+from aila.storage.db_models import SandboxExecHistoryRecord
 
 __all__ = ["router"]
 
@@ -132,7 +137,34 @@ class SandboxStatus(BaseModel):
     provisioned: bool
     ssh_host: str
     ssh_reachable: bool | None
+    host_os: str
     checks: list[SandboxCheck]
+
+
+class SandboxProbeResponse(BaseModel):
+    """Response body for ``POST /platform/sandbox/probe``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool
+    detail: str
+    duration_ms: int
+
+
+class SandboxHistoryRow(BaseModel):
+    """Response row for ``GET /platform/sandbox/history``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    actor_user_id: str | None
+    argv: list[str]
+    exit_code: int | None
+    duration_s: float
+    timed_out: bool
+    oom: bool
+    truncated: bool
+    created_at: str
 
 
 def _to_response(result: SandboxResult) -> SandboxResultResponse:
@@ -201,6 +233,22 @@ async def exec_sandbox(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"sandbox backend failed: {exc}",
         ) from exc
+
+    try:
+        async with async_session_scope() as session:
+            session.add(SandboxExecHistoryRecord(
+                actor_user_id=ctx.user_id,
+                argv=list(spec.argv),
+                exit_code=result.exit_code,
+                duration_s=result.duration_s,
+                timed_out=result.timed_out,
+                oom=result.oom,
+                truncated=result.truncated,
+            ))
+            await session.commit()
+    except SQLAlchemyError as exc:
+        _log.warning("platform.sandbox.exec history insert failed: %s", exc)
+
     return DataEnvelope(data=_to_response(result))
 
 
@@ -259,5 +307,68 @@ async def sandbox_status(
         provisioned=provisioned,
         ssh_host=ssh_host,
         ssh_reachable=None,
+        host_os=os.name,
         checks=checks,
     ))
+
+
+def _history_row(record: SandboxExecHistoryRecord) -> SandboxHistoryRow:
+    return SandboxHistoryRow(
+        id=record.id,
+        actor_user_id=record.actor_user_id,
+        argv=list(record.argv),
+        exit_code=record.exit_code,
+        duration_s=record.duration_s,
+        timed_out=record.timed_out,
+        oom=record.oom,
+        truncated=record.truncated,
+        created_at=record.created_at.isoformat(),
+    )
+
+
+@router.post("/probe", status_code=status.HTTP_200_OK)
+@limiter.limit("10/minute")
+async def probe_sandbox(
+    request: Request,
+    ctx: AuthContext = Depends(_require_admin),
+) -> DataEnvelope[SandboxProbeResponse]:
+    """Run a bounded live SSH round-trip to the configured sandbox host.
+
+    Never raises on a failed probe; the response body carries ``ok=False``
+    plus an actionable ``detail`` so the governance panel can flip
+    ``ssh_reachable`` and surface the reason inline.
+    """
+    del request, ctx
+    service = SandboxService(build_platform_settings(get_settings()))
+    probe: SandboxProbe = await service.probe()
+    return DataEnvelope(data=SandboxProbeResponse(
+        ok=probe.ok,
+        detail=probe.detail,
+        duration_ms=probe.duration_ms,
+    ))
+
+
+@router.get("/history", status_code=status.HTTP_200_OK)
+@limiter.limit("30/minute")
+async def sandbox_history(
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    ctx: AuthContext = Depends(_require_admin),
+) -> DataEnvelope[list[SandboxHistoryRow]]:
+    """Return recent admin sandbox exec dispatches, newest first.
+
+    Reads the shape-only history table populated by successful POSTs to
+    ``/platform/sandbox/exec``. NEVER exposes stdin, stdout, or stderr --
+    those are not stored.
+    """
+    del request, ctx
+    async with async_session_scope() as session:
+        stmt = (
+            select(SandboxExecHistoryRecord)
+            .order_by(SandboxExecHistoryRecord.created_at.desc())  # type: ignore[attr-defined]
+            .offset(offset)
+            .limit(limit)
+        )
+        rows = (await session.exec(stmt)).all()
+    return DataEnvelope(data=[_history_row(r) for r in rows])

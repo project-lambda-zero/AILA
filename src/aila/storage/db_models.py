@@ -895,6 +895,33 @@ class ExplainCacheRecord(SQLModel, table=True):
     cached_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 
+class SandboxExecHistoryRecord(SQLModel, table=True):
+    """Shape-only history of admin sandbox exec dispatches (req 33).
+
+    One row per successful POST /platform/sandbox/exec. Records the SHAPE
+    of the call (argv, exit code, timing, result flags) and the acting
+    god-tier admin -- never stdin, stdout, or stderr bodies. The admin
+    sandbox is a shared platform resource; this table is an audit of who
+    ran what, not a transcript.
+
+    Written by: POST /platform/sandbox/exec after a successful run.
+    Consumed by: GET /platform/sandbox/history (RecentExecutionsPanel).
+    """
+
+    __tablename__ = "sandbox_exec_history"
+    __table_args__ = (Index("ix_sandbox_exec_history_created_at", "created_at"),)
+
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
+    actor_user_id: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    argv: list[str] = Field(sa_column=Column("argv", JSONB, nullable=False))
+    exit_code: int | None = Field(default=None, sa_column=Column(Integer, nullable=True))
+    duration_s: float = Field(sa_column=Column(Float, nullable=False))
+    timed_out: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default="false"))
+    oom: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default="false"))
+    truncated: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default="false"))
+    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+
+
 # ---------------------------------------------------------------------------
 # Plan C endpoint support tables (D-32/D-33/D-35/D-40/D-41)
 # ---------------------------------------------------------------------------

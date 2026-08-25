@@ -8,7 +8,7 @@
  *   CONFIG EDITOR      GET  /config/platform  +  PUT /config/platform/{key}
  *                      (client-filtered to sandbox_* keys)
  *   EXEC CONSOLE       POST /platform/sandbox/exec  (mutation)
- *   RECENT EXECUTIONS  no endpoint -- honest not-implemented placeholder
+ *   RECENT EXECUTIONS  GET  /platform/sandbox/history
  *
  * Config is not raw JSON: each of the 15 sandbox_* keys renders as a
  * labelled row with a type-aware editor. The exec form is a typed form
@@ -20,17 +20,20 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
-import type { ChangeEvent, CSSProperties, FormEvent, JSX } from "react";
+import type { ChangeEvent, CSSProperties, Dispatch, FormEvent, JSX, SetStateAction } from "react";
 
 import { ApiError } from "../../api/client";
 import {
   useSandboxConfig,
   useSandboxExec,
+  useSandboxHistory,
+  useSandboxProbe,
   useSandboxStatus,
   useUpdateSandboxConfig,
 } from "../../api/sandbox";
 import type {
   SandboxConfigRow,
+  SandboxHistoryRow,
   SandboxResult,
   SandboxSpec,
   SandboxStatus,
@@ -180,10 +183,12 @@ const SANDBOX_KEY_RANK: Record<string, number> = Object.fromEntries(
 /* --------------------------- BACKEND & HEALTH ---------------------------- */
 
 function HealthPanel({ status }: { status: SandboxStatus | undefined | null }): JSX.Element | null {
+  const probe = useSandboxProbe();
   if (!status) return null;
   const backendChip = status.backend === "none" ? chipFaint : chipAccent;
   const provisionedChip = status.provisioned ? chipOk : chipWarn;
   const reachable = status.ssh_reachable;
+  const probeData = probe.data;
   return (
     <div style={{ ...stack, ...pad }}>
       <div style={kvGrid}>
@@ -193,23 +198,60 @@ function HealthPanel({ status }: { status: SandboxStatus | undefined | null }): 
         <span style={kvVal}>
           <span style={provisionedChip}>{status.provisioned ? "ready" : "not provisioned"}</span>
         </span>
+        <span style={kvLabel}>host os</span>
+        <span style={kvVal}><span style={chip}>{status.host_os}</span></span>
         <span style={kvLabel}>ssh host</span>
         <span style={kvVal}>
           {status.ssh_host ? <span style={chip}>{status.ssh_host}</span> : <span style={chipFaint}>unset</span>}
         </span>
         <span style={kvLabel}>ssh reachable</span>
         <span style={kvVal}>
-          {reachable === null ? (
-            <span style={chipFaint}>not probed</span>
-          ) : reachable ? (
-            <span style={chipOk}>reachable</span>
-          ) : (
-            <span style={chipWarn}>unreachable</span>
-          )}
+          <span style={css("display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;")}>
+            {probe.isPending ? (
+              <span style={chipFaint}>probing&#8230;</span>
+            ) : probeData ? (
+              probeData.ok ? <span style={chipOk}>reachable</span> : <span style={chipWarn}>unreachable</span>
+            ) : reachable === null ? (
+              <span style={chipFaint}>not probed</span>
+            ) : reachable ? (
+              <span style={chipOk}>reachable</span>
+            ) : (
+              <span style={chipWarn}>unreachable</span>
+            )}
+            <button
+              type="button"
+              onClick={() => probe.mutate()}
+              disabled={probe.isPending}
+              style={probe.isPending ? btnGhostDisabled : btnGhost}
+            >
+              probe
+            </button>
+            {probeData ? (
+              <span style={css("color:var(--text-faint);font-family:var(--font-mono);font-size:10px;word-break:break-word;")}>
+                {probeData.detail}
+                {"\u00a0\u00b7\u00a0"}
+                {probeData.duration_ms}ms
+              </span>
+            ) : null}
+          </span>
+          {probe.isError ? (
+            <div style={css(`color:${H_WARN};font-family:var(--font-mono);font-size:9.5px;padding:3px 0 0;`)}>
+              probe failed &mdash; {apiErrMessage(probe.error)}
+            </div>
+          ) : null}
         </span>
       </div>
 
-      {status.backend === "none" ? (
+      {status.backend === "none" && status.host_os === "nt" ? (
+        <div style={css(`padding:9px 11px;border:1px solid color-mix(in srgb,${H_WARN} 55%,transparent);border-radius:2px;background:color-mix(in srgb,${H_WARN} 8%,transparent);color:${H_WARN};font-family:var(--font-mono);font-size:10.5px;line-height:1.55;`)}>
+          the <code>nsjail</code> and <code>firecracker</code> backends run
+          on a Linux host reached over SSH. this host is Windows and has no
+          local sandbox exec path. set <code>sandbox_backend</code> to
+          <code>&nbsp;nsjail</code> or <code>firecracker</code> and point
+          <code>&nbsp;sandbox_ssh_host</code> at a Linux host in the config
+          editor below.
+        </div>
+      ) : status.backend === "none" ? (
         <div style={css(`padding:8px 10px;border:1px solid color-mix(in srgb,${H_WARN} 55%,transparent);border-radius:2px;background:color-mix(in srgb,${H_WARN} 8%,transparent);color:${H_WARN};font-family:var(--font-mono);font-size:10.5px;`)}>
           backend not provisioned (sandbox_backend=none). set sandbox_backend
           to <code>nsjail</code> or <code>firecracker</code> in the config
@@ -542,8 +584,22 @@ function parseArgv(line: string): string[] {
   return out;
 }
 
-function ExecConsole(): JSX.Element {
-  const [form, setForm] = useState<ExecFormState>(DEFAULT_EXEC_FORM);
+/** Render argv tokens back into a single line the exec form's parser can
+ *  re-tokenize. Any token that contains whitespace or a quote is wrapped
+ *  in single quotes so it round-trips through parseArgv. */
+function argvToLine(argv: string[]): string {
+  return argv
+    .map((tok) => (/[\s'"]/.test(tok) ? `'${tok.replace(/'/g, "'\\''")}'` : tok))
+    .join(" ");
+}
+
+function ExecConsole({
+  form,
+  setForm,
+}: {
+  form: ExecFormState;
+  setForm: Dispatch<SetStateAction<ExecFormState>>;
+}): JSX.Element {
   const [argvError, setArgvError] = useState<string | null>(null);
   const mut = useSandboxExec();
 
@@ -772,7 +828,9 @@ function ExecResultView({
 
 /* ---------------------------- RECENT EXECUTIONS -------------------------- */
 
-function RecentExecutionsPanel(): JSX.Element {
+function RecentExecutionsPanel({ onLoad }: { onLoad: (argv: string[]) => void }): JSX.Element {
+  const q = useSandboxHistory();
+  const rows: SandboxHistoryRow[] = q.data ?? [];
   return (
     <div style={panelBox}>
       <div style={panelTitle}>
@@ -780,16 +838,56 @@ function RecentExecutionsPanel(): JSX.Element {
         <span style={css("color:var(--text-primary);")}>recent executions</span>
         <span style={css("flex:1;")} />
         <span style={css("color:var(--text-faint);text-transform:none;letter-spacing:0.04em;")}>
-          not persisted
+          GET /platform/sandbox/history &middot; {rows.length} runs
         </span>
       </div>
       <div style={scroll}>
-        <div style={{ ...emptyNote, textAlign: "left", padding: 16 }}>
-          execution history is not persisted yet: /platform/sandbox/exec
-          runs are dispatched one-shot and the SandboxResult is returned
-          to the caller only. add a history table + list endpoint to
-          light this panel up.
-        </div>
+        {q.isLoading && !q.data ? (
+          <div style={emptyNote}>loading /platform/sandbox/history&#8230;</div>
+        ) : q.isError ? (
+          <div style={{ ...emptyNote, color: H_WARN }}>
+            could not load /platform/sandbox/history &mdash; {apiErrMessage(q.error)}
+          </div>
+        ) : rows.length === 0 ? (
+          <div style={emptyNote}>no sandbox executions recorded yet.</div>
+        ) : (
+          <div style={pad}>
+            {rows.map((row) => {
+              const argvDisplay = argvToLine(row.argv);
+              return (
+                <div
+                  key={row.id}
+                  style={css("display:grid;grid-template-columns:auto 1fr auto;gap:6px 12px;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--border-faint);font-family:var(--font-mono);font-size:10.5px;")}
+                >
+                  <span style={chipRow}>
+                    <span style={row.exit_code === 0 ? chipOk : chipWarn}>
+                      exit {row.exit_code === null ? "\u2014" : row.exit_code}
+                    </span>
+                    <span style={chip}>{fmtDuration(row.duration_s)}</span>
+                    {row.timed_out ? <span style={chipWarn}>timed out</span> : null}
+                    {row.oom ? <span style={chipWarn}>oom</span> : null}
+                    {row.truncated ? <span style={chipWarn}>truncated</span> : null}
+                  </span>
+                  <span style={css("min-width:0;color:var(--text-primary);word-break:break-word;")}>
+                    <span style={css("color:var(--text-primary);")}>{argvDisplay || <span style={chipFaint}>(empty argv)</span>}</span>
+                    <span style={css("display:block;color:var(--text-faint);font-size:9.5px;letter-spacing:0.04em;padding:2px 0 0;")}>
+                      {new Date(row.created_at).toLocaleString()}
+                      {row.actor_user_id ? `\u00a0\u00b7\u00a0${row.actor_user_id}` : ""}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => onLoad(row.argv)}
+                    style={btnGhost}
+                    title="populate the exec form's argv with this row's tokens"
+                  >
+                    load
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -808,6 +906,7 @@ export default function SandboxPage(props: ModulePageProps): JSX.Element {
     isFocused,
     onFocus,
   } = props;
+  const [form, setForm] = useState<ExecFormState>(DEFAULT_EXEC_FORM);
 
   const statusStrip = (
     <>
@@ -899,8 +998,10 @@ export default function SandboxPage(props: ModulePageProps): JSX.Element {
           <StatusPanel />
           <ConfigEditor />
         </div>
-        <ExecConsole />
-        <RecentExecutionsPanel />
+        <ExecConsole form={form} setForm={setForm} />
+        <RecentExecutionsPanel
+          onLoad={(argv) => setForm((f) => ({ ...f, argvLine: argvToLine(argv) }))}
+        />
       </main>
 
     </ConsoleWindow>

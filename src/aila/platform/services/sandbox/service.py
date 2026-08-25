@@ -20,7 +20,9 @@ Policy the service enforces before dispatch:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -40,7 +42,7 @@ from .contracts import (
     SandboxUnavailableError,
 )
 
-__all__ = ["SandboxConfig", "SandboxService"]
+__all__ = ["SandboxConfig", "SandboxProbe", "SandboxService"]
 
 _log = logging.getLogger(__name__)
 
@@ -77,6 +79,15 @@ class SandboxConfig:
     jailer_bin: str
     rootfs_path: str
     kernel_path: str
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxProbe:
+    """Result of a bounded live SSH round-trip to the sandbox host."""
+
+    ok: bool
+    detail: str
+    duration_ms: int
 
 
 class SandboxService:
@@ -239,6 +250,65 @@ class SandboxService:
             "stderr": new_stderr,
             "truncated": truncated,
         })
+
+    async def probe(self, *, connect_timeout: float = 5.0, command_timeout: float = 8.0) -> SandboxProbe:
+        """Bounded live SSH round-trip using the configured sandbox host.
+
+        Returns ok=False with an actionable detail (never raises) when the
+        backend is 'none', the host is empty, or the SSH round-trip fails.
+        """
+        cfg = await self._load_config()
+        if cfg.backend == "none" or not cfg.backend.strip():
+            return SandboxProbe(
+                ok=False,
+                detail=(
+                    "sandbox_backend is 'none'; set it to 'nsjail' or "
+                    "'firecracker' and point sandbox_ssh_host at a Linux host."
+                ),
+                duration_ms=0,
+            )
+        if not cfg.ssh_host.strip():
+            return SandboxProbe(
+                ok=False,
+                detail="sandbox_ssh_host is empty; point it at a Linux sandbox host reachable via SSH.",
+                duration_ms=0,
+            )
+        payload = self._build_host_payload(cfg)
+        start = time.monotonic()
+        try:
+            _, _, exit_code = await asyncio.wait_for(
+                self._ssh.run_command_full(
+                    payload,
+                    "true",
+                    timeout_seconds=command_timeout,
+                    connect_timeout=connect_timeout,
+                ),
+                timeout=connect_timeout + command_timeout + 5.0,
+            )
+        except (AuthenticationError, UpstreamError, AILATimeoutError, ValidationError) as exc:
+            return SandboxProbe(
+                ok=False,
+                detail=f"SSH probe failed: {exc}",
+                duration_ms=int((time.monotonic() - start) * 1000),
+            )
+        except (paramiko.SSHException, OSError, TimeoutError) as exc:
+            return SandboxProbe(
+                ok=False,
+                detail=f"SSH probe failed: {exc}",
+                duration_ms=int((time.monotonic() - start) * 1000),
+            )
+        duration_ms = int((time.monotonic() - start) * 1000)
+        if exit_code == 0:
+            return SandboxProbe(
+                ok=True,
+                detail=f"ssh round-trip ok ({cfg.ssh_user or 'root'}@{cfg.ssh_host}:{cfg.ssh_port})",
+                duration_ms=duration_ms,
+            )
+        return SandboxProbe(
+            ok=False,
+            detail=f"remote probe command exited {exit_code}",
+            duration_ms=duration_ms,
+        )
 
     async def describe(self) -> SandboxConfig:
         """Public live snapshot of the sandbox config for admin/status surfaces.

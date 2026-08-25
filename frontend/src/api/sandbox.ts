@@ -5,6 +5,8 @@
  *   GET /config/platform          -> useSandboxConfig  (client-filtered)
  *   PUT /config/platform/{key}    -> useUpdateSandboxConfig
  *   POST /platform/sandbox/exec   -> useSandboxExec    (mutation)
+ *   POST /platform/sandbox/probe  -> useSandboxProbe   (mutation)
+ *   GET /platform/sandbox/history -> useSandboxHistory
  *
  * All shapes are hand-written from the backend contracts so a change on
  * either side surfaces as a TS build error, not a silent runtime mismatch.
@@ -38,6 +40,8 @@ export interface SandboxStatus {
   /** null when reachability could not be probed (e.g. host not configured
    *  or SSH probe skipped for the current backend). */
   ssh_reachable: boolean | null;
+  /** server os.name, e.g. "nt" | "posix". */
+  host_os: string;
   checks: SandboxStatusCheck[];
 }
 
@@ -169,11 +173,62 @@ export function useUpdateSandboxConfig(): UseMutationResult<
  *  the backend was tried and its transport failed -- both surface as
  *  ApiError with their status preserved for the caller to distinguish. */
 export function useSandboxExec(): UseMutationResult<SandboxResult, Error, SandboxSpec> {
+  const qc = useQueryClient();
   return useMutation<SandboxResult, Error, SandboxSpec>({
     mutationFn: (spec) =>
       apiFetch<SandboxResult>("/platform/sandbox/exec", {
         method: "POST",
         body: JSON.stringify(spec),
       }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["sandbox", "history"] });
+    },
+  });
+}
+
+/* --------------------------------- probe --------------------------------- */
+
+/** Response of POST /platform/sandbox/probe: a live SSH reachability
+ *  check that the operator drives on demand. */
+export interface SandboxProbe {
+  ok: boolean;
+  detail: string;
+  duration_ms: number;
+}
+
+/** One-shot probe. Flips the ssh_reachable chip in the health panel from
+ *  the last cached value to the live result without waiting on the
+ *  status query's staleness window. */
+export function useSandboxProbe(): UseMutationResult<SandboxProbe, Error, void> {
+  return useMutation<SandboxProbe, Error, void>({
+    mutationFn: () =>
+      apiFetch<SandboxProbe>("/platform/sandbox/probe", { method: "POST" }),
+  });
+}
+
+/* --------------------------------- history ------------------------------- */
+
+/** One row of GET /platform/sandbox/history. Stdin/stdout/stderr are
+ *  intentionally NOT stored server-side, so the history row only carries
+ *  argv + outcome metadata. */
+export interface SandboxHistoryRow {
+  id: string;
+  actor_user_id: string | null;
+  argv: string[];
+  exit_code: number | null;
+  duration_s: number;
+  timed_out: boolean;
+  oom: boolean;
+  truncated: boolean;
+  created_at: string;
+}
+
+/** Recent sandbox exec history, DESC by created_at, capped at 20 rows. */
+export function useSandboxHistory(): UseQueryResult<SandboxHistoryRow[]> {
+  return useQuery<SandboxHistoryRow[]>({
+    queryKey: ["sandbox", "history"],
+    queryFn: () => apiFetch<SandboxHistoryRow[]>("/platform/sandbox/history?limit=20"),
+    staleTime: 5_000,
+    refetchOnWindowFocus: false,
   });
 }
