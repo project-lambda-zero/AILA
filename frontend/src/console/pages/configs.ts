@@ -234,7 +234,34 @@ export const PAGE_CONFIGS = {
   "vr:disclosures": {
     title: "vr \u00b7 disclosures",
     endpoint: "/vr/disclosures",
-    columns: [c("finding_id", "finding"), c("kind"), c("status"), c("poc_tier", "poc"), c("severity_rating", "severity"), c("bounty_awarded_usd", "bounty $"), c("created_at", "created")],
+    // /vr/disclosures paginates by offset/limit with meta{total,offset,limit}
+    // (api_router.py:7440+), so offset-mode reads the true total and the list
+    // is reachable past the default 50-row page.
+    pagination: true,
+    paginationParams: "offset",
+    // Each row embeds its resolved channel (VRDisclosureSubmissionSummary.
+    // track_info), so the track name shows as a column and the full track
+    // detail (program_url, accepted_poc_tiers, embargo_default_days, ...)
+    // renders in the click-open detail panel via StructuredValue -- there is
+    // no separate disclosure-tracks page.
+    columns: [
+      c("finding_id", "finding"),
+      {
+        field: "track_info",
+        label: "track",
+        render: (v) => {
+          const info = v as { display_name?: unknown } | null;
+          const name = info && typeof info === "object" ? info.display_name : null;
+          return name != null && name !== "" ? String(name) : "\u2014";
+        },
+      },
+      c("kind"),
+      c("status"),
+      c("poc_tier", "poc"),
+      c("severity_rating", "severity"),
+      c("bounty_awarded_usd", "bounty $"),
+      c("created_at", "created"),
+    ],
     filters: [{ name: "kind", label: "kind", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "vr:fuzz-campaigns": {
@@ -955,11 +982,6 @@ export const PAGE_CONFIGS = {
   },
 
   // ---- Final coverage: stats / reference endpoints ---------------------
-  "vr:disclosure-tracks": {
-    title: "vr \u00b7 disclosure tracks",
-    endpoint: "/vr/disclosure-tracks",
-    columns: [],
-  },
   "admin:teams-cross-view": {
     title: "admin \u00b7 teams cross-view",
     endpoint: "/admin/teams/cross-view",
