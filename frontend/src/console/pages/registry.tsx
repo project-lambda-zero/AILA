@@ -89,6 +89,7 @@ const BESPOKE: Record<string, PageEntry> = {
   "vulnerability:scan": { title: "vulnerability \u00b7 launch scan", render: (p) => <VulnerabilityPage {...p} /> },
   "vulnerability:findings": { title: "vulnerability \u00b7 findings", render: (p) => <VulnerabilityPage {...p} /> },
   "vulnerability:radar": { title: "vulnerability \u00b7 network radar", render: (p) => <VulnerabilityPage {...p} /> },
+  "vulnerability:topology": { title: "vulnerability \u00b7 network topology", render: (p) => <VulnerabilityPage {...p} /> },
   "vulnerability:viz": { title: "vulnerability \u00b7 data visualization", render: (p) => <VulnerabilityPage {...p} /> },
   "vulnerability:reports": { title: "vulnerability \u00b7 reports", render: (p) => <VulnerabilityPage {...p} /> },
   "admin:dashboard": { title: "admin \u00b7 dashboard", render: (p) => <AdminDashboardPage {...p} /> },

@@ -63,6 +63,7 @@ export const MODULES: ModuleDef[] = [
       page("reports"),
       // utility
       page("network radar", "Vulnerability.dc.html#radar"),
+      page("network topology", "Vulnerability.dc.html#topology"),
       page("data visualization", "Vulnerability.dc.html#viz"),
     ],
   },
