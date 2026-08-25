@@ -277,6 +277,11 @@ async def cross_team_view() -> DataEnvelope[list[CrossTeamStatsRow]]:
                 )
             )
 
+    # Deterministic default order: busiest tenant first, ties broken by name
+    # (systems_count DESC, team_name ASC). Sorted here after the rows are
+    # assembled -- the counts are per-team subquery results, not a single ORDER
+    # BY-able projection -- so the cross-view reads the same way on every load.
+    rows.sort(key=lambda r: (-r.systems_count, r.team_name))
     return DataEnvelope(data=rows)
 
 

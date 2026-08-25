@@ -18,6 +18,7 @@ import NdayProjectForm, { CveReproduceDetail } from "./NdayProjectForm";
 import PersonaModelRoutingPage from "./PersonaModelRoutingPage";
 import SandboxPage from "./SandboxPage";
 import TargetInvestigations from "./TargetInvestigations";
+import { TeamCrossDetail } from "./TeamCrossDetail";
 import UploadForm from "./UploadForm";
 import VrPatternsPage from "./VrPatternsPage";
 import VulnerabilityPage from "./VulnerabilityPage";
@@ -152,6 +153,21 @@ const BESPOKE: Record<string, PageEntry> = {
             }
           />
         )}
+      />
+    ),
+  },
+  // Teams cross-view: a god-tier cross-tenant table (columns + text/count
+  // filters from configs.ts) plus a bespoke detail body that drills a row into
+  // that team's detail + member roster via GET /admin/teams/{team_id}, so the
+  // operator moves from counts to one team's members without leaving the panel.
+  "admin:teams-cross-view": {
+    title: PAGE_CONFIGS["admin:teams-cross-view"].title,
+    render: (p) => (
+      <DataPage
+        config={PAGE_CONFIGS["admin:teams-cross-view"]}
+        configKey="admin:teams-cross-view"
+        {...p}
+        detailBody={(row) => <TeamCrossDetail row={row} />}
       />
     ),
   },

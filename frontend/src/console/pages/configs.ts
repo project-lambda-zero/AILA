@@ -1022,7 +1022,20 @@ export const PAGE_CONFIGS = {
   "admin:teams-cross-view": {
     title: "admin \u00b7 teams cross-view",
     endpoint: "/admin/teams/cross-view",
-    columns: [],
+    // CrossTeamStatsRow has no `id`; key rows on team_id so selection and the
+    // detail drill (registry.tsx -> TeamCrossDetail, GET /admin/teams/{id})
+    // resolve. Columns bind 1:1 to the projection fields. The endpoint is
+    // unpaginated and takes no filter params, so the req 28 filters run
+    // client-side over the fetched set (server: unset).
+    idField: "team_id",
+    empty: "no teams \u2014 create one from admin \u00b7 teams",
+    columns: [c("team_name", "team"), c("systems_count", "systems"), c("runs_count", "runs"), c("members_count", "members"), c("team_id", "id")],
+    filters: [
+      { name: "team_name", label: "team", type: "text" },
+      { name: "systems_count", label: "systems", type: "numeric-range" },
+      { name: "runs_count", label: "runs", type: "numeric-range" },
+      { name: "members_count", label: "members", type: "numeric-range" },
+    ],
   },
   "admin:queue-depth": {
     title: "admin \u00b7 queue depth",
