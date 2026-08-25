@@ -124,14 +124,6 @@ HONESTY_WHITELIST: list[tuple[str, str, str]] = _validate([
         "a SQL WHERE clause; `is True` would break ORM query generation.",
     ),
 
-    # api/routers/saved_filters.py -- SavedFilterRecord.shared_with_team
-    (
-        "aila/api/routers/saved_filters.py",
-        "E712",
-        "SQLAlchemy column expression: SavedFilterRecord.shared_with_team == True "
-        "produces a SQL WHERE clause; `is True` would break ORM query generation.",
-    ),
-
 
     (
         "aila/modules/vulnerability/api_router.py",

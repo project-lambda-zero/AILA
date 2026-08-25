@@ -468,12 +468,6 @@ export const PAGE_CONFIGS = {
     columns: [c("tag_key", "tag"), c("description"), c("is_system_default", "system"), c("created_at", "created")],
     filters: [{ name: "tag_key", label: "tag key", type: "text" }, { name: "created_at", label: "created", type: "date-range" }],
   },
-  "admin:saved-filters": {
-    title: "admin \u00b7 saved filters",
-    endpoint: "/saved-filters",
-    columns: [c("name"), c("entity_type", "entity"), c("is_pinned", "pinned"), c("shared_with_team", "shared"), c("created_at", "created")],
-    filters: [{ name: "name", label: "name", type: "text" }, { name: "created_at", label: "created", type: "date-range" }],
-  },
   "admin:config": {
     title: "admin \u00b7 config",
     endpoint: "/config",
@@ -790,7 +784,6 @@ const DELETES: Record<string, { delete: string; idField?: string }> = {
   "admin:automation": { delete: "/automation/schedules/{id}" },
   "admin:scheduled-reports": { delete: "/scheduled-reports/{id}" },
   "admin:tag-vocabulary": { delete: "/tags/vocabulary/{id}", idField: "tag_key" },
-  "admin:saved-filters": { delete: "/saved-filters/{id}" },
   "admin:systems": { delete: "/systems/{id}" },
   "admin:notifications": { delete: "/notifications/{id}" },
   "admin:mcp-instances": { delete: "/platform/mcp/instances/{id}" },

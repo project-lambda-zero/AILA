@@ -541,17 +541,6 @@ export const CREATE_FORMS = {
       { name: "is_active", label: "active", type: "checkbox" },
     ],
   },
-  "admin:saved-filters": {
-    title: "admin \u00b7 new saved filter",
-    endpoint: "/saved-filters",
-    method: "POST",
-    fields: [
-      { name: "name", label: "filter name", type: "text", required: true },
-      { name: "entity_type", label: "applies to (entity type)", type: "text", required: true },
-      { name: "is_pinned", label: "pin", type: "checkbox" },
-      { name: "shared_with_team", label: "share with team", type: "checkbox" },
-    ],
-  },
   "admin:tag-vocabulary": {
     title: "admin \u00b7 new tag key",
     endpoint: "/tags/vocabulary",
@@ -783,16 +772,6 @@ export const EDIT_FORMS = {
       { name: "recipient_emails_json", label: "recipients", type: "json-array-tags" },
       { name: "config_json", label: "report options", type: "json-object-keyval" },
       { name: "is_active", label: "active", type: "checkbox" },
-    ],
-  },
-  "admin:saved-filters": {
-    title: "admin \u00b7 edit saved filter",
-    endpoint: "/saved-filters/{id}",
-    method: "PATCH",
-    fields: [
-      { name: "name", label: "filter name", type: "text" },
-      { name: "is_pinned", label: "pinned", type: "checkbox" },
-      { name: "shared_with_team", label: "shared with team", type: "checkbox" },
     ],
   },
   "admin:systems": {

@@ -20,9 +20,6 @@ __all__ = [
     "FleetStats",
     "NotificationResponse",
     "OIDCAuthorizeResponse",
-    "SavedFilterCreate",
-    "SavedFilterResponse",
-    "SavedFilterUpdate",
     "ScheduledReportCreate",
     "ScheduledReportResponse",
     "ScheduledReportTriggerResponse",
@@ -112,33 +109,6 @@ class FindingWorkflowStateResponse(BaseModel):
     finding_id: str
     current_state: str
     history: list[FindingWorkflowHistoryResponse]
-
-
-class SavedFilterCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=128)
-    entity_type: str
-    filter_json: str = Field(default="{}")
-    is_pinned: bool = False
-    shared_with_team: bool = False
-
-
-class SavedFilterUpdate(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=128)
-    filter_json: str | None = None
-    is_pinned: bool | None = None
-    shared_with_team: bool | None = None
-
-
-class SavedFilterResponse(BaseModel):
-    id: str
-    user_id: str
-    name: str
-    entity_type: str
-    filter_json: str
-    is_pinned: bool
-    shared_with_team: bool
-    created_at: datetime
-    updated_at: datetime
 
 
 class WidgetLayoutRequest(BaseModel):

@@ -933,27 +933,6 @@ class WidgetLayoutRecord(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 
-class SavedFilterRecord(SQLModel, table=True):
-    """User-saved filter configuration for entity list views.
-
-    shared_with_team=True makes the filter visible to all users in the same group (D-41/D-42).
-    Written by: POST /saved-filters.
-    Consumed by: GET /saved-filters (BE-09).
-    """
-
-    __tablename__ = "saved_filter_records"
-
-    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    user_id: str = Field(index=True)
-    name: str
-    entity_type: str = Field(index=True)
-    filter_json: str = Field(default="{}", sa_column=Column(Text))
-    is_pinned: bool = Field(default=False)
-    shared_with_team: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
-    updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
-
-
 class ScheduledReportRecord(TeamScopedMixin, SQLModel, table=True):
     """Scheduled report configuration with cron expression.
 

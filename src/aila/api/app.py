@@ -765,9 +765,6 @@ def create_app() -> FastAPI:
     from aila.api.routers.findings_workflow import router as findings_workflow_router
     application.include_router(findings_workflow_router)
 
-    from aila.api.routers.saved_filters import router as saved_filters_router
-    application.include_router(saved_filters_router)
-
     from aila.api.routers.widgets import router as widgets_router
     application.include_router(widgets_router)
 
