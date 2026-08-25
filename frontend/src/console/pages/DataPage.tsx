@@ -277,6 +277,17 @@ export interface PageConfig {
    * ({items: [{created_at, stage, action, status, ...}], total}) like
    * /audit/events. Renders newest-first with semantic status badges. */
   detailEvents?: { endpoint: string; itemsKey?: string };
+  /** Per-row floating viewer. When set, DataPage renders a button in the
+   * detail header labelled `actionLabel`; clicking opens a page-local
+   * <ConsoleWindow kind="floater"> whose body is `render(row, close)`.
+   * DataPage owns the floater's open/minimized/fullscreen state so any page
+   * can attach a rich detail viewer without hand-rolling window plumbing.
+   * `title(row)` computes the window title from the selected row. */
+  rowViewer?: {
+    actionLabel: string;
+    title: (row: Record<string, unknown>) => string;
+    render: (row: Record<string, unknown>, close: () => void) => ReactNode;
+  };
 }
 
 const ROW_KEYS = ["items", "results", "rows", "entries", "records", "data", "findings", "investigations", "targets", "workspaces"];
@@ -596,6 +607,25 @@ export default function DataPage(
   const [sel, setSel] = useState<Record<string, unknown> | null>(null);
   // Which form is open (if any) and the row it's editing (null for create).
   const [formMode, setFormMode] = useState<"create" | "edit" | null>(null);
+  // Optional page-local floater viewer (config.rowViewer). Holds the row
+  // whose content is being shown plus its own {minimized, fullscreen} state
+  // so the viewer window behaves like any other console surface. Closing
+  // clears the row; opening a different row replaces the payload but keeps
+  // the window in place.
+  const [viewerRow, setViewerRow] = useState<Record<string, unknown> | null>(null);
+  const [viewerMinimized, setViewerMinimized] = useState(false);
+  const [viewerFullscreen, setViewerFullscreen] = useState(false);
+  const [viewerFocused, setViewerFocused] = useState(false);
+  const openViewer = (row: Record<string, unknown>): void => {
+    setViewerRow(row);
+    setViewerMinimized(false);
+    setViewerFocused(true);
+  };
+  const closeViewer = (): void => {
+    setViewerRow(null);
+    setViewerFullscreen(false);
+    setViewerFocused(false);
+  };
 
   // ---- delete only (create/update belong in real typed wizards) --------
   const qc = useQueryClient();
@@ -1082,6 +1112,15 @@ export default function DataPage(
               {config.delete ? (
                 <button type="button" onClick={() => sel && doDelete(sel)} style={css(`padding:3px 10px;border:1px solid ${H_WARN}66;border-radius:2px;background:transparent;color:${H_WARN};font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;`)}>delete</button>
               ) : null}
+              {sel && config.rowViewer ? (
+                <button
+                  type="button"
+                  onClick={() => openViewer(sel)}
+                  style={css("padding:3px 10px;border:1px solid var(--accent);border-radius:2px;background:transparent;color:var(--accent);font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;")}
+                >
+                  {config.rowViewer.actionLabel}
+                </button>
+              ) : null}
               {sel ? (
                 visibleActions(sel).map((a) => (
                   <button
@@ -1292,6 +1331,24 @@ export default function DataPage(
             </div>
           </div>
         </div>
+      ) : null}
+      {config.rowViewer && viewerRow ? (
+        <ConsoleWindow
+          id={`${windowId}:viewer`}
+          kind="floater"
+          title={config.rowViewer.title(viewerRow)}
+          initialRect={{ x: 160, y: 120, w: 880, h: 560 }}
+          minSize={{ w: 480, h: 320 }}
+          isFullscreen={viewerFullscreen}
+          isMinimized={viewerMinimized}
+          isFocused={viewerFocused}
+          onFocus={() => setViewerFocused(true)}
+          onClose={closeViewer}
+          onMinimize={() => setViewerMinimized((m) => !m)}
+          onToggleFullscreen={() => setViewerFullscreen((f) => !f)}
+        >
+          {config.rowViewer.render(viewerRow, closeViewer)}
+        </ConsoleWindow>
       ) : null}
     </ConsoleWindow>
   );

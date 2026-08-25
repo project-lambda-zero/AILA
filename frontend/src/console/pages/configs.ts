@@ -4,7 +4,7 @@ import { css } from "../css";
 import { AuditEventDetail } from "./AuditEventDetail";
 import { SeverityBadge, StatusBadge } from "./badges";
 import type { PageColumn, PageConfig } from "./DataPage";
-import { LlmChatTranscript, llmPreviewLine } from "./LlmLogEntry";
+import { LlmLogViewer } from "./LlmLogViewer";
 
 /** Column shorthand: field + auto-labelled from the field name. */
 // Auto-assign a shared semantic renderer (badges.tsx) for fields whose names
@@ -628,35 +628,47 @@ export const PAGE_CONFIGS = {
     title: "admin \u00b7 llm log",
     endpoint: "/admin/llm-log",
     itemsKey: "items",
-    // Prompt + response previews arrive as opaque 200-char strings that
-    // are sometimes JSON (chat-messages array or a `{summary: ...}`
-    // response). Renderers turn either shape into a single readable line
-    // so the table doesn't leak raw JSON; the full transcript view lives
-    // in LlmLogEntry.tsx (`LlmChatTranscript`) for the detail panel.
+    // Row previews were dropped from the table: they leaked opaque JSON
+    // fragments and the same information is available in-context via the
+    // rowViewer floater. The viewer fetches the full stored transcript
+    // (paired audit seal when present, row preview when disabled) via
+    // GET /admin/llm-log/{id}/content and renders it as a two-pane chat
+    // transcript, so the list stays scannable while the detail carries
+    // the full body. Filters ride the req 28 primitive server-side and
+    // compose with pagination + true meta.total.
+    pagination: true,
     columns: [
       c("timestamp", "when"),
       c("model"),
       c("task_type", "task"),
-      {
-        field: "prompt_preview",
-        label: "prompt",
-        render: (v) => llmPreviewLine(v, "prompt") ?? "\u2014",
-      },
-      {
-        field: "response_preview",
-        label: "response",
-        render: (v) => llmPreviewLine(v, "response") ?? "\u2014",
-      },
+      c("user_id", "user"),
+      c("run_id", "run"),
       c("input_tokens", "in"),
       c("output_tokens", "out"),
       c("cost_usd", "cost $"),
       c("duration_ms", "ms"),
       c("status"),
     ],
-    filters: [{ name: "model", label: "model", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "timestamp", label: "when", type: "date-range" }],
-    detailRenderers: {
-      prompt_preview: (v) => createElement(LlmChatTranscript, { value: v }),
-      response_preview: (v) => createElement(LlmChatTranscript, { value: v }),
+    filters: [
+      { name: "model", label: "model", type: "multi-select", server: true },
+      { name: "task_type", label: "task", type: "multi-select", server: true },
+      { name: "status", label: "status", type: "multi-select", server: true },
+      { name: "user_id", label: "user", type: "text", server: true },
+      { name: "team_id", label: "team", type: "text", server: true },
+      { name: "search", label: "search", type: "text", server: true },
+      { name: "timestamp", label: "when", type: "date-range", server: true },
+      { name: "cost_usd", label: "cost $", type: "numeric-range", server: true },
+    ],
+    rowViewer: {
+      actionLabel: "view content",
+      title: (row) => {
+        const id = row["id"];
+        const model = row["model"];
+        const idStr = typeof id === "string" || typeof id === "number" ? String(id) : "?";
+        const modelStr = typeof model === "string" && model !== "" ? model : "llm call";
+        return `llm log \u00b7 ${modelStr} \u00b7 ${idStr}`;
+      },
+      render: (row) => createElement(LlmLogViewer, { row }),
     },
   },
   // ---- Admin: platform (added -- previously unlisted features) ----------
