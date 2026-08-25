@@ -211,17 +211,14 @@ async def transition_finding(
     Server-side state machine enforcement (T-138-22):
     - Validates the transition is legal for the current state.
     - Invalid transitions return 422 Unprocessable Entity.
+    - A target real in a sibling module's extension is reported as a
+      transition violation, not an unknown state (module_id scoping).
     - Records previous_state and transitioned_by for audit trail.
     """
     platform = getattr(request.app.state, "platform", None)
     valid_states, transitions = _resolve_finding_state_machine(
         platform, module_id=body.module_id
     )
-    if body.target_state not in valid_states:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Unknown state '{body.target_state}'. Valid: {valid_states}",
-        )
 
     async with async_session_scope() as session:
         # Get the most recent workflow record for this finding, scoped
@@ -256,6 +253,21 @@ async def transition_finding(
                 )
 
         current_state = latest.current_state if latest else "new"
+
+        # Validate the target AFTER the current-state load so an
+        # out-of-module target (a state that is real in a sibling
+        # module's extension, e.g. malware.quarantined against a
+        # vr-scoped transition) reports the transition phrasing; only
+        # a target known to NO module is an unknown state.
+        if body.target_state not in valid_states:
+            union_states, _ = _resolve_finding_state_machine(
+                platform, module_id=None
+            )
+            if body.target_state not in union_states:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Unknown state '{body.target_state}'. Valid: {valid_states}",
+                )
 
         # Validate transition (T-138-22: server-side enforcement)
         allowed = transitions.get(current_state, [])
