@@ -1087,7 +1087,10 @@ export const PAGE_CONFIGS = {
       c("ece_before"),
       c("ece_after"),
       {
-        field: "ece_after",
+        // display-only computed column derived from ece_before/ece_after
+        // (distinct `field` so the React key + auto-derived filter options
+        // don't collide with the raw ece_after column above).
+        field: "ece_delta",
         label: "\u0394 ece",
         render: (_v, row) => {
           const b = Number(row.ece_before);
