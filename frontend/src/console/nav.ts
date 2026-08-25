@@ -28,7 +28,6 @@ export const MODULES: ModuleDef[] = [
     pages: [
       page("workspaces"),
       page("targets"),
-      page("vuln research"),
       page("cves"),
       page("investigations"),
       page("patterns"),

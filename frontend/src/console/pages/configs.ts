@@ -78,12 +78,6 @@ export const PAGE_CONFIGS = {
     columns: [c("display_name", "name"), c("kind"), c("status"), c("analysis_state", "analysis"), c("primary_language", "lang"), c("workspace_name", "workspace"), c("created_at", "created")],
     filters: [{ name: "display_name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
-  "vr:vuln-research": {
-    title: "vr \u00b7 research projects",
-    endpoint: "/vr/projects",
-    columns: [c("name"), c("cve_id", "cve"), c("status"), c("finding_count", "findings"), c("latest_disclosure_status", "disclosure"), c("created_at", "created")],
-    filters: [{ name: "name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
-  },
   "vr:investigations": {
     title: "vr \u00b7 investigations",
     endpoint: "/vr/investigations",
@@ -719,7 +713,13 @@ export const PAGE_CONFIGS = {
   "vr:cves": {
     title: "vr \u00b7 cves",
     endpoint: "/vr/cves",
-    columns: [],
+    blurb: "known-cve registry \u00b7 open a row to reproduce it as an n-day project, or + new for a blank reproduction",
+    columns: [c("cve_id", "cve"), c("title"), c("source"), c("cvss_score", "cvss"), c("published_at", "published")],
+    filters: [
+      { name: "cve_id", label: "cve", type: "text" },
+      { name: "title", label: "title", type: "text" },
+      { name: "source", label: "source", type: "select" },
+    ],
   },
   "vr:fuzz-proposals": {
     title: "vr \u00b7 fuzz proposals",
@@ -830,7 +830,6 @@ export const PAGE_CONFIGS = {
 const DELETES: Record<string, { delete: string; idField?: string }> = {
   "vr:workspaces": { delete: "/vr/workspaces/{id}" },
   "vr:targets": { delete: "/vr/targets/{id}" },
-  "vr:vuln-research": { delete: "/vr/projects/{id}" },
   "vr:investigations": { delete: "/vr/investigations/{id}" },
   "vr:patterns": { delete: "/vr/patterns/{id}" },
   "vr:disclosures": { delete: "/vr/disclosures/{id}" },

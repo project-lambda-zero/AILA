@@ -210,6 +210,101 @@ export function useUploadApkTarget(): UseMutationResult<
 }
 
 /* ============================================================================
+ * VR n-day project creation + CVE registry (reproduction flow)
+ * ==========================================================================*/
+
+/** Mirrors CVERecordSummary -- one row of the /vr/cves registry, used to
+ * populate the CVE picker in the reproduction form. */
+export interface CveRegistryRow {
+  id: string;
+  cve_id: string;
+  source: string;
+  title: string;
+  description: string;
+  published_at?: string | null;
+  cvss_score?: number | null;
+  cwe_ids?: string[];
+  references?: string[];
+  affected_components?: string[];
+}
+
+/** GET /vr/cves -- backs the registry picker in the n-day reproduction form. */
+export function useVrCves(): UseQueryResult<CveRegistryRow[]> {
+  return useQuery({
+    queryKey: ["vr", "cves", "picker"],
+    queryFn: () => apiFetch<CveRegistryRow[]>("/vr/cves?limit=200"),
+    staleTime: 30_000,
+  });
+}
+
+/** Mirrors TargetIngestionSpec -- how one target reaches the analysis
+ * workstation. For the reproduction flow only the no-file-upload shapes are
+ * used: an existing ingested binary (`upload` + binary_id), a git repo, or a
+ * download url. */
+export interface TargetIngestionSpecPayload {
+  input_source: "upload" | "git_repo" | "http_url";
+  target_class?: string;
+  source_available?: boolean;
+  binary_id?: string | null;
+  repo_url?: string | null;
+  vulnerable_ref?: string | null;
+  patched_ref?: string | null;
+  build_command?: string | null;
+  build_artifact?: string | null;
+  download_url?: string | null;
+}
+
+/** Mirrors VRProjectCreate -- the VR_NDAY_V1 project-create body. */
+export interface VRProjectCreatePayload {
+  name: string;
+  workspace_id: string;
+  cve_id?: string | null;
+  target: TargetIngestionSpecPayload;
+  patched_target?: TargetIngestionSpecPayload | null;
+  context_notes?: string;
+  analysis_system_id: number;
+  poc_system_id?: number | null;
+}
+
+/** Mirrors VRProjectSummary (the created project row). */
+export interface CreatedVRProject {
+  id: string;
+  name: string;
+  cve_id?: string | null;
+  status: string;
+  workspace_id?: string | null;
+  target_id?: string | null;
+  patched_target_id?: string | null;
+  analysis_system_id?: number | null;
+  poc_system_id?: number | null;
+  created_at?: string | null;
+}
+
+/** POST /vr/projects -- creates an n-day project and starts the VR_NDAY_V1
+ * workflow (setup -> research -> poc_development -> advisory -> response_emit).
+ * The router materializes the target ingestion spec into vr_targets rows, so
+ * no separate target-create call is needed. */
+export function useCreateVrProject(): UseMutationResult<
+  CreatedVRProject,
+  Error,
+  VRProjectCreatePayload
+> {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body) =>
+      apiFetch<CreatedVRProject>("/vr/projects", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["datapage", "/vr/projects"] });
+      void qc.invalidateQueries({ queryKey: ["datapage", "/vr/investigations"] });
+      void qc.invalidateQueries({ queryKey: ["intake", "vr", "targets"] });
+    },
+  });
+}
+
+/* ============================================================================
  * Malware target creation
  * ==========================================================================*/
 

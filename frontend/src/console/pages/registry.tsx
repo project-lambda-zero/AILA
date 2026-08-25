@@ -9,6 +9,7 @@ import ForensicsProjectPage from "./forensics/ForensicsProjectPage";
 import KnowledgePage from "./KnowledgePage";
 import MalwareHealthPanel from "./MalwareHealthPanel";
 import MalwareXRayPage from "./MalwareXRayPage";
+import NdayProjectForm, { CveReproduceDetail } from "./NdayProjectForm";
 import PersonaModelRoutingPage from "./PersonaModelRoutingPage";
 import SandboxPage from "./SandboxPage";
 import TargetInvestigations from "./TargetInvestigations";
@@ -34,6 +35,36 @@ const BESPOKE: Record<string, PageEntry> = {
   "malware:xray": { title: "malware \u00b7 x-ray", render: (p) => <MalwareXRayPage {...p} /> },
   "malware:health": { title: "malware \u00b7 health", render: (p) => <MalwareHealthPanel {...p} /> },
   "vr:new-target": { title: "vr \u00b7 upload target", render: (p) => <UploadForm module="vr" {...p} /> },
+  // The n-day CVE reproduction surface: opened from the CVE registry ("+ new"
+  // for a blank start, or a row's "reproduce" button prefilled with its cve).
+  "vr:new-project": { title: "vr \u00b7 new n-day project", render: (p) => <NdayProjectForm {...p} /> },
+  // CVE registry is the single CVE/reproduction surface: "+ new" opens a blank
+  // reproduction, and a row's detail body carries a "reproduce" control that
+  // opens the create flow prefilled with that cve_id.
+  "vr:cves": {
+    title: PAGE_CONFIGS["vr:cves"].title,
+    render: (p) => (
+      <DataPage
+        config={PAGE_CONFIGS["vr:cves"]}
+        configKey="vr:cves"
+        {...p}
+        onNewClick={() => p.onOpenPage?.("vr", "new-project", "new n-day project")}
+        detailBody={(row) => (
+          <CveReproduceDetail
+            row={row}
+            onReproduce={() =>
+              p.onOpenPage?.(
+                "vr",
+                "new-project",
+                `reproduce ${String(row.cve_id ?? "")}`.trim(),
+                String(row.cve_id ?? ""),
+              )
+            }
+          />
+        )}
+      />
+    ),
+  },
   "malware:new-target": { title: "malware \u00b7 upload target", render: (p) => <UploadForm module="malware" {...p} /> },
   "forensics:project": { title: "forensics \u00b7 project", render: (p) => <ForensicsProjectPage {...p} /> },
   "vulnerability:scan": { title: "vulnerability \u00b7 launch scan", render: (p) => <VulnerabilityPage {...p} /> },
