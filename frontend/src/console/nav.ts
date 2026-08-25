@@ -26,12 +26,14 @@ export const MODULES: ModuleDef[] = [
     label: "vulnerability research",
     noun: "investigations",
     pages: [
+      // workflow
+      page("investigations"),
       page("workspaces"),
       page("targets"),
       page("cves"),
-      page("investigations"),
-      page("patterns"),
+      // artifacts
       page("findings"),
+      page("patterns"),
       page("disclosures"),
       page("disclosure tracks"),
       page("fuzz campaigns"),
@@ -42,12 +44,15 @@ export const MODULES: ModuleDef[] = [
     label: "vulnerability mgmt",
     noun: "advisories",
     pages: [
+      // workflow
       page("launch scan", "Vulnerability.dc.html#scan"),
-      page("findings", "Vulnerability.dc.html#findings"),
       page("systems"),
+      // artifacts
+      page("findings", "Vulnerability.dc.html#findings"),
+      page("reports"),
+      // utility
       page("network radar", "Vulnerability.dc.html#radar"),
       page("data visualization", "Vulnerability.dc.html#viz"),
-      page("reports"),
     ],
   },
   {
@@ -64,17 +69,20 @@ export const MODULES: ModuleDef[] = [
     label: "malware analysis",
     noun: "reports",
     pages: [
+      // workflow
       page("malware analysis"),
-      page("health"),
       page("workspaces"),
       page("targets"),
       page("projects"),
       page("investigations"),
+      // artifacts
       page("observations"),
       page("patterns"),
       page("findings"),
       page("families"),
       page("playbooks"),
+      // utility
+      page("health"),
     ],
   },
 ];
