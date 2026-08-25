@@ -264,6 +264,14 @@ input, textarea, select, button { font-family: inherit; }
 .dp-table tbody tr { transition: background-color 90ms ease; }
 .dp-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); }
 
+/* ---- Vulnerability breadcrumb segments ----
+   Inline styles carry the base look and the active-segment highlight; hover and
+   keyboard focus need real pseudo-classes, so they live here (mirrors the
+   .dp-table pattern above). */
+.vuln-crumb { transition: color 90ms ease, background-color 90ms ease; }
+.vuln-crumb:hover { color: var(--text-primary); background: color-mix(in srgb, var(--accent) 9%, transparent); }
+.vuln-crumb:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; color: var(--text-primary); }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
 }
