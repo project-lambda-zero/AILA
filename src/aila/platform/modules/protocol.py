@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from ...storage.memory import PermanentMemoryStore
     from ...storage.registry import ConfigRegistry, SchemaRegistry
     from ...storage.report_store import ReportArtifactStore
+    from ..agents.persona_router import PersonaRouter
     from ..contracts.reasoning import (
         ReasoningDomainProfile,
         ReasoningStrategyDeclaration,
@@ -516,6 +517,29 @@ class ModuleProtocol(Protocol):
                                              ['vr.false_positive']}}}
         """
         return {}
+
+    def persona_router(self) -> type[PersonaRouter] | None:
+        """Return the module's platform-owned :class:`PersonaRouter` subclass.
+
+        OPTIONAL -- platform guards with :func:`hasattr` before calling.
+
+        Consumed by ``GET /platform/agents/persona-registry`` (req 31)
+        to publish the finite set of persona voices this module binds
+        and the finite set of ``model_role`` / ``task_type`` values
+        the module's router can legally emit. The persona-model
+        routing config UI reads that registry so the operator picks
+        from a bounded ``<select>`` per persona instead of a free
+        text input.
+
+        Production modules that carry an agent panel (``vr``,
+        ``malware``) return their ``PersonaRouter`` subclass via a
+        deferred import inside this method (mirror the
+        :meth:`route_specs` deferred-import convention). Persona-less
+        modules (``forensics``, ``hello_world``, ``_template``)
+        return ``None`` so the registry lists them with an empty
+        persona set instead of forcing an unused router binding.
+        """
+        return None
 
     async def fleet_severity_summary(self, system_ids: list[int], session: Any) -> dict[int, str]:
         """Return top severity per system_id for the given fleet slice (optional, D-20).

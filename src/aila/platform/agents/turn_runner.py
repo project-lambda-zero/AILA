@@ -855,6 +855,7 @@ class AgentTurnRunnerBase:
         # accumulate.
         task_type = await resolve_effective_task_type(
             task_type, branch.persona_voice,
+            module_id=self._MODULE_ID or None,
         )
         # RFC-09: pick the coarse model family this turn will run on so a
         # family-specific prompt variant wins when one exists (falls back to

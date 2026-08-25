@@ -1,43 +1,26 @@
 /**
- * React Query hooks for per-persona sibling model routing (#151).
+ * React Query hooks for per-persona sibling model routing (#151, req 31).
  *
  * Backend: `platform/routing/persona_model.py` reads the ConfigRegistry key
- * `platform.persona_model_role_map` -- a JSON object mapping a sibling persona
- * voice (halvar/maddie/yuki/renzo/noor/wei) to a model_role (task_type that
- * resolves through `llm_model_{role}`). It is read live at the shared turn
- * dispatch (`platform/agents/turn_runner.py`) that the VR, malware, and
- * forensics reasoning loops all run through. An EMPTY map is byte-identical to
- * the prior behavior (every persona keeps the default model), so the feature
- * is opt-in: it does nothing until an operator maps at least one persona here.
+ * `platform.persona_model_role_map`. The stored value is a JSON string whose
+ * shape is a nested map `{module_id: {persona_voice: model_role}}`. The
+ * sentinel module_id `"__global__"` is the fallback bucket -- resolution for
+ * (module_id, persona) is `nested[module_id][persona]` else
+ * `nested["__global__"][persona]` else base task_type. A legacy flat
+ * `{persona: model_role}` value is promoted under `"__global__"` at read time.
+ * An EMPTY map is byte-identical to the prior behavior (every persona keeps
+ * the default model), so the feature is opt-in.
  *
- * This module surfaces that single config key for the agents-page editor:
- *   GET /config/platform/persona_model_role_map -> ConfigEntryResponse
- *   PUT /config/platform/persona_model_role_map  {value, value_type:"str"}
- * (PUT is admin-gated server-side.)
+ * This module surfaces two endpoints for the admin editor:
+ *   GET  /platform/agents/persona-registry -> [PersonaRegistryModule]
+ *   GET  /config/platform/persona_model_role_map -> ConfigEntryResponse
+ *   PUT  /config/platform/persona_model_role_map  {value, value_type:"str"}
+ * (PUT is admin-gated server-side; the registry read is operator-gated.)
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { UseMutationResult, UseQueryResult } from "@tanstack/react-query";
 
 import { apiFetch } from "./client";
-
-/** The six real sibling persona voices (`PersonaVoice`, platform
- *  `contracts/enums.py`). These are the valid keys for the routing map; the
- *  synthetic voices (unspecified/merge_result/fork_unnamed) are structural
- *  markers, never operator-routable. */
-export const PERSONA_VOICES = ["halvar", "maddie", "yuki", "renzo", "noor", "wei"] as const;
-export type PersonaVoice = (typeof PERSONA_VOICES)[number];
-
-/** Human-readable role each core persona plays, shown next to the input so an
- *  operator maps models to the debate role, not an opaque codename. Mirrors the
- *  persona -> role split in the module persona routers. */
-export const PERSONA_ROLE_LABEL: Record<PersonaVoice, string> = {
-  halvar: "researcher",
-  noor: "researcher",
-  renzo: "implementer",
-  wei: "implementer",
-  maddie: "critic",
-  yuki: "critic",
-};
 
 /** Subset of the backend `ConfigEntryResponse` the editor reads. */
 export interface PersonaRoutingConfig {
@@ -52,14 +35,40 @@ export interface PersonaRoutingConfig {
   updated_at: string | null;
 }
 
-const CONFIG_PATH = "/config/platform/persona_model_role_map";
-const QUERY_KEY = ["config", "platform", "persona_model_role_map"] as const;
+/** One persona binding as returned by the registry endpoint. `role` is null
+ *  when the module has no `persona_role_map` (e.g. malware routes per-voice).
+ *  `task_type_options` is the module-wide finite list of legal task_types the
+ *  router can emit; the select is bounded to exactly this list. */
+export interface PersonaRegistryPersona {
+  voice: string;
+  role: string | null;
+  task_type_options: string[];
+}
 
-/** Parse the stored JSON value into a persona -> model_role map. Invalid or
- *  empty JSON resolves to an empty map -- byte-identical to how the backend
- *  treats it (off). Blank values are dropped so a half-filled row never counts
- *  as an active override. */
-export function parsePersonaMap(raw: string | null | undefined): Record<string, string> {
+/** One registered module as returned by the registry endpoint. A module with
+ *  no operator-routable personas (forensics, hello_world, _template) appears
+ *  with `personas: []`. */
+export interface PersonaRegistryModule {
+  module_id: string;
+  module_label: string;
+  personas: PersonaRegistryPersona[];
+}
+
+export const CONFIG_PATH = "/config/platform/persona_model_role_map";
+export const QUERY_KEY = ["config", "platform", "persona_model_role_map"] as const;
+
+const REGISTRY_PATH = "/platform/agents/persona-registry";
+const REGISTRY_QUERY_KEY = ["platform", "agents", "persona-registry"] as const;
+
+/** Parse the stored JSON value into a nested `{module_id: {persona:
+ *  model_role}}` map. A legacy flat `{persona: model_role}` value is wrapped
+ *  under the `"__global__"` sentinel so the resolver's fallback bucket sees
+ *  it. Invalid, empty, or malformed values resolve to an empty map --
+ *  byte-identical to how the backend treats it (off). Blank inner values are
+ *  dropped so a half-filled row never counts as an active override. */
+export function parsePersonaMap(
+  raw: string | null | undefined,
+): Record<string, Record<string, string>> {
   const text = (raw ?? "").trim();
   if (text === "") return {};
   let parsed: unknown;
@@ -69,10 +78,30 @@ export function parsePersonaMap(raw: string | null | undefined): Record<string, 
     return {};
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-  const out: Record<string, string> = {};
-  for (const [key, rawValue] of Object.entries(parsed as Record<string, unknown>)) {
-    const value = typeof rawValue === "string" ? rawValue.trim() : "";
-    if (value !== "") out[key] = value;
+  const entries = Object.entries(parsed as Record<string, unknown>);
+  if (entries.length === 0) return {};
+
+  // Legacy flat shape: every top-level value is a string.
+  const allStrings = entries.every(([, v]) => typeof v === "string");
+  if (allStrings) {
+    const flat: Record<string, string> = {};
+    for (const [persona, rawValue] of entries) {
+      const value = typeof rawValue === "string" ? rawValue.trim() : "";
+      if (value !== "") flat[persona] = value;
+    }
+    return Object.keys(flat).length === 0 ? {} : { __global__: flat };
+  }
+
+  // Nested shape: top-level values are objects (module_id -> bucket).
+  const out: Record<string, Record<string, string>> = {};
+  for (const [moduleId, inner] of entries) {
+    if (inner === null || typeof inner !== "object" || Array.isArray(inner)) continue;
+    const bucket: Record<string, string> = {};
+    for (const [persona, rawValue] of Object.entries(inner as Record<string, unknown>)) {
+      const value = typeof rawValue === "string" ? rawValue.trim() : "";
+      if (value !== "") bucket[persona] = value;
+    }
+    if (Object.keys(bucket).length > 0) out[moduleId] = bucket;
   }
   return out;
 }
@@ -87,18 +116,42 @@ export function usePersonaRoutingConfig(): UseQueryResult<PersonaRoutingConfig> 
   });
 }
 
-/** Write the persona -> model_role map. An empty map is persisted as the empty
- *  string, which the backend resolves as "off" -- so toggling the feature off
- *  is a real write, not a special case. Invalidates the read on success. */
+/** Read the persona registry. Returns one entry per registered module; a
+ *  module with no operator-routable personas is included with `personas: []`
+ *  so the page shows every module honestly. `apiFetch` unwraps the
+ *  `DataEnvelope.data`, so the resolved type is the module array directly. */
+export function usePersonaRegistry(): UseQueryResult<PersonaRegistryModule[]> {
+  return useQuery<PersonaRegistryModule[]>({
+    queryKey: REGISTRY_QUERY_KEY,
+    queryFn: () => apiFetch<PersonaRegistryModule[]>(REGISTRY_PATH),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/** Write the nested `{module_id: {persona: model_role}}` map. An empty map is
+ *  persisted as the empty string, which the backend resolves as "off" -- so
+ *  toggling the feature off is a real write, not a special case. Empty inner
+ *  values and empty buckets are dropped before serialization. Invalidates
+ *  the read on success. */
 export function useUpdatePersonaRouting(): UseMutationResult<
   PersonaRoutingConfig,
   Error,
-  Record<string, string>
+  Record<string, Record<string, string>>
 > {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (map: Record<string, string>) => {
-      const value = Object.keys(map).length > 0 ? JSON.stringify(map) : "";
+    mutationFn: (nested: Record<string, Record<string, string>>) => {
+      const cleaned: Record<string, Record<string, string>> = {};
+      for (const [moduleId, inner] of Object.entries(nested)) {
+        const bucket: Record<string, string> = {};
+        for (const [persona, rawValue] of Object.entries(inner)) {
+          const value = typeof rawValue === "string" ? rawValue.trim() : "";
+          if (value !== "") bucket[persona] = value;
+        }
+        if (Object.keys(bucket).length > 0) cleaned[moduleId] = bucket;
+      }
+      const value = Object.keys(cleaned).length > 0 ? JSON.stringify(cleaned) : "";
       return apiFetch<PersonaRoutingConfig>(CONFIG_PATH, {
         method: "PUT",
         body: JSON.stringify({ value, value_type: "str" }),

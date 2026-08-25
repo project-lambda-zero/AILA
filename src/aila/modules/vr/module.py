@@ -256,6 +256,16 @@ class VRModule(ModuleProtocol):
         del filters
         return list(rows)
 
+    def persona_router(self):
+        """Return the VR :class:`PersonaRouter` subclass (req 31).
+
+        Deferred import mirrors :meth:`route_specs` so the platform
+        can list this module's persona bindings without pulling the
+        VR agent stack at module-collection time.
+        """
+        from .agents.persona_router import PersonaRouter
+        return PersonaRouter
+
     def route_specs(self) -> list[ModuleRouteSpec]:
         """Declare the VR module's HTTP route surface.
 

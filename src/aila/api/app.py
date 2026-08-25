@@ -765,6 +765,13 @@ def create_app() -> FastAPI:
     from aila.api.routers.findings_workflow import router as findings_workflow_router
     application.include_router(findings_workflow_router)
 
+    # Req 31: platform agent registry -- publishes per-module persona
+    # router bindings so the persona-model routing config UI can
+    # bound its per-persona <select> to the finite model_role values
+    # each module's PersonaRouter actually emits.
+    from aila.api.routers.agents import router as agents_router
+    application.include_router(agents_router)
+
     from aila.api.routers.widgets import router as widgets_router
     application.include_router(widgets_router)
 

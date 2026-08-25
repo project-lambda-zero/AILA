@@ -1,20 +1,21 @@
 /**
  * PersonaModelRoutingPage -- bespoke admin window for per-persona sibling
- * model routing (#151).
+ * model routing (#151, req 31).
  *
  * The platform routes every sibling branch through one shared turn dispatch
  * (`platform/agents/turn_runner.py`). By default every persona runs the same
- * base model, so multi-persona debate is an expensive form of self-consistency
- * (the #151 finding). This window is the opt-in switch: map one or more of the
- * six sibling personas to a distinct model_role and their branches run a
- * different base model, turning the debate into real adversarial diversity.
+ * base model. This window is the opt-in switch: map one or more of a module's
+ * personas to a distinct model_role and their branches run a different base
+ * model, turning the debate into real adversarial diversity.
  *
- * It edits a single ConfigRegistry key, `platform.persona_model_role_map`,
- * through the admin-gated config API:
- *   GET /config/platform/persona_model_role_map
- *   PUT /config/platform/persona_model_role_map  {value, value_type:"str"}
- * An empty map is persisted as the empty string -- the backend resolves that
- * as off, byte-identical to prior behavior.
+ * The persona list, the role tag, and the finite list of model_role options
+ * per persona are ALL driven by the registry endpoint
+ * `GET /platform/agents/persona-registry` -- no hard-coded persona list, no
+ * hard-coded model_role fallbacks. The config value schema is nested:
+ * `{module_id: {persona_voice: model_role}}` with the sentinel `"__global__"`
+ * as the fallback bucket. A legacy flat value read as the __global__ bucket
+ * is displayed as a fallback per matching per-module select; the first save
+ * from the new page rewrites the value in nested per-module form.
  */
 
 import { useEffect, useMemo, useState } from "react";
@@ -22,12 +23,12 @@ import type { ChangeEvent, CSSProperties, JSX } from "react";
 
 import { ApiError } from "../../api/client";
 import {
-  PERSONA_ROLE_LABEL,
-  PERSONA_VOICES,
   parsePersonaMap,
+  usePersonaRegistry,
   usePersonaRoutingConfig,
   useUpdatePersonaRouting,
 } from "../../api/personaRouting";
+import type { PersonaRegistryModule } from "../../api/personaRouting";
 import type { ModulePageProps } from "../contract";
 import { css } from "../css";
 import { ConsoleWindow } from "../window";
@@ -35,6 +36,8 @@ import { ConsoleWindow } from "../window";
 /* ------------------------------ constants -------------------------------- */
 
 const H_WARN = "#ffb85f";
+const GLOBAL_BUCKET = "__global__";
+type NestedMap = Record<string, Record<string, string>>;
 
 /* ------------------------------- styles ---------------------------------- */
 
@@ -80,6 +83,18 @@ const chipWarn: CSSProperties = css(
 const emptyNote: CSSProperties = css(
   "flex:1;display:flex;align-items:center;justify-content:center;padding:20px;font-family:var(--font-mono);font-size:11px;color:var(--text-faint);letter-spacing:0.04em;text-align:center;",
 );
+const moduleHeader: CSSProperties = css(
+  "display:flex;align-items:baseline;gap:10px;padding:14px 0 6px 0;border-bottom:1px solid var(--border-soft);",
+);
+const moduleTitle: CSSProperties = css(
+  "font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-primary);",
+);
+const moduleId: CSSProperties = css(
+  "font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.06em;color:var(--text-faint);",
+);
+const moduleEmpty: CSSProperties = css(
+  "padding:8px 0;font-family:var(--font-mono);font-size:11px;color:var(--text-faint);letter-spacing:0.03em;",
+);
 const personaRow: CSSProperties = css(
   "display:grid;grid-template-columns:minmax(150px,180px) 1fr;gap:10px 14px;align-items:center;padding:8px 0;border-bottom:1px solid var(--border-faint);",
 );
@@ -98,66 +113,127 @@ function apiErrMessage(err: unknown): string {
   return String(err);
 }
 
+function cloneNested(map: NestedMap): NestedMap {
+  const out: NestedMap = {};
+  for (const [k, inner] of Object.entries(map)) out[k] = { ...inner };
+  return out;
+}
+
+/** Resolve the current display value for one per-module persona select.
+ *  Prefer a module-specific entry; fall back to the __global__ bucket
+ *  (legacy flat migration path); return "" (the leading `-- default --`
+ *  option) if neither is set OR the stored value is not in this module's
+ *  bounded option list. */
+function currentValue(
+  drafts: NestedMap,
+  moduleIdKey: string,
+  voice: string,
+  options: string[],
+): string {
+  const local = drafts[moduleIdKey]?.[voice];
+  if (local && options.includes(local)) return local;
+  const global = drafts[GLOBAL_BUCKET]?.[voice];
+  if (global && options.includes(global)) return global;
+  return "";
+}
+
+/** Build the nested map that will be persisted. Iterates the registry so
+ *  only real (module_id, voice) pairs land in the payload; the __global__
+ *  bucket from a legacy read is intentionally dropped, so the first save
+ *  from this page rewrites a legacy flat value into per-module nested form. */
+function buildForSave(drafts: NestedMap, registry: PersonaRegistryModule[]): NestedMap {
+  const out: NestedMap = {};
+  for (const mod of registry) {
+    const bucket: Record<string, string> = {};
+    for (const persona of mod.personas) {
+      const value = (drafts[mod.module_id]?.[persona.voice] ?? "").trim();
+      if (value !== "" && persona.task_type_options.includes(value)) {
+        bucket[persona.voice] = value;
+      }
+    }
+    if (Object.keys(bucket).length > 0) out[mod.module_id] = bucket;
+  }
+  return out;
+}
+
 function RoutingEditor(): JSX.Element {
-  const q = usePersonaRoutingConfig();
+  const cfg = usePersonaRoutingConfig();
+  const reg = usePersonaRegistry();
   const mut = useUpdatePersonaRouting();
 
-  const serverMap = useMemo(
-    () => parsePersonaMap(q.data?.effective_value),
-    [q.data?.effective_value],
+  const serverMap = useMemo<NestedMap>(
+    () => parsePersonaMap(cfg.data?.effective_value),
+    [cfg.data?.effective_value],
   );
+  const registry = reg.data ?? [];
 
-  // Local editable state, seeded from the server map. `enabled` is derived
-  // from the server map on load (non-empty = on) but is operator-controlled
-  // thereafter, so the operator can flip the whole feature off in one click.
+  // Local editable state, seeded from the parsed server map. `enabled` is
+  // derived from the server map on load (non-empty = on) but is
+  // operator-controlled thereafter.
   const [enabled, setEnabled] = useState(false);
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [drafts, setDrafts] = useState<NestedMap>({});
   const [seeded, setSeeded] = useState(false);
 
   useEffect(() => {
-    if (q.data === undefined || seeded) return;
+    if (cfg.data === undefined || seeded) return;
     setEnabled(Object.keys(serverMap).length > 0);
-    setDrafts({ ...serverMap });
+    setDrafts(cloneNested(serverMap));
     setSeeded(true);
-  }, [q.data, serverMap, seeded]);
+  }, [cfg.data, serverMap, seeded]);
 
-  const draftMap = useMemo<Record<string, string>>(() => {
-    if (!enabled) return {};
-    const out: Record<string, string> = {};
-    for (const persona of PERSONA_VOICES) {
-      const value = (drafts[persona] ?? "").trim();
-      if (value !== "") out[persona] = value;
-    }
-    return out;
-  }, [enabled, drafts]);
+  const setPersona = (moduleIdKey: string, voice: string, value: string): void => {
+    setDrafts((d) => {
+      const copy = cloneNested(d);
+      const bucket = copy[moduleIdKey] ?? {};
+      if (value === "") {
+        delete bucket[voice];
+      } else {
+        bucket[voice] = value;
+      }
+      if (Object.keys(bucket).length === 0) {
+        delete copy[moduleIdKey];
+      } else {
+        copy[moduleIdKey] = bucket;
+      }
+      return copy;
+    });
+  };
+
+  const draftMap = useMemo<NestedMap>(
+    () => (enabled ? buildForSave(drafts, registry) : {}),
+    [enabled, drafts, registry],
+  );
 
   const dirty = useMemo(
     () => JSON.stringify(draftMap) !== JSON.stringify(serverMap),
     [draftMap, serverMap],
   );
-  const mappedCount = Object.keys(draftMap).length;
-  const envOverride = q.data?.overridden_by_env ?? false;
+  const mappedCount = Object.values(draftMap).reduce(
+    (n, bucket) => n + Object.keys(bucket).length,
+    0,
+  );
+  const envOverride = cfg.data?.overridden_by_env ?? false;
 
   const save = (): void => {
     mut.mutate(draftMap);
   };
   const reset = (): void => {
     setEnabled(Object.keys(serverMap).length > 0);
-    setDrafts({ ...serverMap });
+    setDrafts(cloneNested(serverMap));
   };
 
-  if (q.isLoading && q.data === undefined) {
+  if ((cfg.isLoading && cfg.data === undefined) || (reg.isLoading && reg.data === undefined)) {
     return (
       <div style={panelBox}>
         <div style={panelTitle}>
           <span style={dot} />
           <span style={css("color:var(--text-primary);")}>persona routing</span>
         </div>
-        <div style={emptyNote}>loading /config/platform/persona_model_role_map&#8230;</div>
+        <div style={emptyNote}>loading persona registry &amp; config&#8230;</div>
       </div>
     );
   }
-  if (q.isError) {
+  if (cfg.isError) {
     return (
       <div style={panelBox}>
         <div style={panelTitle}>
@@ -165,7 +241,20 @@ function RoutingEditor(): JSX.Element {
           <span style={css("color:var(--text-primary);")}>persona routing</span>
         </div>
         <div style={{ ...emptyNote, color: H_WARN }}>
-          could not load the config key &mdash; {apiErrMessage(q.error)}
+          could not load the config key &mdash; {apiErrMessage(cfg.error)}
+        </div>
+      </div>
+    );
+  }
+  if (reg.isError) {
+    return (
+      <div style={panelBox}>
+        <div style={panelTitle}>
+          <span style={dot} />
+          <span style={css("color:var(--text-primary);")}>persona routing</span>
+        </div>
+        <div style={{ ...emptyNote, color: H_WARN }}>
+          could not load the persona registry &mdash; {apiErrMessage(reg.error)}
         </div>
       </div>
     );
@@ -182,16 +271,18 @@ function RoutingEditor(): JSX.Element {
         ) : (
           <span style={chipFaint}>off &middot; homogeneous</span>
         )}
-        {q.data ? <span style={chipFaint}>src: {q.data.effective_source}</span> : null}
+        {cfg.data ? <span style={chipFaint}>src: {cfg.data.effective_source}</span> : null}
       </div>
 
       <div style={{ ...scroll }}>
         <div style={{ ...pad, ...stack }}>
           <p style={prose}>
-            Route a distinct base model per sibling persona (#151). Homogeneous debate approximates
-            self-consistency; distinct reasoners on distinct roles unlock cross-error rejection. This
-            is <strong style={css("color:var(--text-primary);")}>opt-in</strong> &mdash; with no
-            personas mapped, every branch keeps the default model and behavior is unchanged.
+            Route a distinct base model per persona, per module (#151). Homogeneous debate
+            approximates self-consistency; distinct reasoners on distinct roles unlock cross-error
+            rejection. This is <strong style={css("color:var(--text-primary);")}>opt-in</strong>
+            &mdash; with no personas mapped, every branch keeps the default model and behavior is
+            unchanged. Options per persona are bounded to the task_types the module&apos;s router
+            can legally emit.
           </p>
 
           <label
@@ -205,48 +296,69 @@ function RoutingEditor(): JSX.Element {
               onChange={(e: ChangeEvent<HTMLInputElement>) => setEnabled(e.target.checked)}
               style={css("width:15px;height:15px;accent-color:var(--accent);cursor:pointer;")}
             />
-            Route a distinct base model per sibling persona
+            Route a distinct base model per persona
           </label>
 
           {envOverride ? (
             <div style={css("display:flex;align-items:center;gap:8px;")}>
               <span style={chipWarn}>env override</span>
               <span style={css("font-family:var(--font-mono);font-size:10px;color:var(--text-faint);")}>
-                {q.data?.env_key} is set; the live value comes from the environment and edits here will
-                not take effect until it is unset.
+                {cfg.data?.env_key} is set; the live value comes from the environment and edits
+                here will not take effect until it is unset.
               </span>
             </div>
           ) : null}
 
-          <div style={css("display:flex;flex-direction:column;")}>
-            {PERSONA_VOICES.map((persona) => (
-              <div key={persona} style={personaRow}>
-                <div style={css("display:flex;flex-direction:column;gap:2px;")}>
-                  <span style={personaName}>{persona}</span>
-                  <span style={roleTag}>{PERSONA_ROLE_LABEL[persona]}</span>
+          {registry.length === 0 ? (
+            <div style={moduleEmpty}>no modules registered</div>
+          ) : (
+            registry.map((mod) => (
+              <section key={mod.module_id} style={css("display:flex;flex-direction:column;")}>
+                <div style={moduleHeader}>
+                  <span style={moduleTitle}>{mod.module_label}</span>
+                  <span style={moduleId}>{mod.module_id}</span>
                 </div>
-                <input
-                  type="text"
-                  value={drafts[persona] ?? ""}
-                  disabled={!enabled}
-                  placeholder={enabled ? "model_role (e.g. researcher_opus) \u2014 blank = default model" : "\u2014"}
-                  onChange={(e: ChangeEvent<HTMLInputElement>) =>
-                    setDrafts((d) => ({ ...d, [persona]: e.target.value }))
-                  }
-                  style={enabled ? inputStyle : inputDisabled}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
-              </div>
-            ))}
-          </div>
+                {mod.personas.length === 0 ? (
+                  <div style={moduleEmpty}>no operator-routable personas</div>
+                ) : (
+                  mod.personas.map((persona) => {
+                    const options = persona.task_type_options;
+                    const value = currentValue(drafts, mod.module_id, persona.voice, options);
+                    return (
+                      <div key={persona.voice} style={personaRow}>
+                        <div style={css("display:flex;flex-direction:column;gap:2px;")}>
+                          <span style={personaName}>{persona.voice}</span>
+                          <span style={roleTag}>{persona.role ?? "\u2014"}</span>
+                        </div>
+                        <select
+                          value={value}
+                          disabled={!enabled}
+                          onChange={(e: ChangeEvent<HTMLSelectElement>) =>
+                            setPersona(mod.module_id, persona.voice, e.target.value)
+                          }
+                          style={enabled ? inputStyle : inputDisabled}
+                        >
+                          <option value="">-- default --</option>
+                          {options.map((opt) => (
+                            <option key={opt} value={opt}>
+                              {opt}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })
+                )}
+              </section>
+            ))
+          )}
 
           <p style={css("font-family:var(--font-mono);font-size:10px;line-height:1.6;color:var(--text-faint);")}>
             A model_role is a task_type the LLM client resolves through{" "}
-            <code style={css("color:var(--text-muted);")}>llm_model_&#123;role&#125;</code>. Wire the
-            underlying model for each role on the Config page (namespace{" "}
-            <code style={css("color:var(--text-muted);")}>platform</code>). Leave a persona blank to
-            keep it on the default model.
+            <code style={css("color:var(--text-muted);")}>llm_model_&#123;role&#125;</code>. Wire
+            the underlying model for each role on the Config page (namespace{" "}
+            <code style={css("color:var(--text-muted);")}>platform</code>). Leaving a persona at
+            &#8220;-- default --&#8221; keeps it on the module&apos;s base task_type.
           </p>
 
           {mut.isError ? (
@@ -360,7 +472,7 @@ export default function PersonaModelRoutingPage(props: ModulePageProps): JSX.Ele
           admin &middot; persona model routing
         </span>
         <span style={{ color: "var(--text-faint)", textTransform: "none", letterSpacing: "0.04em" }}>
-          per-persona sibling model map &mdash; adversarial diversity (#151)
+          per-module persona sibling model map &mdash; adversarial diversity (#151)
         </span>
       </header>
 
