@@ -652,6 +652,17 @@ HONESTY_WHITELIST = [
     # the prompt is required to keep the synth call inside context.
     ("vr/workflow/task.py", "_run_vr_auto_patch", "[:8000]"),
     ("vr/workflow/task.py", "_fetch_vr_source_ctx", "[:16000]"),
+
+    # ------------------------------------------------------------------
+    # req 25 -- dante console conversational agent.
+    # ------------------------------------------------------------------
+    # api/routers/sessions.py::_decode_actions: parses the persisted
+    # ``actions_json`` blob for the response serializer. NULL / blank /
+    # malformed values MUST degrade to an empty list because the frontend
+    # treats "no proposed actions" as the same shape regardless of source;
+    # an assistant reply with unparseable actions is still a valid message.
+    ("api/routers/sessions.py", "except_return_default",
+     "silently hides failures"),
 ]
 
 

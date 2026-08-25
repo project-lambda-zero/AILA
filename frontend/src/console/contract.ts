@@ -16,7 +16,7 @@ export interface LeftRailProps {
   onTogglePages: () => void;
   adminOpen: boolean;
   onToggleAdmin: () => void;
-  onOpenIntake: () => void;
+  onOpenIntake: (opts?: { moduleId?: string; targetId?: string }) => void;
   onOpenSettings: () => void;
   onOpenPage: (moduleId: string, pageId: string, label: string) => void;
 }
@@ -62,7 +62,7 @@ export interface ChatConsoleProps {
   investigationId: string | null;
   investigationTitle: string | null;
   onToggleMode: () => void;
-  onOpenIntake: () => void;
+  onOpenIntake: (opts?: { moduleId?: string; targetId?: string }) => void;
   onOpenXray?: () => void;
   /** True while a minimized page dock occupies the bottom of the center column.
    * The composer reserves space for it so it stays clickable. */
@@ -77,6 +77,10 @@ export interface IntakeWizardProps {
    * in its target picker; clicking it hands off to the shell (which should
    * close the wizard and open the UploadForm window for this module). */
   onRequestUpload?: () => void;
+  /** Optional -- when a targetId is supplied and matches a loaded target
+   *  for the wizard's module, the picker preselects that target. Best-effort;
+   *  a miss silently falls back to the normal empty picker. */
+  prefill?: { targetId?: string };
 }
 
 export interface SettingsOverlayProps {

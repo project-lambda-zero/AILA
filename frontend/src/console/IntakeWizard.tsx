@@ -251,7 +251,7 @@ const FX_CONTAINER_STYLE = css(
 /* ------------------------------- component --------------------------------- */
 
 function IntakeWizard(
-  { moduleId, onClose, onBind, onRequestUpload }: IntakeWizardProps,
+  { moduleId, onClose, onBind, onRequestUpload, prefill }: IntakeWizardProps,
 ): React.ReactElement {
   const cfg = getCfg(moduleId);
   const isFx = cfg.flow === "forensics";
@@ -323,6 +323,21 @@ function IntakeWizard(
       window.clearTimeout(closeTimerRef.current ?? undefined);
     };
   }, []);
+
+  // Preselect a target passed in via `prefill.targetId` once the targets query
+  // has loaded and the id matches a row. Best-effort: a miss leaves the picker
+  // empty. `kind` also flips to that target's kind so it appears in `matches`.
+  const prefillTargetId = prefill?.targetId ?? null;
+  useEffect(() => {
+    if (!isInvestigationFlow || !prefillTargetId) return;
+    if (targetId === prefillTargetId) return;
+    const rows = targetsQuery.data ?? [];
+    const hit = rows.find((t) => t.id === prefillTargetId);
+    if (!hit) return;
+    setTargetId(hit.id);
+    setTargetName(hit.display_name);
+    setKind(hit.kind);
+  }, [isInvestigationFlow, prefillTargetId, targetsQuery.data, targetId]);
 
   // Forensics analyzer select needs real registered systems (the backend
   // requires a numeric system_id, not a display label). Fetch once when the

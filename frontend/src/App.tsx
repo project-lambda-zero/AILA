@@ -39,7 +39,10 @@ function Console() {
   const [pagesOpen, setPagesOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [intakeOpen, setIntakeOpen] = useState(false);
+  // Intake overlay state. Carries the effective module + optional target id
+  // to preselect in the wizard picker (used when dante proposes an
+  // open_wizard action targeting a specific asset).
+  const [intake, setIntake] = useState<{ module: string; targetId: string | null } | null>(null);
   // Multi-window host: an ordered back-to-front stack plus the focused id.
   // `page`/`overlay` surfaces form the center-column drill stack (only the top
   // non-minimized one renders); `floater` surfaces (added by later reqs) render
@@ -148,12 +151,17 @@ function Console() {
   // from the Systems tab's "+ register system" button (there is no duplicate
   // IntakeWizard variant for that module). Every other module keeps the
   // existing generic IntakeWizard.
-  const requestIntake = () => {
-    if (moduleId === "vulnerability") {
+  // Opts may arrive from dante (an open_wizard action carrying a module_id +
+  // optional target_id) or from the LeftRail / ChatConsole "+ new
+  // investigation" affordance (no args, defers to the current module).
+  const requestIntake = (opts?: { moduleId?: string; targetId?: string }) => {
+    const effectiveModule = opts?.moduleId ?? moduleId;
+    const targetId = opts?.targetId ?? null;
+    if (effectiveModule === "vulnerability" && !targetId) {
       openNamedPage("vulnerability", "systems:new", "register system");
-    } else {
-      setIntakeOpen(true);
+      return;
     }
+    setIntake({ module: effectiveModule, targetId });
   };
 
   // Opening a rail row binds it and raises the module's detail window. For
@@ -409,17 +417,19 @@ function Console() {
               onOpenPage={(mod, page, title) => openNamedPage(mod, page, title ?? page)}
             />
           ) : null}
-          {intakeOpen ? (
+          {intake ? (
             <IntakeWizard
-              moduleId={moduleId}
-              onClose={() => setIntakeOpen(false)}
+              moduleId={intake.module}
+              prefill={{ targetId: intake.targetId ?? undefined }}
+              onClose={() => setIntake(null)}
               onBind={(inv) => {
-                setIntakeOpen(false);
+                setIntake(null);
                 openInvestigation(inv);
               }}
               onRequestUpload={() => {
-                setIntakeOpen(false);
-                openNamedPage(moduleId, "new-target", "upload target");
+                const m = intake.module;
+                setIntake(null);
+                openNamedPage(m, "new-target", "upload target");
               }}
             />
           ) : null}

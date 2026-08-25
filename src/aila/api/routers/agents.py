@@ -171,18 +171,48 @@ def _module_entry(module) -> PersonaRegistryModule:
     )
 
 
+def _dante_platform_entry() -> PersonaRegistryModule:
+    """Synthetic ``platform`` entry exposing the ``dante`` console agent (req 25).
+
+    dante is the platform-owned console conversational agent; it does
+    not belong to any module and so is not surfaced by the
+    module-registry walk. Surfacing it here lets the persona-model
+    routing config UI (req 31) bind an operator-chosen model_role to
+    the ``dante`` voice under ``module_id='platform'`` without needing
+    a fake ``platform`` module to exist in the registry.
+    """
+    return PersonaRegistryModule(
+        module_id="platform",
+        module_label="Platform",
+        personas=[
+            PersonaRegistryPersona(
+                voice="dante",
+                role=None,
+                # dante shares the operator-configured ``routing``
+                # task_type by default. Listing it as the sole option
+                # keeps the config UI aligned with the actual code
+                # path in ``DanteAgent.respond``.
+                task_type_options=["routing"],
+            ),
+        ],
+    )
+
+
 def build_persona_registry(platform: object) -> list[PersonaRegistryModule]:
     """Assemble the persona-registry response body for ``platform``.
 
     Public pure helper so tests can exercise the introspection path
     against real module registrations without spinning the full app
     fixture. Iterates ``platform.runtime.module_registry.modules`` in
-    registration order.
+    registration order and prepends the synthetic ``platform`` entry
+    that surfaces the ``dante`` console agent (req 25).
     """
+    entries: list[PersonaRegistryModule] = [_dante_platform_entry()]
     if platform is None:
-        return []
+        return entries
     modules = list(platform.runtime.module_registry.modules)  # type: ignore[attr-defined]
-    return [_module_entry(mod) for mod in modules]
+    entries.extend(_module_entry(mod) for mod in modules)
+    return entries
 
 
 @router.get(

@@ -213,7 +213,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
         </span>
         <span style={css(`flex:1;`)} />
         <span
-          onClick={onOpenIntake}
+          onClick={() => onOpenIntake()}
           style={css(
             `border:1px solid var(--border);padding:0 5px;font-size:12px;color:var(--accent);cursor:pointer;`,
           )}

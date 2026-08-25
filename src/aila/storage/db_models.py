@@ -865,6 +865,12 @@ class SessionMessageRecord(SQLModel, table=True):
     role: str = Field(sa_column=Column(Text, nullable=False))  # "user" | "assistant"
     content: str = Field(default="", sa_column=Column(Text, server_default=""))
     run_id: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    # req 25: JSON-encoded list of DanteAction dicts proposed on an
+    # assistant turn by the platform ``dante`` agent. NULL on legacy
+    # rows and on user turns. The frontend renders each action as a
+    # confirm/open button and executes the mapped mutation via the
+    # existing per-kind endpoint on operator confirm.
+    actions_json: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 

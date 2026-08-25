@@ -2,12 +2,30 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch } from "./client";
 
+/** Dante proposal shape (frozen contract). A dante assistant turn carries
+ *  `actions: DanteAction[]` (empty when the reply is pure conversation). The
+ *  backend validates every action; only well-formed actions arrive here. */
+export interface DanteAction {
+  kind: "open_wizard" | "enqueue_scan" | "create_tag" | "delete_tag";
+  label: string;
+  summary?: string;
+  // open_wizard
+  module_id?: string;
+  target_id?: string | null;
+  // enqueue_scan
+  query?: string;
+  system_ids?: string[];
+  // create_tag / delete_tag
+  key?: string;
+}
+
 export interface SessionMessage {
   message_id: string;
   role: "user" | "assistant" | "system";
   content: string;
   run_id?: string | null;
   created_at?: string;
+  actions?: DanteAction[];
 }
 
 export interface SessionSummary {

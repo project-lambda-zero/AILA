@@ -14,9 +14,12 @@ import {
   usePostSessionMessage,
   useSessionMessages,
   useSessions,
+  type DanteAction,
   type SessionMessage,
 } from "../api/sessions";
+import { useCreateVocabEntry, useDeleteVocabEntry } from "../api/systems";
 import type { Message } from "../api/types";
+import { useSubmitVulnScan } from "../api/vulnerability";
 import type { ChatConsoleProps } from "./contract";
 import { css } from "./css";
 import { shortCaseId } from "./ids";
@@ -153,19 +156,23 @@ function chipStyle(tone: ChipTone): CSSProperties {
 
 /* -------------------------------- constants ------------------------------- */
 
+// Prompt chips map to real dante capabilities: the interview/advise voice
+// and the four proposal kinds (open_wizard / enqueue_scan / create_tag /
+// delete_tag). No decorative options; anything a chip suggests dante can
+// actually do.
 const ADV_SUGGESTIONS: readonly string[] = [
-  "summarize the dissent",
-  "what is still unconfirmed?",
-  "draft the disclosure",
+  "what can you do?",
+  "open a vr investigation on this target",
+  "scan this system for kev cves",
 ];
 
 // "+ new investigation" is rendered separately as an accent action (it opens
 // the intake wizard, not a prompt). These are the plain prompt chips.
 const BASIC_SUGGESTIONS: readonly string[] = [
   "what can you do?",
-  "explain the modules",
-  "check platform health",
-  "search findings",
+  "open a vr investigation",
+  "scan a system for kev cves",
+  "add a tag to the vocabulary",
 ];
 
 // Assistant copy for the boot bubble (basic mode / unbound). This is
@@ -181,9 +188,17 @@ interface RowProps {
   body: string;
   chips: Array<{ label: string; tone: ChipTone }>;
   card: { id: string; conf: string; body: string } | null;
+  actions?: DanteAction[];
+  messageId?: string;
 }
 
-function renderRow(key: string, r: RowProps): JSX.Element {
+interface RowRenderCtx {
+  acted: Set<string>;
+  onAction: (a: DanteAction, messageId?: string) => void;
+  onDismiss: (messageId?: string) => void;
+}
+
+function renderRow(key: string, r: RowProps, ctx?: RowRenderCtx): JSX.Element {
   const you = r.who === "you";
 
   const rowStyle = css(
@@ -220,6 +235,31 @@ function renderRow(key: string, r: RowProps): JSX.Element {
     `display:flex;flex-wrap:wrap;gap:5px;margin-top:7px;${you ? "justify-content:flex-end;" : ""}`,
   );
 
+  const actionsRowStyle = css(
+    "display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center;",
+  );
+  const proposalSummaryStyle = css(
+    `flex:1 1 100%;font-size:11px;line-height:1.4;color:${T.mut};margin-bottom:2px;`,
+  );
+  const actionBtnBase =
+    `padding:5px 11px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.06em;text-transform:uppercase;border-radius:2px;cursor:pointer;white-space:nowrap;`;
+  const confirmBtnStyle = css(
+    `${actionBtnBase}color:var(--text-on-accent);background:var(--accent);border:1px solid var(--accent);box-shadow:0 0 12px rgba(255,95,135,0.28);`,
+  );
+  const dismissBtnStyle = css(
+    `${actionBtnBase}color:${T.mut};background:var(--surface-card);border:1px solid var(--border-soft);`,
+  );
+  const inertBtnStyle = css(
+    `${actionBtnBase}color:${T.fnt};background:var(--surface-sunk);border:1px solid var(--border-soft);cursor:default;opacity:0.55;`,
+  );
+  const wizardBtnStyle = css(
+    `${actionBtnBase}color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);border:1px solid ${H.acc}66;`,
+  );
+
+  const actions = r.actions ?? [];
+  const rowIsDante = r.who === "dante";
+  const isActed = Boolean(r.messageId && ctx?.acted.has(r.messageId));
+
   return (
     <div key={key} style={rowStyle}>
       <div style={metaStyle}>
@@ -247,6 +287,50 @@ function renderRow(key: string, r: RowProps): JSX.Element {
           ))}
         </div>
       ) : null}
+      {rowIsDante && actions.length > 0 && ctx ? (
+        <div style={actionsRowStyle}>
+          {actions.map((a, i) => {
+            const aKey = `${r.messageId ?? key}-a${i}`;
+            if (a.kind === "open_wizard") {
+              const label = a.label || `open ${a.module_id ?? "module"} wizard`;
+              return (
+                <button
+                  key={aKey}
+                  type="button"
+                  onClick={() => ctx.onAction(a, r.messageId)}
+                  style={wizardBtnStyle}
+                >
+                  {label}
+                </button>
+              );
+            }
+            // Mutation kinds render a summary + confirm/dismiss pair. Once
+            // acted, the buttons flip inert (Set<messageId> in the root
+            // tracks this) so a proposal can be run at most once.
+            return (
+              <div key={aKey} style={actionsRowStyle}>
+                {a.summary ? <div style={proposalSummaryStyle}>{a.summary}</div> : null}
+                <button
+                  type="button"
+                  disabled={isActed}
+                  onClick={() => ctx.onAction(a, r.messageId)}
+                  style={isActed ? inertBtnStyle : confirmBtnStyle}
+                >
+                  {isActed ? "done" : (a.label || "confirm")}
+                </button>
+                <button
+                  type="button"
+                  disabled={isActed}
+                  onClick={() => ctx.onDismiss(r.messageId)}
+                  style={isActed ? inertBtnStyle : dismissBtnStyle}
+                >
+                  dismiss
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -264,6 +348,8 @@ function bindSessionMessage(m: SessionMessage): RowProps {
     body: m.content,
     chips,
     card: null,
+    actions: m.actions ?? [],
+    messageId: m.message_id,
   };
 }
 
@@ -364,6 +450,14 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
 
   const [draft, setDraft] = useState<string>("");
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  // Separate dante session for advanced mode: dante replies land here and
+  // render in the chat panel WITHOUT being written to the investigation
+  // transcript. Reset when the bound case changes so each case owns its
+  // conversation with dante.
+  const [advSessionId, setAdvSessionId] = useState<string | null>(null);
+  // Message ids for which the operator has already confirmed or dismissed a
+  // dante proposal. Prevents double-firing a mutation from the same row.
+  const [acted, setActed] = useState<Set<string>>(() => new Set<string>());
   const threadRef = useRef<HTMLDivElement | null>(null);
   const seenLen = useRef<number | null>(null);
 
@@ -380,16 +474,38 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
     }
   }, [activeSessionId, sessionsQ.data?.items]);
 
-  const sessionMessagesQ = useSessionMessages(!adv ? activeSessionId : null);
-  const postSessionMessage = usePostSessionMessage(!adv ? activeSessionId : null);
+  useEffect(() => {
+    // Case change clears the advanced-mode dante session so we lazy-create a
+    // fresh one on the next send for the new investigation.
+    setAdvSessionId(null);
+  }, [investigationId]);
+
+  const chatSessionId = adv ? advSessionId : activeSessionId;
+  const sessionMessagesQ = useSessionMessages(chatSessionId);
+  const postSessionMessage = usePostSessionMessage(chatSessionId);
   const sessionMessages: SessionMessage[] = sessionMessagesQ.data?.items ?? [];
+
+  // Mutation hooks dante's proposals invoke on operator confirm. Bound here
+  // (Rules of Hooks) and dispatched by kind inside onAction.
+  const submitVulnScan = useSubmitVulnScan();
+  const createVocab = useCreateVocabEntry();
+  const deleteVocab = useDeleteVocabEntry();
 
   // Reset the scroll baseline when the bound case or session changes.
   useEffect(() => {
     seenLen.current = null;
-  }, [investigationId, activeSessionId, mode]);
+  }, [investigationId, activeSessionId, advSessionId, mode]);
 
-  const totalMessageCount = adv ? messages.length : sessionMessages.length;
+  // Dante assistant replies (advanced mode only) that render alongside the
+  // transcript. Filter to assistant-only so the operator's session-side turn
+  // doesn't double-render with the transcript row.
+  const advDanteRows: SessionMessage[] = adv
+    ? sessionMessages.filter((m) => m.role === "assistant")
+    : [];
+
+  const totalMessageCount = adv
+    ? messages.length + advDanteRows.length
+    : sessionMessages.length;
 
   // The design opens with the greeting at the top of the thread. On first load
   // of a case we stay at the top; once new turns actually arrive we follow them
@@ -407,11 +523,6 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
   }, [totalMessageCount]);
 
   const bindLabel = investigationId ? shortCaseId(moduleId, investigationId) : moduleId;
-  const panelSig = adv
-    ? `bound \u00b7 ${bindLabel} case_state`
-    : activeSessionId
-      ? `session \u00b7 ${activeSessionId.slice(0, 8)}`
-      : "assistant \u00b7 ready";
 
   const promptGlyph = adv ? `${moduleId}:` : ">";
   const placeholder = adv
@@ -432,17 +543,35 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
 
   const doSend = (): void => {
     if (!canSend) return;
+    const content = trimmed;
     if (adv && investigationId) {
-      postMessage.mutate(trimmed, {
+      // Advanced mode dual-post: the operator turn hits the investigation
+      // transcript (existing behavior) AND the same content posts to the
+      // per-case dante session so dante can reply in the chat panel without
+      // writing into the transcript. Lazy-create the dante session on the
+      // first send for this case.
+      postMessage.mutate(content, {
         onSuccess: () => setDraft(""),
       });
+      if (advSessionId) {
+        postSessionMessage.mutate({ content, sessionId: advSessionId });
+      } else {
+        createSession.mutate(
+          { title: `dante \u00b7 ${bindLabel}`.slice(0, 40) },
+          {
+            onSuccess: (newSess) => {
+              setAdvSessionId(newSess.session_id);
+              postSessionMessage.mutate({ content, sessionId: newSess.session_id });
+            },
+          },
+        );
+      }
       return;
     }
     if (!activeSessionId) {
       // Create the session, then post THIS message to it. Without the nested
       // post the operator's first message is dropped (session made, draft
       // cleared, nothing sent).
-      const content = trimmed;
       createSession.mutate(
         { title: content.slice(0, 40) },
         {
@@ -456,12 +585,65 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
       return;
     }
     postSessionMessage.mutate(
-      { content: trimmed },
+      { content },
       {
         onSuccess: () => setDraft(""),
       },
     );
   };
+
+  const markActed = (messageId?: string): void => {
+    if (!messageId) return;
+    setActed((prev) => {
+      if (prev.has(messageId)) return prev;
+      const next = new Set(prev);
+      next.add(messageId);
+      return next;
+    });
+  };
+
+  // Dispatch a dante proposal against the existing hook that owns the
+  // matching real mutation. open_wizard is a pure UI gesture (no mutation,
+  // no acted flag needed). enqueue_scan / create_tag / delete_tag each map
+  // to the same hook the operator would trigger by hand elsewhere in the UI.
+  const onAction = (a: DanteAction, messageId?: string): void => {
+    if (a.kind === "open_wizard") {
+      onOpenIntake({
+        moduleId: a.module_id,
+        targetId: a.target_id ?? undefined,
+      });
+      return;
+    }
+    if (a.kind === "enqueue_scan") {
+      const query = (a.query ?? "").trim();
+      if (!query) return;
+      submitVulnScan.mutate(
+        { query_text: query, targets: a.system_ids ?? [] },
+        { onSettled: () => markActed(messageId) },
+      );
+      markActed(messageId);
+      return;
+    }
+    if (a.kind === "create_tag") {
+      const key = (a.key ?? "").trim();
+      if (!key) return;
+      createVocab.mutate(
+        { tag_key: key, description: a.summary ?? "" },
+        { onSettled: () => markActed(messageId) },
+      );
+      markActed(messageId);
+      return;
+    }
+    if (a.kind === "delete_tag") {
+      const key = (a.key ?? "").trim();
+      if (!key) return;
+      deleteVocab.mutate(key, { onSettled: () => markActed(messageId) });
+      markActed(messageId);
+      return;
+    }
+  };
+
+  const rowCtx: RowRenderCtx = { acted, onAction, onDismiss: markActed };
 
   const onKey = (e: KeyboardEvent<HTMLInputElement>): void => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -486,9 +668,6 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
   );
   const panelBarHatch = css(
     "height:2px;flex:1;background-image:repeating-linear-gradient(135deg,var(--border) 0 1px,transparent 1px 3px);",
-  );
-  const panelBarSig = css(
-    "color:var(--text-faint);text-transform:none;letter-spacing:0.05em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;",
   );
 
   const threadStyle = css(
@@ -539,13 +718,43 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
   // The console opens with the assistant greeting -- the same static copy the
   // design page leads with -- and the live turns follow it. This is UI chrome,
   // not investigation data, so it is honest to show above any bound thread.
-  const bootRow = renderRow("boot", {
-    who: "dante",
-    meta: "boot",
-    body: BOOT_COPY,
-    chips: [],
-    card: null,
-  });
+  const bootRow = renderRow(
+    "boot",
+    {
+      who: "dante",
+      meta: "boot",
+      body: BOOT_COPY,
+      chips: [],
+      card: null,
+    },
+    rowCtx,
+  );
+
+  // Merge the investigation transcript with dante's assistant-only replies
+  // from the per-case dante session by created_at ascending. Rows without a
+  // timestamp fall to the end in insertion order.
+  interface MergedRow { key: string; ts: number; el: JSX.Element }
+  const mergedAdvRows = (): JSX.Element[] => {
+    const rows: MergedRow[] = [];
+    for (const m of messages) {
+      const t = m.created_at ? Date.parse(m.created_at) : Number.NaN;
+      rows.push({
+        key: `t:${m.id}`,
+        ts: Number.isFinite(t) ? t : Number.POSITIVE_INFINITY,
+        el: renderRow(`t:${m.id}`, bindMessage(m), rowCtx),
+      });
+    }
+    for (const s of advDanteRows) {
+      const t = s.created_at ? Date.parse(s.created_at) : Number.NaN;
+      rows.push({
+        key: `d:${s.message_id}`,
+        ts: Number.isFinite(t) ? t : Number.POSITIVE_INFINITY,
+        el: renderRow(`d:${s.message_id}`, bindSessionMessage(s), rowCtx),
+      });
+    }
+    rows.sort((a, b) => a.ts - b.ts);
+    return rows.map((r) => r.el);
+  };
 
   let threadContent: JSX.Element | JSX.Element[];
   if (adv && investigationId) {
@@ -556,13 +765,13 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
         bootRow,
         <div key="_err" style={emptyStyle}>could not load messages for this investigation.</div>,
       ];
-    } else if (messages.length === 0) {
+    } else if (messages.length === 0 && advDanteRows.length === 0) {
       threadContent = [
         bootRow,
         <div key="_empty" style={emptyStyle}>no turns yet -- send a message below</div>,
       ];
     } else {
-      threadContent = [bootRow, ...messages.map((m) => renderRow(m.id, bindMessage(m)))];
+      threadContent = [bootRow, ...mergedAdvRows()];
     }
   } else if (!adv) {
     if (sessionMessagesQ.isLoading && !sessionMessagesQ.data) {
@@ -570,7 +779,10 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
     } else if (sessionMessages.length === 0) {
       threadContent = bootRow;
     } else {
-      threadContent = [bootRow, ...sessionMessages.map((m) => renderRow(m.message_id, bindSessionMessage(m)))];
+      threadContent = [
+        bootRow,
+        ...sessionMessages.map((m) => renderRow(m.message_id, bindSessionMessage(m), rowCtx)),
+      ];
     }
   } else {
     threadContent = bootRow;
@@ -582,9 +794,8 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
     <div style={panelStyle}>
       <div style={panelBarStyle}>
         <span style={panelBarDot} />
-        <span style={panelBarLabel}>console</span>
+        <span style={panelBarLabel}>dante</span>
         <span aria-hidden="true" style={panelBarHatch} />
-        <span style={panelBarSig}>{panelSig}</span>
         {adv && investigationId && onOpenXray ? (
           <button type="button" onClick={onOpenXray} style={xrayBtnStyle}>
             x-ray {"\u25b8"}
@@ -599,7 +810,7 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
       <div style={composerWrapStyle}>
         <div style={suggestionsRow}>
           {!adv ? (
-            <button key="_new" type="button" onClick={onOpenIntake} style={newInvBtn}>
+            <button key="_new" type="button" onClick={() => onOpenIntake()} style={newInvBtn}>
               {"\uff0b new investigation"}
             </button>
           ) : null}
