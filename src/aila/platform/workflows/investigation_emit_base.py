@@ -599,6 +599,7 @@ def state_investigation_emit(
                                 bindings.branch_model.status.in_(_live_statuses),  # type: ignore[attr-defined]
                             )
                         ))
+                        .where(bindings.message_model.superseded_at.is_(None))
                     )
                     total_messages = int(msg_count_row.first() or 0)
                     # Clock the wall-clock cap from when work ACTUALLY began

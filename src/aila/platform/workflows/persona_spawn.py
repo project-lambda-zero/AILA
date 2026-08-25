@@ -11,7 +11,7 @@ Phase 1 (atomic UnitOfWork, one commit): lock the inv row so parallel
 spawn ticks serialize; group every existing branch by persona and pick
 the winner (an ``operator_reopen:`` branch always wins, then highest
 turn_count, then newest); reactivate the winner to a fresh slot
-(turn_count 0, stripped case_state, prior messages deleted so the
+(turn_count 0, stripped case_state, prior messages archived (superseded) so the
 tool-failure breaker starts clean); abandon duplicates; and INSERT a
 branch for every persona without one. Any raise rolls the whole panel
 back -- either all siblings resolve to a stable id or none do.
@@ -209,7 +209,7 @@ async def spawn_persona_siblings(
                 continue
             if b.id == best.id:
                 # Winner -- reactivate as a fresh slot (turn_count 0,
-                # stripped case_state, prior messages deleted) so the
+                # stripped case_state, prior messages archived (superseded)) so the
                 # cap math, steering directives, rejected-hypothesis
                 # lists, and tool-failure breaker all start clean.
                 #
@@ -232,7 +232,7 @@ async def spawn_persona_siblings(
                 ):
                     # Completed branch with no pending review work left --
                     # leave it completed. Resurrecting it here (turn_count
-                    # reset, prior messages deleted) with nothing to review
+                    # reset, prior messages archived (superseded)) with nothing to review
                     # is the deliberation churn: every setup re-entry reset
                     # already-voted siblings, so a fully-deliberated split
                     # finding never let the investigation settle (it cycled
@@ -254,11 +254,18 @@ async def spawn_persona_siblings(
                         b.case_state_json or "{}",
                     )
                     uow.session.add(b)
+                    # Soft-supersede prior transcript rather than deleting
+                    # so the operator-visible history and audit trail
+                    # survive reactivation. Agent-context reads filter on
+                    # ``superseded_at IS NULL`` to reconstruct a fresh
+                    # slate.
                     await uow.session.execute(
                         _sql_text(
-                            f"DELETE FROM {message_table} "
-                            "WHERE branch_id = :bid"
-                        ).bindparams(bid=b.id),
+                            f"UPDATE {message_table} "
+                            "SET superseded_at = :ts "
+                            "WHERE branch_id = :bid "
+                            "AND superseded_at IS NULL"
+                        ).bindparams(ts=utc_now(), bid=b.id),
                     )
                     result.reactivated.append(b.id)
                     _log.info(
@@ -292,30 +299,54 @@ async def spawn_persona_siblings(
                 )
             elif b.turn_count == 0 and b.status == "abandoned":
                 # Zero-turn abandoned branch from a prior stall/reopen
-                # cycle with NO live task on it -- hard-delete so branches
-                # don't accumulate across cycles. Messages (if any from
-                # setup) are removed first to satisfy FK constraints.
+                # cycle with NO live task on it. GC only when the branch
+                # has zero messages -- a branch that ever carried a
+                # transcript row (even a setup message) must be KEPT so
+                # the superseded rows still have their FK parent for
+                # display + audit. Zero-message branches are safe to
+                # hard-delete because there's nothing to reference them.
                 _bt = branch_model.__tablename__
-                await uow.session.execute(
+                _mcount = (await uow.session.execute(
                     _sql_text(
-                        f"UPDATE {_bt} "
-                        "SET parent_branch_id = NULL "
-                        "WHERE parent_branch_id = :bid"
-                    ).bindparams(bid=b.id),
-                )
-                await uow.session.execute(
-                    _sql_text(
-                        f"DELETE FROM {message_table} "
+                        f"SELECT COUNT(*) FROM {message_table} "
                         "WHERE branch_id = :bid"
                     ).bindparams(bid=b.id),
-                )
-                await uow.session.delete(b)
-                result.abandoned.append(b.id)
-                _log.info(
-                    "auto_deliberation: hard-deleted stale zero-turn "
-                    "abandoned %s branch %s (keeping %s)",
-                    b.persona_voice, b.id, best.id,
-                )
+                )).scalar() or 0
+                if _mcount == 0:
+                    await uow.session.execute(
+                        _sql_text(
+                            f"UPDATE {_bt} "
+                            "SET parent_branch_id = NULL "
+                            "WHERE parent_branch_id = :bid"
+                        ).bindparams(bid=b.id),
+                    )
+                    await uow.session.delete(b)
+                    result.abandoned.append(b.id)
+                    _log.info(
+                        "auto_deliberation: hard-deleted stale zero-turn "
+                        "abandoned %s branch %s (keeping %s)",
+                        b.persona_voice, b.id, best.id,
+                    )
+                else:
+                    # Message-bearing branch -- archive the transcript
+                    # via soft-supersede and leave the branch as
+                    # abandoned (its current status). The row is kept so
+                    # the superseded messages retain their FK parent.
+                    await uow.session.execute(
+                        _sql_text(
+                            f"UPDATE {message_table} "
+                            "SET superseded_at = :ts "
+                            "WHERE branch_id = :bid "
+                            "AND superseded_at IS NULL"
+                        ).bindparams(ts=utc_now(), bid=b.id),
+                    )
+                    result.abandoned.append(b.id)
+                    _log.info(
+                        "auto_deliberation: archived transcript on "
+                        "zero-turn abandoned %s branch %s and kept the "
+                        "branch row (message-bearing; keeping %s)",
+                        b.persona_voice, b.id, best.id,
+                    )
             elif b.status not in ("abandoned",):
                 b.status = "abandoned"
                 b.closed_reason = "duplicate_persona_cleanup"

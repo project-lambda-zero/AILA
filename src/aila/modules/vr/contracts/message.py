@@ -81,3 +81,7 @@ class VRMessageSummary(BaseModel):
     at_turn: int | None = None
     evidence_refs: list[str] = Field(default_factory=list)
     created_at: datetime | None = None
+    # Set when this row belongs to a prior run archived by a reset /
+    # re-enqueue (req 26). The transcript view groups rows into run segments
+    # by this timestamp; NULL means the row is part of the current run.
+    superseded_at: datetime | None = None

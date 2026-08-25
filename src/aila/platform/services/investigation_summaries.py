@@ -175,6 +175,8 @@ def build_message_summary(
     }
     if "acked_at" in summary_cls.model_fields:
         kwargs["acked_at"] = getattr(record, "acked_at", None)
+    if "superseded_at" in summary_cls.model_fields:
+        kwargs["superseded_at"] = getattr(record, "superseded_at", None)
     if persona_voice is not None and "persona_voice" in summary_cls.model_fields:
         kwargs["persona_voice"] = persona_voice
     return summary_cls(**kwargs)

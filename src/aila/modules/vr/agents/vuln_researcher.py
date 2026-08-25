@@ -269,6 +269,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             rows = (await uow.session.exec(
                 _select(VRInvestigationMessageRecord)
                 .where(VRInvestigationMessageRecord.branch_id == self.branch_id)
+                .where(VRInvestigationMessageRecord.superseded_at.is_(None))
                 .order_by(VRInvestigationMessageRecord.created_at.desc())
             )).all()
         for row in rows:
@@ -520,6 +521,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                     _select(VRInvestigationMessageRecord)
                     .where(VRInvestigationMessageRecord.branch_id == s.id)
                     .where(VRInvestigationMessageRecord.sender_kind == SenderKind.ENGINE.value)
+                    .where(VRInvestigationMessageRecord.superseded_at.is_(None))
                     .order_by(VRInvestigationMessageRecord.created_at.desc())
                     .limit(6),
                 )).all()
@@ -1012,6 +1014,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                         SenderKind.SYSTEM.value,
                     ]),
                 )
+                .where(VRInvestigationMessageRecord.superseded_at.is_(None))
                 .order_by(VRInvestigationMessageRecord.created_at.desc())
                 .limit(20)
             )).all()

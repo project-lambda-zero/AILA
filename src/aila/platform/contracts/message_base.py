@@ -36,7 +36,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict
 from pydantic import Field as PField
 from sqlalchemy import DateTime, Text
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, select
 
 from ._common import utc_now
 from ._naming import TableDerivedConstraintsMixin, TabledFk
@@ -47,6 +47,7 @@ __all__ = [
     "MessageCreateBase",
     "MessageRecordBase",
     "MessageSummaryBase",
+    "active_messages",
 ]
 
 
@@ -84,6 +85,15 @@ class MessageRecordBase(TableDerivedConstraintsMixin, SQLModel):
     created_at: datetime = Field(
         default_factory=utc_now, sa_type=DateTime(timezone=True), index=True,
     )
+    # Soft-supersede marker (req 26). Reset / re-enqueue / loser-branch GC
+    # stamp this instead of hard-deleting the row, so an investigation's full
+    # transcript survives for display and audit. Agent-context reads
+    # reconstruct a clean slate by filtering ``superseded_at IS NULL`` (see
+    # ``active_messages``); display reads show every row and tag run segments
+    # by this timestamp. Nullable + indexed; existing rows read as active.
+    superseded_at: datetime | None = Field(
+        default=None, sa_type=DateTime(timezone=True), index=True,
+    )
 
 
 class MessageSummaryBase(BaseModel):
@@ -107,6 +117,9 @@ class MessageSummaryBase(BaseModel):
     at_turn: int | None = None
     evidence_refs: list[str] = PField(default_factory=list)
     created_at: datetime | None = None
+    # When set, this row belongs to a prior run archived by a reset /
+    # re-enqueue; the display groups rows into run segments by this value.
+    superseded_at: datetime | None = None
 
 
 class MessageCreateBase(BaseModel):
@@ -133,3 +146,16 @@ class MessageCreateBase(BaseModel):
         default=None,
         description="When set, skip auto-classification and use this intent directly.",
     )
+
+
+def active_messages(model: type[MessageRecordBase], *columns: Any) -> Any:
+    """SELECT restricted to non-superseded messages (req 26 clean-slate read).
+
+    Agent-context reads reconstruct the current run's slate and MUST ignore
+    rows a reset / re-enqueue archived. Pass ``model`` for a full-row select,
+    or explicit ``columns`` for a projection. Aggregate reads whose target is
+    ``func.count()`` (no model target) apply ``model.superseded_at.is_(None)``
+    directly instead of calling this helper.
+    """
+    target: tuple[Any, ...] = columns if columns else (model,)
+    return select(*target).where(model.superseded_at.is_(None))

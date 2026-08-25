@@ -953,6 +953,7 @@ async def _recent_semantic_queries(
             _select(message_model)
             .where(message_model.branch_id == branch_id)
             .where(message_model.payload_kind == PayloadKind.TOOL_CALL.value)
+            .where(message_model.superseded_at.is_(None))
             .order_by(message_model.created_at.desc())
             .limit(limit)
         )).all()
@@ -998,6 +999,7 @@ async def _already_posted(
             _select(message_model)
             .where(message_model.investigation_id == investigation_id)
             .where(message_model.auto_steering_key == auto_steering_key)
+            .where(message_model.superseded_at.is_(None))
         )).all()
         if not rows:
             return False

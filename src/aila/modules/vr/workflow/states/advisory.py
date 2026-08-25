@@ -243,7 +243,7 @@ async def _emit_poc_message(poc: dict[str, Any]) -> None:
                         VRInvestigationMessageRecord.branch_id == branch,
                         VRInvestigationMessageRecord.payload_kind
                         == PayloadKind.POC_SCRIPT.value,
-                    ).limit(1)
+                    ).where(VRInvestigationMessageRecord.superseded_at.is_(None)).limit(1)
                 )
             ).first()
             if existing:

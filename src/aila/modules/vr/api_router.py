@@ -4414,7 +4414,10 @@ def create_vr_router() -> APIRouter:
                         VRInvestigationMessageRecord.investigation_id,
                         sa_func.count(),
                     )
-                    .where(VRInvestigationMessageRecord.investigation_id.in_(row_ids))
+                    .where(
+                        VRInvestigationMessageRecord.investigation_id.in_(row_ids),
+                        VRInvestigationMessageRecord.superseded_at.is_(None),
+                    )
                     .group_by(VRInvestigationMessageRecord.investigation_id),
                 )).all()
                 msg_counts = {iid: int(c) for iid, c in msg_pairs}
@@ -4538,7 +4541,10 @@ def create_vr_router() -> APIRouter:
             )
             message_count = (await uow.session.exec(
                 select(sa_func.count()).select_from(VRInvestigationMessageRecord)
-                .where(VRInvestigationMessageRecord.investigation_id == investigation_id)
+                .where(
+                    VRInvestigationMessageRecord.investigation_id == investigation_id,
+                    VRInvestigationMessageRecord.superseded_at.is_(None),
+                )
             )).one()
             outcome_count = (await uow.session.exec(
                 select(sa_func.count()).select_from(VRInvestigationOutcomeRecord)
@@ -5421,15 +5427,22 @@ def create_vr_router() -> APIRouter:
             )).all()
             branch_ids = [b.id for b in branches]
 
-            # 1) Delete every message on every branch (full reasoning wipe).
+            # 1) Soft-supersede every message on every branch. The full
+            # reasoning transcript stays on disk for display + audit;
+            # agent-context reads filter superseded_at IS NULL to see a
+            # fresh slate. Only stamp rows currently active so a re-reset
+            # does not re-stamp already-archived history.
+            _now = utc_now()
             for bid in branch_ids:
                 msgs = (await uow.session.exec(
                     select(VRInvestigationMessageRecord).where(
                         VRInvestigationMessageRecord.branch_id == bid,
+                        VRInvestigationMessageRecord.superseded_at.is_(None),
                     ),
                 )).all()
                 for m in msgs:
-                    await uow.session.delete(m)
+                    m.superseded_at = _now
+                    uow.session.add(m)
 
             # 2) Delete every outcome for this investigation.
             outcomes = (await uow.session.exec(
@@ -5476,7 +5489,25 @@ def create_vr_router() -> APIRouter:
                     uow.session.add(b)
                     reset_count += 1
                 else:
-                    await uow.session.delete(b)
+                    # A forked branch that still has (now-superseded)
+                    # messages CANNOT be hard-deleted -- the FK to
+                    # vr_investigation_messages would fire. Keep the
+                    # branch, mark it terminal so it drops off the live
+                    # branch list, and let its superseded transcript
+                    # remain readable. Only zero-message forks are safe
+                    # to delete outright (self-FKs already nulled above).
+                    msg_count = (await uow.session.exec(
+                        select(sa_func.count()).select_from(VRInvestigationMessageRecord)
+                        .where(VRInvestigationMessageRecord.branch_id == b.id)
+                    )).one()
+                    if int(msg_count) > 0:
+                        b.status = "abandoned"
+                        b.closed_reason = "investigation_reset"
+                        b.closed_at = utc_now()
+                        b.updated_at = utc_now()
+                        uow.session.add(b)
+                    else:
+                        await uow.session.delete(b)
 
             # 4) Reset investigation row itself. message_count + outcome_count
             # are projections derived at summary time (count from the message /
@@ -5489,6 +5520,12 @@ def create_vr_router() -> APIRouter:
             # carry into the fresh 6h budget. The dispatch-hub setup
             # re-stamps ``started_at = now`` on the next worker pick-up.
             inv.started_at = None
+            # Detach the investigation from any findings its archived run
+            # produced. The findings rows are preserved intact; only this
+            # inv's back-pointer is cleared so a fresh run starts with no
+            # linked findings and prior findings are not left orphaned
+            # pointing at a superseded transcript.
+            inv.linked_finding_ids_json = "[]"
             inv.updated_at = utc_now()
             uow.session.add(inv)
 

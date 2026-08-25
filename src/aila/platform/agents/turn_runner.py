@@ -576,6 +576,9 @@ class AgentTurnRunnerBase:
         if not writes:
             return
         for index, write in enumerate(writes):
+            # An empty-payload ledger write carries no information and only creates a noise row, so it is dropped at the source.
+            if not write.payload:
+                continue
             kind = write.kind
             if in_recon and kind == "note":
                 kind = "discovery"
