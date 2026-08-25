@@ -479,15 +479,41 @@ class ModuleProtocol(Protocol):
     def workflow_definitions(self) -> dict[str, dict]:
         """Return module-owned workflow state machine definitions (D-37/D-29).
 
-        Called by GET /findings/workflow/states to list all registered workflows.
-        Each key is a workflow identifier; each value has 'states' and 'transitions'.
+        Called by ``GET /findings/workflow/states`` and by
+        ``POST /findings/{finding_id}/transition`` to resolve the finding
+        state machine. Each key is a workflow identifier (the finding
+        lifecycle uses ``"finding"``); each value has ``states`` and
+        ``transitions``.
 
-        OPTIONAL -- platform checks hasattr() before calling.
+        Contract (finding lifecycle):
+          * The platform owns the base states/transitions
+            (``new -> investigating -> mitigated -> verified -> closed``,
+            plus the ``investigating -> new`` / ``mitigated ->
+            investigating`` re-open edges) via
+            ``aila.platform.contracts.finding_states.FINDING_STATE_TRANSITIONS``.
+            Modules MUST NOT redefine those unprefixed states.
+          * Every module-added state MUST be prefixed with the module id
+            (e.g. ``vr.false_positive``, ``malware.quarantined``,
+            ``forensics.contained``) so cross-module vocabularies never
+            collide.
+          * The resolver in ``aila.api.routers.findings_workflow`` merges
+            base + all modules for the read-side listing and merges
+            base + a single requested module when scoped by ``module_id``
+            (the ``POST .../transition`` path uses the request body's
+            ``module_id`` so legal next-states are module-scoped and a
+            cross-module target correctly 422s).
+
+        Production modules (``vr``, ``malware``, ``forensics``) MUST
+        implement this method and return their module-prefixed finding
+        extension. The platform-side ``hasattr()`` guard remains ONLY to
+        tolerate scaffold / non-production modules (``_template``,
+        ``hello_world``) that carry no domain finding vocabulary.
 
         Returns:
             Dict mapping workflow_id to state machine definition, e.g.:
-                {'vulnerability': {'states': ['new', 'mitigated'],
-                                   'transitions': {'new': ['mitigated']}}}
+                {'finding': {'states': ['vr.false_positive'],
+                             'transitions': {'investigating':
+                                             ['vr.false_positive']}}}
         """
         return {}
 

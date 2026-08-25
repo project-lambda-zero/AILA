@@ -386,8 +386,18 @@ def _summary_from_record(
     )
 
 
-def _finding_from_record(record: Any) -> VRFinding:
-    """Project a ``VRFindingRecord`` row to the public ``VRFinding``."""
+def _finding_from_record(
+    record: Any,
+    *,
+    workflow_state: str = "new",
+) -> VRFinding:
+    """Project a ``VRFindingRecord`` row to the public ``VRFinding``.
+
+    ``workflow_state`` is the caller-resolved value from the latest
+    ``FindingWorkflowRecord`` row for this finding (module_id='vr'), or
+    ``"new"`` when the caller has no batch mapping to consult or the
+    finding has no workflow row yet.
+    """
     from .contracts import CrashType, PoCResult
 
     poc: PoCResult | None = None
@@ -438,6 +448,7 @@ def _finding_from_record(record: Any) -> VRFinding:
         cvss_vector=record.cvss_vector,
         cwe_id=record.cwe_id,
         evidence_count=evidence_count,
+        workflow_state=workflow_state,
     )
 
 
@@ -1623,7 +1634,35 @@ def create_vr_router() -> APIRouter:
                 .offset(offset).limit(limit),
             )).all()
 
-        items = [_finding_from_record(r) for r in rows]
+            # D-37/D-29 -- one batch query resolves the latest workflow
+            # state per finding on the page. Ordered ascending so the
+            # dict-fold's "last wins" leaves the most recent transition
+            # for every finding_id.
+            page_ids = [r.id for r in rows]
+            state_by_finding: dict[str, str] = {}
+            if page_ids:
+                from aila.storage.db_models import FindingWorkflowRecord
+                wf_rows = (await uow.session.exec(
+                    select(
+                        FindingWorkflowRecord.finding_id,
+                        FindingWorkflowRecord.current_state,
+                    )
+                    .where(FindingWorkflowRecord.finding_id.in_(page_ids))
+                    .where(FindingWorkflowRecord.module_id == "vr")
+                    .order_by(FindingWorkflowRecord.created_at.asc()),
+                )).all()
+                for wf in wf_rows:
+                    fid = wf[0] if hasattr(wf, "__getitem__") else wf.finding_id
+                    state = wf[1] if hasattr(wf, "__getitem__") else wf.current_state
+                    state_by_finding[str(fid)] = state
+
+        items = [
+            _finding_from_record(
+                r,
+                workflow_state=state_by_finding.get(r.id, "new"),
+            )
+            for r in rows
+        ]
         meta = PaginatedMeta(total=total, offset=offset, limit=limit).model_dump()
         return DataEnvelope(data=items, meta=meta)
 

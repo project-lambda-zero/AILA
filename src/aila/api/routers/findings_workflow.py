@@ -51,12 +51,18 @@ def _require_operator(auth: AuthContext = Depends(require_user_or_api_key)) -> A
 
 def _resolve_finding_state_machine(
     platform: object,
+    module_id: str | None = None,
 ) -> tuple[list[str], dict[str, list[str]]]:
     """Resolve the finding state machine: platform base plus module extensions.
 
     The base transition map is the platform-owned generic finding lifecycle
     (FINDING_STATE_TRANSITIONS); each registered module's workflow_definitions()
     are merged on top. The API layer names no finding vocabulary of its own.
+
+    When ``module_id`` is provided the merge is scoped to base + only that
+    module's extension (modules whose ``module_id`` differs are skipped).
+    When ``module_id`` is ``None`` the full union across every registered
+    module is returned (the read-side merged view).
     """
     transitions: dict[str, list[str]] = {
         state: list(targets) for state, targets in FINDING_STATE_TRANSITIONS.items()
@@ -66,6 +72,8 @@ def _resolve_finding_state_machine(
         return states, transitions
     try:
         for module in platform.runtime.module_registry.modules:
+            if module_id is not None and getattr(module, "module_id", None) != module_id:
+                continue
             if not hasattr(module, "workflow_definitions"):
                 continue
             for _wf_id, wf_def in module.workflow_definitions().items():
@@ -103,15 +111,21 @@ def _record_to_response(r: FindingWorkflowRecord) -> FindingWorkflowHistoryRespo
 @limiter.limit("120/minute")
 async def get_workflow_states(
     request: Request,
+    module_id: str | None = None,
     auth: AuthContext = Depends(require_user_or_api_key),
 ) -> DataEnvelope[WorkflowStateDefinition]:
     """Return the canonical state machine definition (states + allowed transitions).
 
     Also merges module-contributed workflow definitions if any modules
-    implement workflow_definitions().
+    implement workflow_definitions(). When the optional ``module_id`` query
+    param is provided the response is scoped to base + only that module's
+    extension; without it the union across every registered module is
+    returned.
     """
     platform = getattr(request.app.state, "platform", None)
-    merged_states, merged_transitions = _resolve_finding_state_machine(platform)
+    merged_states, merged_transitions = _resolve_finding_state_machine(
+        platform, module_id=module_id
+    )
 
     return DataEnvelope(
         data=WorkflowStateDefinition(
@@ -200,7 +214,9 @@ async def transition_finding(
     - Records previous_state and transitioned_by for audit trail.
     """
     platform = getattr(request.app.state, "platform", None)
-    valid_states, transitions = _resolve_finding_state_machine(platform)
+    valid_states, transitions = _resolve_finding_state_machine(
+        platform, module_id=body.module_id
+    )
     if body.target_state not in valid_states:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

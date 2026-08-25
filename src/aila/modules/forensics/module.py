@@ -201,6 +201,30 @@ class ForensicsModule(ModuleProtocol):
         """Return field names valid for report row filtering."""
         return ["artifact_family", "artifact_type", "source_tool", "project_id"]
 
+    def workflow_definitions(self) -> dict[str, dict]:
+        """Return module-owned finding-workflow state extensions.
+
+        Forensics adds three domain-prefixed terminal-ish states that
+        model DFIR containment / eradication / recovery. The base
+        ``new / investigating / mitigated / verified / closed`` states
+        live on the platform and are NOT redeclared here.
+        """
+        return {
+            "finding": {
+                "states": [
+                    "forensics.contained",
+                    "forensics.eradicated",
+                    "forensics.recovered",
+                ],
+                "transitions": {
+                    "investigating": ["forensics.contained"],
+                    "forensics.contained": ["forensics.eradicated", "investigating"],
+                    "forensics.eradicated": ["forensics.recovered", "forensics.contained"],
+                    "forensics.recovered": ["closed", "forensics.eradicated"],
+                },
+            },
+        }
+
     async def register_tools(
         self,
         tool_registry: ToolRegistry,

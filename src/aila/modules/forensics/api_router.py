@@ -1594,6 +1594,7 @@ def create_forensics_router() -> APIRouter:
             FindingSuppressionRecord,
             ForensicsProjectRecord,
         )
+        from aila.storage.db_models import FindingWorkflowRecord
 
         async with UnitOfWork() as uow:
             project = (await uow.session.exec(
@@ -1676,6 +1677,45 @@ def create_forensics_router() -> APIRouter:
 
         deduped = [f for fp, f in seen.items() if fp not in suppressed_fps]
         deduped.sort(key=lambda f: -len(f["suspicious_reasons"]))
+
+        # Attach workflow_state to each finding. Findings are DERIVED at
+        # read-time from ArtifactRecord.data_json (no persisted "finding"
+        # row exists), so the finding's fingerprint doubles as its
+        # ``finding_id`` key into ``FindingWorkflowRecord``. Batch-load
+        # every workflow record for the page's fingerprints, fold
+        # created_at-ascending into ``{finding_id: current_state}``
+        # (last wins), then seed an initial ``new`` record for any
+        # fingerprint that has no history yet -- idempotent because we
+        # only insert when the fingerprint is absent from the fold.
+        page_fps = [f["fingerprint"] for f in deduped]
+        state_by_fp: dict[str, str] = {}
+        if page_fps:
+            async with UnitOfWork() as uow:
+                rows = (await uow.session.exec(
+                    select(FindingWorkflowRecord)
+                    .where(FindingWorkflowRecord.module_id == "forensics")
+                    .where(FindingWorkflowRecord.finding_id.in_(page_fps))  # type: ignore[attr-defined]
+                    .order_by(FindingWorkflowRecord.created_at.asc())  # type: ignore[union-attr]
+                )).all()
+                for r in rows:
+                    state_by_fp[r.finding_id] = r.current_state
+                missing = [fp for fp in page_fps if fp not in state_by_fp]
+                if missing:
+                    transitioned_by = auth.user_id or "system"
+                    for fp in missing:
+                        uow.session.add(FindingWorkflowRecord(
+                            finding_id=fp,
+                            module_id="forensics",
+                            current_state="new",
+                            previous_state=None,
+                            transitioned_by=transitioned_by,
+                            notes="",
+                            team_id=project.team_id,
+                        ))
+                        state_by_fp[fp] = "new"
+                    await uow.session.commit()
+        for f in deduped:
+            f["workflow_state"] = state_by_fp.get(f["fingerprint"], "new")
         return DataEnvelope(data=deduped)
 
     @router.get(

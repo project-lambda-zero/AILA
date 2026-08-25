@@ -2,10 +2,32 @@ import { createElement } from "react";
 
 import { css } from "../css";
 import { AuditEventDetail } from "./AuditEventDetail";
-import { SeverityBadge, StatusBadge } from "./badges";
+import { SeverityBadge, StatusBadge, WorkflowStateBadge } from "./badges";
 import { humanizeCron } from "./cronPreview";
-import type { PageColumn, PageConfig } from "./DataPage";
+import type { PageAction, PageColumn, PageConfig } from "./DataPage";
 import { LlmLogViewer } from "./LlmLogViewer";
+
+/** Build a workflow-transition PageAction for a findings DataPage. Each POST
+ * hits /findings/{id}/transition with the module id and target state; the
+ * `whenField: "workflow_state"` gate hides the button on rows whose current
+ * state cannot legally reach the target. Notes are collected in a small pre-
+ * flight modal so operators can record why the state changed. */
+function transitionAction(moduleId: string, target: string, sources: string[]): PageAction {
+  return {
+    label: "\u2192 " + target,
+    method: "POST",
+    endpoint: "/findings/{id}/transition",
+    body: { module_id: moduleId, target_state: target },
+    whenField: "workflow_state",
+    whenStatus: sources,
+    fields: [
+      { name: "notes", label: "notes", type: "textarea", placeholder: "optional context recorded on the workflow record" },
+    ],
+  };
+}
+
+const mwTransition = (target: string, sources: string[]): PageAction =>
+  transitionAction("malware", target, sources);
 
 /** Column shorthand: field + auto-labelled from the field name. */
 // Auto-assign a shared semantic renderer (badges.tsx) for fields whose names
@@ -274,8 +296,33 @@ export const PAGE_CONFIGS = {
   "malware:findings": {
     title: "malware \u00b7 findings",
     endpoint: "/malware/findings",
-    columns: [c("kind"), c("confidence"), c("target_id", "target"), c("investigation_id", "investigation"), c("operator_notes", "notes"), c("created_at", "created")],
+    columns: [
+      c("kind"),
+      c("confidence"),
+      {
+        field: "workflow_state",
+        label: "state",
+        render: (v) => createElement(WorkflowStateBadge, { value: v ?? "new" }),
+      },
+      c("target_id", "target"),
+      c("investigation_id", "investigation"),
+      c("operator_notes", "notes"),
+      c("created_at", "created"),
+    ],
     filters: [{ name: "kind", label: "kind", type: "text" }, { name: "kind", label: "kind", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
+    // Workflow transitions. Each row calls POST /findings/{id}/transition with
+    // module_id="malware" and the target state; whenStatus gates the button by
+    // the row's current workflow_state so only legal edges appear. The graph
+    // mirrors the backend contract in module.py workflow_definitions() -- keep
+    // in lockstep. Notes are optional operator context, sent verbatim.
+    actions: [
+      mwTransition("investigating", ["new", "mitigated", "malware.benign_confirmed", "malware.quarantined"]),
+      mwTransition("mitigated", ["investigating"]),
+      mwTransition("verified", ["mitigated"]),
+      mwTransition("closed", ["verified"]),
+      mwTransition("malware.benign_confirmed", ["investigating"]),
+      mwTransition("malware.quarantined", ["investigating"]),
+    ],
   },
   "malware:families": {
     title: "malware \u00b7 families",
@@ -857,12 +904,9 @@ export const PAGE_CONFIGS = {
     blurb: "task counts by status",
     columns: [],
   },
-  "admin:finding-states": {
-    title: "admin \u00b7 finding states",
-    endpoint: "/findings/workflow/states",
-    blurb: "finding workflow state machine",
-    columns: [],
-  },
+  // admin:finding-states is a bespoke read-only overview (see
+  // AdminFindingStatesPage) since the endpoint returns a state machine, not a
+  // list of rows a DataPage can render honestly.
   "admin:widget-layout": {
     title: "admin \u00b7 widget layout",
     endpoint: "/widgets/layout",

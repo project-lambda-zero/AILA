@@ -87,6 +87,7 @@ from aila.platform.services.branch_cleanup import close_orphan_branches_on_termi
 from aila.platform.services.knowledge import KnowledgeService
 from aila.platform.tasks.arq_purge import purge_arq_jobs_for_investigation
 from aila.platform.uow import UnitOfWork
+from aila.storage.db_models import FindingWorkflowRecord
 
 __all__ = [
     "OutcomeDispatchResult",
@@ -201,6 +202,41 @@ def _int_or_none(value: Any) -> int | None:
 _NOT_YET_DISPATCHABLE: dict[OutcomeKind, str] = {
     OutcomeKind.ASSESSMENT_REPORT: "assessment_reports_are_terminal_no_downstream",
 }
+
+
+async def _ensure_initial_workflow_record(
+    session: Any,
+    *,
+    finding_id: str,
+    team_id: str | None,
+    transitioned_by: str,
+) -> None:
+    """Idempotently seed the initial ``FindingWorkflowRecord`` for a VR finding.
+
+    Called from every VR finding-creation path (currently
+    :meth:`OutcomeDispatcher._dispatch_direct_finding`; also invoked
+    from the api_router promote/re-dispatch path via the same handler).
+    Checks for any existing row keyed by ``finding_id`` first so a
+    re-dispatch or retry never duplicates the row and never clobbers a
+    finding already advanced by the transition endpoint.
+    """
+    existing = (await session.exec(
+        _select(FindingWorkflowRecord)
+        .where(FindingWorkflowRecord.finding_id == finding_id)
+        .limit(1),
+    )).first()
+    if existing is not None:
+        return
+    session.add(FindingWorkflowRecord(
+        finding_id=finding_id,
+        module_id="vr",
+        current_state="new",
+        previous_state=None,
+        transitioned_by=transitioned_by or "system",
+        notes="",
+        team_id=team_id,
+    ))
+    await session.flush()
 
 
 class OutcomeDispatcher(OutcomeDispatcherBase):
@@ -540,6 +576,18 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
             uow.session.add(finding)
             await uow.session.flush()
             finding_id = finding.id
+
+            # D-37/D-29 -- stamp the initial finding workflow row so the
+            # findings explorer + transition endpoint see a real starting
+            # state instead of falling back to the "new" default. Guarded
+            # for idempotency in case re-dispatch or a retry ever reaches
+            # the same finding_id.
+            await _ensure_initial_workflow_record(
+                uow.session,
+                finding_id=finding_id,
+                team_id=finding.team_id,
+                transitioned_by="system",
+            )
 
             inv_row = (await uow.session.exec(
                 _select(VRInvestigationRecord).where(

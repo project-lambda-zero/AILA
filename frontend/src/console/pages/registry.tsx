@@ -2,6 +2,7 @@ import type { JSX } from "react";
 
 import type { ModulePageProps } from "../contract";
 import AdminDashboardPage from "./AdminDashboardPage";
+import AdminFindingStatesPage from "./AdminFindingStatesPage";
 import AdminPlatformCorpusPage from "./AdminPlatformCorpusPage";
 import AutomationWizard, { AutomationActionDetail } from "./AutomationWizard";
 import { PAGE_CONFIGS } from "./configs";
@@ -75,6 +76,7 @@ const BESPOKE: Record<string, PageEntry> = {
   "vulnerability:viz": { title: "vulnerability \u00b7 data visualization", render: (p) => <VulnerabilityPage {...p} /> },
   "vulnerability:reports": { title: "vulnerability \u00b7 reports", render: (p) => <VulnerabilityPage {...p} /> },
   "admin:dashboard": { title: "admin \u00b7 dashboard", render: (p) => <AdminDashboardPage {...p} /> },
+  "admin:finding-states": { title: "admin \u00b7 finding states", render: (p) => <AdminFindingStatesPage {...p} /> },
   "admin:platform-corpus": {
     title: "admin \u00b7 platform corpus",
     render: (p) => <AdminPlatformCorpusPage {...p} />,

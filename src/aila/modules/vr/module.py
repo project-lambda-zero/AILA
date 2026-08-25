@@ -184,6 +184,26 @@ class VRModule(ModuleProtocol):
         """No filterable reports yet."""
         return []
 
+    def workflow_definitions(self) -> dict[str, dict]:
+        """VR module-owned finding lifecycle extension.
+
+        Adds the two VR-prefixed terminal domain states (``vr.false_positive``
+        and ``vr.accepted_risk``) reachable from the base ``investigating``
+        state, plus the re-open edges back to ``investigating``. Base
+        states remain platform-owned; only the module-prefixed vocabulary
+        is declared here per MODULE_STANDARD.
+        """
+        return {
+            "finding": {
+                "states": ["vr.false_positive", "vr.accepted_risk"],
+                "transitions": {
+                    "investigating": ["vr.false_positive", "vr.accepted_risk"],
+                    "vr.false_positive": ["investigating"],
+                    "vr.accepted_risk": ["investigating"],
+                },
+            },
+        }
+
     async def register_tools(
         self,
         tool_registry: ToolRegistry,
