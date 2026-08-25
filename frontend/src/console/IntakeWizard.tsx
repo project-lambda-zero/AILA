@@ -1,19 +1,19 @@
 /**
- * IntakeWizard -- fullscreen overlay ported verbatim from the AILA Console
- * mock (docs/design sys/AILA Console.dc.html). One overlay handles four
- * modules with two distinct flows:
+ * IntakeWizard -- fullscreen overlay ported from the AILA Console mock
+ * (docs/design sys/AILA Console.dc.html). One overlay handles three modules
+ * with two distinct flows:
  *
- *  - vr / malware / vulnerability -> generic 3-step intake: kind grid,
- *    per-kind descriptor fields, review (initial question + investigation
- *    kind + auto-pilot + budget), then a staged ingestion animation.
- *  - forensics -> a configure -> readiness -> confirm wizard with its
- *    own header, project-kind and analyzer-OS cards, and a readiness
- *    animation before the confirm summary.
+ *  - vr / malware -> generic 3-step intake: kind grid, pick a registered
+ *    target, review (initial question + investigation kind + auto-pilot +
+ *    budget), then a staged animation that runs alongside the real
+ *    POST /{module}/investigations mutation and binds on success.
+ *  - forensics -> a configure -> readiness -> confirm wizard with its own
+ *    header, project-kind and analyzer-OS cards, and a real backend
+ *    readiness check before the confirm summary.
  *
- * Styling copies the mock's inline style strings 1:1 through css().
- * No investigation is fabricated -- when the animation completes we
- * simply onClose(); onBind is left typed but unused until the real
- * create-endpoint is wired.
+ * Styling copies the mock's inline style strings 1:1 through css(). No
+ * completion is fabricated: every flow drives a real backend call and binds
+ * the created row through onBind.
  */
 
 import React, { useEffect, useRef, useState } from "react";
@@ -37,10 +37,9 @@ import { FieldHelp, WizardShell } from "./wizards";
 import type { WizardFieldIssue, WizardStepDef } from "./wizards";
 
 /* ---------------------------- INTAKE data spine ---------------------------- */
-/* Copied verbatim from the mock's <script> block. Grounded in the backend
- * contracts: TargetKind + InvestigationKind for vr, sample TargetKind for
- * malware, evidence intake for forensics, SSH system registration for
- * vulnerability. */
+/* Copied from the mock's <script> block. Grounded in the backend contracts:
+ * TargetKind + InvestigationKind for vr, sample TargetKind for malware, and
+ * evidence intake for forensics. */
 
 interface KindDef {
   k: string;
@@ -52,7 +51,7 @@ interface KindDef {
 }
 
 interface GenericCfg {
-  flow: "target" | "system";
+  flow: "target";
   title: string;
   newLabel: string;
   launch: string;
@@ -98,7 +97,6 @@ const INTAKE: {
   vr: GenericCfg;
   malware: GenericCfg;
   forensics: ForensicsCfg;
-  vulnerability: GenericCfg;
 } = {
   vr: {
     flow: "target",
@@ -202,33 +200,12 @@ const INTAKE: {
       ["workspace prepared", "case workspace + db provisioned"],
     ],
   },
-  vulnerability: {
-    flow: "system",
-    title: "add system",
-    newLabel: "add system",
-    launch: "add system + scan \u25b8",
-    invKinds: [],
-    stages: [
-      ["ssh_inventory", "ssh \u00b7 uname + package list"],
-      ["advisory_match", "match packages -> advisories (osv / secdb)"],
-      ["risk_scoring", "dedupe \u00b7 enrich \u00b7 risk-score"],
-    ],
-    groups: [["system", "system"]],
-    kinds: [
-      { k: "ubuntu", l: "ubuntu", g: "system", fields: [["host", "host / ip", "10.0.0.4"], ["ssh_user", "ssh user", "root"]] },
-      { k: "debian", l: "debian", g: "system", fields: [["host", "host / ip", ""], ["ssh_user", "ssh user", "root"]] },
-      { k: "arch", l: "arch", g: "system", fields: [["host", "host / ip", ""], ["ssh_user", "ssh user", "root"]] },
-      { k: "alpine", l: "alpine", g: "system", fields: [["host", "host / ip", ""], ["ssh_user", "ssh user", "root"]] },
-    ],
-  },
 };
 
 /** Narrow a runtime string to a known module id without an inline cast. */
 function getCfg(moduleId: string): ModuleCfg {
-  if (moduleId === "vr") return INTAKE.vr;
   if (moduleId === "malware") return INTAKE.malware;
   if (moduleId === "forensics") return INTAKE.forensics;
-  if (moduleId === "vulnerability") return INTAKE.vulnerability;
   return INTAKE.vr;
 }
 
@@ -238,15 +215,14 @@ function getCfg(moduleId: string): ModuleCfg {
  * the header/step strip/footer inside that window. */
 
 function IntakeWizard(
-  { moduleId, onClose, onBind, onRequestUpload, prefill }: IntakeWizardProps,
+  { moduleId, onBind, onRequestUpload, prefill }: IntakeWizardProps,
 ): React.ReactElement {
   const cfg = getCfg(moduleId);
   const isFx = cfg.flow === "forensics";
 
-  // vr / malware run the "pick an existing target + define question ->
-  // POST /{module}/investigations" flow. vulnerability keeps the mock's
-  // descriptor-collection flow (system registration is not wired here).
-  const isInvestigationFlow = moduleId === "vr" || moduleId === "malware";
+  // Non-forensics modules (vr / malware) run the "pick a registered target +
+  // define a question -> POST /{module}/investigations" flow; forensics runs
+  // its own configure -> readiness -> confirm flow in the branch below.
 
   const [step, setStep] = useState<number>(0);
   const [kind, setKind] = useState<string | null>(isFx ? "disk_evidence" : null);
@@ -285,12 +261,12 @@ function IntakeWizard(
   const [fxError, setFxError] = useState<string | null>(null);
 
   // Rules of Hooks: always call these. The `enabled` gate keeps the queries
-  // silent when the wizard is on vulnerability / forensics.
+  // silent when the wizard is on the forensics flow (which has no target picker).
   const workspaces = useWorkspaces(moduleId === "malware" ? "malware" : "vr");
   const targetsQuery = useTargets(
     moduleId === "malware" ? "malware" : "vr",
     {
-      enabled: isInvestigationFlow,
+      enabled: !isFx,
       workspaceId: workspaceFilter || null,
     },
   );
@@ -299,15 +275,12 @@ function IntakeWizard(
   const createMalInv = useCreateMalwareInvestigation();
   const creating = createVrInv.isPending || createMalInv.isPending;
 
-  // window.setInterval / window.setTimeout return `number` in the DOM lib and
-  // give us a concrete handle type without leaning on `ReturnType<typeof ...>`.
+  // window.setInterval returns a `number` handle in the DOM lib.
   const timerRef = useRef<number | null>(null);
-  const closeTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     return () => {
       window.clearInterval(timerRef.current ?? undefined);
-      window.clearTimeout(closeTimerRef.current ?? undefined);
     };
   }, []);
 
@@ -316,7 +289,7 @@ function IntakeWizard(
   // empty. `kind` also flips to that target's kind so it appears in `matches`.
   const prefillTargetId = prefill?.targetId ?? null;
   useEffect(() => {
-    if (!isInvestigationFlow || !prefillTargetId) return;
+    if (isFx || !prefillTargetId) return;
     if (targetId === prefillTargetId) return;
     const rows = targetsQuery.data ?? [];
     const hit = rows.find((t) => t.id === prefillTargetId);
@@ -324,7 +297,7 @@ function IntakeWizard(
     setTargetId(hit.id);
     setTargetName(hit.display_name);
     setKind(hit.kind);
-  }, [isInvestigationFlow, prefillTargetId, targetsQuery.data, targetId]);
+  }, [isFx, prefillTargetId, targetsQuery.data, targetId]);
 
   // Forensics analyzer select needs real registered systems (the backend
   // requires a numeric system_id, not a display label). Fetch once when the
@@ -674,34 +647,23 @@ function IntakeWizard(
   const kd = kind ? gcfg.kinds.find((x) => x.k === kind) ?? null : null;
   const hasInv = gcfg.invKinds.length > 0;
 
-  // Steps + issue lists that drive WizardShell. Investigation flow (vr/malware)
-  // routes through target-picker; descriptor flow (vulnerability) collects
-  // per-kind descriptor fields on step 1 instead. Step 3 is the terminal
-  // animation and hides the shell's primary via showPrimary=false.
+  // Steps + issue lists that drive WizardShell. Step 1 picks a registered
+  // target of the chosen kind; step 3 is the terminal animation that runs
+  // alongside the create mutation and hides the shell's primary via
+  // showPrimary=false.
   const genSteps: WizardStepDef[] = [
     { id: "kind", title: "pick kind", purpose: "pick what to investigate." },
-    isInvestigationFlow
-      ? { id: "target", title: "pick target", purpose: "pick a registered target of this kind." }
-      : { id: "descriptor", title: "descriptor fields", purpose: "fill the descriptor for this kind." },
+    { id: "target", title: "pick target", purpose: "pick a registered target of this kind." },
     { id: "review", title: "review + launch", purpose: "name the initial question and configure the run." },
   ];
   const genIssues: WizardFieldIssue[] = [];
   if (step === 0) {
     if (kind === null) genIssues.push({ label: "kind", reason: "pick a kind to continue" });
   } else if (step === 1) {
-    if (isInvestigationFlow) {
-      if (targetId === null) genIssues.push({ label: "target", reason: "pick a target to investigate" });
-    } else if (kd) {
-      for (const f of kd.fields) {
-        if (f[0] === "parent_finding_id") continue;
-        if ((desc[f[0]] ?? "").trim() === "") genIssues.push({ label: f[1], reason: "required" });
-      }
-    } else {
-      genIssues.push({ label: "kind", reason: "pick a kind first" });
-    }
+    if (targetId === null) genIssues.push({ label: "target", reason: "pick a target to investigate" });
   } else if (step === 2) {
-    if (isInvestigationFlow && targetId === null) genIssues.push({ label: "target", reason: "pick a target first" });
-    if (isInvestigationFlow && question.trim() === "") genIssues.push({ label: "initial question", reason: "required" });
+    if (targetId === null) genIssues.push({ label: "target", reason: "pick a target first" });
+    if (question.trim() === "") genIssues.push({ label: "initial question", reason: "required" });
   }
 
   const autoStyle = css(
@@ -712,36 +674,19 @@ function IntakeWizard(
     };border-radius:2px;`,
   );
 
-  // Review-step target line. For vr/malware we show the picked target's real
-  // display name; for the descriptor-mode flow (vulnerability) we still join
-  // whatever the operator filled in as before.
-  const targetLine = isInvestigationFlow
-    ? targetName || (targetId ? targetId : "no target picked")
-    : kd
-      ? kd.fields
-          .map((f) => desc[f[0]] ?? "")
-          .filter((v) => v.trim() !== "")
-          .join(" \u00b7 ") || "no descriptor yet"
-      : "";
+  // Review-step target line: the picked target's real display name (or its id
+  // as a fallback before the name resolves).
+  const targetLine = targetName || (targetId ? targetId : "no target picked");
 
   const onLaunch = (): void => {
     // Belt-and-braces: WizardShell already disables the primary via issues +
     // busy, but a stale focused button on the review step should never fire
     // the launch mutation with a missing target / empty question.
-    if (isInvestigationFlow && (targetId === null || question.trim() === "" || creating)) return;
+    if (targetId === null || question.trim() === "" || creating) return;
     setLaunchError(null);
     setStep(3);
     setStage(0);
 
-    if (!isInvestigationFlow) {
-      // Vulnerability + any other future generic module: animate + close.
-      runStages(gcfg.stages.length, 900, () => {
-        closeTimerRef.current = window.setTimeout(() => onClose(), 700);
-      });
-      return;
-    }
-
-    if (targetId === null) return;
     const q = question.trim();
     const kindLabel = kd?.l ?? "target";
     const derivedTitle = (q || `${invKind} \u00b7 ${targetName || kindLabel}`).slice(0, 255);
@@ -842,28 +787,7 @@ function IntakeWizard(
             </div>
           )}
 
-          {step === 1 && kd !== null && !isInvestigationFlow && (
-            <div style={css("display:flex;flex-direction:column;gap:11px;")}>
-              <div style={css("font-size:10px;letter-spacing:0.06em;color:var(--text-muted);")}>
-                <span style={css("color:var(--accent);")}>{"kind \u00b7"}</span> {kd.l}
-              </div>
-              {kd.fields.map((f) => (
-                <label key={f[0]} style={css("display:flex;flex-direction:column;gap:4px;")}>
-                  <span style={css("font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);")}>
-                    {f[1]}
-                  </span>
-                  <input
-                    value={desc[f[0]] ?? ""}
-                    onChange={(e): void => setDescField(f[0], e.target.value)}
-                    placeholder={f[2]}
-                    style={css("background:var(--surface-sunk);border:1px solid var(--border-soft);outline:none;padding:7px 9px;color:var(--text-primary);font-family:var(--font-mono);font-size:11.5px;border-radius:2px;")}
-                  />
-                </label>
-              ))}
-            </div>
-          )}
-
-          {step === 1 && kd !== null && isInvestigationFlow && (() => {
+          {step === 1 && kd !== null && (() => {
             const allTargets = targetsQuery.data ?? [];
             const matches = allTargets.filter((t) => t.kind === kd.k);
             const wsRows = workspaces.data ?? [];
@@ -1021,9 +945,7 @@ function IntakeWizard(
           {step >= 3 && (
             <div style={css("display:flex;flex-direction:column;gap:9px;")}>
               <div style={css("font-size:10px;letter-spacing:0.06em;color:var(--text-muted);")}>
-                {isInvestigationFlow
-                  ? `creating investigation \u00b7 ${targetName || kd?.l || ""}`
-                  : `ingesting ${kd?.l ?? ""} \u2014 TargetAnalysisService is resolving the target before the panel spawns.`}
+                {`creating investigation \u00b7 ${targetName || kd?.l || ""}`}
               </div>
               {launchError ? (
                 <div style={css("padding:8px 10px;border:1px solid var(--status-warn);color:var(--status-warn);font-size:11px;border-radius:2px;background:color-mix(in srgb,var(--status-warn) 8%,transparent);white-space:pre-wrap;word-break:break-word;")}>

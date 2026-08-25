@@ -279,7 +279,6 @@ function Console() {
           <IntakeWizard
             moduleId={w.module}
             prefill={{ targetId: w.investigationId ?? undefined }}
-            onClose={() => closeWindow(w.id)}
             onBind={(inv) => {
               closeWindow(w.id);
               openInvestigation(inv);

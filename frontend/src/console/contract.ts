@@ -75,7 +75,6 @@ export interface ChatConsoleProps {
 
 export interface IntakeWizardProps {
   moduleId: string;
-  onClose: () => void;
   onBind: (inv: BoundInvestigation) => void;
   /** Optional -- when set the wizard renders a "+ upload new target" button
    * in its target picker; clicking it hands off to the shell (which should
