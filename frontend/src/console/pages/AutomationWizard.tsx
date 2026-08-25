@@ -33,6 +33,7 @@ import { useSystems } from "../../api/systems";
 import type { ModulePageProps } from "../contract";
 import { css } from "../css";
 import { ConsoleWindow } from "../window";
+import { WizardShell, type WizardFieldIssue, type WizardStepDef } from "../wizards";
 import {
   CRON_PRESETS,
   WEEKDAY_NAMES,
@@ -45,14 +46,6 @@ import {
  * shared style helpers -- mirror NdayProjectForm / UploadForm inline vars
  * -------------------------------------------------------------------------- */
 
-const panelBoxRaw =
-  "min-height:0;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--radius-md,3px);background:color-mix(in srgb,var(--surface-card) 84%,transparent);overflow:hidden;box-shadow:var(--bevel-raised,inset 1px 1px 0 rgba(255,255,255,0.03));";
-const panelTitle = css(
-  "flex:0 0 auto;display:flex;align-items:center;gap:10px;height:var(--panel-title-h,27px);padding:0 12px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:9.5px;text-transform:uppercase;letter-spacing:0.14em;color:var(--text-muted);",
-);
-const dot = css(
-  "width:8px;height:8px;border-radius:1px;background:var(--accent);box-shadow:0 0 6px var(--accent);flex:0 0 auto;",
-);
 const sectionLabel = css(
   "font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-faint);",
 );
@@ -69,50 +62,17 @@ const helpText = css(
 );
 
 /* -------------------------------------------------------------------------- *
- * step chrome
+ * step chrome -- the five steps as WizardStepDefs the shared WizardShell reads
+ * for its `step N of M` strip, purpose line, and progress segments.
  * -------------------------------------------------------------------------- */
 
-const STEPS: Array<{ id: number; label: string }> = [
-  { id: 1, label: "action" },
-  { id: 2, label: "target" },
-  { id: 3, label: "schedule" },
-  { id: 4, label: "arguments" },
-  { id: 5, label: "review" },
+const WIZARD_STEPS: WizardStepDef[] = [
+  { id: "action", title: "pick action", purpose: "choose a platform-registered operation to schedule." },
+  { id: "target", title: "pick target", purpose: "bind the action to one of your registered systems." },
+  { id: "schedule", title: "set schedule", purpose: "choose when it fires -- a preset or a raw cron, in utc." },
+  { id: "arguments", title: "arguments", purpose: "supply the action's parameters; typed when it declares a schema." },
+  { id: "review", title: "review", purpose: "confirm the schedule, then submit it to the automation runner." },
 ];
-
-function StepStrip({ current, furthest }: { current: number; furthest: number }): JSX.Element {
-  return (
-    <div style={css("display:flex;gap:6px;align-items:stretch;")}>
-      {STEPS.map((s) => {
-        const active = s.id === current;
-        const done = s.id < furthest;
-        const color = active ? "var(--accent)" : done ? "var(--text-muted)" : "var(--text-faint)";
-        const border = active ? "var(--accent)" : "var(--border-soft)";
-        return (
-          <div
-            key={s.id}
-            style={css(
-              `flex:1;padding:6px 10px;border:1px solid ${border};border-radius:2px;background:${
-                active ? "color-mix(in srgb,var(--accent) 8%,transparent)" : "transparent"
-              };display:flex;flex-direction:column;gap:2px;`,
-            )}
-          >
-            <span style={css(`font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:${color};`)}>
-              {`step ${s.id}`}
-            </span>
-            <span
-              style={css(
-                `font-size:11.5px;color:${active ? "var(--text-primary)" : color};letter-spacing:0.04em;text-transform:lowercase;`,
-              )}
-            >
-              {s.label}
-            </span>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
 
 /* -------------------------------------------------------------------------- *
  * step 1 -- action catalog
@@ -575,7 +535,6 @@ export default function AutomationWizard(props: ModulePageProps): JSX.Element {
   const systemRows = systemsQ.data?.items ?? [];
 
   const [step, setStep] = useState<number>(prefillActionId ? 2 : 1);
-  const [furthest, setFurthest] = useState<number>(prefillActionId ? 2 : 1);
   const [actionId, setActionId] = useState<string>(prefillActionId);
   const [targetName, setTargetName] = useState<string>("");
   const [enabled, setEnabled] = useState<boolean>(true);
@@ -612,40 +571,46 @@ export default function AutomationWizard(props: ModulePageProps): JSX.Element {
   const cronExpr = cronFromSchedule(schedule);
   const cronRuns = nextRuns(cronExpr, 3);
 
-  const stepBlocker = (n: number): string | null => {
+  // Per-step validation as the WizardShell contract wants it: an empty list
+  // enables the shell's primary control; a non-empty list disables it AND the
+  // shell renders each issue by label + reason (no silent disables).
+  const stepIssues = (n: number): WizardFieldIssue[] => {
     if (n === 1) {
-      if (actionId.trim() === "") return "pick an action from the catalog to continue.";
-      return null;
+      return actionId.trim() === ""
+        ? [{ label: "action", reason: "pick one from the catalog" }]
+        : [];
     }
     if (n === 2) {
-      if (targetName.trim() === "") return "pick a target system so the schedule binds to something the server accepts.";
-      return null;
+      return targetName.trim() === ""
+        ? [{ label: "target system", reason: "pick a registered system" }]
+        : [];
     }
     if (n === 3) {
-      if (cronExpr.trim() === "") return "supply a cron expression (choose a preset or type a custom one).";
-      if (cronRuns.length === 0) return "the cron expression does not produce a fire time in the next 370 days; adjust it.";
-      return null;
+      if (cronExpr.trim() === "") return [{ label: "schedule", reason: "choose a preset or type a custom cron" }];
+      if (cronRuns.length === 0) {
+        return [{ label: "schedule", reason: "no fire time in the next 370 days; adjust the expression" }];
+      }
+      return [];
     }
     if (n === 4 && parsedSchema) {
+      const out: WizardFieldIssue[] = [];
       for (const req of parsedSchema.required) {
         const cur = typedArgs[req];
         if (cur === undefined || cur === null || String(cur).trim() === "") {
-          return `required argument \`${req}\` is empty.`;
+          out.push({ label: `argument \`${req}\``, reason: "required" });
         }
       }
-      return null;
+      return out;
     }
-    return null;
+    return [];
   };
 
-  const blocker = stepBlocker(step);
-  const canAdvance = blocker === null;
+  const issues = stepIssues(step);
+  const canAdvance = issues.length === 0;
 
   const goNext = (): void => {
     if (!canAdvance) return;
-    const nx = Math.min(step + 1, 5);
-    setStep(nx);
-    if (nx > furthest) setFurthest(nx);
+    setStep(Math.min(step + 1, 5));
   };
   const goBack = (): void => setStep(Math.max(step - 1, 1));
 
@@ -702,10 +667,7 @@ export default function AutomationWizard(props: ModulePageProps): JSX.Element {
       actions={actionRows}
       loading={actionsQ.isLoading}
       selectedId={actionId}
-      onPick={(id) => {
-        setActionId(id);
-        if (furthest < 1) setFurthest(1);
-      }}
+      onPick={(id) => setActionId(id)}
     />
   );
 
@@ -901,112 +863,52 @@ export default function AutomationWizard(props: ModulePageProps): JSX.Element {
       onToggleFullscreen={onToggleFullscreen}
       footerExtras={statusStrip}
     >
-      <main style={{ flex: 1, minHeight: 0, display: "flex", padding: 12 }}>
-        <div style={css(`flex:1;${panelBoxRaw}`)}>
-          <div style={panelTitle}>
-            <span style={dot} />
-            <span style={css("color:var(--text-primary);")}>
-              {created ? "created" : `step ${step} of 5 \u00b7 ${STEPS[step - 1].label}`}
-            </span>
-            <span style={css("flex:1;")} />
-            <span style={css("color:var(--text-faint);text-transform:none;letter-spacing:0.04em;")}>
-              automation
-            </span>
-          </div>
-          <div
-            style={css(
-              "flex:1;min-height:0;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:16px;max-width:820px;",
-            )}
-          >
-            {created ? (
-              createdPanel
-            ) : (
-              <>
-                <StepStrip current={step} furthest={furthest} />
-                {stepBody[step]}
-                {blocker ? (
-                  <div
-                    style={css(
-                      "padding:8px 10px;border:1px solid var(--status-warn);color:var(--status-warn);font-size:11px;border-radius:2px;background:color-mix(in srgb,var(--status-warn) 8%,transparent);",
-                    )}
-                  >
-                    {blocker}
-                  </div>
-                ) : null}
-              </>
-            )}
-
-            {error ? (
-              <div
-                style={css(
-                  "padding:8px 10px;border:1px solid var(--status-warn);color:var(--status-warn);font-size:11px;border-radius:2px;background:color-mix(in srgb,var(--status-warn) 8%,transparent);white-space:pre-wrap;word-break:break-word;",
-                )}
-              >
-                {error}
-              </div>
-            ) : null}
-
-            <div
+      {created ? (
+        <main
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            gap: 14,
+            overflow: "auto",
+            padding: 18,
+          }}
+        >
+          {createdPanel}
+          <div>
+            <button
+              type="button"
+              onClick={onBack}
               style={css(
-                "display:flex;align-items:center;gap:9px;padding-top:10px;border-top:1px solid var(--border-soft);",
+                "padding:0 14px;height:30px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-muted);background:transparent;border:1px solid var(--border-soft);border-radius:2px;cursor:pointer;",
               )}
             >
-              <button
-                type="button"
-                onClick={onBack}
-                style={css(
-                  "padding:0 12px;height:32px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);background:transparent;border:1px solid var(--border-soft);border-radius:3px;cursor:pointer;",
-                )}
-              >
-                {created ? "close" : "cancel"}
-              </button>
-              {!created && step > 1 ? (
-                <button
-                  type="button"
-                  onClick={goBack}
-                  style={css(
-                    "padding:0 12px;height:32px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);background:transparent;border:1px solid var(--border-soft);border-radius:3px;cursor:pointer;",
-                  )}
-                >
-                  {"\u25c2 back"}
-                </button>
-              ) : null}
-              <span style={css("flex:1;")} />
-              {createSchedule.isPending ? (
-                <span style={css("font-size:11px;color:var(--accent);letter-spacing:0.06em;")}>{"submitting\u2026"}</span>
-              ) : null}
-              {!created && step < 5 ? (
-                <button
-                  type="button"
-                  onClick={goNext}
-                  disabled={!canAdvance}
-                  style={css(
-                    `padding:0 16px;height:32px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-on-accent);background:var(--accent);border:1px solid var(--accent);border-radius:3px;cursor:${
-                      canAdvance ? "pointer" : "not-allowed"
-                    };opacity:${canAdvance ? 1 : 0.5};`,
-                  )}
-                >
-                  {"next \u25b8"}
-                </button>
-              ) : null}
-              {!created && step === 5 ? (
-                <button
-                  type="button"
-                  onClick={(): void => void onSubmit()}
-                  disabled={!canSubmit}
-                  style={css(
-                    `padding:0 16px;height:32px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-on-accent);background:var(--accent);border:1px solid var(--accent);border-radius:3px;cursor:${
-                      canSubmit ? "pointer" : "not-allowed"
-                    };opacity:${canSubmit ? 1 : 0.5};`,
-                  )}
-                >
-                  {"create schedule \u25b8"}
-                </button>
-              ) : null}
-            </div>
+              close
+            </button>
           </div>
-        </div>
-      </main>
+        </main>
+      ) : (
+        <main style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+          <div style={{ flex: 1, minHeight: 0 }}>
+            <WizardShell
+              heading="new automation"
+              steps={WIZARD_STEPS}
+              current={step - 1}
+              issues={issues}
+              onBack={goBack}
+              onNext={goNext}
+              onFinish={(): void => void onSubmit()}
+              finishLabel="create schedule"
+              busy={createSchedule.isPending}
+              error={error}
+              onRetry={(): void => void onSubmit()}
+            >
+              {stepBody[step]}
+            </WizardShell>
+          </div>
+        </main>
+      )}
     </ConsoleWindow>
   );
 }
