@@ -49,16 +49,19 @@ export const PAGE_CONFIGS = {
     title: "vr \u00b7 workspaces",
     endpoint: "/vr/workspaces",
     columns: [c("name"), c("slug"), c("status"), c("target_count", "targets"), c("active_investigation_count", "active"), c("created_at", "created")],
+    filters: [{ name: "name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "vr:targets": {
     title: "vr \u00b7 targets",
     endpoint: "/vr/targets",
     columns: [c("display_name", "name"), c("kind"), c("status"), c("analysis_state", "analysis"), c("primary_language", "lang"), c("workspace_name", "workspace"), c("created_at", "created")],
+    filters: [{ name: "display_name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "vr:vuln-research": {
     title: "vr \u00b7 research projects",
     endpoint: "/vr/projects",
     columns: [c("name"), c("cve_id", "cve"), c("status"), c("finding_count", "findings"), c("latest_disclosure_status", "disclosure"), c("created_at", "created")],
+    filters: [{ name: "name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "vr:investigations": {
     title: "vr \u00b7 investigations",
@@ -139,6 +142,7 @@ export const PAGE_CONFIGS = {
     title: "vr \u00b7 patterns",
     endpoint: "/vr/patterns",
     columns: [c("kind"), c("summary"), c("confidence"), c("status"), c("scope"), c("trust_tier", "trust"), c("times_retrieved", "reused")],
+    filters: [{ name: "kind", label: "kind", type: "text" }, { name: "status", label: "status", type: "select" }],
   },
   "vr:findings": {
     title: "vr \u00b7 findings",
@@ -148,16 +152,19 @@ export const PAGE_CONFIGS = {
     pagination: true,
     paginationParams: "offset",
     columns: [c("crash_type", "crash"), c("vulnerable_function", "function"), c("disclosure_status", "disclosure"), c("assigned_cve_id", "cve"), c("cvss_score", "cvss"), c("cwe_id", "cwe"), c("evidence_count", "evidence")],
+    filters: [{ name: "crash_type", label: "crash type", type: "text" }],
   },
   "vr:disclosures": {
     title: "vr \u00b7 disclosures",
     endpoint: "/vr/disclosures",
     columns: [c("finding_id", "finding"), c("kind"), c("status"), c("poc_tier", "poc"), c("severity_rating", "severity"), c("bounty_awarded_usd", "bounty $"), c("created_at", "created")],
+    filters: [{ name: "kind", label: "kind", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "vr:fuzz-campaigns": {
     title: "vr \u00b7 fuzz campaigns",
     endpoint: "/vr/fuzz/campaigns",
     columns: [c("name"), c("engine_id", "engine"), c("status"), c("coverage_pct", "coverage %"), c("crashes_found", "crashes"), c("total_execs", "execs"), c("execs_per_sec", "exec/s")],
+    filters: [{ name: "name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }],
     actions: [
       {
         label: "launch",
@@ -180,32 +187,38 @@ export const PAGE_CONFIGS = {
     title: "vr \u00b7 mcp servers",
     endpoint: "/vr/mcp/servers",
     columns: [c("name"), c("base_url", "url"), c("status"), c("latency_ms", "latency"), c("tool_count", "tools"), c("last_probed_at", "probed")],
+    filters: [{ name: "name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "last_probed_at", label: "probed", type: "date-range" }],
   },
   "vr:mcp-call-log": {
     title: "vr \u00b7 mcp call log",
     endpoint: "/vr/mcp/calls",
     columns: [c("server_id", "server"), c("action"), c("status"), c("http_status", "http"), c("latency_ms", "latency"), c("error_excerpt", "error"), c("called_at", "called")],
+    filters: [{ name: "action", label: "action", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "called_at", label: "called", type: "date-range" }],
   },
   // ---- Malware (prefix /malware) ---------------------------------------
   "malware:malware-analysis": {
     title: "malware \u00b7 analysis",
     endpoint: "/malware/investigations",
     columns: [c("title"), c("kind"), c("status"), c("strategy_family", "strategy"), c("branch_count", "branches"), c("outcome_count", "outcomes"), c("cost_actual_usd", "cost $"), c("created_at", "created")],
+    filters: [{ name: "title", label: "title", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "malware:workspaces": {
     title: "malware \u00b7 workspaces",
     endpoint: "/malware/workspaces",
     columns: [c("name"), c("slug"), c("status"), c("target_count", "targets"), c("active_investigation_count", "active"), c("created_at", "created")],
+    filters: [{ name: "name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "malware:targets": {
     title: "malware \u00b7 targets",
     endpoint: "/malware/targets",
     columns: [c("display_name", "name"), c("kind"), c("primary_language", "lang"), c("status"), c("analysis_state", "analysis"), c("uploaded_filename", "file"), c("created_at", "created")],
+    filters: [{ name: "display_name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "malware:investigations": {
     title: "malware \u00b7 investigations",
     endpoint: "/malware/investigations",
     columns: [c("title"), c("kind"), c("status"), c("strategy_family", "strategy"), c("branch_count", "branches"), c("message_count", "turns"), c("outcome_count", "outcomes"), c("cost_actual_usd", "cost $")],
+    filters: [{ name: "title", label: "title", type: "text" }, { name: "status", label: "status", type: "select" }],
   },
   "malware:observations": {
     title: "malware \u00b7 observations",
@@ -213,16 +226,19 @@ export const PAGE_CONFIGS = {
     scopeFrom: { endpoint: "/malware/targets", param: "target_id" },
     blurb: "scoped to the first target; pick another target in the header scope selector",
     columns: [c("kind"), c("polarity"), c("source"), c("target_id", "target"), c("investigation_id", "investigation"), c("created_at", "created")],
+    filters: [{ name: "kind", label: "kind", type: "text" }, { name: "polarity", label: "polarity", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "malware:patterns": {
     title: "malware \u00b7 patterns",
     endpoint: "/malware/patterns",
     columns: [c("kind"), c("summary"), c("confidence"), c("status"), c("scope"), c("trust_tier", "trust"), c("times_retrieved", "reused")],
+    filters: [{ name: "kind", label: "kind", type: "text" }, { name: "status", label: "status", type: "select" }],
   },
   "malware:findings": {
     title: "malware \u00b7 findings",
     endpoint: "/malware/findings",
     columns: [c("kind"), c("confidence"), c("target_id", "target"), c("investigation_id", "investigation"), c("operator_notes", "notes"), c("created_at", "created")],
+    filters: [{ name: "kind", label: "kind", type: "text" }, { name: "kind", label: "kind", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "malware:families": {
     title: "malware \u00b7 families",
@@ -230,6 +246,7 @@ export const PAGE_CONFIGS = {
     scopeFrom: { endpoint: "/malware/workspaces", param: "workspace_id" },
     blurb: "scoped to the first workspace; pick another workspace in the header scope selector",
     columns: [c("name"), c("actor_cluster", "actor"), c("status"), c("sample_count", "samples"), c("playbook_count", "playbooks"), c("created_at", "created")],
+    filters: [{ name: "name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "malware:playbooks": {
     title: "malware \u00b7 playbooks",
@@ -237,6 +254,7 @@ export const PAGE_CONFIGS = {
     scopeFrom: { endpoint: "/malware/workspaces", param: "workspace_id" },
     blurb: "scoped to the first workspace; pick another workspace in the header scope selector",
     columns: [c("name"), c("description"), c("status"), c("run_count", "runs"), c("last_run_at", "last run"), c("created_at", "created")],
+    filters: [{ name: "name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "last_run_at", label: "last run", type: "date-range" }],
     actions: [
       {
         label: "run",
@@ -251,6 +269,7 @@ export const PAGE_CONFIGS = {
     title: "malware \u00b7 mcp servers",
     endpoint: "/malware/mcp/servers",
     columns: [c("name"), c("base_url", "url"), c("status"), c("latency_ms", "latency"), c("tool_count", "tools")],
+    filters: [{ name: "name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }],
     actions: [
       {
         label: "re-probe",
@@ -263,6 +282,7 @@ export const PAGE_CONFIGS = {
     title: "malware \u00b7 mcp call log",
     endpoint: "/malware/mcp/call-log",
     columns: [c("called_at", "when"), c("server_id", "server"), c("action"), c("status"), c("http_status", "http"), c("latency_ms", "latency"), c("error_excerpt", "error")],
+    filters: [{ name: "action", label: "action", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "called_at", label: "when", type: "date-range" }],
   },
 
   // ---- Forensics (prefix /forensics) -----------------------------------
@@ -271,6 +291,7 @@ export const PAGE_CONFIGS = {
     endpoint: "/forensics/projects",
     itemsKey: "items",
     columns: [c("name"), c("project_kind", "kind"), c("status"), c("system_name", "system"), c("evidence_count", "evidence"), c("artifact_count", "artifacts"), c("lead_count", "leads"), c("investigation_count", "investigations")],
+    filters: [{ name: "name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }],
     actions: [
       {
         label: "check readiness",
@@ -286,6 +307,7 @@ export const PAGE_CONFIGS = {
     title: "admin \u00b7 users",
     endpoint: "/users",
     columns: [c("username"), c("email"), c("role"), c("team_id", "team"), c("is_active", "active"), c("last_login_at", "last login"), c("created_at", "created")],
+    filters: [{ name: "username", label: "username", type: "text" }, { name: "role", label: "role", type: "select" }, { name: "last_login_at", label: "last login", type: "date-range" }],
     actions: [
       {
         label: "deactivate",
@@ -308,6 +330,7 @@ export const PAGE_CONFIGS = {
     title: "admin \u00b7 teams",
     endpoint: "/admin/teams",
     columns: [c("name"), c("description"), c("member_count", "members"), c("created_at", "created"), c("updated_at", "updated")],
+    filters: [{ name: "name", label: "name", type: "text" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "admin:api-keys": {
     title: "admin \u00b7 api keys",
@@ -315,6 +338,7 @@ export const PAGE_CONFIGS = {
     itemsKey: "keys",
     idField: "key_id",
     columns: [c("key_prefix", "prefix"), c("role"), c("label"), c("created_by", "by"), c("created_at", "created"), c("revoked_at", "revoked")],
+    filters: [{ name: "label", label: "label", type: "text" }, { name: "role", label: "role", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
     actions: [
       {
         label: "revoke",
@@ -329,6 +353,7 @@ export const PAGE_CONFIGS = {
     title: "admin \u00b7 oidc providers",
     endpoint: "/auth/oidc/providers",
     columns: [c("provider_name", "name"), c("provider_type", "type"), c("display_name", "display"), c("issuer_url", "issuer"), c("client_id", "client"), c("is_enabled", "enabled")],
+    filters: [{ name: "display_name", label: "display name", type: "text" }],
   },
   // ---- Admin: operations ------------------------------------------------
   "admin:task-queue": {
@@ -337,6 +362,7 @@ export const PAGE_CONFIGS = {
     itemsKey: "tasks",
     idField: "task_id",
     columns: [c("task_id", "task"), c("track"), c("status"), c("fn_path", "fn"), c("created_at", "created"), c("started_at", "started"), c("completed_at", "completed")],
+    filters: [{ name: "track", label: "track", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
     actions: [
       {
         label: "cancel",
@@ -383,6 +409,7 @@ export const PAGE_CONFIGS = {
     endpoint: "/admin/tasks/dead-letter",
     idField: "task_id",
     columns: [c("task_id", "task"), c("track"), c("fn_path", "fn"), c("exception_class", "exception"), c("error"), c("attempts"), c("dead_lettered_at", "when")],
+    filters: [{ name: "track", label: "track", type: "text" }],
     actions: [
       {
         label: "requeue",
@@ -403,16 +430,19 @@ export const PAGE_CONFIGS = {
     title: "admin \u00b7 automation",
     endpoint: "/automation/schedules",
     columns: [c("action_id", "action"), c("target_name", "target"), c("cron_expression", "cron"), c("enabled"), c("last_run_at", "last run"), c("last_run_result", "result")],
+    filters: [{ name: "target_name", label: "target name", type: "text" }, { name: "last_run_at", label: "last run", type: "date-range" }],
   },
   "admin:workflows": {
     title: "admin \u00b7 workflows",
     endpoint: "/admin/workflows/runs",
     columns: [c("run_id", "run"), c("current_state", "state"), c("definition_id", "definition"), c("retries_in_state", "retries"), c("version"), c("updated_at", "updated")],
+    filters: [{ name: "definition_id", label: "definition", type: "text" }, { name: "updated_at", label: "updated", type: "date-range" }],
   },
   "admin:scheduled-reports": {
     title: "admin \u00b7 scheduled reports",
     endpoint: "/scheduled-reports",
     columns: [c("name"), c("report_type", "type"), c("cron_expression", "cron"), c("is_active", "active"), c("last_run_at", "last run"), c("created_at", "created")],
+    filters: [{ name: "name", label: "name", type: "text" }, { name: "is_active", label: "is active", type: "select" }, { name: "last_run_at", label: "last run", type: "date-range" }],
     actions: [
       {
         label: "trigger now",
@@ -429,6 +459,7 @@ export const PAGE_CONFIGS = {
     itemsKey: "months",
     blurb: "monthly LLM cost history",
     columns: [c("year_month", "month"), c("total_cost_usd", "cost $"), c("total_tokens", "tokens")],
+    filters: [{ name: "year_month", label: "year month", type: "text" }],
   },
   "admin:executive": {
     title: "admin \u00b7 executive",
@@ -449,11 +480,13 @@ export const PAGE_CONFIGS = {
     title: "admin \u00b7 tag vocabulary",
     endpoint: "/tags/vocabulary",
     columns: [c("tag_key", "tag"), c("description"), c("is_system_default", "system"), c("created_at", "created")],
+    filters: [{ name: "tag_key", label: "tag key", type: "text" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "admin:saved-filters": {
     title: "admin \u00b7 saved filters",
     endpoint: "/saved-filters",
     columns: [c("name"), c("entity_type", "entity"), c("is_pinned", "pinned"), c("shared_with_team", "shared"), c("created_at", "created")],
+    filters: [{ name: "name", label: "name", type: "text" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "admin:config": {
     title: "admin \u00b7 config",
@@ -484,6 +517,7 @@ export const PAGE_CONFIGS = {
     title: "admin \u00b7 tools",
     endpoint: "/tools",
     columns: [c("tool_key", "key"), c("name"), c("description"), c("module_id", "module")],
+    filters: [{ name: "name", label: "name", type: "text" }],
   },
   // ---- Admin: audit -----------------------------------------------------
   "admin:audit-logs": {
@@ -495,6 +529,7 @@ export const PAGE_CONFIGS = {
     // pagination works exactly.
     pagination: true,
     columns: [c("created_at", "when"), c("stage"), c("action"), c("status"), c("target"), c("user_id", "user"), c("run_id", "run")],
+    filters: [{ name: "target", label: "target", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "when", type: "date-range" }],
   },
   "admin:llm-log": {
     title: "admin \u00b7 llm log",
@@ -525,6 +560,7 @@ export const PAGE_CONFIGS = {
       c("duration_ms", "ms"),
       c("status"),
     ],
+    filters: [{ name: "model", label: "model", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "timestamp", label: "when", type: "date-range" }],
     detailRenderers: {
       prompt_preview: (v) => createElement(LlmChatTranscript, { value: v }),
       response_preview: (v) => createElement(LlmChatTranscript, { value: v }),
@@ -542,6 +578,7 @@ export const PAGE_CONFIGS = {
     endpoint: "/systems",
     itemsKey: "items",
     columns: [c("name"), c("host"), c("distro"), c("connectivity_status", "conn"), c("last_scan_at", "last scan"), c("last_scan_status", "scan status"), c("top_severity", "top sev")],
+    filters: [{ name: "name", label: "name", type: "text" }],
   },
   "admin:topology": {
     title: "admin \u00b7 topology",
@@ -555,11 +592,13 @@ export const PAGE_CONFIGS = {
     endpoint: "/sessions",
     itemsKey: "items",
     columns: [c("session_id", "session"), c("user_id", "user"), c("title"), c("message_count", "messages"), c("last_message_at", "last msg"), c("created_at", "created")],
+    filters: [{ name: "title", label: "title", type: "text" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "admin:notifications": {
     title: "admin \u00b7 notifications",
     endpoint: "/notifications",
     columns: [c("title"), c("category"), c("source_module", "module"), c("is_read", "read"), c("created_at", "created")],
+    filters: [{ name: "title", label: "title", type: "text" }, { name: "category", label: "category", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
     actions: [
       {
         label: "mark read",
@@ -588,6 +627,7 @@ export const PAGE_CONFIGS = {
     title: "admin \u00b7 mcp instances",
     endpoint: "/platform/mcp/instances",
     columns: [c("name"), c("transport"), c("endpoint"), c("enabled"), c("module_scope", "module"), c("approval_state", "approval"), c("created_at", "created")],
+    filters: [{ name: "name", label: "name", type: "text" }, { name: "transport", label: "transport", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
     actions: [
       {
         label: "approve",
@@ -610,6 +650,7 @@ export const PAGE_CONFIGS = {
     endpoint: "/agents/specialists?module_id=vr",
     blurb: "vr module specialists",
     columns: [c("name"), c("module_id", "module"), c("capability"), c("strategy_family", "strategy"), c("enabled"), c("created_at", "created")],
+    filters: [{ name: "name", label: "name", type: "text" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "admin:platform-corpus": {
     title: "admin \u00b7 platform corpus",
@@ -673,6 +714,7 @@ export const PAGE_CONFIGS = {
     title: "vulnerability \u00b7 reports",
     endpoint: "/vulnerability/reports/list",
     columns: [c("title"), c("target"), c("status"), c("finding_count", "findings"), c("created_at", "created")],
+    filters: [{ name: "title", label: "title", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
 
   // Forensics sub-resources (evidence / artifacts / leads / timeline / ...)

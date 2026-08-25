@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import type { ChangeEvent, JSX, ReactNode } from "react";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch, apiFetchEnvelope, API_BASE } from "../../api/client";
+import { fetchFieldOptions } from "../../api/mutations";
+import type { FieldOption } from "../../api/mutations";
 import { asRecord, readArray } from "../../api/parse";
 import type { ModulePageProps } from "../contract";
 import { css } from "../css";
@@ -24,23 +26,111 @@ export interface PageColumn {
   render?: (value: unknown, row: Record<string, unknown>) => ReactNode;
 }
 
-/** A client-side filter control. Filters apply to the fetched rows before
- * render; when the page also sets `fetchAllPages` the filter sees the full
- * dataset and pagination slices the filtered set. For server-paginated pages
- * without fetchAllPages, a filter narrows the current page only (documented
- * limitation -- prefer fetchAllPages for filterable catalogs). */
+/** A filter control rendered under the page title. Filters apply to the
+ * fetched rows before render; when the page also sets `fetchAllPages` the
+ * filter sees the full dataset and pagination slices the filtered set. For
+ * server-paginated pages without fetchAllPages, a client-side filter narrows
+ * the current page only (documented limitation -- prefer fetchAllPages, or
+ * `server: true` where the backend supports the param). */
 export interface PageFilter {
+  /** Row field the filter narrows; MUST be a rendered column so the control
+   * always acts on visible data. For date/numeric ranges this is the field
+   * compared; for server filters it is also the query-param base name. */
   name: string;
   label: string;
-  type: "text" | "select";
+  /** text = case-insensitive substring; select = exact match (single);
+   * multi-select = row value in the chosen set; segmented = exact match via a
+   * button group; date-range = two ISO date inputs (inclusive of the end
+   * day); numeric-range = two numeric bounds (inclusive). */
+  type: "text" | "select" | "multi-select" | "segmented" | "date-range" | "numeric-range";
+  /** Static options for select / multi-select / segmented. When omitted AND
+   * `optionsFrom` is unset, the option list is derived from the distinct row
+   * values of `name` in the fetched set (honest zero-config enum filter). */
   options?: { value: string; label: string }[];
-  /** When true, the filter value is sent to the endpoint as a query param
-   * (`name=value`) instead of narrowing the fetched rows client-side. The
-   * backend applies it across the full dataset and returns the true
-   * `meta.total`, so it composes with server pagination. Text inputs are
-   * debounced. Use for large catalogs whose backend already supports the
-   * filter (e.g. `/vr/investigations` `?status=&kind=&q=`). */
+  /** Source options from a live list endpoint (select / multi-select /
+   * segmented), mirroring FormSpec.optionsFrom. Rows map to {value,label} via
+   * `optionsValueField` / `optionsLabelField` (default id-like / name-like).
+   * Overrides row-derived options; static `options` win over both. */
+  optionsFrom?: string;
+  optionsValueField?: string;
+  optionsLabelField?: string;
+  /** When true, the value is sent to the endpoint as a query param instead of
+   * narrowing fetched rows client-side; the backend applies it across the full
+   * dataset and returns the true `meta.total`, so it composes with server
+   * pagination. Param encoding by type: text/select/segmented -> `name=value`;
+   * multi-select -> repeated `name=v1&name=v2`; date-range ->
+   * `name_since` / `name_until`; numeric-range -> `name_min` / `name_max`.
+   * Inputs are debounced ~250ms. */
   server?: boolean;
+}
+
+/** A two-ended range value (date-range / numeric-range). `lo` is
+ * since/min, `hi` is until/max. */
+type RangeVal = { lo: string; hi: string };
+/** The runtime value held for one filter: a scalar (text/select/segmented),
+ * a set (multi-select), or a range (date-range/numeric-range). */
+type FilterValue = string | string[] | RangeVal;
+
+const asScalar = (v: FilterValue | undefined): string => (typeof v === "string" ? v : "");
+const asList = (v: FilterValue | undefined): string[] => (Array.isArray(v) ? v : []);
+const asRange = (v: FilterValue | undefined): RangeVal =>
+  v != null && typeof v === "object" && !Array.isArray(v) ? v : { lo: "", hi: "" };
+
+/** True when the filter currently holds a narrowing value. */
+function filterHasValue(f: PageFilter, v: FilterValue | undefined): boolean {
+  if (f.type === "multi-select") return asList(v).length > 0;
+  if (f.type === "date-range" || f.type === "numeric-range") {
+    const r = asRange(v);
+    return r.lo.trim() !== "" || r.hi.trim() !== "";
+  }
+  return asScalar(v).trim() !== "";
+}
+
+/** Distinct non-empty row values for a field, as {value,label} options. */
+function deriveOptions(rows: Record<string, unknown>[], field: string): FieldOption[] {
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const raw = row[field];
+    if (raw === null || raw === undefined || typeof raw === "object") continue;
+    const s = String(raw);
+    if (s !== "") seen.add(s);
+  }
+  return [...seen].sort().map((v) => ({ value: v, label: v }));
+}
+
+/** Whether a single row passes one client-side filter. */
+function matchFilter(f: PageFilter, v: FilterValue | undefined, row: Record<string, unknown>): boolean {
+  const cell = row[f.name];
+  if (f.type === "multi-select") {
+    const sel = asList(v);
+    return sel.length === 0 || sel.includes(String(cell ?? ""));
+  }
+  if (f.type === "numeric-range") {
+    const r = asRange(v);
+    const n = Number(cell);
+    if (!Number.isFinite(n)) return false;
+    if (r.lo.trim() !== "" && n < Number(r.lo)) return false;
+    if (r.hi.trim() !== "" && n > Number(r.hi)) return false;
+    return true;
+  }
+  if (f.type === "date-range") {
+    const r = asRange(v);
+    const t = Date.parse(String(cell ?? ""));
+    if (Number.isNaN(t)) return false;
+    if (r.lo.trim() !== "") {
+      const loT = Date.parse(r.lo);
+      if (!Number.isNaN(loT) && t < loT) return false;
+    }
+    if (r.hi.trim() !== "") {
+      const hiT = Date.parse(r.hi);
+      // Date inputs yield a bare day at UTC midnight; include the whole hi day.
+      if (!Number.isNaN(hiT) && t > hiT + 86_399_999) return false;
+    }
+    return true;
+  }
+  const needle = asScalar(v).trim();
+  if (f.type === "select" || f.type === "segmented") return String(cell ?? "") === needle;
+  return String(cell ?? "").toLowerCase().includes(needle.toLowerCase());
 }
 
 /** A row-level action rendered in the detail header (and optionally inline).
@@ -243,11 +333,25 @@ export default function DataPage(
   const pagParams = config.paginationParams ?? "page";
   const PAGE_SIZE = 50;
   const [page, setPage] = useState<number>(1);
-  // Client-side filters: one active value per configured filter. Text matches
-  // by substring (case-insensitive); select matches exactly.
-  const [filterVals, setFilterVals] = useState<Record<string, string>>({});
+  // One active value per configured filter. Scalars for text/select/segmented,
+  // a string[] for multi-select, a {lo,hi} range for date/numeric ranges. Any
+  // change resets pagination to page 1.
+  const [filterVals, setFilterVals] = useState<Record<string, FilterValue>>({});
   const setFilter = (name: string, value: string): void => {
     setFilterVals((cur) => ({ ...cur, [name]: value }));
+    setPage(1);
+  };
+  const toggleFilter = (name: string, value: string): void => {
+    setFilterVals((cur) => {
+      const set = new Set(asList(cur[name]));
+      if (set.has(value)) set.delete(value);
+      else set.add(value);
+      return { ...cur, [name]: [...set] };
+    });
+    setPage(1);
+  };
+  const setRangeFilter = (name: string, key: "lo" | "hi", value: string): void => {
+    setFilterVals((cur) => ({ ...cur, [name]: { ...asRange(cur[name]), [key]: value } }));
     setPage(1);
   };
   const pageUrl = (endpoint: string, page: number, pageSize: number): string => {
@@ -261,23 +365,62 @@ export default function DataPage(
   // query params so the backend narrows the full dataset and reports the true
   // meta.total. Debounce the raw input values ~250ms so a text search issues
   // one request per pause, not one per keystroke; selects ride the same delay.
-  const [debouncedVals, setDebouncedVals] = useState<Record<string, string>>({});
+  const [debouncedVals, setDebouncedVals] = useState<Record<string, FilterValue>>({});
   useEffect(() => {
     const t = setTimeout(() => setDebouncedVals(filterVals), 250);
     return () => clearTimeout(t);
   }, [filterVals]);
   const serverQS = useMemo(() => {
     const parts: string[] = [];
+    const enc = encodeURIComponent;
     for (const f of config.filters ?? []) {
       if (!f.server) continue;
-      const v = (debouncedVals[f.name] ?? "").trim();
-      if (v) parts.push(`${encodeURIComponent(f.name)}=${encodeURIComponent(v)}`);
+      const v = debouncedVals[f.name];
+      if (f.type === "multi-select") {
+        for (const item of asList(v)) {
+          const s = item.trim();
+          if (s) parts.push(`${enc(f.name)}=${enc(s)}`);
+        }
+      } else if (f.type === "date-range" || f.type === "numeric-range") {
+        const r = asRange(v);
+        const lo = r.lo.trim();
+        const hi = r.hi.trim();
+        const loSuf = f.type === "date-range" ? "since" : "min";
+        const hiSuf = f.type === "date-range" ? "until" : "max";
+        if (lo) parts.push(`${enc(f.name)}_${loSuf}=${enc(lo)}`);
+        if (hi) parts.push(`${enc(f.name)}_${hiSuf}=${enc(hi)}`);
+      } else {
+        const s = asScalar(v).trim();
+        if (s) parts.push(`${enc(f.name)}=${enc(s)}`);
+      }
     }
     return parts.join("&");
   }, [config.filters, debouncedVals]);
   const queryEndpoint = serverQS && effectiveEndpoint
     ? `${effectiveEndpoint}${effectiveEndpoint.includes("?") ? "&" : "?"}${serverQS}`
     : effectiveEndpoint;
+  // Filters that source their option list from a live endpoint. `useQueries`
+  // handles the variable-length list in one hook call, so option fetches stay
+  // rule-of-hooks safe regardless of how many filters a config declares.
+  const optionFilters = useMemo(
+    () => (config.filters ?? []).filter((f) => f.optionsFrom),
+    [config.filters],
+  );
+  const optionResults = useQueries({
+    queries: optionFilters.map((f) => ({
+      queryKey: ["filter-options", f.optionsFrom ?? "", f.optionsValueField ?? "", f.optionsLabelField ?? ""],
+      queryFn: (): Promise<FieldOption[]> =>
+        fetchFieldOptions({ endpoint: f.optionsFrom, valueField: f.optionsValueField, labelField: f.optionsLabelField }),
+      staleTime: 30_000,
+    })),
+  });
+  const dynamicOptions: Record<string, { options: FieldOption[]; loading: boolean }> = {};
+  optionFilters.forEach((f, i) => {
+    dynamicOptions[f.name] = {
+      options: optionResults[i]?.data ?? [],
+      loading: optionResults[i]?.isLoading ?? false,
+    };
+  });
   const q = useQuery({
     queryKey: ["datapage", queryEndpoint, pagination && !fetchAllPages ? page : 1],
     queryFn: async () => {
@@ -311,20 +454,21 @@ export default function DataPage(
     refetchInterval: 15000,
   });
   const allRows = useMemo(() => toRows(q.data, config.itemsKey), [q.data, config.itemsKey]);
-  // Client-side filter pass. Every configured filter narrows the fetched
-  // rows; the result feeds both the table and (with fetchAllPages) the
-  // client-side pagination slice.
+  // Options for an option-bearing filter: static `options` win, then a live
+  // `optionsFrom` list, else the distinct row values of the field (so a bare
+  // `{type:"select"}` becomes an honest enum filter with no backend coupling).
+  const optionsFor = (f: PageFilter): { options: FieldOption[]; loading: boolean } => {
+    if (f.options && f.options.length > 0) return { options: f.options, loading: false };
+    if (f.optionsFrom) return dynamicOptions[f.name] ?? { options: [], loading: true };
+    return { options: deriveOptions(allRows, f.name), loading: false };
+  };
+  // Client-side filter pass. Every non-server filter narrows the fetched rows;
+  // the result feeds both the table and (with fetchAllPages) the client-side
+  // pagination slice.
   const filteredRows = useMemo(() => {
-    const active = (config.filters ?? []).filter((f) => !f.server && (filterVals[f.name] ?? "").trim() !== "");
+    const active = (config.filters ?? []).filter((f) => !f.server && filterHasValue(f, filterVals[f.name]));
     if (active.length === 0) return allRows;
-    return allRows.filter((row) =>
-      active.every((f) => {
-        const needle = filterVals[f.name].trim().toLowerCase();
-        const hay = row[f.name];
-        if (f.type === "select") return String(hay ?? "") === filterVals[f.name];
-        return String(hay ?? "").toLowerCase().includes(needle);
-      }),
-    );
+    return allRows.filter((row) => active.every((f) => matchFilter(f, filterVals[f.name], row)));
   }, [allRows, config.filters, filterVals]);
   // Effective row set + total for display. fetchAllPages: the page slices the
   // client-side filtered set. Server pagination: rows come from the backend
@@ -622,30 +766,105 @@ export default function DataPage(
             {config.filters && config.filters.length > 0 ? (
               <span style={css("font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);")}>filter</span>
             ) : null}
-            {config.filters?.map((f) =>
-              f.type === "select" ? (
-                <select
-                  key={f.name}
-                  value={filterVals[f.name] ?? ""}
-                  onChange={(e: ChangeEvent<HTMLSelectElement>) => setFilter(f.name, e.target.value)}
-                  style={css("background:var(--surface-sunk);border:1px solid var(--border-soft);color:var(--text-muted);font-family:var(--font-mono);font-size:11px;padding:3px 8px;border-radius:2px;max-width:180px;text-transform:none;letter-spacing:normal;cursor:pointer;")}
-                >
-                  <option value="">{f.label}</option>
-                  {(f.options ?? []).map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-              ) : (
+            {config.filters?.map((f) => {
+              if (f.type === "date-range" || f.type === "numeric-range") {
+                const r = asRange(filterVals[f.name]);
+                const inputType = f.type === "date-range" ? "date" : "number";
+                return (
+                  <span key={f.name} style={css("display:inline-flex;align-items:center;gap:4px;")}>
+                    <input
+                      type={inputType}
+                      aria-label={`${f.label} from`}
+                      value={r.lo}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setRangeFilter(f.name, "lo", e.target.value)}
+                      style={css(FILTER_CTL + "max-width:130px;")}
+                    />
+                    <span style={css("color:var(--text-faint);font-size:10px;")}>{"\u2013"}</span>
+                    <input
+                      type={inputType}
+                      aria-label={`${f.label} to`}
+                      value={r.hi}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setRangeFilter(f.name, "hi", e.target.value)}
+                      style={css(FILTER_CTL + "max-width:130px;")}
+                    />
+                  </span>
+                );
+              }
+              if (f.type === "segmented") {
+                const { options } = optionsFor(f);
+                const cur = asScalar(filterVals[f.name]);
+                return (
+                  <span key={f.name} role="group" aria-label={f.label} style={css("display:inline-flex;border:1px solid var(--border-soft);border-radius:2px;overflow:hidden;")}>
+                    {options.map((o) => {
+                      const on = cur === o.value;
+                      return (
+                        <button
+                          key={o.value}
+                          type="button"
+                          aria-pressed={on}
+                          onClick={() => setFilter(f.name, on ? "" : o.value)}
+                          style={css(`padding:3px 9px;border:0;border-right:1px solid var(--border-soft);background:${on ? "var(--accent)" : "transparent"};color:${on ? "var(--surface-sunk)" : "var(--text-muted)"};font-family:var(--font-mono);font-size:10px;letter-spacing:0.04em;text-transform:none;cursor:pointer;`)}
+                        >
+                          {o.label}
+                        </button>
+                      );
+                    })}
+                  </span>
+                );
+              }
+              if (f.type === "multi-select") {
+                const { options, loading } = optionsFor(f);
+                const sel = asList(filterVals[f.name]);
+                return (
+                  <span key={f.name} role="group" aria-label={f.label} style={css("display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap;")}>
+                    <span style={css("font-size:10px;color:var(--text-faint);letter-spacing:0.04em;")}>{f.label}</span>
+                    {loading ? <span style={css("font-size:10px;color:var(--text-faint);")}>loading{"\u2026"}</span> : null}
+                    {options.map((o) => {
+                      const on = sel.includes(o.value);
+                      return (
+                        <button
+                          key={o.value}
+                          type="button"
+                          aria-pressed={on}
+                          onClick={() => toggleFilter(f.name, o.value)}
+                          style={css(`padding:2px 7px;border:1px solid ${on ? "var(--accent)" : "var(--border-soft)"};border-radius:2px;background:${on ? "color-mix(in srgb,var(--accent) 18%,transparent)" : "var(--surface-sunk)"};color:${on ? "var(--accent)" : "var(--text-muted)"};font-family:var(--font-mono);font-size:10px;letter-spacing:0.03em;text-transform:none;cursor:pointer;`)}
+                        >
+                          {o.label}
+                        </button>
+                      );
+                    })}
+                  </span>
+                );
+              }
+              if (f.type === "select") {
+                const { options, loading } = optionsFor(f);
+                return (
+                  <select
+                    key={f.name}
+                    aria-label={f.label}
+                    value={asScalar(filterVals[f.name])}
+                    onChange={(e: ChangeEvent<HTMLSelectElement>) => setFilter(f.name, e.target.value)}
+                    style={css(FILTER_CTL + "max-width:180px;cursor:pointer;")}
+                  >
+                    <option value="">{loading ? "loading\u2026" : f.label}</option>
+                    {options.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                );
+              }
+              return (
                 <input
                   key={f.name}
                   type="text"
-                  value={filterVals[f.name] ?? ""}
+                  aria-label={f.label}
+                  value={asScalar(filterVals[f.name])}
                   onChange={(e: ChangeEvent<HTMLInputElement>) => setFilter(f.name, e.target.value)}
                   placeholder={f.label}
-                  style={css("background:var(--surface-sunk);border:1px solid var(--border-soft);color:var(--text-muted);font-family:var(--font-mono);font-size:11px;padding:3px 8px;border-radius:2px;max-width:160px;text-transform:none;letter-spacing:normal;")}
+                  style={css(FILTER_CTL + "max-width:160px;")}
                 />
-              ),
-            )}
+              );
+            })}
             <span style={css("flex:1;")} />
             {config.pageActions?.map((a) => (
               <button
@@ -828,3 +1047,5 @@ const panelTitle = css(
 );
 const dot = css("width:8px;height:8px;border-radius:1px;background:var(--accent);box-shadow:0 0 6px var(--accent);flex:0 0 auto;");
 const H_WARN = "#ffb85f";
+const FILTER_CTL =
+  "background:var(--surface-sunk);border:1px solid var(--border-soft);color:var(--text-muted);font-family:var(--font-mono);font-size:11px;padding:3px 8px;border-radius:2px;text-transform:none;letter-spacing:normal;";
