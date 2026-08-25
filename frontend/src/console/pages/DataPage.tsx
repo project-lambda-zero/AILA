@@ -372,9 +372,14 @@ export default function DataPage(
      * of the generic field grid. Receives the selected row. Used for
      * drill-down panels (e.g. a target row's investigations). */
     detailBody?: (row: Record<string, unknown>) => ReactNode;
+    /** Node rendered in the filter/toolbar bar (right group, next to
+     * pageActions). Lets a bespoke wrapper add a page-level control that
+     * carries local React state -- e.g. a "preview applicable" button that
+     * opens a query overlay -- without inventing a config-level capability. */
+    toolbarExtra?: ReactNode;
   },
 ): JSX.Element {
-  const { config, configKey, onNewClick, onRowActivate, detailBody, onBack, onMinimize, isFullscreen, onToggleFullscreen, onOpenPage, windowId, title: windowTitle, isFocused, onFocus } = props;
+  const { config, configKey, onNewClick, onRowActivate, detailBody, toolbarExtra, onBack, onMinimize, isFullscreen, onToggleFullscreen, onOpenPage, windowId, title: windowTitle, isFocused, onFocus } = props;
   const createSpec: FormSpec | undefined = (CREATE_FORMS as Record<string, FormSpec>)[configKey];
   const editSpec: FormSpec | undefined = (EDIT_FORMS as Record<string, FormSpec>)[configKey];
   const idField = config.idField ?? "id";
@@ -951,7 +956,7 @@ export default function DataPage(
           ) : null}
           <span style={css("color:var(--text-faint);text-transform:none;letter-spacing:0.04em;")}>{rows.length} rows</span>
         </div>
-        {(config.filters && config.filters.length > 0) || pagination ? (
+        {(config.filters && config.filters.length > 0) || pagination || toolbarExtra ? (
           <div style={css("display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--border-soft);flex-wrap:wrap;")}>
             {config.filters && config.filters.length > 0 ? (
               <span style={css("font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);")}>filter</span>
@@ -1056,6 +1061,7 @@ export default function DataPage(
               );
             })}
             <span style={css("flex:1;")} />
+            {toolbarExtra}
             {config.pageActions?.map((a) => (
               <button
                 key={a.label}

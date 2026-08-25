@@ -245,7 +245,9 @@ export const CREATE_FORMS = {
       { name: "confidence", label: "confidence", type: "select", options: PATTERN_CONFIDENCE },
       { name: "evidence_refs", label: "evidence refs", type: "tags" },
       { name: "scope", label: "scope", type: "select", options: PATTERN_SCOPE },
-      { name: "trust_tier", label: "trust tier", type: "select", options: PATTERN_TRUST_TIER },
+      // trust_tier is stamped at write time (RFC-08) and the store overrides
+      // any payload value, so an operator control here would be dead. The
+      // detail view surfaces trust_tier read-only instead.
     ],
   },
   "vr:disclosures": {

@@ -197,8 +197,40 @@ export const PAGE_CONFIGS = {
   "vr:patterns": {
     title: "vr \u00b7 patterns",
     endpoint: "/vr/patterns",
+    // /vr/patterns paginates by offset/limit (meta.total) and filters by
+    // kind/status/scope; the filters below are server-side so they narrow the
+    // full catalog and the page count reflects the filtered total.
+    pagination: true,
+    paginationParams: "offset",
     columns: [c("kind"), c("summary"), c("confidence"), c("status"), c("scope"), c("trust_tier", "trust"), c("times_retrieved", "reused")],
-    filters: [{ name: "kind", label: "kind", type: "text" }, { name: "status", label: "status", type: "select" }],
+    // Review transitions go through the existing PATCH contract (there is no
+    // dedicated review endpoint by design): promote draft -> active, and
+    // archive active -> archived. Each is gated on the row's lifecycle status
+    // so the button only shows on rows it can legally move.
+    actions: [
+      { label: "promote to active", method: "PATCH", endpoint: "/vr/patterns/{id}", body: { status: "active" }, whenField: "status", whenStatus: ["draft"] },
+      { label: "archive", method: "PATCH", endpoint: "/vr/patterns/{id}", body: { status: "archived" }, whenField: "status", whenStatus: ["active"], confirm: "archive this pattern? archived patterns are no longer returned by applicable-pattern retrieval." },
+    ],
+    filters: [
+      { name: "kind", label: "kind", type: "select", server: true, options: [
+        { value: "exploitation_technique", label: "exploitation technique" },
+        { value: "fuzzing_strategy", label: "fuzzing strategy" },
+        { value: "search_heuristic", label: "search heuristic" },
+        { value: "tool_recipe", label: "tool recipe" },
+        { value: "triage_rule", label: "triage rule" },
+      ] },
+      { name: "status", label: "status", type: "select", server: true, options: [
+        { value: "draft", label: "draft" },
+        { value: "active", label: "active" },
+        { value: "archived", label: "archived" },
+      ] },
+      { name: "scope", label: "scope", type: "select", server: true, options: [
+        { value: "local", label: "local" },
+        { value: "workspace", label: "workspace" },
+        { value: "team", label: "team" },
+        { value: "global", label: "global" },
+      ] },
+    ],
   },
   "vr:findings": {
     title: "vr \u00b7 findings",

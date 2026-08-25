@@ -19,6 +19,7 @@ import PersonaModelRoutingPage from "./PersonaModelRoutingPage";
 import SandboxPage from "./SandboxPage";
 import TargetInvestigations from "./TargetInvestigations";
 import UploadForm from "./UploadForm";
+import VrPatternsPage from "./VrPatternsPage";
 import VulnerabilityPage from "./VulnerabilityPage";
 import XRayPage from "./XRayPage";
 
@@ -70,6 +71,10 @@ const BESPOKE: Record<string, PageEntry> = {
       />
     ),
   },
+  // Patterns get a bespoke wrapper: the declarative DataPage (list + detail +
+  // edit + promote/archive review actions + kind/status/scope filters) plus a
+  // "preview applicable" toolbar control that simulates the retrieval gate.
+  "vr:patterns": { title: PAGE_CONFIGS["vr:patterns"].title, render: (p) => <VrPatternsPage {...p} /> },
   "malware:new-target": { title: "malware \u00b7 upload target", render: (p) => <UploadForm module="malware" {...p} /> },
   "forensics:project": { title: "forensics \u00b7 project", render: (p) => <ForensicsProjectPage {...p} /> },
   "vulnerability:scan": { title: "vulnerability \u00b7 launch scan", render: (p) => <VulnerabilityPage {...p} /> },
