@@ -9,8 +9,9 @@
  * and every action invalidates that copy plus the parent list so the pane
  * reflects a re-enqueue without a manual reselect.
  *
- * Sections are independently collapsible panels (native <button> headers with
- * `aria-expanded`, keyboard-operable). Stage rows are limited to the stages
+ * Sections are independently collapsible panels: each native <button> header
+ * carries `aria-expanded` and `aria-controls` pointing at its region panel id
+ * (`aria-labelledby` back), keyboard-operable. Stage rows are limited to the stages
  * that apply to the target's kind, mirroring the backend
  * `_applicable_stages_for` split so structural no-op stages never render.
  */
@@ -126,23 +127,29 @@ function analysisTone(state: string | undefined): "ok" | "live" | "warn" | "err"
 }
 
 function Section({
+  sectionKey,
   title,
   right,
   open,
   onToggle,
   children,
 }: {
+  sectionKey: string;
   title: string;
   right?: ReactNode;
   open: boolean;
   onToggle: () => void;
   children: ReactNode;
 }): JSX.Element {
+  const panelId = `vrtd-section-${sectionKey}`;
+  const headerId = `${panelId}-header`;
   return (
     <div style={sectionBox}>
       <button
         type="button"
+        id={headerId}
         aria-expanded={open}
+        aria-controls={panelId}
         onClick={onToggle}
         style={css(
           `display:flex;align-items:center;gap:8px;width:100%;padding:6px 10px;border:0;border-bottom:${open ? "1px solid var(--border)" : "0"};background:var(--surface-chrome);color:var(--text-primary);font-family:var(--font-mono);cursor:pointer;text-align:left;`,
@@ -153,7 +160,11 @@ function Section({
         <span style={css("flex:1;")} />
         {right}
       </button>
-      {open ? <div style={sectionBody}>{children}</div> : null}
+      {open ? (
+        <div id={panelId} role="region" aria-labelledby={headerId} style={sectionBody}>
+          {children}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -348,6 +359,7 @@ export default function VRTargetDetail({ row, onOpenXray }: VRTargetDetailProps)
 
       {/* Status & analysis (primary, expanded by default). */}
       <Section
+        sectionKey="status"
         title="status & analysis"
         open={open.status ?? true}
         onToggle={() => toggle("status")}
@@ -400,7 +412,7 @@ export default function VRTargetDetail({ row, onOpenXray }: VRTargetDetailProps)
       </Section>
 
       {/* Details -- kind-specific descriptor + languages + provenance. */}
-      <Section title="details" open={open.details ?? false} onToggle={() => toggle("details")}>
+      <Section sectionKey="details" title="details" open={open.details ?? false} onToggle={() => toggle("details")}>
         <div style={kvGrid}>
           <KV label="kind">{t.kind ?? EM_DASH}</KV>
           <KV label="workspace">{t.workspace_name ?? EM_DASH}</KV>
@@ -424,13 +436,13 @@ export default function VRTargetDetail({ row, onOpenXray }: VRTargetDetailProps)
 
       {/* APK overview -- android_apk only, absent (no empty card) otherwise. */}
       {isApk && apkOverview && Object.keys(apkOverview).length ? (
-        <Section title="apk overview" open={open.apk ?? false} onToggle={() => toggle("apk")}>
+        <Section sectionKey="apk" title="apk overview" open={open.apk ?? false} onToggle={() => toggle("apk")}>
           <StructuredValue value={apkOverview} />
         </Section>
       ) : null}
 
       {/* Investigations scoped to this target. */}
-      <Section title="investigations" open={open.investigations ?? false} onToggle={() => toggle("investigations")}>
+      <Section sectionKey="investigations" title="investigations" open={open.investigations ?? false} onToggle={() => toggle("investigations")}>
         <TargetInvestigations targetId={id} endpoint="/vr/investigations" onOpenXray={onOpenXray} />
       </Section>
     </div>
