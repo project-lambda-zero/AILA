@@ -606,6 +606,14 @@ export const PAGE_CONFIGS = {
     itemsKey: "subsystems",
     blurb: "per-subsystem comprehensive health",
     columns: [],
+    // subsystems is a real multi-row list (SubsystemHealth per probe); both
+    // controls narrow auto-derived columns the table actually renders --
+    // name (text substring) and status (row-derived select over the live
+    // SubsystemStatus enum). Client-side, so no backend coupling.
+    filters: [
+      { name: "name", label: "subsystem", type: "text" },
+      { name: "status", label: "status", type: "select" },
+    ],
   },
   "admin:automation": {
     title: "admin \u00b7 automation",
@@ -1100,6 +1108,11 @@ export const PAGE_CONFIGS = {
     endpoint: "/tasks/queue-depth",
     blurb: "task counts by status",
     columns: [],
+    // No filters by design: /tasks/queue-depth returns a single dict[str,int]
+    // aggregate, which toRows renders as exactly ONE row (status keys become
+    // columns). A filter narrows nothing on a one-row aggregate, so any control
+    // would be decorative -- forbidden by the structural-honesty constraint in
+    // specs/table-filtering-global.md. Not a list config in that spec's sense.
   },
   // admin:finding-states is a bespoke read-only overview (see
   // AdminFindingStatesPage) since the endpoint returns a state machine, not a
