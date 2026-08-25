@@ -500,6 +500,11 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
         root_cause = payload.get("answer") or payload.get("reasoning") or ""
         crash_signature = payload.get("crash_signature")
         poc_code = payload.get("poc_code")
+        raw_cvss = payload.get("cvss_score")
+        cvss_score = float(raw_cvss) if isinstance(raw_cvss, (int, float)) else None
+        cvss_vector = payload.get("cvss_vector")
+        cwe_id = payload.get("cwe_id")
+        assigned_cve_id = payload.get("assigned_cve_id") or payload.get("cve_id")
 
         # fix §186 + §235 -- single UoW atomically inserts the finding
         # and links it to the investigation. Old code committed after
@@ -524,6 +529,10 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
                     str(payload.get("poc_language", "python"))[:32]
                     if poc_code else None
                 ),
+                cvss_score=cvss_score,
+                cvss_vector=(cvss_vector[:128] if isinstance(cvss_vector, str) else None),
+                cwe_id=(cwe_id[:16] if isinstance(cwe_id, str) else None),
+                assigned_cve_id=(assigned_cve_id[:32] if isinstance(assigned_cve_id, str) else None),
                 evidence_refs_json=EvidenceRefList.model_validate(
                     payload.get("evidence_refs") or [],
                 ).model_dump_json(),

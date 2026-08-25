@@ -195,7 +195,7 @@ def _descriptor_from_spec(spec: Any) -> str:
     return _json.dumps(descriptor)
 
 
-__all__ = ["DisclosureUpdate", "create_vr_router"]
+__all__ = ["DisclosureUpdate", "FindingUpdate", "create_vr_router"]
 
 _log = logging.getLogger(__name__)
 _cfg = ModuleConfigReader("vr")
@@ -210,6 +210,20 @@ class DisclosureUpdate(BaseModel):
     vendor_contact: str | None = Field(default=None, max_length=512)
     assigned_cve_id: str | None = Field(default=None, max_length=32)
     patch_version: str | None = Field(default=None, max_length=64)
+
+
+class FindingUpdate(BaseModel):
+    """PATCH body for enriching a finding's triage/classification fields."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    crash_type: str | None = Field(default=None, max_length=64)
+    vulnerable_function: str | None = Field(default=None, max_length=255)
+    cvss_score: float | None = Field(default=None, ge=0, le=10)
+    cvss_vector: str | None = Field(default=None, max_length=128)
+    cwe_id: str | None = Field(default=None, max_length=16)
+    assigned_cve_id: str | None = Field(default=None, max_length=32)
+    evidence_refs: list[str] | None = Field(default=None)
 
 
 class _ReenqueueBody(BaseModel):
@@ -1651,6 +1665,68 @@ def create_vr_router() -> APIRouter:
                     detail=f"Finding {finding_id!r} not found.",
                 )
         return DataEnvelope(data=_finding_from_record(row))
+
+    @router.patch(
+        "/findings/{finding_id}",
+        response_model=DataEnvelope[VRFinding],
+        summary="Enrich a finding's triage/classification fields.",
+    )
+    @limiter.limit("30/minute")
+    async def update_finding_global(
+        request: Request,
+        finding_id: str,
+        body: FindingUpdate,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRFinding]:
+        """Enrich a finding in place (project-agnostic, team-scoped).
+
+        Companion to the disclosure PATCH: that route advances the
+        coordinated-disclosure lifecycle, this one fills the triage and
+        classification fields (crash_type, vulnerable_function, cvss,
+        cwe, cve, evidence refs) that a writer left NULL. Project-agnostic
+        so stub findings with a null project_id can still be enriched.
+        """
+        del request
+        from aila.platform.contracts import utc_now
+
+        from .contracts.evidence_ref import EvidenceRefList
+        from .db_models import VRFindingRecord
+
+        async with UnitOfWork() as uow:
+            stmt = select(VRFindingRecord).where(
+                VRFindingRecord.id == finding_id,
+            )
+            if auth.team_id is not None:
+                stmt = stmt.where(VRFindingRecord.team_id == auth.team_id)
+            finding = (await uow.session.exec(stmt)).first()
+            if finding is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Finding {finding_id!r} not found.",
+                )
+
+            if body.crash_type is not None:
+                finding.crash_type = body.crash_type
+            if body.vulnerable_function is not None:
+                finding.vulnerable_function = body.vulnerable_function
+            if body.cvss_score is not None:
+                finding.cvss_score = body.cvss_score
+            if body.cvss_vector is not None:
+                finding.cvss_vector = body.cvss_vector
+            if body.cwe_id is not None:
+                finding.cwe_id = body.cwe_id
+            if body.assigned_cve_id is not None:
+                finding.assigned_cve_id = body.assigned_cve_id
+            if body.evidence_refs is not None:
+                finding.evidence_refs_json = EvidenceRefList.model_validate(
+                    body.evidence_refs,
+                ).model_dump_json()
+            finding.updated_at = utc_now()
+            uow.session.add(finding)
+            await uow.session.commit()
+            await uow.session.refresh(finding)
+
+        return DataEnvelope(data=_finding_from_record(finding))
 
     @router.get(
         "/projects/{project_id}/findings",

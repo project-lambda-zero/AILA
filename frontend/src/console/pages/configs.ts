@@ -174,6 +174,27 @@ export const PAGE_CONFIGS = {
     paginationParams: "offset",
     columns: [c("crash_type", "crash"), c("vulnerable_function", "function"), c("disclosure_status", "disclosure"), c("assigned_cve_id", "cve"), c("cvss_score", "cvss"), c("cwe_id", "cwe"), c("evidence_count", "evidence")],
     filters: [{ name: "crash_type", label: "crash type", type: "text" }],
+    // Enrich a finding in place: writers leave triage/classification fields
+    // NULL for stub and direct-dispatch findings, so the operator fills them
+    // through the pre-flight modal (fields prefill from the row where present).
+    // PATCH /vr/findings/{id} is the project-agnostic edit endpoint so null-
+    // project stubs are editable; the response re-derives the list row.
+    actions: [
+      {
+        label: "edit",
+        method: "PATCH",
+        endpoint: "/vr/findings/{id}",
+        fields: [
+          { name: "crash_type", label: "crash type", type: "text", fromRow: "crash_type", placeholder: "e.g. overflow_heap, uaf, oob_write" },
+          { name: "vulnerable_function", label: "vulnerable function", type: "text", fromRow: "vulnerable_function" },
+          { name: "cvss_score", label: "cvss score", type: "number", fromRow: "cvss_score", placeholder: "0.0 - 10.0" },
+          { name: "cvss_vector", label: "cvss vector", type: "text", fromRow: "cvss_vector" },
+          { name: "cwe_id", label: "cwe id", type: "text", fromRow: "cwe_id", placeholder: "e.g. CWE-416" },
+          { name: "assigned_cve_id", label: "cve id", type: "text", fromRow: "assigned_cve_id", placeholder: "e.g. CVE-2025-1234" },
+          { name: "evidence_refs", label: "evidence refs", type: "tags", placeholder: "message / outcome ids or source citations" },
+        ],
+      },
+    ],
   },
   "vr:disclosures": {
     title: "vr \u00b7 disclosures",
