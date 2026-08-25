@@ -887,12 +887,17 @@ export const PAGE_CONFIGS = {
       c("last_probed_at", "probed"),
       c("error"),
     ],
+    // `GET /platform/mcp/servers` accepts only `module_scope` as a query param
+    // (comma-OR), so that filter narrows server-side. It has no `status` param,
+    // so `status` filters the fetched (unpaginated) rows client-side against the
+    // "reachable"/"unreachable" probe projection -- a server:true here would be
+    // dropped by FastAPI and narrow nothing.
     filters: [
       { name: "module_scope", label: "module", type: "select", server: true, options: [
         { value: "vr", label: "vr" },
         { value: "malware", label: "malware" },
       ] },
-      { name: "status", label: "status", type: "select", server: true, options: [
+      { name: "status", label: "status", type: "select", options: [
         { value: "reachable", label: "reachable" },
         { value: "unreachable", label: "unreachable" },
       ] },
