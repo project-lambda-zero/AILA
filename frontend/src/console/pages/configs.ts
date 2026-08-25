@@ -626,13 +626,6 @@ export const PAGE_CONFIGS = {
     columns: [c("name"), c("module_id", "module"), c("capability"), c("strategy_family", "strategy"), c("enabled"), c("created_at", "created")],
     filters: [{ name: "name", label: "name", type: "text" }, { name: "created_at", label: "created", type: "date-range" }],
   },
-  "admin:platform-corpus": {
-    title: "admin \u00b7 platform corpus",
-    endpoint: "/platform/eval/corpus/stats",
-    blurb: "eval corpus stats",
-    columns: [],
-  },
-
   // ---- VR: additional (previously unmapped) ----------------------------
   "vr:cves": {
     title: "vr \u00b7 cves",

@@ -2,6 +2,7 @@ import type { JSX } from "react";
 
 import type { ModulePageProps } from "../contract";
 import AdminDashboardPage from "./AdminDashboardPage";
+import AdminPlatformCorpusPage from "./AdminPlatformCorpusPage";
 import { PAGE_CONFIGS } from "./configs";
 import DataPage from "./DataPage";
 import ForensicsProjectPage from "./forensics/ForensicsProjectPage";
@@ -40,6 +41,10 @@ const BESPOKE: Record<string, PageEntry> = {
   "vulnerability:viz": { title: "vulnerability \u00b7 data visualization", render: (p) => <VulnerabilityPage {...p} /> },
   "vulnerability:reports": { title: "vulnerability \u00b7 reports", render: (p) => <VulnerabilityPage {...p} /> },
   "admin:dashboard": { title: "admin \u00b7 dashboard", render: (p) => <AdminDashboardPage {...p} /> },
+  "admin:platform-corpus": {
+    title: "admin \u00b7 platform corpus",
+    render: (p) => <AdminPlatformCorpusPage {...p} />,
+  },
   "admin:knowledge": { title: "admin \u00b7 knowledge", render: (p) => <KnowledgePage {...p} /> },
   "admin:sandbox": { title: "admin \u00b7 sandbox", render: (p) => <SandboxPage {...p} /> },
   "admin:persona-routing": {
