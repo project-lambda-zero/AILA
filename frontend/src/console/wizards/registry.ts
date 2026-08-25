@@ -61,8 +61,11 @@ export const WIZARDS: readonly WizardDef[] = [
     id: "vuln-system",
     module: "vulnerability",
     label: "register system",
-    purpose: "add an SSH-reachable system to the registry.",
-    open: { kind: "page", moduleKey: "vulnerability", section: "systems:new" },
+    purpose: "add an SSH-reachable system to the platform registry.",
+    // The SSH host registry is platform-owned (system-registry-platform.md
+    // req 11): this wizard raises the admin systems page, and the
+    // operator hits "+ register system" inside for the create form.
+    open: { kind: "page", moduleKey: "admin", section: "systems" },
   },
   {
     id: "admin-automation",

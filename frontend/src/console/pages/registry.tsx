@@ -19,6 +19,7 @@ import { McpInstanceToolsDetail } from "./McpInstanceToolsDetail";
 import NdayProjectForm, { CveReproduceDetail } from "./NdayProjectForm";
 import PersonaModelRoutingPage from "./PersonaModelRoutingPage";
 import SandboxPage from "./SandboxPage";
+import SystemsRegistryPage from "./SystemsRegistryPage";
 import { TeamCrossDetail } from "./TeamCrossDetail";
 import UploadForm from "./UploadForm";
 import VRTargetDetail from "./VRTargetDetail";
@@ -85,11 +86,13 @@ const BESPOKE: Record<string, PageEntry> = {
   "forensics:project": { title: "forensics \u00b7 project", render: (p) => <ForensicsProjectPage {...p} /> },
   "vulnerability:scan": { title: "vulnerability \u00b7 launch scan", render: (p) => <VulnerabilityPage {...p} /> },
   "vulnerability:findings": { title: "vulnerability \u00b7 findings", render: (p) => <VulnerabilityPage {...p} /> },
-  "vulnerability:systems": { title: "vulnerability \u00b7 systems", render: (p) => <VulnerabilityPage {...p} /> },
   "vulnerability:radar": { title: "vulnerability \u00b7 network radar", render: (p) => <VulnerabilityPage {...p} /> },
   "vulnerability:viz": { title: "vulnerability \u00b7 data visualization", render: (p) => <VulnerabilityPage {...p} /> },
   "vulnerability:reports": { title: "vulnerability \u00b7 reports", render: (p) => <VulnerabilityPage {...p} /> },
   "admin:dashboard": { title: "admin \u00b7 dashboard", render: (p) => <AdminDashboardPage {...p} /> },
+  // Platform-owned SSH host registry (system-registry-platform.md req 11):
+  // the only systems surface, re-homed off the vulnerability module.
+  "admin:systems": { title: "admin \u00b7 systems", render: (p) => <SystemsRegistryPage {...p} /> },
   // Cost & reporting: the former cost / cost-roi / executive views merged into
   // one page with overview / detail / configs segments (req 47).
   "admin:cost": { title: "admin \u00b7 cost", render: (p) => <CostReportingPage {...p} /> },

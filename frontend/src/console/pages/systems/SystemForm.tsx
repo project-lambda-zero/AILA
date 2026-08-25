@@ -53,6 +53,7 @@ interface FieldsState {
   port: string;
   distro: string;
   description: string;
+  role: string;
   private_key: string;
   password: string;
   private_key_passphrase: string;
@@ -71,6 +72,7 @@ function seedFromExisting(row: SystemBase): FieldsState {
     port: String(row.port),
     distro: row.distro,
     description: row.description,
+    role: row.role,
     private_key: "",
     password: "",
     private_key_passphrase: "",
@@ -87,6 +89,7 @@ const EMPTY: FieldsState = {
   port: "22",
   distro: "unknown",
   description: "",
+  role: "",
   private_key: "",
   password: "",
   private_key_passphrase: "",
@@ -104,6 +107,7 @@ function computeIssues(f: FieldsState): WizardFieldIssue[] {
   if (!Number.isFinite(portNum) || portNum < 1 || portNum > 65535) {
     out.push({ label: "ssh port", reason: "must be between 1 and 65535" });
   }
+  if (f.role.length > 64) out.push({ label: "role", reason: "64 characters or fewer" });
   return out;
 }
 
@@ -138,6 +142,7 @@ export default function SystemForm(props: SystemFormProps): JSX.Element {
       if (portNum !== editRow.port) body.port = portNum;
       if (f.distro !== editRow.distro) body.distro = f.distro;
       if (f.description !== editRow.description) body.description = f.description;
+      if (f.role !== editRow.role) body.role = f.role.trim();
       if (f.private_key.trim()) body.private_key = f.private_key;
       else if (f.clearKey) body.private_key = null;
       if (f.password) body.password = f.password;
@@ -153,6 +158,7 @@ export default function SystemForm(props: SystemFormProps): JSX.Element {
         port: portNum,
         distro: f.distro || "unknown",
         description: f.description,
+        role: f.role.trim(),
       };
       if (f.private_key.trim()) body.private_key = f.private_key;
       if (f.password) body.password = f.password;
@@ -274,6 +280,21 @@ export default function SystemForm(props: SystemFormProps): JSX.Element {
             >
               {DISTRO_OPTIONS.map((d) => <option key={d} value={d}>{d}</option>)}
             </select>
+          </label>
+
+          <label style={FIELD_LABEL}>
+            <span style={FIELD_LABEL_ROW}>
+              <span style={FIELD_SPAN}>role</span>
+              <FieldHelp text="Free-text host role or kind (e.g. vuln-scan, analysis, poc, fuzz, forensics, sandbox). Drives the role filter on the registry list. Leave blank if unspecified." />
+            </span>
+            <input
+              type="text"
+              value={f.role}
+              onChange={(e) => set("role", e.target.value)}
+              maxLength={64}
+              placeholder="unspecified"
+              style={inputStyle()}
+            />
           </label>
 
           <label style={FIELD_LABEL}>

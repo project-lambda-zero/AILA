@@ -99,7 +99,7 @@ function Console() {
   // project detail), reusing the ModulePageProps.investigationId channel.
   //
   // A `section` may carry an in-page sub-intent past a colon (e.g.
-  // "systems:new", "scan:<run_id>"). The registry key is derived from the
+  // "scan:<run_id>", "reports:<run_id>"). The registry key is derived from the
   // base slug (part before the colon) so the same registered renderer serves
   // both the base view and its sub-intents; the full section string is
   // handed through to the page so it can react to the intent.
@@ -173,16 +173,18 @@ function Console() {
     openNamedPage(w.open.moduleKey, w.open.section, w.label, null);
   };
 
-  // LeftRail's "+" is module-aware: for vulnerability it opens the Systems
-  // registry with an auto-open create form, matching the SystemForm invoked
-  // from the Systems tab's "+ register system" button (there is no duplicate
+  // LeftRail's "+" is module-aware: for vulnerability it raises the
+  // platform-owned admin systems registry (there is no duplicate
   // IntakeWizard variant for that module). Every other module opens its
   // IntakeWizard as an overlay window.
   const requestIntake = (opts?: { moduleId?: string; targetId?: string }): void => {
     const effectiveModule = opts?.moduleId ?? moduleId;
     const targetId = opts?.targetId ?? null;
     if (effectiveModule === "vulnerability") {
-      openNamedPage("vulnerability", "systems:new", "register system");
+      // Systems registry is platform-owned (system-registry-platform.md
+      // req 11): the vulnerability module's "+" jumps to the admin systems
+      // page, where "+ register system" inside opens the create form.
+      openNamedPage("admin", "systems", "admin \u00b7 systems");
       return;
     }
     openIntakeWindow(effectiveModule, targetId);

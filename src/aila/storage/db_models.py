@@ -56,6 +56,8 @@ class ManagedSystemRecord(TeamScopedMixin, SQLModel, table=True):
     port: int = 22
     distro: str = Field(default="unknown")
     description: str = Field(default="")
+    role: str = Field(default="", index=True)
+    """Free-text role/kind so a module picker can filter (examples: vuln-scan/analysis/poc/fuzz/forensics/sandbox). Empty string means unspecified."""
     private_key_path: str | None = None
     private_key_secret_id: str | None = None
     private_key_passphrase_secret_id: str | None = None

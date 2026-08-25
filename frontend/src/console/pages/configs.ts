@@ -794,13 +794,9 @@ export const PAGE_CONFIGS = {
     },
   },
   // ---- Admin: platform (added -- previously unlisted features) ----------
-  "admin:systems": {
-    title: "admin \u00b7 systems",
-    endpoint: "/systems",
-    itemsKey: "items",
-    columns: [c("name"), c("host"), c("distro"), c("connectivity_status", "conn"), c("last_scan_at", "last scan"), c("last_scan_status", "scan status"), c("top_severity", "top sev")],
-    filters: [{ name: "name", label: "name", type: "text" }],
-  },
+  // admin:systems is intentionally not a DataPage config: it is served by
+  // the bespoke SystemsRegistryPage (registry.tsx) which owns the rich
+  // registry surface (create/edit/tags/heartbeat + role filter + probe).
   "admin:sessions": {
     title: "admin \u00b7 sessions",
     endpoint: "/sessions",
@@ -1139,7 +1135,6 @@ const DELETES: Record<string, { delete: string; idField?: string }> = {
   "admin:oidc-providers": { delete: "/auth/oidc/providers/{id}" },
   "admin:automation": { delete: "/automation/schedules/{id}" },
   "admin:scheduled-reports": { delete: "/scheduled-reports/{id}" },
-  "admin:systems": { delete: "/systems/{id}" },
   "admin:mcp-instances": { delete: "/platform/mcp/instances/{id}" },
 };
 

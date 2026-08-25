@@ -93,6 +93,7 @@ def _system_to_response(record: ManagedSystemRecord) -> SystemResponse:
         port=record.port,
         distro=record.distro,
         description=record.description,
+        role=record.role,
         created_at=record.created_at,
         updated_at=record.updated_at,
     )
@@ -243,12 +244,17 @@ async def list_systems(
     request: Request,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=50, ge=1, le=250),
+    role: str | None = Query(default=None, description="Exact-match filter on the role/kind column"),
+    probe: bool = Query(default=False, description="When true, run bounded concurrent live SSH heartbeats for the returned page (reuses the 30 s cache)"),
     auth: AuthContext = Depends(require_user_or_api_key),
 ) -> SystemListResponse:
     """Return a paginated list of all registered SSH systems with enrichment data.
 
     Each item includes connectivity_status, tags, last_scan_at, last_scan_status,
-    and top_severity. Enrichment uses aggregated queries -- not N+1 per system (D-03/D-11/D-12/D-20).
+    top_severity, and last_checked_at. Enrichment uses aggregated queries -- not
+    N+1 per system (D-03/D-11/D-12/D-20). When ``probe=true`` the endpoint runs
+    a bounded set of live SSH heartbeats for the page and prefers those results
+    over the passive port map for connectivity precedence.
     """
 
     async def _query() -> tuple[list[ManagedSystemRecord], int, dict, dict, dict, dict]:
@@ -256,11 +262,16 @@ async def list_systems(
             count_stmt = select(func.count(ManagedSystemRecord.id))
             if auth.team_id is not None:
                 count_stmt = count_stmt.where(ManagedSystemRecord.team_id == auth.team_id)
+            if role is not None:
+                count_stmt = count_stmt.where(ManagedSystemRecord.role == role)
             total = (await session.exec(count_stmt)).one()
 
             offset = (page - 1) * page_size
+            stmt = select(ManagedSystemRecord)
+            if role is not None:
+                stmt = stmt.where(ManagedSystemRecord.role == role)
             stmt = (
-                select(ManagedSystemRecord)
+                stmt
                 .order_by(ManagedSystemRecord.name)
                 .offset(offset)
                 .limit(page_size)
@@ -279,10 +290,71 @@ async def list_systems(
 
     rows, total, connectivity_map, tags_map, scan_map, severity_map = await _query()
 
+    # Optional live SSH probe for the returned page. Bounded concurrency
+    # (Semaphore(8)) with per-system failure isolation: an unreachable
+    # system yields an ``error`` payload but never aborts the list.
+    probe_map: dict[int, dict] = {}
+    if probe and rows:
+        probe_sem = asyncio.Semaphore(8)
+
+        async def _run_probe(rec: ManagedSystemRecord) -> tuple[int, dict] | None:
+            if rec.id is None:
+                return None
+            integration = {
+                "name": rec.name,
+                "host": rec.host,
+                "username": rec.username,
+                "port": rec.port,
+                "private_key_path": rec.private_key_path,
+                "private_key_secret_id": rec.private_key_secret_id,
+                "private_key_passphrase_secret_id": rec.private_key_passphrase_secret_id,
+                "password_secret_id": rec.password_secret_id,
+                "known_hosts_path": rec.known_hosts_path,
+                "host_key_fingerprint": rec.host_key_fingerprint,
+            }
+            async with probe_sem:
+                payload = await _probe_heartbeat(rec.id, integration)
+            return rec.id, payload
+
+        results = await asyncio.gather(
+            *[_run_probe(rec) for rec in rows], return_exceptions=True,
+        )
+        for result in results:
+            if isinstance(result, BaseException) or result is None:
+                if isinstance(result, BaseException):
+                    _log.debug("list_systems probe fan-out failed", exc_info=result)
+                continue
+            sid_probe, payload = result
+            probe_map[sid_probe] = payload
+
     items: list[SystemEnrichedResponse] = []
     for r in rows:
         sid = r.id
         scan_entry = scan_map.get(r.name)
+        # Connectivity precedence: (1) live heartbeat (cached or freshly
+        # probed) -> reachable/unreachable + probe checked_at; else
+        # (2) passive SystemPortRecord map -> status, no timestamp;
+        # else (3) None.
+        conn_status: str | None
+        last_checked_at: datetime | None = None
+        probe_payload = probe_map.get(sid) if sid is not None else None
+        if probe_payload is None and sid is not None:
+            cached = _heartbeat_cache.get(sid)
+            if cached is not None and (_time.monotonic() - cached[0]) < _HEARTBEAT_CACHE_TTL_S:
+                probe_payload = cached[1]
+        if probe_payload is not None:
+            conn_status = "reachable" if probe_payload.get("reachable") else "unreachable"
+            checked_raw = probe_payload.get("checked_at")
+            if isinstance(checked_raw, str):
+                try:
+                    last_checked_at = datetime.fromisoformat(checked_raw)
+                except ValueError:
+                    last_checked_at = None
+        elif sid is not None and sid in connectivity_map:
+            conn_status = connectivity_map[sid]
+        else:
+            conn_status = None
+
         items.append(
             SystemEnrichedResponse(
                 id=sid,  # type: ignore[arg-type]
@@ -292,13 +364,15 @@ async def list_systems(
                 port=r.port,
                 distro=r.distro,
                 description=r.description,
+                role=r.role,
                 created_at=r.created_at,
                 updated_at=r.updated_at,
-                connectivity_status=connectivity_map.get(sid) if sid is not None else None,  # type: ignore[arg-type]
+                connectivity_status=conn_status,
                 tags=tags_map.get(sid, []) if sid is not None else [],  # type: ignore[arg-type]
                 last_scan_at=scan_entry[0] if scan_entry else None,  # type: ignore[arg-type]
                 last_scan_status=scan_entry[1] if scan_entry else None,
                 top_severity=severity_map.get(sid) if sid is not None else None,  # type: ignore[arg-type]
+                last_checked_at=last_checked_at,
             )
         )
 
@@ -414,73 +488,28 @@ def _heartbeat_lock(system_id: int) -> asyncio.Lock:
     return lock
 
 
-@router.get(
-    "/{system_id}/heartbeat",
-    response_model=HeartbeatEnvelope,
-    summary=(
-        "Live SSH reachability probe (echo ok, 3 s timeout). Cached "
-        "30 s server-side."
-    ),
-)
-@limiter.limit("60/minute")
-async def get_system_heartbeat(
-    system_id: int,
-    request: Request,
-    auth: AuthContext = Depends(require_user_or_api_key),
-) -> HeartbeatEnvelope:
-    """Live SSH heartbeat -- opens a fresh paramiko connect with a 3 s
-    timeout, runs ``echo ok``, measures latency, and returns the
-    result. Cached for 30 s to avoid hammering the workstation when
-    the frontend polls every 30 s anyway.
+async def _probe_heartbeat(system_id: int, integration: dict) -> dict:
+    """Run a live SSH heartbeat probe honoring the 30 s cache.
+
+    Callers must build ``integration`` (the SSH connection dict) from a
+    freshly loaded ``ManagedSystemRecord`` after enforcing team ownership.
+    Returns the same payload shape as ``HeartbeatResponse``:
+    ``{system_id, reachable, latency_ms, checked_at, error}``.
+    Cache is shared with ``get_system_heartbeat``.
     """
-    del request
     from aila.config import get_settings
     from aila.platform.config import build_platform_settings
     from aila.platform.services.ssh import SSHService
 
-    # Enforce team ownership before consulting the shared cache so a
-    # cross-team caller cannot read another team's cached probe result.
-    async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
-        owned = (await session.exec(
-            select(ManagedSystemRecord.id).where(ManagedSystemRecord.id == system_id)
-        )).first()
-    if owned is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"System {system_id} not found",
-        )
-
     now = _time.monotonic()
     cached = _heartbeat_cache.get(system_id)
     if cached is not None and (now - cached[0]) < _HEARTBEAT_CACHE_TTL_S:
-        return HeartbeatEnvelope(data=HeartbeatResponse(**cached[1]))
+        return cached[1]
 
     async with _heartbeat_lock(system_id):
         cached = _heartbeat_cache.get(system_id)
         if cached is not None and (_time.monotonic() - cached[0]) < _HEARTBEAT_CACHE_TTL_S:
-            return HeartbeatEnvelope(data=HeartbeatResponse(**cached[1]))
-
-        async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
-            sys_record = (await session.exec(
-                select(ManagedSystemRecord).where(ManagedSystemRecord.id == system_id)
-            )).first()
-            if sys_record is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"System {system_id} not found",
-                )
-            integration = {
-                "name": sys_record.name,
-                "host": sys_record.host,
-                "username": sys_record.username,
-                "port": sys_record.port,
-                "private_key_path": sys_record.private_key_path,
-                "private_key_secret_id": sys_record.private_key_secret_id,
-                "private_key_passphrase_secret_id": sys_record.private_key_passphrase_secret_id,
-                "password_secret_id": sys_record.password_secret_id,
-                "known_hosts_path": sys_record.known_hosts_path,
-                "host_key_fingerprint": sys_record.host_key_fingerprint,
-            }
+            return cached[1]
 
         ssh = SSHService(build_platform_settings(get_settings()))
         checked_at = datetime.now(UTC).isoformat()
@@ -508,7 +537,55 @@ async def get_system_heartbeat(
             "error": error,
         }
         _heartbeat_cache[system_id] = (_time.monotonic(), payload)
-        return HeartbeatEnvelope(data=HeartbeatResponse(**payload))
+        return payload
+
+
+@router.get(
+    "/{system_id}/heartbeat",
+    response_model=HeartbeatEnvelope,
+    summary=(
+        "Live SSH reachability probe (echo ok, 3 s timeout). Cached "
+        "30 s server-side."
+    ),
+)
+@limiter.limit("60/minute")
+async def get_system_heartbeat(
+    system_id: int,
+    request: Request,
+    auth: AuthContext = Depends(require_user_or_api_key),
+) -> HeartbeatEnvelope:
+    """Live SSH heartbeat -- opens a fresh paramiko connect with a 3 s
+    timeout, runs ``echo ok``, measures latency, and returns the
+    result. Cached for 30 s to avoid hammering the workstation when
+    the frontend polls every 30 s anyway.
+    """
+    del request
+    # Enforce team ownership before consulting the shared cache so a
+    # cross-team caller cannot read another team's cached probe result.
+    async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
+        sys_record = (await session.exec(
+            select(ManagedSystemRecord).where(ManagedSystemRecord.id == system_id)
+        )).first()
+        if sys_record is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"System {system_id} not found",
+            )
+        integration = {
+            "name": sys_record.name,
+            "host": sys_record.host,
+            "username": sys_record.username,
+            "port": sys_record.port,
+            "private_key_path": sys_record.private_key_path,
+            "private_key_secret_id": sys_record.private_key_secret_id,
+            "private_key_passphrase_secret_id": sys_record.private_key_passphrase_secret_id,
+            "password_secret_id": sys_record.password_secret_id,
+            "known_hosts_path": sys_record.known_hosts_path,
+            "host_key_fingerprint": sys_record.host_key_fingerprint,
+        }
+
+    payload = await _probe_heartbeat(system_id, integration)
+    return HeartbeatEnvelope(data=HeartbeatResponse(**payload))
 
 
 @router.get("/{system_id}", response_model=SystemDetailResponse, summary="Get system detail")
@@ -781,6 +858,7 @@ async def import_systems_csv(
                     port=item.port,
                     distro=item.distro,
                     description=item.description,
+                    role=item.role,
                     private_key_secret_id=private_key_secret_id,
                     private_key_passphrase_secret_id=private_key_passphrase_secret_id,
                     password_secret_id=password_secret_id,
@@ -897,6 +975,7 @@ async def create_system(
                 port=req.port,
                 distro=req.distro,
                 description=req.description,
+                role=req.role,
                 private_key_secret_id=private_key_secret_id,
                 private_key_passphrase_secret_id=private_key_passphrase_secret_id,
                 password_secret_id=password_secret_id,

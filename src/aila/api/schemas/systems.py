@@ -35,6 +35,7 @@ class SystemResponse(APIModel):
     port: int = Field(default=22, description="SSH port")
     distro: str = Field(default="unknown", description="Linux distribution identifier")
     description: str = Field(default="", description="Human-readable system description")
+    role: str = Field(default="", description="Free-text role/kind (examples: vuln-scan/analysis/poc/fuzz/forensics/sandbox); empty means unspecified")
     created_at: datetime | None = Field(default=None, description="When this system was registered")
     updated_at: datetime | None = Field(default=None, description="When this system was last updated")
 
@@ -70,6 +71,10 @@ class SystemEnrichedResponse(SystemResponse):
         default=None,
         description="Highest active finding severity for this system: critical|high|medium|low",
     )
+    last_checked_at: datetime | None = Field(
+        default=None,
+        description="ISO timestamp of the last SSH heartbeat probe for this system; null if never probed",
+    )
 
 
 SystemListResponse = PaginatedResponse[SystemEnrichedResponse]
@@ -99,6 +104,7 @@ class SystemCreateRequest(APIModel):
     port: int = Field(default=22, ge=1, le=65535, description="SSH port")
     distro: str = Field(default="unknown", description="Linux distribution")
     description: str = Field(default="", description="Optional free-text description")
+    role: str = Field(default="", max_length=64, description="Free-text role/kind (examples: vuln-scan/analysis/poc/fuzz/forensics/sandbox); empty means unspecified")
     private_key: str | None = Field(
         default=None,
         description="SSH private key content (PEM format, will be encrypted and stored via SecretRecord)",
@@ -122,6 +128,7 @@ class SystemUpdateRequest(APIModel):
     port: int | None = Field(default=None, ge=1, le=65535)
     distro: str | None = None
     description: str | None = None
+    role: str | None = Field(default=None, max_length=64, description="New role/kind (examples: vuln-scan/analysis/poc/fuzz/forensics/sandbox); send null to leave unchanged")
     private_key: str | None = Field(
         default=None,
         description="New SSH private key content (PEM format; will be encrypted; send null to clear)",

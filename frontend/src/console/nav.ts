@@ -57,8 +57,8 @@ export const MODULES: ModuleDef[] = [
     pages: [
       // workflow
       page("launch scan", "Vulnerability.dc.html#scan"),
-      page("systems"),
-      // artifacts
+      // artifacts (systems moved to admin -- system-registry-platform.md
+      // req 11: the SSH host registry is platform-owned)
       page("findings", "Vulnerability.dc.html#findings"),
       page("reports"),
       // utility

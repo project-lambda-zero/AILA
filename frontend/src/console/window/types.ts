@@ -27,7 +27,7 @@ export interface WindowState {
   /** Page-registry key that resolves the renderer (e.g. "vr:targets", "xray",
    * "malware:xray"). Not always `module:section` -- X-Ray keys are bare. */
   registryKey: string;
-  /** Registry sub-intent past the module prefix (e.g. "overview", "systems:new"). */
+  /** Registry sub-intent past the module prefix (e.g. "overview", "scan:<run_id>"). */
   section: string | null;
   /** Selected-entity id threaded through ModulePageProps.investigationId. */
   investigationId: string | null;

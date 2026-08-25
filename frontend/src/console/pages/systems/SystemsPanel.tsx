@@ -1,6 +1,17 @@
 /**
- * Systems registry panel + system detail panel. Split verbatim from the
- * historic VulnerabilityPage.tsx.
+ * Systems registry panel + system detail panel. Re-homed from the
+ * vulnerability module into the platform-owned admin/systems page
+ * (system-registry-platform.md req 11): the SSH host registry is not
+ * vulnerability-scoped, so it lives once at admin:systems and reads from
+ * the platform /systems router directly.
+ *
+ * SystemsSection renders standalone: no visible gating (its own page owns
+ * layout), no auto-open create plumbing (its own "+ register system" button
+ * is the sole entry). Adds a free-text role filter, a "refresh connectivity"
+ * button that forces a live SSH probe pass (probe=true) over the current
+ * page, and a role column + last-checked_at hint next to the connectivity
+ * chip. Every other affordance (detail, tags, heartbeat, create/edit) is
+ * carried over unchanged.
  */
 import { useEffect, useState } from "react";
 import type { JSX } from "react";
@@ -32,8 +43,8 @@ import {
   normSev,
   sevChipStyle,
   statusChipStyle,
-} from "./helpers";
-import { H } from "./palette";
+} from "../vulnerability/helpers";
+import { H } from "../vulnerability/palette";
 
 /** Console role ladder for gating tag controls: admins manage the vocabulary
  * and pick keys from a select; operators+ assign (free-text for non-admins)
@@ -44,43 +55,39 @@ const roleRank = (role: string | undefined): number =>
 
 /* =============================== SYSTEMS ================================= */
 
-interface SystemsSectionProps {
-  visible: boolean;
-  /** When true (section === "systems:new"), the create SystemForm auto-opens
-   *  on the FIRST mount pass. The parent clears the sub-intent via onNavigate
-   *  after we consume it so re-visiting the tab doesn't keep re-opening it. */
-  autoOpenCreate: boolean;
-  onConsumeAutoOpen: () => void;
-}
-
-function SystemsSection(props: SystemsSectionProps): JSX.Element {
-  const systemsQ = useSystems(1, 200);
-  const [formMode, setFormMode] = useState<"create" | { edit: SystemEnriched } | null>(
-    props.autoOpenCreate ? "create" : null,
-  );
+function SystemsSection(): JSX.Element {
+  const [roleFilter, setRoleFilter] = useState<string>("");
+  // `probe` toggles a live-heartbeat pass on the list endpoint. Setting it
+  // true changes the react-query key, so the query refetches with probe=true;
+  // once the fetch settles we reset it so subsequent refetches (react-query's
+  // 15s stale window) don't keep asking the backend to walk every host.
+  const [probe, setProbe] = useState<boolean>(false);
+  const systemsQ = useSystems(1, 200, roleFilter.trim() || undefined, probe);
+  const [formMode, setFormMode] = useState<"create" | { edit: SystemEnriched } | null>(null);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const role = useAuth((s) => s.user?.role);
   const isAdmin = roleRank(role) >= ROLE_RANK.admin;
   const [vocabOpen, setVocabOpen] = useState<boolean>(false);
 
-  // Consume the autoOpen intent so navigating away and back to `systems`
-  // (base section) doesn't re-open the modal after the operator dismissed it.
-  // The section is already `systems:new` on the first render (initial
-  // formMode picked it up); this effect covers the case where the operator
-  // reopens the create form while still on the page.
-  const consume = props.onConsumeAutoOpen;
   useEffect(() => {
-    if (props.autoOpenCreate) {
-      setFormMode((prev) => (prev === null ? "create" : prev));
-      consume();
-    }
-  }, [props.autoOpenCreate, consume]);
+    if (probe && !systemsQ.isFetching) setProbe(false);
+  }, [probe, systemsQ.isFetching]);
 
   const items = systemsQ.data?.items ?? [];
   const selected = items.find((s) => s.id === selectedId) ?? null;
 
   const rightAction = (
     <div style={css("display:flex;gap:8px;")}>
+      <button
+        type="button"
+        onClick={() => setProbe(true)}
+        disabled={probe || systemsQ.isFetching}
+        style={css(
+          "padding:0 13px;height:28px;font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:3px;cursor:pointer;",
+        )}
+      >
+        {probe || (systemsQ.isFetching && probe) ? "probing \u2026" : "refresh connectivity"}
+      </button>
       {isAdmin ? (
         <button
           type="button"
@@ -104,15 +111,40 @@ function SystemsSection(props: SystemsSectionProps): JSX.Element {
     </div>
   );
 
+  const gridCols = "160px 150px 110px 90px 130px 90px 80px 60px";
+
   return (
-    <section style={css("position:absolute;inset:0;overflow:auto;padding:16px 18px;display:" + (props.visible ? "block" : "none") + ";")}>
+    <section style={css("position:relative;flex:1;min-height:0;overflow:auto;padding:16px 18px;")}>
       <SectionTitle glyph={"\u25a4"} label="Systems Registry" right={rightAction} />
+
+      <div style={css("margin-top:12px;display:flex;align-items:center;gap:8px;")}>
+        <label style={css("display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);")}>
+          <span>filter by role</span>
+          <input
+            type="text"
+            value={roleFilter}
+            onChange={(e) => setRoleFilter(e.target.value)}
+            placeholder="e.g. vuln-scan"
+            style={css("background:var(--surface-sunk);border:1px solid var(--border-soft);outline:none;padding:5px 8px;color:var(--text-primary);font-family:var(--font-mono);font-size:10.5px;border-radius:2px;min-width:180px;")}
+          />
+        </label>
+        {roleFilter.trim() ? (
+          <button
+            type="button"
+            onClick={() => setRoleFilter("")}
+            style={css("padding:0 8px;height:24px;font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);background:transparent;border:1px solid var(--border-soft);border-radius:2px;cursor:pointer;")}
+          >
+            clear
+          </button>
+        ) : null}
+      </div>
 
       <div style={css("margin-top:14px;display:flex;gap:12px;")}>
         <div style={css("flex:1;min-width:0;")}>
-          <div style={css("display:grid;grid-template-columns:170px 160px 90px 100px 100px 90px 70px;gap:10px;padding:8px 12px;background:var(--surface-sunk);border:1px solid var(--border-soft);border-bottom:0;border-radius:4px 4px 0 0;font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>
+          <div style={css("display:grid;grid-template-columns:" + gridCols + ";gap:10px;padding:8px 12px;background:var(--surface-sunk);border:1px solid var(--border-soft);border-bottom:0;border-radius:4px 4px 0 0;font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>
             <span>name</span>
             <span>host</span>
+            <span>role</span>
             <span>distro</span>
             <span>connectivity</span>
             <span>last scan</span>
@@ -126,26 +158,33 @@ function SystemsSection(props: SystemsSectionProps): JSX.Element {
               <div style={css("padding:22px;text-align:center;font-size:11px;color:var(--status-warn);")}>failed to load systems.</div>
             ) : items.length === 0 ? (
               <div style={css("padding:26px;text-align:center;font-size:11px;color:var(--text-muted);")}>
-                no systems registered yet {"\u2014"} click "register system" to add one.
+                no systems registered {"\u2014"} click "register system" to add one.
               </div>
             ) : items.map((s) => {
               const sev = normSev(s.top_severity);
               const isSel = selectedId === s.id;
+              const lastChecked = s.last_checked_at ? s.last_checked_at.slice(0, 19).replace("T", " ") : null;
               return (
                 <div
                   key={s.id}
                   onClick={() => setSelectedId(s.id)}
                   style={css(
-                    "display:grid;grid-template-columns:170px 160px 90px 100px 100px 90px 70px;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border-faint);cursor:pointer;background:" +
+                    "display:grid;grid-template-columns:" + gridCols + ";gap:10px;padding:8px 12px;border-bottom:1px solid var(--border-faint);cursor:pointer;background:" +
                     (isSel ? H.accent1c : "var(--surface-card)") + ";",
                   )}
                 >
                   <span style={css("font-size:11px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;align-self:center;")}>{s.name}</span>
                   <span style={css("font-size:10.5px;color:var(--text-muted);font-family:var(--font-mono);align-self:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{s.host}</span>
+                  <span style={css("font-size:10px;color:" + (s.role ? "var(--text-primary)" : "var(--text-faint)") + ";font-family:var(--font-mono);align-self:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{s.role || "\u2014"}</span>
                   <span style={css("font-size:10px;color:var(--text-muted);align-self:center;")}>{s.distro}</span>
-                  <span style={connChipStyle(s.connectivity_status)}>{s.connectivity_status ?? "unknown"}</span>
+                  <span style={css("align-self:center;display:flex;flex-direction:column;gap:2px;min-width:0;")}>
+                    <span style={connChipStyle(s.connectivity_status)}>{s.connectivity_status ?? "unknown"}</span>
+                    {lastChecked ? (
+                      <span style={css("font-size:9px;color:var(--text-faint);font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{lastChecked}</span>
+                    ) : null}
+                  </span>
                   <span style={css("font-size:10px;color:var(--text-muted);align-self:center;")}>{(s.last_scan_at ?? "\u2014").slice(0, 10) || "\u2014"}</span>
-                  <span>{sev ? <span style={sevChipStyle(sev)}>{sev}</span> : <span style={css("align-self:center;font-size:10px;color:var(--text-faint);")}>{"\u2014"}</span>}</span>
+                  <span style={css("align-self:center;")}>{sev ? <span style={sevChipStyle(sev)}>{sev}</span> : <span style={css("font-size:10px;color:var(--text-faint);")}>{"\u2014"}</span>}</span>
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); setFormMode({ edit: s }); }}

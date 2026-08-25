@@ -49,6 +49,10 @@ export interface SystemBase {
   port: number;
   distro: string;
   description: string;
+  /** Free-text role/kind (e.g. vuln-scan, analysis, poc, fuzz, forensics,
+   *  sandbox). Empty string means unspecified. Mirrors
+   *  ManagedSystemRecord.role. */
+  role: string;
   created_at: string | null;
   updated_at: string | null;
 }
@@ -56,6 +60,11 @@ export interface SystemBase {
 /** Mirrors SystemEnrichedResponse (list rows). */
 export interface SystemEnriched extends SystemBase {
   connectivity_status: string | null;
+  /** ISO timestamp of the last SSH heartbeat probe that produced the
+   *  connectivity_status. Null when no live probe has ever populated the
+   *  cache and the status came from the passive port-scan map (or when no
+   *  data is available). */
+  last_checked_at: string | null;
   tags: Array<{ tag_key: string; tag_value: string }>;
   last_scan_at: string | null;
   last_scan_status: string | null;
@@ -106,6 +115,8 @@ export interface SystemCreateRequest {
   port?: number;
   distro?: string;
   description?: string;
+  /** Free-text role/kind, max 64 chars. Empty string means unspecified. */
+  role?: string;
   private_key?: string | null;
   password?: string | null;
   private_key_passphrase?: string | null;
@@ -120,6 +131,8 @@ export interface SystemUpdateRequest {
   port?: number;
   distro?: string;
   description?: string;
+  /** Free-text role/kind, max 64 chars. */
+  role?: string;
   private_key?: string | null;
   password?: string | null;
   private_key_passphrase?: string | null;
@@ -244,8 +257,16 @@ export interface TopologyResponse {
 
 /* -------------------------------- hooks ---------------------------------- */
 
-export function useSystems(page: number = 1, pageSize: number = 100) {
-  const qs = `page=${page}&page_size=${pageSize}`;
+export function useSystems(
+  page: number = 1,
+  pageSize: number = 100,
+  role?: string,
+  probe: boolean = false,
+) {
+  const parts = [`page=${page}`, `page_size=${pageSize}`];
+  if (role != null && role !== "") parts.push(`role=${encodeURIComponent(role)}`);
+  if (probe) parts.push("probe=true");
+  const qs = parts.join("&");
   return useQuery({
     queryKey: ["systems", "list", qs],
     queryFn: () => apiFetch<SystemsPage>(`/systems?${qs}`),
