@@ -61,6 +61,11 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
           : vrInvestigations;
 
   const [pinned, setPinned] = useState<string[]>([]);
+  // Per-category collapse state for the admin block. Empty on mount so every
+  // category renders header-only on first open (a compact map of what exists);
+  // reset whenever the whole admin block is toggled so reopening returns to the
+  // all-collapsed default.
+  const [adminCatOpen, setAdminCatOpen] = useState<Record<string, boolean>>({});
 
   const rows: RailRow[] = useMemo(() => {
     const raw = source.data ?? [];
@@ -325,7 +330,11 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
       <div style={css(`flex:0 0 auto;max-height:230px;display:flex;flex-direction:column;min-height:0;`)}>
         <button
           type="button"
-          onClick={onToggleAdmin}
+          aria-expanded={adminOpen}
+          onClick={() => {
+            setAdminCatOpen({});
+            onToggleAdmin();
+          }}
           style={css(
             `display:flex;align-items:center;gap:7px;width:100%;padding:9px 11px;background:var(--surface-chrome);border:0;border-top:1px solid var(--border-soft);cursor:pointer;font-family:var(--font-mono);font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
           )}
@@ -338,32 +347,47 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
             `max-height:190px;overflow:auto;flex-direction:column;padding:0 7px 7px;gap:2px;display:${adminOpen ? "flex" : "none"};`,
           )}
         >
-          {ADMIN_CATS.map((g) => (
-            <Fragment key={g.cat}>
-              <div
-                style={css(
-                  `padding:7px 9px 3px;font-size:8px;letter-spacing:0.18em;text-transform:uppercase;color:var(--accent);`,
-                )}
-              >
-                {g.cat}
-              </div>
-              {g.items.map((label) => (
+          {ADMIN_CATS.map((g) => {
+            const catExpanded = Boolean(adminCatOpen[g.cat]);
+            return (
+              <Fragment key={g.cat}>
                 <button
-                  key={`${g.cat}:${label}`}
                   type="button"
-                  onClick={() => onOpenPage("admin", label.replace(/\s+/g, "-"), label)}
+                  aria-expanded={catExpanded}
+                  onClick={() =>
+                    setAdminCatOpen((prev) => ({ ...prev, [g.cat]: !prev[g.cat] }))
+                  }
                   style={css(
-                    `display:flex;align-items:center;gap:8px;padding:5px 8px;border:0;border-radius:2px;background:var(--surface-card);font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.03em;color:var(--text-muted);cursor:pointer;text-align:left;`,
+                    `display:flex;align-items:center;gap:6px;width:100%;padding:7px 9px 3px;background:transparent;border:0;cursor:pointer;font-size:8px;letter-spacing:0.18em;text-transform:uppercase;color:var(--accent);text-align:left;`,
                   )}
                 >
-                  <span
-                    style={css(`width:5px;height:5px;flex:0 0 auto;background:var(--text-faint);`)}
-                  />
-                  {label}
+                  <span style={css(`font-size:8px;`)}>{catExpanded ? "\u25bc" : "\u25b6"}</span>
+                  {g.cat}
                 </button>
-              ))}
-            </Fragment>
-          ))}
+                <div
+                  style={css(
+                    `flex-direction:column;gap:2px;padding-bottom:3px;display:${catExpanded ? "flex" : "none"};`,
+                  )}
+                >
+                  {g.items.map((label) => (
+                    <button
+                      key={`${g.cat}:${label}`}
+                      type="button"
+                      onClick={() => onOpenPage("admin", label.replace(/\s+/g, "-"), label)}
+                      style={css(
+                        `display:flex;align-items:center;gap:8px;padding:5px 8px;border:0;border-radius:2px;background:var(--surface-card);font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.03em;color:var(--text-muted);cursor:pointer;text-align:left;`,
+                      )}
+                    >
+                      <span
+                        style={css(`width:5px;height:5px;flex:0 0 auto;background:var(--text-faint);`)}
+                      />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </Fragment>
+            );
+          })}
         </div>
       </div>
 
