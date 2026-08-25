@@ -21,6 +21,7 @@ import TargetInvestigations from "./TargetInvestigations";
 import UploadForm from "./UploadForm";
 import VrPatternsPage from "./VrPatternsPage";
 import VulnerabilityPage from "./VulnerabilityPage";
+import WorkspaceTargets from "./WorkspaceTargets";
 import XRayPage from "./XRayPage";
 
 export type PageRender = (p: ModulePageProps) => JSX.Element;
@@ -149,6 +150,28 @@ const BESPOKE: Record<string, PageEntry> = {
                 actionId,
               )
             }
+          />
+        )}
+      />
+    ),
+  },
+  // Workspace-first drill (req 4 / vr-navigation-ia): a workspace row's detail
+  // panel lists that workspace's targets; expanding a target reveals its
+  // investigations, each opening the X-Ray -- Workspace -> Target ->
+  // Investigation, without hopping out to the top-level targets list.
+  "vr:workspaces": {
+    title: PAGE_CONFIGS["vr:workspaces"].title,
+    render: (p) => (
+      <DataPage
+        config={PAGE_CONFIGS["vr:workspaces"]}
+        configKey="vr:workspaces"
+        {...p}
+        detailBody={(row) => (
+          <WorkspaceTargets
+            workspaceId={String(row.id ?? "")}
+            targetsEndpoint="/vr/targets"
+            investigationsEndpoint="/vr/investigations"
+            onOpenXray={(inv) => p.onOpenPage?.("vr", "xray", `vr \u00b7 x-ray`, inv.id)}
           />
         )}
       />

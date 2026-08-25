@@ -138,7 +138,12 @@ export const PAGE_CONFIGS = {
       // enumerable sets, so they are `select`, not free text.
       { name: "target_id", label: "target", type: "select", server: true, optionsFrom: "/vr/targets", optionsValueField: "id", optionsLabelField: "display_name" },
       { name: "workspace_id", label: "workspace", type: "select", server: true, optionsFrom: "/vr/workspaces", optionsValueField: "id", optionsLabelField: "name" },
-      { name: "project_id", label: "project", type: "select", server: true, optionsFrom: "/vr/projects", optionsValueField: "id", optionsLabelField: "name" },
+      // No project_id filter: VRInvestigationRecord.project_id is never set on
+      // any creation path (main create, variant-hunt children, and fuzz child
+      // copies all leave it NULL), and VRInvestigationSummary carries no
+      // project_id field -- so the filter could only ever return zero rows and
+      // the column could never confirm a match. The n-day project surface is
+      // the CVE-reproduction page instead (req 4 / vr-navigation-ia AC4).
       { name: "has_outcomes", label: "outcomes", type: "select", server: true, options: [{ value: "true", label: "with outcomes" }] },
       { name: "primary_outcome_polarity", label: "verdict polarity", type: "select", server: true, options: [
         { value: "finding", label: "finding" },

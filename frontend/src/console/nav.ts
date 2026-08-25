@@ -26,10 +26,12 @@ export const MODULES: ModuleDef[] = [
     label: "vulnerability research",
     noun: "investigations",
     pages: [
-      // workflow
-      page("investigations"),
+      // workflow -- workspace-first backbone (req 4 / vr-navigation-ia): a
+      // workspace contains targets, a target binds investigations, so the
+      // rail leads with Workspaces, then Targets, then Investigations.
       page("workspaces"),
       page("targets"),
+      page("investigations"),
       page("cves"),
       // artifacts
       page("findings"),
