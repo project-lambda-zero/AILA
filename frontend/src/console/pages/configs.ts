@@ -359,7 +359,59 @@ export const PAGE_CONFIGS = {
     itemsKey: "keys",
     idField: "key_id",
     columns: [c("key_prefix", "prefix"), c("role"), c("label"), c("created_by", "by"), c("created_at", "created"), c("revoked_at", "revoked")],
-    filters: [{ name: "label", label: "label", type: "text" }, { name: "role", label: "role", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
+    filters: [
+      { name: "role", label: "role", type: "multi-select" },
+      {
+        name: "revoked_at",
+        label: "status",
+        type: "segmented",
+        options: [
+          { value: "active", label: "active" },
+          { value: "revoked", label: "revoked" },
+        ],
+        deriveValue: (r) => (r.revoked_at ? "revoked" : "active"),
+      },
+      {
+        name: "label",
+        label: "search",
+        type: "text",
+        deriveValue: (r) => `${r.label ?? ""} ${r.key_prefix ?? ""}`,
+      },
+      { name: "created_at", label: "created", type: "date-range" },
+    ],
+    pageActions: [
+      {
+        label: "mint key",
+        method: "POST",
+        endpoint: "/auth/keys",
+        body: { role: "reader" },
+        fields: [
+          {
+            name: "role",
+            label: "role",
+            type: "select",
+            options: [
+              { value: "reader", label: "reader" },
+              { value: "operator", label: "operator" },
+              { value: "admin", label: "admin" },
+            ],
+          },
+          { name: "label", label: "label", type: "text", placeholder: "human-readable name" },
+          {
+            name: "team_id",
+            label: "team id (god-tier only)",
+            type: "text",
+            placeholder: "blank = your own team",
+            godTierOnly: true,
+          },
+        ],
+        reveal: {
+          title: "api key created",
+          note: "copy the raw key now -- it is never shown again",
+          fields: ["raw_key", "key_prefix", "role", "label"],
+        },
+      },
+    ],
     actions: [
       {
         label: "revoke",
@@ -765,7 +817,6 @@ const DELETES: Record<string, { delete: string; idField?: string }> = {
   "malware:playbooks": { delete: "/malware/playbooks/{id}" },
   "malware:projects": { delete: "/malware/projects/{id}" },
   "admin:teams": { delete: "/admin/teams/{id}" },
-  "admin:api-keys": { delete: "/auth/keys/{id}", idField: "key_id" },
   "admin:oidc-providers": { delete: "/auth/oidc/providers/{id}" },
   "admin:automation": { delete: "/automation/schedules/{id}" },
   "admin:scheduled-reports": { delete: "/scheduled-reports/{id}" },

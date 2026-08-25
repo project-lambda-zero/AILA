@@ -207,6 +207,20 @@ async def create_api_key(
             detail=f"Invalid role '{body.role}'. Must be one of: {sorted(VALID_ROLES)}",
         )
 
+    # #36: a god-tier admin (JWT team_id null) binds the key to whatever
+    # team the request specifies (None => team-less god-tier key). A
+    # team-scoped admin can only mint keys within its own team; a body
+    # team_id naming any other team is refused.
+    if admin.team_id is None:
+        target_team_id = body.team_id
+    else:
+        if body.team_id is not None and body.team_id != admin.team_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Cannot mint an API key for another team.",
+            )
+        target_team_id = admin.team_id
+
     raw_key = generate_api_key()
     hashed = hash_api_key(raw_key)
     key_prefix = raw_key[:12]
@@ -218,9 +232,7 @@ async def create_api_key(
         role=body.role,
         label=body.label,
         created_by=admin.user_id,
-        # #36: a team-scoped admin's key belongs to that team; a god-tier
-        # admin (team_id=None) mints a team-less (god-tier) key.
-        team_id=admin.team_id,
+        team_id=target_team_id,
         created_at=now,
     )
 

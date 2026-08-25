@@ -3,6 +3,7 @@ import type { ChangeEvent, JSX, ReactNode } from "react";
 
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import { useAuth } from "../../api/auth";
 import { apiFetch, apiFetchEnvelope, API_BASE } from "../../api/client";
 import { fetchFieldOptions } from "../../api/mutations";
 import type { FieldOption } from "../../api/mutations";
@@ -63,6 +64,13 @@ export interface PageFilter {
    * `name_since` / `name_until`; numeric-range -> `name_min` / `name_max`.
    * Inputs are debounced ~250ms. */
   server?: boolean;
+  /** Compute the value this filter matches on from the whole row instead of
+   * reading `row[name]` directly. Lets one control span multiple columns
+   * (e.g. search `label` + `key_prefix` under one text box) or map derived
+   * state (e.g. `revoked_at` presence -> "active"/"revoked"). When absent,
+   * matching behavior is unchanged. `deriveOptions` still reads `row[name]`,
+   * so pair `deriveValue` with static `options` for select/segmented. */
+  deriveValue?: (row: Record<string, unknown>) => string;
 }
 
 /** A two-ended range value (date-range / numeric-range). `lo` is
@@ -101,7 +109,7 @@ function deriveOptions(rows: Record<string, unknown>[], field: string): FieldOpt
 
 /** Whether a single row passes one client-side filter. */
 function matchFilter(f: PageFilter, v: FilterValue | undefined, row: Record<string, unknown>): boolean {
-  const cell = row[f.name];
+  const cell = f.deriveValue ? f.deriveValue(row) : row[f.name];
   if (f.type === "multi-select") {
     const sel = asList(v);
     return sel.length === 0 || sel.includes(String(cell ?? ""));
@@ -151,6 +159,10 @@ export interface ActionField {
   required?: boolean;
   /** Prefill the field from this row field when the action opens on a row. */
   fromRow?: string;
+  /** When true, the field is only shown and collected for a god-tier admin
+   * (JWT with no `team_id`). Hidden and never submitted for team-scoped
+   * callers; use for fields the backend only accepts from god-tier. */
+  godTierOnly?: boolean;
 }
 
 /** One-shot reveal of an action's JSON response, shown once in a modal after
@@ -350,6 +362,9 @@ export default function DataPage(
   const createSpec: FormSpec | undefined = (CREATE_FORMS as Record<string, FormSpec>)[configKey];
   const editSpec: FormSpec | undefined = (EDIT_FORMS as Record<string, FormSpec>)[configKey];
   const idField = config.idField ?? "id";
+  const isGodTier = useAuth((s) => s.user?.role === "admin" && !s.user?.team_id);
+  const visibleFields = (a: PageAction): ActionField[] =>
+    (a.fields ?? []).filter((f) => !f.godTierOnly || isGodTier);
   // Some list endpoints require a parent scope (e.g. /malware/families needs
   // ?workspace_id=). Resolve the first available parent id, then scope the URL.
   const scopeQ = useQuery({
@@ -655,11 +670,12 @@ export default function DataPage(
       window.open(`${API_BASE}${url.startsWith("/") ? url : `/${url}`}`, "_blank", "noopener");
       return;
     }
-    if (a.fields && a.fields.length > 0) {
+    const shown = visibleFields(a);
+    if (shown.length > 0) {
       // Prefill declared fields from the row, then collect the rest in a modal
       // whose submit is the explicit confirm.
       const init: Record<string, string> = {};
-      for (const f of a.fields) {
+      for (const f of shown) {
         if (f.fromRow && row && row[f.fromRow] != null) init[f.name] = String(row[f.fromRow]);
       }
       setActionVals(init);
@@ -676,7 +692,7 @@ export default function DataPage(
     if (!actionForm) return;
     const { action: a, row } = actionForm;
     const out: Record<string, unknown> = {};
-    for (const f of a.fields ?? []) {
+    for (const f of visibleFields(a)) {
       const s = (actionVals[f.name] ?? "").trim();
       if (s === "") {
         if (f.required) {
@@ -1193,7 +1209,7 @@ export default function DataPage(
             style={css("width:min(460px,100%);max-height:100%;overflow:auto;display:flex;flex-direction:column;gap:12px;padding:18px;background:var(--surface-card);border:1px solid var(--border);border-radius:3px;")}
           >
             <div style={css("font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-primary);")}>{actionForm.action.label}</div>
-            {(actionForm.action.fields ?? []).map((f) => (
+            {visibleFields(actionForm.action).map((f) => (
               <label key={f.name} style={actionLabel}>
                 <span>
                   {f.label}

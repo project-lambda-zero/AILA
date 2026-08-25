@@ -26,6 +26,9 @@ class ApiKeyCreateRequest(APIModel):
 
     role: Literal["admin", "operator", "reader"] = ROLE_READER
     label: str = ""
+    # #36: honored only for a god-tier admin (JWT team_id null); a team-scoped
+    # admin passing a foreign team_id is refused with 403.
+    team_id: str | None = None
 
 
 class ApiKeyCreateResponse(APIModel):
