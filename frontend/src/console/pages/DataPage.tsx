@@ -133,6 +133,35 @@ function matchFilter(f: PageFilter, v: FilterValue | undefined, row: Record<stri
   return String(cell ?? "").toLowerCase().includes(needle.toLowerCase());
 }
 
+/** One field collected in an action's pre-flight modal. Deliberately small:
+ * an action body is a handful of scalars, not a full record -- that is what
+ * the typed create/edit FormSpec is for. */
+export interface ActionField {
+  /** Body key the value is sent under. */
+  name: string;
+  label: string;
+  /** Widget: `text` (default), `textarea` (multi-line, e.g. a revoke reason),
+   * `number`, `select` (needs `options`), or `tags` (sent as a string[], e.g.
+   * approver_ids). */
+  type?: "text" | "textarea" | "number" | "select" | "tags";
+  /** Choices for a `select` field. */
+  options?: FieldOption[];
+  placeholder?: string;
+  required?: boolean;
+  /** Prefill the field from this row field when the action opens on a row. */
+  fromRow?: string;
+}
+
+/** One-shot reveal of an action's JSON response, shown once in a modal after
+ * success -- for secrets the server never returns again. */
+export interface ActionReveal {
+  title?: string;
+  /** Response keys to surface, in order. Empty -> the whole payload. */
+  fields?: string[];
+  /** Caption above the payload (e.g. "copy now -- not shown again"). */
+  note?: string;
+}
+
 /** A row-level action rendered in the detail header (and optionally inline).
  * One action = one backend call with {id} substituted from the row. */
 export interface PageAction {
@@ -141,18 +170,33 @@ export interface PageAction {
   method: "POST" | "PATCH" | "PUT" | "DELETE" | "GET";
   /** Endpoint template with `{id}` (and `{scope}`) substituted from the row. */
   endpoint: string;
-  /** Optional JSON body template; `{id}`/`{scope}` substitute like the path. */
+  /** Optional JSON body template; `{id}`/`{scope}` substitute like the path.
+   * Values collected via `fields` merge OVER this template. */
   body?: Record<string, unknown>;
-  /** Only show/enable when the row's status field matches one of these
-   * (lowercased compare). Empty means always available. */
+  /** Only show/enable when the gate field matches one of these (lowercased
+   * compare). Empty means always available. The gate field is `whenField`
+   * when set, else the row's `status` (with `is_active` fallback). */
   whenStatus?: string[];
-  /** Confirmation prompt before firing (destructive or irreversible). */
+  /** Row field the `whenStatus` gate reads. Defaults to `status`/`is_active`.
+   * Set to gate on another state column (e.g. `approval_state`,
+   * `analysis_state`). */
+  whenField?: string;
+  /** Confirmation prompt before firing (destructive or irreversible). Skipped
+   * when `fields` is set -- the collection modal is the explicit confirm. */
   confirm?: string;
-  /** Show the action only when the row is in this state -- used with
-   * whenStatus to render a contextual "resume" instead of "pause", etc. */
+  /** Tone the control as destructive (warn color). */
   destructive?: boolean;
   /** GET + open the substituted URL in a new tab (server streams a file). */
   download?: boolean;
+  /** Fields collected from the operator in a small pre-flight modal before the
+   * call fires. Collected values are serialized (number -> Number, tags ->
+   * string[], else string) and merged over `body`, then sent as the JSON
+   * body. Use where the endpoint requires operator input (e.g. a revoke
+   * `reason`, a promote `approver_ids`). */
+  fields?: ActionField[];
+  /** When set, the call's JSON response is shown once in a modal after
+   * success (e.g. a freshly minted API key). */
+  reveal?: ActionReveal;
 }
 
 /** Declarative config for a backend-backed list window. One of these per nav
@@ -270,6 +314,31 @@ function ctlBtn(label: string, title: string, onClick: () => void): JSX.Element 
       {label}
     </button>
   );
+}
+
+/** Turn a reveal action's response payload into ordered [label, value] pairs
+ * for the one-shot reveal modal. Named `reveal.fields` win; otherwise every
+ * top-level key of the payload object is shown. */
+function revealEntries(r: { action: PageAction; payload: unknown }): [string, string][] {
+  const obj = asRecord(r.payload);
+  if (!obj) {
+    const s = typeof r.payload === "string" ? r.payload : JSON.stringify(r.payload, null, 2);
+    return [["result", s]];
+  }
+  const want = r.action.reveal?.fields;
+  const keys = want && want.length > 0 ? want : Object.keys(obj);
+  return keys.map((k) => {
+    const v = obj[k];
+    const s =
+      v == null
+        ? "\u2014"
+        : typeof v === "string"
+          ? v
+          : typeof v === "number" || typeof v === "boolean"
+            ? String(v)
+            : JSON.stringify(v);
+    return [k, s] as [string, string];
+  });
 }
 
 export default function DataPage(
@@ -557,6 +626,41 @@ export default function DataPage(
       void qc.invalidateQueries({ queryKey: ["datapage", effectiveEndpoint] });
     },
   });
+  // Action-body collection + one-shot reveal state. `actionForm` holds the
+  // action awaiting operator input (with its target row); `actionVals` are the
+  // in-progress field values; `reveal` holds a completed action's response to
+  // show once.
+  const [actionForm, setActionForm] = useState<{ action: PageAction; row: Record<string, unknown> | null } | null>(null);
+  const [actionVals, setActionVals] = useState<Record<string, string>>({});
+  const [actionErr, setActionErr] = useState<string | null>(null);
+  const [reveal, setReveal] = useState<{ action: PageAction; payload: unknown } | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  // Fire one action call: path + static body substituted, collected `extra`
+  // merged over the body, response captured when the action declares a reveal.
+  const fireAction = (a: PageAction, row: Record<string, unknown> | null, extra?: Record<string, unknown>): void => {
+    const sub = (s: string): string =>
+      s
+        .replace("{scope}", encodeURIComponent(activeScope))
+        .replace("{id}", encodeURIComponent(String(row?.[idField] ?? "")));
+    const base: Record<string, unknown> = a.body
+      ? Object.fromEntries(Object.entries(a.body).map(([k, v]) => [k, typeof v === "string" ? sub(v) : v]))
+      : {};
+    const merged = { ...base, ...(extra ?? {}) };
+    const body = Object.keys(merged).length > 0 ? merged : undefined;
+    action.mutate(
+      { path: sub(a.endpoint), method: a.method, body },
+      a.reveal
+        ? {
+            onSuccess: (data: unknown) => {
+              setReveal({ action: a, payload: data });
+              setCopied(false);
+            },
+          }
+        : undefined,
+    );
+  };
+
   const doAction = (a: PageAction, row: Record<string, unknown> | null): void => {
     if (a.download) {
       const url = a.endpoint
@@ -565,21 +669,62 @@ export default function DataPage(
       window.open(`${API_BASE}${url.startsWith("/") ? url : `/${url}`}`, "_blank", "noopener");
       return;
     }
+    if (a.fields && a.fields.length > 0) {
+      // Prefill declared fields from the row, then collect the rest in a modal
+      // whose submit is the explicit confirm.
+      const init: Record<string, string> = {};
+      for (const f of a.fields) {
+        if (f.fromRow && row && row[f.fromRow] != null) init[f.name] = String(row[f.fromRow]);
+      }
+      setActionVals(init);
+      setActionErr(null);
+      setActionForm({ action: a, row });
+      return;
+    }
     if (a.confirm && !window.confirm(a.confirm)) return;
-    const sub = (s: string): string =>
-      s
-        .replace("{scope}", encodeURIComponent(activeScope))
-        .replace("{id}", encodeURIComponent(String(row?.[idField] ?? "")));
-    const body: Record<string, unknown> | undefined = a.body
-      ? Object.fromEntries(Object.entries(a.body).map(([k, v]) => [k, typeof v === "string" ? sub(v) : v]))
-      : undefined;
-    action.mutate({ path: sub(a.endpoint), method: a.method, body });
+    fireAction(a, row);
+  };
+
+  // Serialize the collected action fields (number/tags/string) and fire.
+  const submitActionForm = (): void => {
+    if (!actionForm) return;
+    const { action: a, row } = actionForm;
+    const out: Record<string, unknown> = {};
+    for (const f of a.fields ?? []) {
+      const s = (actionVals[f.name] ?? "").trim();
+      if (s === "") {
+        if (f.required) {
+          setActionErr(`${f.label} is required`);
+          return;
+        }
+        continue;
+      }
+      if (f.type === "number") {
+        const n = Number(s);
+        if (Number.isNaN(n)) {
+          setActionErr(`${f.label} must be a number`);
+          return;
+        }
+        out[f.name] = n;
+      } else if (f.type === "tags") {
+        out[f.name] = s.split(/[\s,]+/).filter(Boolean);
+      } else {
+        out[f.name] = s;
+      }
+    }
+    setActionForm(null);
+    fireAction(a, row, out);
+  };
+
+  const copyReveal = (v: string): void => {
+    void navigator.clipboard?.writeText(v);
+    setCopied(true);
   };
   const visibleActions = (row: Record<string, unknown>): PageAction[] =>
     (config.actions ?? []).filter((a) => {
       if (!a.whenStatus || a.whenStatus.length === 0) return true;
-      const status = String(row["status"] ?? row["is_active"] ?? "").toLowerCase();
-      return a.whenStatus.includes(status);
+      const gate = a.whenField ? row[a.whenField] : (row["status"] ?? row["is_active"]);
+      return a.whenStatus.includes(String(gate ?? "").toLowerCase());
     });
 
   // ---- bulk selection ----------------------------------------------------
@@ -1034,6 +1179,107 @@ export default function DataPage(
           </div>
         </div>
       ) : null}
+      {actionForm ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${actionForm.action.label} details`}
+          onClick={() => setActionForm(null)}
+          style={css("position:absolute;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;padding:32px;z-index:21;")}
+        >
+          <form
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitActionForm();
+            }}
+            style={css("width:min(460px,100%);max-height:100%;overflow:auto;display:flex;flex-direction:column;gap:12px;padding:18px;background:var(--surface-card);border:1px solid var(--border);border-radius:3px;")}
+          >
+            <div style={css("font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-primary);")}>{actionForm.action.label}</div>
+            {(actionForm.action.fields ?? []).map((f) => (
+              <label key={f.name} style={actionLabel}>
+                <span>
+                  {f.label}
+                  {f.required ? " *" : ""}
+                </span>
+                {f.type === "textarea" ? (
+                  <textarea
+                    value={actionVals[f.name] ?? ""}
+                    placeholder={f.placeholder}
+                    onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setActionVals((c) => ({ ...c, [f.name]: e.target.value }))}
+                    style={css(ACTION_INPUT + "min-height:64px;resize:vertical;")}
+                  />
+                ) : f.type === "select" ? (
+                  <select
+                    value={actionVals[f.name] ?? ""}
+                    onChange={(e: ChangeEvent<HTMLSelectElement>) => setActionVals((c) => ({ ...c, [f.name]: e.target.value }))}
+                    style={css(ACTION_INPUT + "cursor:pointer;")}
+                  >
+                    <option value="">{f.placeholder ?? "select\u2026"}</option>
+                    {(f.options ?? []).map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type={f.type === "number" ? "number" : "text"}
+                    value={actionVals[f.name] ?? ""}
+                    placeholder={f.type === "tags" ? f.placeholder ?? "comma or space separated" : f.placeholder}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setActionVals((c) => ({ ...c, [f.name]: e.target.value }))}
+                    style={css(ACTION_INPUT)}
+                  />
+                )}
+              </label>
+            ))}
+            {actionErr ? <div style={actionErrBox}>{actionErr}</div> : null}
+            <div style={css("display:flex;justify-content:flex-end;gap:8px;")}>
+              <button type="button" onClick={() => setActionForm(null)} style={actionGhostBtn}>
+                cancel
+              </button>
+              <button type="submit" disabled={action.isPending} style={actionPrimaryBtn}>
+                {actionForm.action.label}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+      {reveal ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={reveal.action.reveal?.title ?? "result"}
+          onClick={() => setReveal(null)}
+          style={css("position:absolute;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;padding:32px;z-index:22;")}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={css("width:min(520px,100%);max-height:100%;overflow:auto;display:flex;flex-direction:column;gap:12px;padding:18px;background:var(--surface-card);border:1px solid var(--border);border-radius:3px;")}
+          >
+            <div style={css("font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-primary);")}>{reveal.action.reveal?.title ?? reveal.action.label}</div>
+            {reveal.action.reveal?.note ? (
+              <div style={css("font-family:var(--font-mono);font-size:10px;color:var(--status-ok);letter-spacing:0.03em;text-transform:none;")}>{reveal.action.reveal.note}</div>
+            ) : null}
+            {revealEntries(reveal).map(([k, v]) => (
+              <div key={k} style={css("display:flex;flex-direction:column;gap:4px;")}>
+                <span style={css("font-family:var(--font-mono);font-size:9px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);")}>{k}</span>
+                <div style={css("display:flex;align-items:flex-start;gap:6px;")}>
+                  <code style={css("flex:1;min-width:0;word-break:break-all;background:var(--surface-sunk);border:1px solid var(--border);border-radius:2px;padding:7px 8px;font-family:var(--font-mono);font-size:11px;color:var(--text-primary);")}>{v}</code>
+                  <button type="button" onClick={() => copyReveal(v)} style={actionGhostBtn}>
+                    {copied ? "copied" : "copy"}
+                  </button>
+                </div>
+              </div>
+            ))}
+            <div style={css("display:flex;justify-content:flex-end;")}>
+              <button type="button" onClick={() => setReveal(null)} style={actionPrimaryBtn}>
+                done
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -1049,3 +1295,20 @@ const dot = css("width:8px;height:8px;border-radius:1px;background:var(--accent)
 const H_WARN = "#ffb85f";
 const FILTER_CTL =
   "background:var(--surface-sunk);border:1px solid var(--border-soft);color:var(--text-muted);font-family:var(--font-mono);font-size:11px;padding:3px 8px;border-radius:2px;text-transform:none;letter-spacing:normal;";
+// Action-body collection modal + one-shot reveal modal styling. ACTION_INPUT
+// is a raw string (concatenated per-widget like FILTER_CTL); the rest are
+// resolved style objects.
+const ACTION_INPUT =
+  "background:var(--surface-sunk);border:1px solid var(--border);border-radius:2px;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;padding:6px 8px;letter-spacing:0.02em;text-transform:none;outline:none;";
+const actionLabel = css(
+  "display:flex;flex-direction:column;gap:4px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);",
+);
+const actionErrBox = css(
+  "border:1px solid #ffb85f;border-radius:2px;padding:7px 9px;background:color-mix(in srgb,#ffb85f 12%,transparent);color:#ffb85f;font-family:var(--font-mono);font-size:10px;letter-spacing:0.02em;text-transform:none;",
+);
+const actionPrimaryBtn = css(
+  "padding:6px 14px;border:1px solid var(--accent);background:var(--accent);color:var(--text-on-accent);font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;border-radius:2px;",
+);
+const actionGhostBtn = css(
+  "padding:6px 12px;border:1px solid var(--border);background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;border-radius:2px;",
+);
