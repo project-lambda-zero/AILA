@@ -88,7 +88,7 @@ export const ADMIN_CATS: { cat: string; items: string[] }[] = [
   { cat: "access", items: ["users", "teams", "teams cross-view", "api keys", "oidc providers"] },
   { cat: "operations", items: ["task queue", "queue depth", "dead letter", "health", "automation", "automation actions", "workflows", "scheduled reports", "mcp instances", "eval calibrators"] },
   { cat: "platform", items: ["dashboard", "systems", "sessions", "specialist agents", "persona routing", "platform corpus", "knowledge", "sandbox", "widget layout"] },
-  { cat: "cost & reporting", items: ["cost", "cost roi"] },
+  { cat: "cost & reporting", items: ["cost"] },
   { cat: "data & config", items: ["config", "tools", "finding states"] },
   { cat: "audit", items: ["audit logs", "llm log"] },
 ];

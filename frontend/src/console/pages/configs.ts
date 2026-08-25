@@ -627,15 +627,6 @@ export const PAGE_CONFIGS = {
       },
     ],
   },
-  // ---- Admin: cost & reporting -----------------------------------------
-  "admin:cost": {
-    title: "admin \u00b7 cost",
-    endpoint: "/cost/history",
-    itemsKey: "months",
-    blurb: "monthly LLM cost history",
-    columns: [c("year_month", "month"), c("total_cost_usd", "cost $"), c("total_tokens", "tokens")],
-    filters: [{ name: "year_month", label: "year month", type: "text" }],
-  },
   // ---- Admin: data & config --------------------------------------------
   "admin:config": {
     title: "admin \u00b7 config",
@@ -855,11 +846,6 @@ export const PAGE_CONFIGS = {
   "admin:teams-cross-view": {
     title: "admin \u00b7 teams cross-view",
     endpoint: "/admin/teams/cross-view",
-    columns: [],
-  },
-  "admin:cost-roi": {
-    title: "admin \u00b7 cost roi",
-    endpoint: "/cost/roi",
     columns: [],
   },
   "admin:queue-depth": {
