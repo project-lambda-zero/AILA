@@ -20,11 +20,13 @@ import StructuredValue from "./StructuredValue";
 
 /** A column projected from a list row. `render` overrides the default cell
  * text; `kind` selects a shared semantic renderer (status/severity/time/cost)
- * from badges.tsx. */
+ * from badges.tsx. Set `numeric` to force right alignment + tabular figures on
+ * a computed column whose value has no backing row field to auto-detect. */
 export interface PageColumn {
   field: string;
   label: string;
   kind?: "status" | "severity" | "time" | "cost";
+  numeric?: boolean;
   render?: (value: unknown, row: Record<string, unknown>) => ReactNode;
 }
 
@@ -642,7 +644,7 @@ export default function DataPage(
     const first = rows[0];
     return new Set(
       columns
-        .filter((c) => c.kind === "cost" || (first !== undefined && typeof first[c.field] === "number"))
+        .filter((c) => c.numeric === true || c.kind === "cost" || (first !== undefined && typeof first[c.field] === "number"))
         .map((c) => c.field),
     );
   }, [columns, rows]);

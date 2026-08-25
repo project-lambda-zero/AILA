@@ -1092,6 +1092,7 @@ export const PAGE_CONFIGS = {
         // don't collide with the raw ece_after column above).
         field: "ece_delta",
         label: "\u0394 ece",
+        numeric: true,
         render: (_v, row) => {
           const b = Number(row.ece_before);
           const a = Number(row.ece_after);
