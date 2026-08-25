@@ -22,6 +22,8 @@ from aila.api.deps import get_config_registry
 from aila.api.limiter import limiter
 from aila.api.schemas.endpoints import (
     ScheduledReportCreate,
+    ScheduledReportKindOption,
+    ScheduledReportKindResponse,
     ScheduledReportResponse,
     ScheduledReportTriggerResponse,
     ScheduledReportUpdate,
@@ -129,6 +131,48 @@ async def list_scheduled_reports(
 
     meta = PaginatedMeta(total=total, offset=offset, limit=limit).model_dump()
     return DataEnvelope(data=[_record_to_response(r) for r in page_rows], meta=meta)
+
+
+@router.get(
+    "/kinds",
+    response_model=DataEnvelope[list[ScheduledReportKindResponse]],
+    summary="List available scheduled report kinds",
+)
+@limiter.limit("60/minute")
+async def list_scheduled_report_kinds(
+    request: Request,
+    auth: AuthContext = Depends(_require_admin),
+) -> DataEnvelope[list[ScheduledReportKindResponse]]:
+    """Enumerate the report kinds the worker dispatch understands. Admin only.
+
+    Each entry carries a human name, a one-line description, and the declared
+    config-option schema that drives the wizard's typed options step. Read
+    from the backing dispatch in report_tasks so a new kind added there shows
+    up without a frontend edit.
+    """
+    from aila.platform.tasks.report_tasks import REPORT_KINDS
+
+    return DataEnvelope(
+        data=[
+            ScheduledReportKindResponse(
+                report_type=kind.report_type,
+                name=kind.name,
+                description=kind.description,
+                config_schema=[
+                    ScheduledReportKindOption(
+                        key=opt.key,
+                        type=opt.type,
+                        label=opt.label,
+                        default=opt.default,
+                        required=opt.required,
+                        options=opt.options,
+                    )
+                    for opt in kind.config_schema
+                ],
+            )
+            for kind in REPORT_KINDS
+        ]
+    )
 
 
 @router.post(

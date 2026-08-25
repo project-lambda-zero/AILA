@@ -21,6 +21,8 @@ __all__ = [
     "NotificationResponse",
     "OIDCAuthorizeResponse",
     "ScheduledReportCreate",
+    "ScheduledReportKindOption",
+    "ScheduledReportKindResponse",
     "ScheduledReportResponse",
     "ScheduledReportTriggerResponse",
     "ScheduledReportUpdate",
@@ -157,6 +159,26 @@ class ScheduledReportResponse(BaseModel):
     created_by: str
     created_at: datetime
     updated_at: datetime
+
+
+class ScheduledReportKindOption(BaseModel):
+    """One declared config option for a report kind's config_json."""
+
+    key: str
+    type: str
+    label: str
+    default: str | bool | None = None
+    required: bool = False
+    options: list[str] | None = None
+
+
+class ScheduledReportKindResponse(BaseModel):
+    """A report kind the scheduled-report dispatch understands."""
+
+    report_type: str
+    name: str
+    description: str
+    config_schema: list[ScheduledReportKindOption] = Field(default_factory=list)
 
 
 class NotificationResponse(BaseModel):
