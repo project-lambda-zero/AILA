@@ -9,6 +9,7 @@ import IntakeWizard from "./console/IntakeWizard";
 import LeftRail from "./console/LeftRail";
 import Login from "./console/Login";
 import { MODULES } from "./console/nav";
+import NotificationsCenter from "./console/NotificationsCenter";
 import { resolvePage } from "./console/pages/registry";
 import SettingsOverlay from "./console/SettingsOverlay";
 import ChatConsole from "./console/ChatConsole";
@@ -339,6 +340,7 @@ function Console() {
           </button>
         ) : null}
         <div style={{ flex: 1 }} />
+        <NotificationsCenter />
         <div
           style={{
             display: "flex",

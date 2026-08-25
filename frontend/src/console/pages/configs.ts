@@ -607,35 +607,6 @@ export const PAGE_CONFIGS = {
     columns: [c("session_id", "session"), c("user_id", "user"), c("title"), c("message_count", "messages"), c("last_message_at", "last msg"), c("created_at", "created")],
     filters: [{ name: "title", label: "title", type: "text" }, { name: "created_at", label: "created", type: "date-range" }],
   },
-  "admin:notifications": {
-    title: "admin \u00b7 notifications",
-    endpoint: "/notifications",
-    columns: [c("title"), c("category"), c("source_module", "module"), c("is_read", "read"), c("created_at", "created")],
-    filters: [{ name: "title", label: "title", type: "text" }, { name: "category", label: "category", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
-    actions: [
-      {
-        label: "mark read",
-        method: "POST",
-        endpoint: "/notifications/{id}/read",
-        // no whenStatus: always shown; the backend marks read idempotently
-      },
-    ],
-    bulkActions: [
-      {
-        label: "mark read",
-        method: "POST",
-        endpoint: "/notifications/{id}/read",
-      },
-    ],
-    pageActions: [
-      {
-        label: "mark all read",
-        method: "POST",
-        endpoint: "/notifications/read-all",
-        confirm: "Mark all notifications as read?",
-      },
-    ],
-  },
   "admin:mcp-instances": {
     title: "admin \u00b7 mcp instances",
     endpoint: "/platform/mcp/instances",
@@ -800,7 +771,6 @@ const DELETES: Record<string, { delete: string; idField?: string }> = {
   "admin:scheduled-reports": { delete: "/scheduled-reports/{id}" },
   "admin:tag-vocabulary": { delete: "/tags/vocabulary/{id}", idField: "tag_key" },
   "admin:systems": { delete: "/systems/{id}" },
-  "admin:notifications": { delete: "/notifications/{id}" },
   "admin:mcp-instances": { delete: "/platform/mcp/instances/{id}" },
 };
 
