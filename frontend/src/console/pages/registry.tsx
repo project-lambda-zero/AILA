@@ -5,6 +5,7 @@ import AdminDashboardPage from "./AdminDashboardPage";
 import AdminFindingStatesPage from "./AdminFindingStatesPage";
 import AdminPlatformCorpusPage from "./AdminPlatformCorpusPage";
 import AutomationWizard, { AutomationActionDetail } from "./AutomationWizard";
+import ScheduledReportWizard, { ScheduledReportDetail } from "./ScheduledReportWizard";
 import { PAGE_CONFIGS } from "./configs";
 import CostReportingPage from "./cost/CostReportingPage";
 import DataPage from "./DataPage";
@@ -125,6 +126,27 @@ const BESPOKE: Record<string, PageEntry> = {
         configKey="admin:automation"
         {...p}
         onNewClick={() => p.onOpenPage?.("admin", "new-automation", "new automation schedule")}
+      />
+    ),
+  },
+  // Scheduled-report creation is a bespoke wizard (kind catalog + typed
+  // options + recipient chips + cron preset picker) instead of a raw typed
+  // form: "+ new" on the scheduled-reports list opens it, and the detail
+  // body owns triggering + task polling (the generic list-level trigger
+  // action was removed so there is a single trigger path).
+  "admin:new-scheduled-report": {
+    title: "admin \u00b7 new scheduled report",
+    render: (p) => <ScheduledReportWizard {...p} />,
+  },
+  "admin:scheduled-reports": {
+    title: PAGE_CONFIGS["admin:scheduled-reports"].title,
+    render: (p) => (
+      <DataPage
+        config={PAGE_CONFIGS["admin:scheduled-reports"]}
+        configKey="admin:scheduled-reports"
+        {...p}
+        onNewClick={() => p.onOpenPage?.("admin", "new-scheduled-report", "new scheduled report")}
+        detailBody={(row) => <ScheduledReportDetail key={String(row.id ?? "")} row={row} />}
       />
     ),
   },

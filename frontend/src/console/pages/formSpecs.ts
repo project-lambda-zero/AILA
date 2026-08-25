@@ -504,29 +504,11 @@ export const CREATE_FORMS = {
   // (registered as `admin:new-automation`), not as a FieldForm spec. The
   // wizard drives the same POST /automation/schedules with a stepped UX
   // over the live action catalog + system fleet + cron preset picker.
-  "admin:scheduled-reports": {
-    title: "admin \u00b7 new scheduled report",
-    endpoint: "/scheduled-reports",
-    method: "POST",
-    fields: [
-      { name: "name", label: "report name", type: "text", required: true },
-      { name: "report_type", label: "report type", type: "text", required: true, placeholder: "e.g. fleet_health" },
-      { name: "cron_expression", label: "cron expression", type: "text", required: true },
-      {
-        name: "recipient_emails_json",
-        label: "recipients",
-        type: "json-array-tags",
-        placeholder: "one email per chip",
-      },
-      {
-        name: "config_json",
-        label: "report options",
-        type: "json-object-keyval",
-        help: "per-report-type options",
-      },
-      { name: "is_active", label: "active", type: "checkbox" },
-    ],
-  },
+  // NOTE: `admin:scheduled-reports` CREATE lives in the bespoke
+  // ScheduledReportWizard (registered as `admin:new-scheduled-report`), not
+  // as a FieldForm spec. The wizard drives the same POST /scheduled-reports
+  // over the live kinds catalog + typed options + email recipient chips +
+  // cron preset picker.
   "admin:mcp-instances": {
     title: "admin \u00b7 new mcp instance",
     endpoint: "/platform/mcp/instances",

@@ -3,7 +3,7 @@ import { createElement } from "react";
 import { css } from "../css";
 import { AuditEventDetail } from "./AuditEventDetail";
 import { SeverityBadge, StatusBadge, WorkflowStateBadge } from "./badges";
-import { humanizeCron } from "./cronPreview";
+import { formatFireTime, humanizeCron, nextRuns } from "./cronPreview";
 import type { PageAction, PageColumn, PageConfig } from "./DataPage";
 import { LlmLogViewer } from "./LlmLogViewer";
 
@@ -701,15 +701,51 @@ export const PAGE_CONFIGS = {
   "admin:scheduled-reports": {
     title: "admin \u00b7 scheduled reports",
     endpoint: "/scheduled-reports",
-    columns: [c("name"), c("report_type", "type"), c("cron_expression", "cron"), c("is_active", "active"), c("last_run_at", "last run"), c("created_at", "created")],
-    filters: [{ name: "name", label: "name", type: "text" }, { name: "is_active", label: "is active", type: "select" }, { name: "last_run_at", label: "last run", type: "date-range" }],
-    actions: [
+    blurb: "a scheduled report is a recurring server-side generation of a named report kind, delivered to a fixed recipient list on a cron",
+    columns: [
+      c("name"),
+      c("report_type", "type"),
+      c("cron_expression", "cron"),
       {
-        label: "trigger now",
-        method: "POST",
-        endpoint: "/scheduled-reports/{id}/trigger",
-        confirm: "Trigger this report now?",
+        // display-only humanized cron column derived from cron_expression
+        // (distinct `field` so the React key + auto-derived filter options
+        // don't collide with the raw cron column above).
+        field: "cron_human",
+        label: "schedule",
+        render: (_value, row) => {
+          const raw = typeof row["cron_expression"] === "string" ? String(row["cron_expression"]) : "";
+          return raw ? humanizeCron(raw) : "\u2014";
+        },
       },
+      {
+        // display-only next-fire-time column: first upcoming run from the
+        // cron expression, formatted UTC. Empty/absent expression yields an
+        // em dash rather than an empty cell.
+        field: "next_run",
+        label: "next run",
+        render: (_value, row) => {
+          const raw = typeof row["cron_expression"] === "string" ? String(row["cron_expression"]) : "";
+          if (!raw) return "\u2014";
+          const runs = nextRuns(raw, 1);
+          return runs.length ? formatFireTime(runs[0]) : "\u2014";
+        },
+      },
+      c("is_active", "active"),
+      c("last_run_at", "last run"),
+      c("created_at", "created"),
+    ],
+    filters: [
+      { name: "name", label: "name", type: "text" },
+      {
+        name: "report_type",
+        label: "type",
+        type: "select",
+        optionsFrom: "/scheduled-reports/kinds",
+        optionsValueField: "report_type",
+        optionsLabelField: "name",
+      },
+      { name: "is_active", label: "is active", type: "select" },
+      { name: "last_run_at", label: "last run", type: "date-range" },
     ],
   },
   // ---- Admin: data & config --------------------------------------------
