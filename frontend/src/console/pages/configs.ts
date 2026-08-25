@@ -600,13 +600,6 @@ export const PAGE_CONFIGS = {
     columns: [c("name"), c("host"), c("distro"), c("connectivity_status", "conn"), c("last_scan_at", "last scan"), c("last_scan_status", "scan status"), c("top_severity", "top sev")],
     filters: [{ name: "name", label: "name", type: "text" }],
   },
-  "admin:topology": {
-    title: "admin \u00b7 topology",
-    endpoint: "/topology",
-    itemsKey: "nodes",
-    blurb: "fleet nodes",
-    columns: [],
-  },
   "admin:sessions": {
     title: "admin \u00b7 sessions",
     endpoint: "/sessions",
@@ -760,11 +753,6 @@ export const PAGE_CONFIGS = {
   "admin:cost-roi": {
     title: "admin \u00b7 cost roi",
     endpoint: "/cost/roi",
-    columns: [],
-  },
-  "admin:topology-subnets": {
-    title: "admin \u00b7 topology subnets",
-    endpoint: "/topology/subnets",
     columns: [],
   },
   "admin:queue-depth": {
