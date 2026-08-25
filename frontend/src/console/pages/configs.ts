@@ -880,10 +880,29 @@ export const PAGE_CONFIGS = {
   },
   "admin:specialist-agents": {
     title: "admin \u00b7 specialist agents",
-    endpoint: "/agents/specialists?module_id=vr",
-    blurb: "vr module specialists",
+    endpoint: "/agents/specialists",
+    blurb: "per-module specialist roster \u00b7 pick a module to list, or seed its built-in defaults",
     columns: [c("name"), c("module_id", "module"), c("capability"), c("strategy_family", "strategy"), c("enabled"), c("created_at", "created")],
-    filters: [{ name: "name", label: "name", type: "text" }, { name: "created_at", label: "created", type: "date-range" }],
+    filters: [
+      // `module_id` is required by the backend list handler; seed with vr so
+      // the first fetch is well-formed, and let the operator switch modules
+      // from the same page without reloading the shell.
+      { name: "module_id", label: "module", type: "select", server: true, defaultValue: "vr", options: [
+        { value: "vr", label: "vr" },
+        { value: "malware", label: "malware" },
+        { value: "forensics", label: "forensics" },
+      ] },
+      { name: "name", label: "name", type: "text" },
+      { name: "created_at", label: "created", type: "date-range" },
+    ],
+    // Seed endpoints are per-module and idempotent; a filter-substituted
+    // pageAction is not expressible (PageAction only templates `{id}`/`{scope}`
+    // from the selected row), so expose one fixed seed button per module.
+    pageActions: [
+      { label: "seed vr", method: "POST", endpoint: "/agents/specialists/vr/seed" },
+      { label: "seed malware", method: "POST", endpoint: "/agents/specialists/malware/seed" },
+      { label: "seed forensics", method: "POST", endpoint: "/agents/specialists/forensics/seed" },
+    ],
   },
   // ---- VR: additional (previously unmapped) ----------------------------
   "vr:cves": {

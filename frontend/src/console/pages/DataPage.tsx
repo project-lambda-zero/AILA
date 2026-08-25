@@ -71,6 +71,11 @@ export interface PageFilter {
    * matching behavior is unchanged. `deriveOptions` still reads `row[name]`,
    * so pair `deriveValue` with static `options` for select/segmented. */
   deriveValue?: (row: Record<string, unknown>) => string;
+  /** Initial scalar value applied on mount (text / select / segmented). Use
+   * when the backend requires a narrowing param and there is no meaningful
+   * "all" -- e.g. `/agents/specialists?module_id=` is required, so the module
+   * selector seeds with `vr`. Ignored for multi-select / range filters. */
+  defaultValue?: string;
 }
 
 /** A two-ended range value (date-range / numeric-range). `lo` is
@@ -417,7 +422,15 @@ export default function DataPage(
   // One active value per configured filter. Scalars for text/select/segmented,
   // a string[] for multi-select, a {lo,hi} range for date/numeric ranges. Any
   // change resets pagination to page 1.
-  const [filterVals, setFilterVals] = useState<Record<string, FilterValue>>({});
+  const [filterVals, setFilterVals] = useState<Record<string, FilterValue>>(() => {
+    const init: Record<string, FilterValue> = {};
+    for (const f of config.filters ?? []) {
+      if (f.defaultValue != null && (f.type === "text" || f.type === "select" || f.type === "segmented")) {
+        init[f.name] = f.defaultValue;
+      }
+    }
+    return init;
+  });
   const setFilter = (name: string, value: string): void => {
     setFilterVals((cur) => ({ ...cur, [name]: value }));
     setPage(1);

@@ -117,6 +117,12 @@ _BUILTINS: dict[str, tuple[dict[str, str], ...]] = {
          "description": "Exploit-development specialist: turn a confirmed finding into a working PoC."},
         {"name": "lara", "capability": "variant-hunt",
          "description": "Variant-hunt specialist: find sibling instances of a confirmed bug pattern."},
+        {"name": "gordon", "capability": "source-audit",
+         "description": "Source-audit specialist: read-only source review for injectable sinks, unsafe patterns, and untrusted-input flow into dangerous calls."},
+        {"name": "garrett", "capability": "crypto",
+         "description": "Crypto specialist: review cryptographic construction, key handling, and algorithm misuse across source and binaries."},
+        {"name": "ratchet", "capability": "fuzz",
+         "description": "Fuzz-targeting specialist: identify and shape fuzzable entry points and harness candidates."},
     ),
     "malware": (
         {"name": "alucard", "capability": "re",
