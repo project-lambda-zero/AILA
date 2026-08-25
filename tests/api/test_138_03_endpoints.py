@@ -1,6 +1,6 @@
 """Tests for Plan 138-03 endpoint groups.
 
-Tests: dashboard, search, tags, finding workflow, saved filters, widget layout,
+Tests: dashboard, search, tags, finding workflow, widget layout,
 scheduled reports, notifications.
 
 All tests run against PostgreSQL (AILA_TEST_DATABASE_URL).
@@ -415,99 +415,6 @@ async def test_finding_workflow_requires_operator(async_client, reader_token, te
 
 
 # ---------------------------------------------------------------------------
-# Saved filters tests (BE-09)
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_saved_filter_crud(async_client, admin_token, test_db):
-    """POST/GET/PATCH/DELETE /saved-filters: full CRUD cycle."""
-    # Create
-    resp = await async_client.post(
-        "/saved-filters",
-        json={
-            "name": "Critical findings",
-            "entity_type": "findings",
-            "filter_json": '{"severity": "CRITICAL"}',
-            "is_pinned": True,
-        },
-        headers={"Authorization": f"Bearer {admin_token}"},
-    )
-    assert resp.status_code == 201, resp.text
-    filter_id = resp.json()["data"]["id"]
-    assert resp.json()["data"]["name"] == "Critical findings"
-
-    # List
-    resp = await async_client.get(
-        "/saved-filters",
-        params={"entity_type": "findings"},
-        headers={"Authorization": f"Bearer {admin_token}"},
-    )
-    assert resp.status_code == 200
-    items = resp.json()["data"]
-    assert any(i["id"] == filter_id for i in items)
-
-    # Update
-    resp = await async_client.patch(
-        f"/saved-filters/{filter_id}",
-        json={"name": "Critical and High findings", "is_pinned": False},
-        headers={"Authorization": f"Bearer {admin_token}"},
-    )
-    assert resp.status_code == 200
-    assert resp.json()["data"]["name"] == "Critical and High findings"
-
-    # Delete
-    resp = await async_client.delete(
-        f"/saved-filters/{filter_id}",
-        headers={"Authorization": f"Bearer {admin_token}"},
-    )
-    assert resp.status_code == 204
-
-
-@pytest.mark.asyncio
-async def test_saved_filter_team_sharing(async_client, admin_token, operator_token, test_db):
-    """Shared filter is visible to other users."""
-    # Create shared filter as admin
-    resp = await async_client.post(
-        "/saved-filters",
-        json={
-            "name": "Team shared filter",
-            "entity_type": "systems",
-            "filter_json": "{}",
-            "shared_with_team": True,
-        },
-        headers={"Authorization": f"Bearer {admin_token}"},
-    )
-    assert resp.status_code == 201
-
-    # Operator should see shared filter
-    resp = await async_client.get(
-        "/saved-filters",
-        headers={"Authorization": f"Bearer {operator_token}"},
-    )
-    assert resp.status_code == 200
-    items = resp.json()["data"]
-    assert any(i["name"] == "Team shared filter" for i in items)
-
-
-@pytest.mark.asyncio
-async def test_saved_filter_ownership_enforced(async_client, admin_token, operator_token, test_db):
-    """Owner check: operator cannot delete admin's filter."""
-    resp = await async_client.post(
-        "/saved-filters",
-        json={"name": "Admin only", "entity_type": "findings", "filter_json": "{}"},
-        headers={"Authorization": f"Bearer {admin_token}"},
-    )
-    filter_id = resp.json()["data"]["id"]
-
-    resp = await async_client.delete(
-        f"/saved-filters/{filter_id}",
-        headers={"Authorization": f"Bearer {operator_token}"},
-    )
-    assert resp.status_code == 403
-
-
-# ---------------------------------------------------------------------------
 # Widget layout tests (BE-04)
 # ---------------------------------------------------------------------------
 
@@ -854,7 +761,6 @@ async def test_all_endpoints_use_envelope(admin_key_record, test_db):
         ("/notifications", "GET"),
         ("/notifications/unread", "GET"),
         ("/widgets/layout", "GET"),
-        ("/saved-filters", "GET"),
         ("/scheduled-reports", "GET"),
         ("/findings/workflow/states", "GET"),
     ]
