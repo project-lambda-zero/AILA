@@ -2793,8 +2793,10 @@ def create_vr_router() -> APIRouter:
             )
 
         registry_svc = McpRegistryService()
-        # _spec/_resolved_url are 'private' by convention but stable
-        # since they back the public /mcp/servers route too.
+        # _spec/_resolved_url are underscore-prefixed by convention but
+        # called directly here to resolve the operator-set audit_mcp
+        # base_url (env -> ConfigRegistry -> catalog -> default) for the
+        # SSRF-guarded refresh POST below. They back no HTTP route.
         spec = registry_svc._spec("audit_mcp")
         if spec is None:
             raise HTTPException(
