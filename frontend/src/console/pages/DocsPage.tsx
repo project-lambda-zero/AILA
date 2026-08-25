@@ -191,7 +191,7 @@ export default function DocsPage(props: ModulePageProps): JSX.Element {
           style={{
             fontFamily: "var(--font-display)",
             color: "var(--text-primary)",
-            fontWeight: 700,
+            fontWeight: 400,
             letterSpacing: "0.16em",
           }}
         >
