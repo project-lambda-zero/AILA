@@ -3,6 +3,7 @@ import type { JSX } from "react";
 import type { ModulePageProps } from "../contract";
 import AdminDashboardPage from "./AdminDashboardPage";
 import AdminPlatformCorpusPage from "./AdminPlatformCorpusPage";
+import AutomationWizard, { AutomationActionDetail } from "./AutomationWizard";
 import { PAGE_CONFIGS } from "./configs";
 import DataPage from "./DataPage";
 import ForensicsProjectPage from "./forensics/ForensicsProjectPage";
@@ -83,6 +84,48 @@ const BESPOKE: Record<string, PageEntry> = {
   "admin:persona-routing": {
     title: "admin \u00b7 persona model routing",
     render: (p) => <PersonaModelRoutingPage {...p} />,
+  },
+  // Automation schedule creation is a stepped wizard rather than a raw
+  // typed form: "+ new" on the automation list opens this window, and the
+  // action catalog's "schedule this action" button opens it with step 1
+  // pre-filled by threading the action_id through the shell's prefill slot.
+  "admin:new-automation": {
+    title: "admin \u00b7 new automation schedule",
+    render: (p) => <AutomationWizard {...p} />,
+  },
+  "admin:automation": {
+    title: PAGE_CONFIGS["admin:automation"].title,
+    render: (p) => (
+      <DataPage
+        config={PAGE_CONFIGS["admin:automation"]}
+        configKey="admin:automation"
+        {...p}
+        onNewClick={() => p.onOpenPage?.("admin", "new-automation", "new automation schedule")}
+      />
+    ),
+  },
+  "admin:automation-actions": {
+    title: PAGE_CONFIGS["admin:automation-actions"].title,
+    render: (p) => (
+      <DataPage
+        config={PAGE_CONFIGS["admin:automation-actions"]}
+        configKey="admin:automation-actions"
+        {...p}
+        detailBody={(row) => (
+          <AutomationActionDetail
+            row={row}
+            onSchedule={(actionId) =>
+              p.onOpenPage?.(
+                "admin",
+                "new-automation",
+                `schedule ${actionId}`.trim(),
+                actionId,
+              )
+            }
+          />
+        )}
+      />
+    ),
   },
   // Targets create is a multipart upload wizard, not a typed field form: the
   // "+ new" button opens the module's upload window instead.

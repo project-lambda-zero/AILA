@@ -498,26 +498,10 @@ export const CREATE_FORMS = {
       { name: "default_team_id", label: "default team id", type: "text" },
     ],
   },
-  "admin:automation": {
-    title: "admin \u00b7 new automation schedule",
-    endpoint: "/automation/schedules",
-    method: "POST",
-    fields: [
-      {
-        name: "action_id",
-        label: "action",
-        type: "select",
-        required: true,
-        optionsFrom: "/automation/actions",
-        optionsValueField: "action_id",
-        optionsLabelField: "description",
-      },
-      { name: "target_name", label: "target", type: "text", required: true, placeholder: "system or target name" },
-      { name: "cron_expression", label: "cron expression", type: "text", required: true, placeholder: "0 9 * * MON" },
-      { name: "action_kwargs", label: "action arguments", type: "keyval" },
-      { name: "enabled", label: "enabled", type: "checkbox" },
-    ],
-  },
+  // NOTE: `admin:automation` CREATE lives in the bespoke AutomationWizard
+  // (registered as `admin:new-automation`), not as a FieldForm spec. The
+  // wizard drives the same POST /automation/schedules with a stepped UX
+  // over the live action catalog + system fleet + cron preset picker.
   "admin:scheduled-reports": {
     title: "admin \u00b7 new scheduled report",
     endpoint: "/scheduled-reports",

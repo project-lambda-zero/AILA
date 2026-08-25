@@ -3,6 +3,7 @@ import { createElement } from "react";
 import { css } from "../css";
 import { AuditEventDetail } from "./AuditEventDetail";
 import { SeverityBadge, StatusBadge } from "./badges";
+import { humanizeCron } from "./cronPreview";
 import type { PageColumn, PageConfig } from "./DataPage";
 import { LlmLogViewer } from "./LlmLogViewer";
 
@@ -517,8 +518,47 @@ export const PAGE_CONFIGS = {
   "admin:automation": {
     title: "admin \u00b7 automation",
     endpoint: "/automation/schedules",
-    columns: [c("action_id", "action"), c("target_name", "target"), c("cron_expression", "cron"), c("enabled"), c("last_run_at", "last run"), c("last_run_result", "result")],
-    filters: [{ name: "target_name", label: "target name", type: "text" }, { name: "last_run_at", label: "last run", type: "date-range" }],
+    blurb: "an automation schedule is a registered action the platform runs on a cron against a target system",
+    columns: [
+      c("action_id", "action"),
+      c("target_name", "target"),
+      c("cron_expression", "cron"),
+      {
+        // display-only humanized cron column derived from cron_expression
+        // (distinct `field` so the React key + auto-derived filter options
+        // don't collide with the raw cron column above).
+        field: "cron_human",
+        label: "schedule",
+        render: (_value, row) => {
+          const raw = typeof row["cron_expression"] === "string" ? String(row["cron_expression"]) : "";
+          return raw ? humanizeCron(raw) : "\u2014";
+        },
+      },
+      c("enabled"),
+      c("last_run_at", "last run"),
+      c("last_run_result", "result"),
+    ],
+    filters: [
+      {
+        name: "action_id",
+        label: "action",
+        type: "select",
+        optionsFrom: "/automation/actions",
+        optionsValueField: "action_id",
+        optionsLabelField: "action_id",
+      },
+      {
+        name: "enabled",
+        label: "enabled",
+        type: "select",
+        options: [
+          { value: "true", label: "yes" },
+          { value: "false", label: "no" },
+        ],
+      },
+      { name: "target_name", label: "target name", type: "text" },
+      { name: "last_run_at", label: "last run", type: "date-range" },
+    ],
   },
   "admin:workflows": {
     title: "admin \u00b7 workflows",
@@ -781,7 +821,13 @@ export const PAGE_CONFIGS = {
   "admin:automation-actions": {
     title: "admin \u00b7 automation actions",
     endpoint: "/automation/actions",
-    columns: [],
+    blurb: "the live AutomationRegistry -- every registered action a module exposes for scheduling",
+    idField: "action_id",
+    columns: [c("action_id", "action"), c("description"), c("module_id", "module")],
+    filters: [
+      { name: "module_id", label: "module", type: "select" },
+      { name: "action_id", label: "action id", type: "text" },
+    ],
   },
   "admin:eval-calibrators": {
     title: "admin \u00b7 eval calibrators",

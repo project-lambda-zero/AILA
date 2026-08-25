@@ -56,3 +56,4 @@ class AutomationActionResponse(BaseModel):
     action_id: str
     description: str
     module_id: str
+    param_schema: dict | None = None
