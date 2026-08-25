@@ -1063,7 +1063,8 @@ export const PAGE_CONFIGS = {
  * `{id}` / `{scope}` are filled from the selected row + active scope. */
 const DELETES: Record<string, { delete: string; idField?: string }> = {
   "vr:workspaces": { delete: "/vr/workspaces/{id}" },
-  "vr:targets": { delete: "/vr/targets/{id}" },
+  // vr:targets delete lives in the bespoke VRTargetDetail action toolbar
+  // (with kind/state-aware siblings), so no generic header delete here.
   "vr:investigations": { delete: "/vr/investigations/{id}" },
   "vr:patterns": { delete: "/vr/patterns/{id}" },
   "vr:disclosures": { delete: "/vr/disclosures/{id}" },

@@ -20,6 +20,7 @@ import SandboxPage from "./SandboxPage";
 import TargetInvestigations from "./TargetInvestigations";
 import { TeamCrossDetail } from "./TeamCrossDetail";
 import UploadForm from "./UploadForm";
+import VRTargetDetail from "./VRTargetDetail";
 import VrPatternsPage from "./VrPatternsPage";
 import VulnerabilityPage from "./VulnerabilityPage";
 import { WorkflowTransitionsDetail } from "./WorkflowTransitionsDetail";
@@ -221,9 +222,8 @@ const BESPOKE: Record<string, PageEntry> = {
         {...p}
         onNewClick={() => p.onOpenPage?.("vr", "new-target", "upload target")}
         detailBody={(row) => (
-          <TargetInvestigations
-            targetId={String(row.id ?? "")}
-            endpoint="/vr/investigations"
+          <VRTargetDetail
+            row={row}
             onOpenXray={(inv) => p.onOpenPage?.("vr", "xray", `vr \u00b7 x-ray`, inv.id)}
           />
         )}

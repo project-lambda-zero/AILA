@@ -47,7 +47,7 @@ export default function TargetInvestigations({ targetId, endpoint, onOpenXray }:
   }
   const invs = q.data ?? [];
   if (invs.length === 0) {
-    return <div style={css("grid-column:1/-1;color:var(--text-faint);font-size:10px;")}>no investigations for this target.</div>;
+    return <div style={css("grid-column:1/-1;color:var(--text-faint);font-size:10px;")}>no investigation is running for this target.</div>;
   }
 
   return (
