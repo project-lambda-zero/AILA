@@ -535,12 +535,6 @@ export const PAGE_CONFIGS = {
     filters: [{ name: "year_month", label: "year month", type: "text" }],
   },
   // ---- Admin: data & config --------------------------------------------
-  "admin:tag-vocabulary": {
-    title: "admin \u00b7 tag vocabulary",
-    endpoint: "/tags/vocabulary",
-    columns: [c("tag_key", "tag"), c("description"), c("is_system_default", "system"), c("created_at", "created")],
-    filters: [{ name: "tag_key", label: "tag key", type: "text" }, { name: "created_at", label: "created", type: "date-range" }],
-  },
   "admin:config": {
     title: "admin \u00b7 config",
     endpoint: "/config",
@@ -820,7 +814,6 @@ const DELETES: Record<string, { delete: string; idField?: string }> = {
   "admin:oidc-providers": { delete: "/auth/oidc/providers/{id}" },
   "admin:automation": { delete: "/automation/schedules/{id}" },
   "admin:scheduled-reports": { delete: "/scheduled-reports/{id}" },
-  "admin:tag-vocabulary": { delete: "/tags/vocabulary/{id}", idField: "tag_key" },
   "admin:systems": { delete: "/systems/{id}" },
   "admin:mcp-instances": { delete: "/platform/mcp/instances/{id}" },
 };

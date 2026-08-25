@@ -21,6 +21,13 @@
  *   GET    /topology                       -> DataEnvelope[TopologyResponse]
  *   GET    /topology/subnets               -> DataEnvelope[list[SubnetGroup]]
  *
+ * Asset-tag hooks below hit the platform /tags router (src/aila/api/routers/tags.py),
+ * co-located here because the vocabulary governs Systems tagging:
+ *   GET/POST /tags/vocabulary              -> admin-managed tag key vocabulary
+ *   DELETE   /tags/vocabulary/{tag_key}    -> remove a vocabulary key (admin)
+ *   GET/POST /tags/systems/{id}            -> tags assigned to a system (operator+)
+ *   DELETE   /tags/systems/{id}/{tag_id}   -> remove a tag from a system (operator+)
+ *
  * apiFetch unwraps the single DataEnvelope layer (`data` key) for every hook.
  * Every request/response mirror the exact Pydantic schemas at
  * src/aila/api/schemas/systems.py and src/aila/api/schemas/topology.py.
@@ -68,6 +75,25 @@ export interface SystemsPage {
   page_size: number;
   pages: number;
   items: SystemEnriched[];
+}
+
+/** Mirrors TagVocabResponse -- an admin-managed assignable tag key. `id` is a
+ *  string on this endpoint (unlike the int `SystemTag.id`). */
+export interface TagVocabEntry {
+  id: string;
+  tag_key: string;
+  description: string;
+  is_system_default: boolean;
+  created_at: string | null;
+}
+
+/** Mirrors TagResponse -- one tag assigned to a system. */
+export interface SystemTag {
+  id: number;
+  system_id: number;
+  tag_key: string;
+  tag_value: string;
+  created_at: string | null;
 }
 
 /** POST /systems body -- SystemCreateRequest. name/host required; the four
@@ -319,6 +345,83 @@ export function useDeleteSystem() {
       void qc.invalidateQueries({ queryKey: ["systems", "list"] });
       void qc.invalidateQueries({ queryKey: ["systems", "detail", id] });
       void qc.invalidateQueries({ queryKey: ["topology"] });
+    },
+  });
+}
+
+/* ------------------------------ asset tags ------------------------------- */
+
+/** Admin-managed tag vocabulary (GET /tags/vocabulary is admin-only). Pass
+ *  `enabled=false` for non-admin callers so the query never fires a 403. */
+export function useTagVocabulary(enabled: boolean = true) {
+  return useQuery({
+    queryKey: ["tags", "vocabulary"],
+    queryFn: () => apiFetch<TagVocabEntry[]>("/tags/vocabulary?limit=250"),
+    enabled,
+    staleTime: 30_000,
+  });
+}
+
+export function useCreateVocabEntry() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { tag_key: string; description: string }) =>
+      apiFetch<TagVocabEntry>("/tags/vocabulary", {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["tags", "vocabulary"] });
+    },
+  });
+}
+
+export function useDeleteVocabEntry() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (tagKey: string) =>
+      apiFetch<unknown>(`/tags/vocabulary/${encodeURIComponent(tagKey)}`, { method: "DELETE" }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["tags", "vocabulary"] });
+    },
+  });
+}
+
+/** Tags currently assigned to a system (GET /tags/systems/{id}); operator+. */
+export function useSystemTags(id: number | null, enabled: boolean = true) {
+  return useQuery({
+    queryKey: ["tags", "system", id],
+    queryFn: () => apiFetch<SystemTag[]>(`/tags/systems/${id}`),
+    enabled: id !== null && enabled,
+    staleTime: 15_000,
+  });
+}
+
+export function useAssignSystemTag(id: number | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { tag_key: string; tag_value: string }) =>
+      apiFetch<SystemTag>(`/tags/systems/${id}`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["tags", "system", id] });
+      void qc.invalidateQueries({ queryKey: ["systems", "detail", id] });
+      void qc.invalidateQueries({ queryKey: ["systems", "list"] });
+    },
+  });
+}
+
+export function useDeleteSystemTag(id: number | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (tagId: number) =>
+      apiFetch<unknown>(`/tags/systems/${id}/${tagId}`, { method: "DELETE" }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["tags", "system", id] });
+      void qc.invalidateQueries({ queryKey: ["systems", "detail", id] });
+      void qc.invalidateQueries({ queryKey: ["systems", "list"] });
     },
   });
 }

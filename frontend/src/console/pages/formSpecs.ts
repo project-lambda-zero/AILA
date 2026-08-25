@@ -541,22 +541,6 @@ export const CREATE_FORMS = {
       { name: "is_active", label: "active", type: "checkbox" },
     ],
   },
-  "admin:tag-vocabulary": {
-    title: "admin \u00b7 new tag key",
-    endpoint: "/tags/vocabulary",
-    method: "POST",
-    fields: [
-      {
-        name: "tag_key",
-        label: "tag key",
-        type: "text",
-        required: true,
-        placeholder: "lowercase alphanumeric + underscore/hyphen",
-        help: "pattern ^[a-z0-9_-]+$",
-      },
-      { name: "description", label: "description", type: "textarea" },
-    ],
-  },
   "admin:systems": {
     title: "admin \u00b7 new system",
     endpoint: "/systems",
