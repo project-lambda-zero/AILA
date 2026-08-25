@@ -120,7 +120,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
       >
         <span
           style={css(
-            `font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
+            `font-family:var(--font-display);font-weight:400;font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
           )}
         >
           module
@@ -157,7 +157,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
             type="button"
             onClick={onTogglePages}
             style={css(
-              `display:flex;align-items:center;gap:7px;width:100%;padding:10px 11px 6px;background:transparent;border:0;cursor:pointer;font-family:var(--font-mono);font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
+              `display:flex;align-items:center;gap:7px;width:100%;padding:10px 11px 6px;background:transparent;border:0;cursor:pointer;font-family:var(--font-display);font-weight:400;font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
             )}
           >
             <span style={css(`color:var(--accent);font-size:8px;`)}>{pagesOpen ? "\u25bc" : "\u25b6"}</span>
@@ -211,7 +211,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
       >
         <span
           style={css(
-            `font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
+            `font-family:var(--font-display);font-weight:400;font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
           )}
         >
           {activeModule.noun}
@@ -336,7 +336,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
             onToggleAdmin();
           }}
           style={css(
-            `display:flex;align-items:center;gap:7px;width:100%;padding:9px 11px;background:var(--surface-chrome);border:0;border-top:1px solid var(--border-soft);cursor:pointer;font-family:var(--font-mono);font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
+            `display:flex;align-items:center;gap:7px;width:100%;padding:9px 11px;background:var(--surface-chrome);border:0;border-top:1px solid var(--border-soft);cursor:pointer;font-family:var(--font-display);font-weight:400;font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
           )}
         >
           <span style={css(`color:var(--accent);font-size:8px;`)}>{adminOpen ? "\u25bc" : "\u25b6"}</span>
@@ -358,7 +358,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
                     setAdminCatOpen((prev) => ({ ...prev, [g.cat]: !prev[g.cat] }))
                   }
                   style={css(
-                    `display:flex;align-items:center;gap:6px;width:100%;padding:7px 9px 3px;background:transparent;border:0;cursor:pointer;font-size:8px;letter-spacing:0.18em;text-transform:uppercase;color:var(--accent);text-align:left;`,
+                    `display:flex;align-items:center;gap:6px;width:100%;padding:7px 9px 3px;background:transparent;border:0;cursor:pointer;font-family:var(--font-display);font-weight:400;font-size:8px;letter-spacing:0.18em;text-transform:uppercase;color:var(--accent);text-align:left;`,
                   )}
                 >
                   <span style={css(`font-size:8px;`)}>{catExpanded ? "\u25bc" : "\u25b6"}</span>
@@ -396,7 +396,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
         type="button"
         onClick={onOpenSettings}
         style={css(
-          `display:flex;align-items:center;gap:7px;width:100%;flex:0 0 auto;padding:9px 11px;border:0;border-top:1px solid var(--border-soft);background:var(--surface-chrome);color:var(--text-muted);font-family:var(--font-mono);font-size:9px;letter-spacing:0.16em;text-transform:uppercase;cursor:pointer;`,
+          `display:flex;align-items:center;gap:7px;width:100%;flex:0 0 auto;padding:9px 11px;border:0;border-top:1px solid var(--border-soft);background:var(--surface-chrome);color:var(--text-muted);font-family:var(--font-display);font-weight:400;font-size:9px;letter-spacing:0.16em;text-transform:uppercase;cursor:pointer;`,
         )}
       >
         <span style={css(`color:var(--accent);`)}>{"\u2699"}</span>

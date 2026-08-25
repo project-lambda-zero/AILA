@@ -924,7 +924,7 @@ export default function DataPage(
       <div style={css(`flex:${sel ? "1 1 62%" : "1 1 100%"};min-width:0;` + panelBox)}>
         <div style={panelTitle}>
           <span style={dot} />
-          <span style={css("color:var(--text-primary);")}>{config.title}</span>
+          <span style={css("color:var(--text-primary);font-family:var(--font-display);font-weight:400;")}>{config.title}</span>
           {config.scopeFrom && scopeParents.length ? (
             <span style={css("display:inline-flex;align-items:center;gap:6px;")}>
               <span style={css("font-size:8.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);")}>scope</span>
@@ -1114,7 +1114,7 @@ export default function DataPage(
         <div style={css("flex:1 1 38%;min-width:0;" + panelBox)}>
             <div style={panelTitle}>
               <span style={dot} />
-              <span style={css("color:var(--text-primary);")}>detail</span>
+              <span style={css("color:var(--text-primary);font-family:var(--font-display);font-weight:400;")}>detail</span>
               {sel && sel["status"] != null ? (
                 <StatusBadge value={sel["status"]} />
               ) : null}
