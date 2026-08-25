@@ -914,7 +914,7 @@ def create_forensics_router() -> APIRouter:
         request: Request,
         auth: AuthContext = Depends(require_auth),
         page: int = Query(default=1, ge=1),
-        page_size: int = Query(default=20, ge=1, le=100),
+        page_size: int = Query(default=20, ge=1, le=250),
     ) -> DataEnvelope[PaginatedResponse[ProjectSummary]]:
         del request
 
