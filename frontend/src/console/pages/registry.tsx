@@ -25,6 +25,7 @@ import UploadForm from "./UploadForm";
 import VRTargetDetail from "./VRTargetDetail";
 import VrPatternsPage from "./VrPatternsPage";
 import VulnerabilityPage from "./VulnerabilityPage";
+import WidgetLayoutPage from "./WidgetLayoutPage";
 import { WorkflowTransitionsDetail } from "./WorkflowTransitionsDetail";
 import WorkspaceTargets from "./WorkspaceTargets";
 import XRayPage from "./XRayPage";
@@ -103,6 +104,7 @@ const BESPOKE: Record<string, PageEntry> = {
   },
   "admin:knowledge": { title: "admin \u00b7 knowledge", render: (p) => <KnowledgePage {...p} /> },
   "admin:sandbox": { title: "admin \u00b7 sandbox", render: (p) => <SandboxPage {...p} /> },
+  "admin:widget-layout": { title: "admin \u00b7 widget layout", render: (p) => <WidgetLayoutPage {...p} /> },
   "admin:persona-routing": {
     title: "admin \u00b7 persona model routing",
     render: (p) => <PersonaModelRoutingPage {...p} />,

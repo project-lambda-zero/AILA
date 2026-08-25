@@ -13,6 +13,7 @@ import NotificationsCenter from "./console/NotificationsCenter";
 import { resolvePage } from "./console/pages/registry";
 import SettingsOverlay from "./console/SettingsOverlay";
 import ChatConsole from "./console/ChatConsole";
+import WidgetHost from "./console/widgets/WidgetHost";
 import { ConsoleWindow } from "./console/window";
 import { resolveWizard } from "./console/wizards";
 import { FaultyTerminal } from "./desktop/FaultyTerminal";
@@ -486,6 +487,14 @@ function Console() {
               onOpenWizard={openWizard}
               onOpenXray={bound ? () => openInvestigation(bound) : undefined}
               dockOpen={minimizedWindows.length > 0}
+            />
+          ) : null}
+          {!activePage ? (
+            <WidgetHost
+              moduleId={moduleId}
+              boundId={bound?.id ?? null}
+              adv={adv}
+              onOpenPage={openNamedPage}
             />
           ) : null}
 

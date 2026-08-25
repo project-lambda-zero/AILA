@@ -21,6 +21,7 @@ import { useCreateVocabEntry, useDeleteVocabEntry } from "../api/systems";
 import type { Message } from "../api/types";
 import { useSubmitVulnScan } from "../api/vulnerability";
 import type { ChatConsoleProps } from "./contract";
+import { useChatSession } from "./chatSessionStore";
 import { css } from "./css";
 import { shortCaseId } from "./ids";
 import { primaryWizardIdForModule, wizardsForModule } from "./wizards";
@@ -649,6 +650,19 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
   };
 
   const rowCtx: RowRenderCtx = { acted, onAction, onDismiss: markActed };
+
+  // Publish the resolved chat session id + acted-message-id set to the shared
+  // store so the dante-actions widget can render pending proposals from the
+  // same session without duplicating this component's logic. Additive mirror
+  // only -- ChatConsole is the sole writer.
+  const publishSessionId = useChatSession((s) => s.setSessionId);
+  const publishActedIds = useChatSession((s) => s.setActedMessageIds);
+  useEffect(() => {
+    publishSessionId(chatSessionId ?? null);
+  }, [chatSessionId, publishSessionId]);
+  useEffect(() => {
+    publishActedIds(Array.from(acted));
+  }, [acted, publishActedIds]);
 
   const onKey = (e: KeyboardEvent<HTMLInputElement>): void => {
     if (e.key === "Enter" && !e.shiftKey) {

@@ -1104,11 +1104,8 @@ export const PAGE_CONFIGS = {
   // admin:finding-states is a bespoke read-only overview (see
   // AdminFindingStatesPage) since the endpoint returns a state machine, not a
   // list of rows a DataPage can render honestly.
-  "admin:widget-layout": {
-    title: "admin \u00b7 widget layout",
-    endpoint: "/widgets/layout",
-    columns: [],
-  },
+  // admin:widget-layout is a bespoke editor page (see WidgetLayoutPage); it
+  // reads/writes /widgets/layout as a single JSON blob, not a table of rows.
 } satisfies Record<string, PageConfig>;
 
 /** DELETE wiring per page (a delete button with confirm is legitimate human
