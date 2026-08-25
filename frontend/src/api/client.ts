@@ -35,7 +35,7 @@ export function configureApi(opts: {
  * returns for most routes. Throws `ApiError` on non-2xx; a 401 also triggers
  * the configured logout handler so the app falls back to the login screen.
  */
-export async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {
+async function requestJson(path: string, opts: RequestInit): Promise<unknown> {
   const headers = new Headers(opts.headers);
   // Only stamp JSON on serialized bodies. A FormData body must keep the
   // browser-generated multipart boundary, so leave its Content-Type unset.
@@ -60,11 +60,23 @@ export async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise
 
   const contentType = res.headers.get("content-type") ?? "";
   if (!contentType.includes("application/json")) {
-    return (await res.text()) as unknown as T;
+    return await res.text();
   }
-  const json: unknown = await res.json();
+  return await res.json();
+}
+
+export async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  const json = await requestJson(path, opts);
   if (json && typeof json === "object" && "data" in json) {
     return json.data as T;
   }
   return json as T;
+}
+
+/** Like {@link apiFetch} but returns the FULL response envelope without
+ * unwrapping `.data`. Use when the caller needs sibling metadata that
+ * apiFetch would drop -- e.g. a `PaginatedMeta` {total, offset, limit} that
+ * lives next to `data`, not inside it (DataEnvelope[list] endpoints). */
+export async function apiFetchEnvelope<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  return (await requestJson(path, opts)) as T;
 }

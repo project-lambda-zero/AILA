@@ -48,6 +48,11 @@ function Console() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [intakeOpen, setIntakeOpen] = useState(false);
   const [openPage, setOpenPage] = useState<OpenPage | null>(null);
+  // Drill-down trail so a page's "back" returns to where it was opened from
+  // (x-ray -> the investigations table -> the console) instead of always
+  // dropping straight to the console. Bounded so a long session can't grow it
+  // without limit.
+  const [pageHistory, setPageHistory] = useState<OpenPage[]>([]);
   const [pageMin, setPageMin] = useState(false);
   const [pageFull, setPageFull] = useState(false);
   const [clock, setClock] = useState("");
@@ -105,14 +110,24 @@ function Console() {
   // base slug (part before the colon) so the same registered renderer serves
   // both the base view and its sub-intents; the full section string is
   // handed through to the page so it can react to the intent.
+  // Raise a page window, pushing whatever page is currently open onto the
+  // history trail first (only when the target is a genuinely different page,
+  // so an in-place section change never self-stacks). "back" walks this trail.
+  const pushAndOpen = (next: OpenPage) => {
+    if (openPage && (openPage.kind !== next.kind || openPage.investigationId !== next.investigationId)) {
+      setPageHistory((h) => [...h, openPage].slice(-25));
+    }
+    setOpenPage(next);
+    setPageMin(false);
+    setPageFull(false);
+  };
+
   const openNamedPage = (moduleKey: string, section: string, label: string, investigationId: string | null = null) => {
     const colon = section.indexOf(":");
     const baseSection = colon >= 0 ? section.slice(0, colon) : section;
     const key = `${moduleKey}:${baseSection}`;
     if (!resolvePage(key)) return;
-    setOpenPage({ kind: key, title: `${moduleKey} \u00b7 ${label}`, investigationId, section });
-    setPageMin(false);
-    setPageFull(false);
+    pushAndOpen({ kind: key, title: `${moduleKey} \u00b7 ${label}`, investigationId, section });
   };
 
   // LeftRail's "+" is module-aware: for vulnerability it opens the Systems
@@ -134,23 +149,19 @@ function Console() {
   const openInvestigation = (inv: BoundInvestigation) => {
     setBound(inv);
     if (moduleId === "vr") {
-      setOpenPage({
+      pushAndOpen({
         kind: "xray",
         title: `vr \u00b7 ${shortCaseId("vr", inv.id)} \u00b7 x-ray`,
         investigationId: inv.id,
         section: "overview",
       });
-      setPageMin(false);
-      setPageFull(false);
     } else if (moduleId === "malware") {
-      setOpenPage({
+      pushAndOpen({
         kind: "malware:xray",
         title: `malware \u00b7 ${shortCaseId("malware", inv.id)} \u00b7 x-ray`,
         investigationId: inv.id,
         section: "overview",
       });
-      setPageMin(false);
-      setPageFull(false);
     } else if (moduleId === "forensics") {
       openNamedPage("forensics", "project", inv.title, inv.id);
     }
@@ -158,8 +169,24 @@ function Console() {
 
   const closePage = () => {
     setOpenPage(null);
+    setPageHistory([]);
     setPageMin(false);
     setPageFull(false);
+  };
+
+  // Back = pop one level of the drill-down trail (e.g. x-ray -> the table that
+  // opened it); at the base of the trail there is nowhere left to go, so it
+  // closes the window back to the console.
+  const goBack = () => {
+    if (pageHistory.length > 0) {
+      const prev = pageHistory[pageHistory.length - 1];
+      setPageHistory((h) => h.slice(0, -1));
+      setOpenPage(prev);
+      setPageMin(false);
+      setPageFull(false);
+    } else {
+      closePage();
+    }
   };
 
   // The opened page renders inside the center-column overlay (or full viewport
@@ -169,7 +196,7 @@ function Console() {
     const shared: ModulePageProps = {
       section: p.section,
       investigationId: p.investigationId,
-      onBack: closePage,
+      onBack: goBack,
       onMinimize: () => setPageMin(true),
       onNavigate: (section: string) => setOpenPage({ ...p, section }),
       isFullscreen: pageFull,
@@ -270,6 +297,31 @@ function Console() {
             </button>
           ))}
         </nav>
+        {openPage && !pageMin ? (
+          <button
+            type="button"
+            onClick={goBack}
+            title={pageHistory.length > 0 ? "back to the previous view" : "back to the console"}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "0 14px",
+              background: "transparent",
+              color: "var(--accent)",
+              border: 0,
+              borderRight: "1px solid var(--border-soft)",
+              fontFamily: "var(--font-mono)",
+              fontSize: 10.5,
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+              cursor: "pointer",
+              fontWeight: 700,
+            }}
+          >
+            {"\u2039 back"}
+          </button>
+        ) : null}
         <div style={{ flex: 1 }} />
         <div
           style={{

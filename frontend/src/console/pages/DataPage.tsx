@@ -1,13 +1,13 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ChangeEvent, JSX, ReactNode } from "react";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiFetch, API_BASE } from "../../api/client";
+import { apiFetch, apiFetchEnvelope, API_BASE } from "../../api/client";
 import { asRecord, readArray } from "../../api/parse";
 import type { ModulePageProps } from "../contract";
 import { css } from "../css";
-import { semanticCell, StatusBadge } from "./badges";
+import { semanticCell, statusRailColor, StatusBadge } from "./badges";
 import { EventTimeline } from "./EventTimeline";
 import FieldForm from "./FieldForm";
 import type { FormSpec } from "./FieldForm";
@@ -34,6 +34,13 @@ export interface PageFilter {
   label: string;
   type: "text" | "select";
   options?: { value: string; label: string }[];
+  /** When true, the filter value is sent to the endpoint as a query param
+   * (`name=value`) instead of narrowing the fetched rows client-side. The
+   * backend applies it across the full dataset and returns the true
+   * `meta.total`, so it composes with server pagination. Text inputs are
+   * debounced. Use for large catalogs whose backend already supports the
+   * filter (e.g. `/vr/investigations` `?status=&kind=&q=`). */
+  server?: boolean;
 }
 
 /** A row-level action rendered in the detail header (and optionally inline).
@@ -250,16 +257,43 @@ export default function DataPage(
     }
     return `${endpoint}${sep}page=${page}&page_size=${pageSize}`;
   };
+  // Server-side filters (filter.server === true) are sent to the endpoint as
+  // query params so the backend narrows the full dataset and reports the true
+  // meta.total. Debounce the raw input values ~250ms so a text search issues
+  // one request per pause, not one per keystroke; selects ride the same delay.
+  const [debouncedVals, setDebouncedVals] = useState<Record<string, string>>({});
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedVals(filterVals), 250);
+    return () => clearTimeout(t);
+  }, [filterVals]);
+  const serverQS = useMemo(() => {
+    const parts: string[] = [];
+    for (const f of config.filters ?? []) {
+      if (!f.server) continue;
+      const v = (debouncedVals[f.name] ?? "").trim();
+      if (v) parts.push(`${encodeURIComponent(f.name)}=${encodeURIComponent(v)}`);
+    }
+    return parts.join("&");
+  }, [config.filters, debouncedVals]);
+  const queryEndpoint = serverQS && effectiveEndpoint
+    ? `${effectiveEndpoint}${effectiveEndpoint.includes("?") ? "&" : "?"}${serverQS}`
+    : effectiveEndpoint;
   const q = useQuery({
-    queryKey: ["datapage", effectiveEndpoint, pagination && !fetchAllPages ? page : 1],
+    queryKey: ["datapage", queryEndpoint, pagination && !fetchAllPages ? page : 1],
     queryFn: async () => {
-      const first = (await apiFetch<unknown>(pageUrl(effectiveEndpoint, pagination && !fetchAllPages ? page : 1, pagination && !fetchAllPages ? PAGE_SIZE : 250))) as Record<string, unknown>;
+      const firstUrl = pageUrl(queryEndpoint, pagination && !fetchAllPages ? page : 1, pagination && !fetchAllPages ? PAGE_SIZE : 250);
+      // Offset-paginated endpoints report the true total in a sibling `meta`
+      // object ({data, meta}); apiFetch unwraps to `data` and drops it, so read
+      // the full envelope for that path and let toRows find rows under `data`.
+      const first = (await (pagination && !fetchAllPages && pagParams === "offset"
+        ? apiFetchEnvelope<unknown>(firstUrl)
+        : apiFetch<unknown>(firstUrl))) as Record<string, unknown>;
       if (!fetchAllPages) return first;
       const pages = typeof first?.pages === "number" ? first.pages : 1;
       if (pages <= 1) return first;
       const rest = await Promise.all(
         Array.from({ length: pages - 1 }, (_, i) =>
-          apiFetch<unknown>(pageUrl(effectiveEndpoint, i + 2, 250)),
+          apiFetch<unknown>(pageUrl(queryEndpoint, i + 2, 250)),
         ),
       );
       const merged = (rest as Record<string, unknown>[]).reduce<Record<string, unknown>>(
@@ -281,7 +315,7 @@ export default function DataPage(
   // rows; the result feeds both the table and (with fetchAllPages) the
   // client-side pagination slice.
   const filteredRows = useMemo(() => {
-    const active = (config.filters ?? []).filter((f) => (filterVals[f.name] ?? "").trim() !== "");
+    const active = (config.filters ?? []).filter((f) => !f.server && (filterVals[f.name] ?? "").trim() !== "");
     if (active.length === 0) return allRows;
     return allRows.filter((row) =>
       active.every((f) => {
@@ -334,6 +368,17 @@ export default function DataPage(
       .slice(0, 8)
       .map((k) => ({ field: k, label: k.replace(/_/g, " ") }));
   }, [config.columns, rows]);
+  // Numeric columns get right alignment + monospace tabular figures so counts
+  // and costs form clean vertical rulers the eye can scan. Derived from the
+  // first row's value type plus the cost semantic kind.
+  const numericFields = useMemo(() => {
+    const first = rows[0];
+    return new Set(
+      columns
+        .filter((c) => c.kind === "cost" || (first !== undefined && typeof first[c.field] === "number"))
+        .map((c) => c.field),
+    );
+  }, [columns, rows]);
   const [sel, setSel] = useState<Record<string, unknown> | null>(null);
   // Which form is open (if any) and the row it's editing (null for create).
   const [formMode, setFormMode] = useState<"create" | "edit" | null>(null);
@@ -445,7 +490,7 @@ export default function DataPage(
     ) : rows.length === 0 ? (
       <div style={emptyNote}>{config.empty ?? "no records."}</div>
     ) : (
-      <table style={css("width:100%;border-collapse:collapse;font-size:11px;")}>
+      <table className="dp-table" style={css("width:100%;border-collapse:collapse;font-size:11px;")}>
               <thead>
                 <tr>
                   {config.bulkActions && config.bulkActions.length > 0 ? (
@@ -464,7 +509,7 @@ export default function DataPage(
                     <th
                       key={c.field}
                       style={css(
-                        "position:sticky;top:0;text-align:left;padding:7px 10px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-size:8.5px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);white-space:nowrap;z-index:1;",
+                        `position:sticky;top:0;text-align:${numericFields.has(c.field) ? "right" : "left"};padding:8px 12px;background:var(--surface-chrome);border-bottom:1px solid color-mix(in srgb,var(--accent) 32%,var(--border));font-family:var(--font-mono);font-size:9px;font-weight:500;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-muted);white-space:nowrap;z-index:1;`,
                       )}
                     >
                       {c.label}
@@ -476,6 +521,12 @@ export default function DataPage(
                 {rows.map((row, i) => {
                   const key = cellText(row[idField]) + i;
                   const active = sel === row;
+                  // Status-toned left ribbon: a continuous vertical rail the eye
+                  // follows down the table, encoding each row's state at the
+                  // left edge. Rendered as an inset box-shadow (no layout shift)
+                  // so hover/active are free to use a background tint. Active
+                  // wins the ribbon in accent so the selected row still reads.
+                  const rail = active ? "var(--accent)" : statusRailColor(row["status"]) ?? "transparent";
                   return (
                     <tr
                       key={key}
@@ -486,7 +537,7 @@ export default function DataPage(
                         else setSel((cur) => (cur === row ? null : row));
                       }}
                       style={css(
-                        `cursor:pointer;border-bottom:1px solid var(--border-faint);${active ? "background:color-mix(in srgb,var(--accent) 12%,transparent);" : ""}`,
+                        `cursor:pointer;border-bottom:1px solid var(--border-faint);box-shadow:inset 3px 0 0 ${rail};${active ? "background:color-mix(in srgb,var(--accent) 16%,transparent);" : ""}`,
                       )}
                     >
                       {config.bulkActions && config.bulkActions.length > 0 ? (
@@ -499,16 +550,29 @@ export default function DataPage(
                           />
                         </td>
                       ) : null}
-                      {columns.map((c) => (
-                        <td
-                          key={c.field}
-                          style={css(
-                            "padding:6px 10px;color:var(--text-primary);max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;",
-                          )}
-                        >
-                          {c.render ? c.render(row[c.field], row) : c.kind ? semanticCell(c.kind, row[c.field]) : cellText(row[c.field])}
-                        </td>
-                      ))}
+                      {columns.map((c, ci) => {
+                        const isNum = numericFields.has(c.field);
+                        const isTitle = ci === 0 && !c.kind;
+                        // Title column anchors the row (bright, semibold);
+                        // numeric columns get mono tabular figures; everything
+                        // else recedes to muted so the eye lands on the anchor
+                        // and the status color, not a wall of even text.
+                        const emphasis = isTitle
+                          ? "color:var(--text-primary);font-weight:600;"
+                          : isNum
+                            ? "color:var(--text-muted);font-family:var(--font-mono);font-variant-numeric:tabular-nums;"
+                            : "color:var(--text-muted);";
+                        return (
+                          <td
+                            key={c.field}
+                            style={css(
+                              `padding:7px 12px;max-width:${isTitle ? 460 : 320}px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:${isNum ? "right" : "left"};${emphasis}`,
+                            )}
+                          >
+                            {c.render ? c.render(row[c.field], row) : c.kind ? semanticCell(c.kind, row[c.field]) : cellText(row[c.field])}
+                          </td>
+                        );
+                      })}
                     </tr>
                   );
                 })}
@@ -597,7 +661,7 @@ export default function DataPage(
             {pagination ? (
               <span style={css("display:inline-flex;align-items:center;gap:6px;")}>
                 <button type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} style={css("border:0;background:transparent;color:var(--text-muted);cursor:pointer;font-size:11px;")}>{"\u25c0"}</button>
-                <span style={css("font-size:10px;color:var(--text-faint);text-transform:none;letter-spacing:0.03em;")}>page {page} / {pageCount} \u00b7 {total} total</span>
+                <span style={css("font-size:10px;color:var(--text-faint);text-transform:none;letter-spacing:0.03em;")}>page {page} / {pageCount} {"\u00b7"} {total} total</span>
                 <button type="button" onClick={() => setPage((p) => p + 1)} disabled={page >= pageCount} style={css("border:0;background:transparent;color:var(--text-muted);cursor:pointer;font-size:11px;")}>{"\u25b6"}</button>
               </span>
             ) : null}

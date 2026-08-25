@@ -3,7 +3,7 @@
    Plain CSS + CSS custom properties. No Tailwind, no utility framework. */
 
 /* ---- webfonts ---- */
-@import url("https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,300;1,6..72,400&family=Familjen+Grotesk:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=JetBrains+Mono:wght@400;500;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,300;1,6..72,400&family=Familjen+Grotesk:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Spline+Sans+Mono:ital,wght@0,300..700;1,300..700&display=swap");
 
 @font-face {
   font-family: "Apoc Revelations";
@@ -33,21 +33,13 @@
   font-style: italic;
   font-display: swap;
 }
-@font-face {
-  font-family: "Monaspace Neon";
-  src: url("/fonts/MonaspaceNeon-Regular.otf") format("opentype");
-  font-weight: 400 700;
-  font-style: normal;
-  font-display: swap;
-}
-
 :root {
   /* --- Base surfaces (midnight stack) --- */
-  --aila-bg: #121212;
-  --aila-bg-sunk: #0d0d0d;
-  --aila-bg-raised: #181818;
-  --aila-bg-chrome: #1f1f1f;
-  --aila-bg-hover: #262626;
+  --aila-bg: #131314;
+  --aila-bg-sunk: #131314;
+  --aila-bg-raised: #131314;
+  --aila-bg-chrome: #131314;
+  --aila-bg-hover: #131314;
 
   /* --- Foreground (warm cream ramp) --- */
   --aila-cream: #ffd7af;
@@ -100,7 +92,7 @@
   --font-display: "Apoc Revelations", "Newsreader", ui-serif, Georgia, serif;
   --font-emphasis: "Apoc Revelations", "Newsreader", ui-serif, Georgia, serif;
   --font-sans: "Familjen Grotesk", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Monaspace Neon", "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-mono: "Spline Sans Mono", ui-monospace, "SF Mono", Menlo, monospace;
 
   /* --- Weights --- */
   --weight-regular: 400;
@@ -149,7 +141,7 @@
    Slugs mirror slugifyTheme() in ../theme. :root == Midnight Cloud 8. */
 
 [data-theme="midnight-cloud-8"] {
-  --aila-bg: #121212; --aila-bg-sunk: #0d0d0d; --aila-bg-raised: #181818; --aila-bg-chrome: #1f1f1f; --aila-bg-hover: #262626;
+  --aila-bg: #131314; --aila-bg-sunk: #131314; --aila-bg-raised: #131314; --aila-bg-chrome: #131314; --aila-bg-hover: #131314;
   --aila-cream: #ffd7af; --aila-cream-muted: #af8c6c; --aila-cream-faint: #6b563f;
   --aila-pink: #ff5f87; --aila-pink-bright: #ff7a9c; --aila-pink-sunk: #c8487a; --aila-pink-fg: #1a0a12;
   --aila-mint: #97dbbe; --aila-lavender: #af87d7; --aila-amber: #ffb85f; --aila-soft-pink: #f0a8c7;
@@ -261,6 +253,16 @@ input, textarea, select, button { font-family: inherit; }
 @keyframes acbreathe { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
 @keyframes acglow { 0%, 100% { text-shadow: 0 0 18px rgba(255, 95, 135, 0.36); } 50% { text-shadow: 0 0 30px rgba(255, 95, 135, 0.62); } }
 @keyframes acsweep { from { transform: translateX(-120%); } to { transform: translateX(320%); } }
+
+/* ---- DataPage table: eye-guides that keep surfaces flat ----
+   The static left ribbon (a per-row status-toned inset box-shadow set inline)
+   is the vertical rail the eye follows; hierarchy/alignment/status color live
+   inline per cell. Hover is the one moving part and lives here where :hover
+   can reach -- a faint accent wash tracks the row under the cursor without
+   bringing back the surface-shade stack. Row background transitions only; the
+   ribbon is inline so it never animates or fights the hover. */
+.dp-table tbody tr { transition: background-color 90ms ease; }
+.dp-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 9%, transparent); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }

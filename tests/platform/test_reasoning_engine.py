@@ -858,31 +858,6 @@ def _noop_decision() -> ReasoningTurnDecision:
     )
 
 
-def test_absorb_stale_hypothesis_sets_stale_directive_at_default_threshold() -> None:
-    """A hypothesis opened at turn 1 that has aged 8 turns (default
-    threshold) triggers ``_directive.stale_hypotheses``."""
-    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
-    initial = ReasoningCaseState(
-        hypotheses=[
-            Hypothesis(id="h_old", claim="long-lived vector", opened_at_turn=1),
-            Hypothesis(id="h_new", claim="just proposed", opened_at_turn=8),
-        ],
-    )
-
-    merged = engine.absorb(initial, _noop_decision(), turn_number=9)
-
-    directive = merged.observables.get("_directive.stale_hypotheses")
-    assert isinstance(directive, str) and directive
-    assert "h_old" in directive
-    assert "long-lived vector" in directive
-    assert "alive 8 turns" in directive
-    # h_new is age=1, well under threshold -- must NOT be flagged.
-    assert "h_new" not in directive
-    # Contract check: directive names actionable next steps.
-    assert "(a) resolve" in directive
-    assert "(b) explicitly defer" in directive
-
-
 def test_absorb_fresh_hypotheses_do_not_set_stale_directive() -> None:
     """When every live hypothesis is younger than the threshold, the
     directive MUST NOT be set (and any prior stamp MUST clear)."""
@@ -931,30 +906,6 @@ def test_absorb_stale_directive_clears_when_hypothesis_resolved() -> None:
     assert not any(h.id == "h_old" for h in merged.hypotheses)
 
 
-def test_absorb_stale_threshold_resolves_from_platform_registry() -> None:
-    """Operator override lowers the threshold: a hypothesis of age 4
-    now trips the directive even though the schema default (8) would
-    let it pass."""
-    registry = _FakeConfigRegistry(
-        {("platform", "reasoning_hyp_stale_turns"): 4},
-    )
-    engine = CyberReasoningEngine(
-        _FakeLLMClient(_FakeResponse("{}")),  # type: ignore[arg-type]
-        config_registry=registry,
-    )
-    initial = ReasoningCaseState(
-        hypotheses=[
-            Hypothesis(id="h_mid", claim="aging fast", opened_at_turn=2),
-        ],
-    )
-
-    merged = engine.absorb(initial, _noop_decision(), turn_number=6)
-
-    directive = merged.observables.get("_directive.stale_hypotheses")
-    assert isinstance(directive, str) and "h_mid" in directive
-    assert "alive 4 turns" in directive
-
-
 def test_absorb_stale_threshold_zero_disables_directive() -> None:
     """``reasoning_hyp_stale_turns <= 0`` disables the directive so a
     stress-mode override can silence the nudge."""
@@ -977,106 +928,59 @@ def test_absorb_stale_threshold_zero_disables_directive() -> None:
 
 
 # ----------------------------------------------------------------------
-# kill-criterion directive (RFC #201): must match on OBSERVATION BODY
-# TEXT ONLY, never on the observation KEY. Keys are routing labels whose
-# tool-verb segments (read_function / read_lines / semantic_search /
-# search_functions / taint_paths_to) tokenize into generic words that
-# pass the 4-char minimum ("read", "lines", "search", "source",
-# "query", ...) -- matching them makes the directive fire on EVERY turn
-# (tool keys accumulate and are never evicted), burning an agent
-# reasoning paragraph per turn rebutting the false positive. Observed
-# live: hours of per-turn kill_criterion_met noise on Apache invs.
+# kill-criterion is an agent-set flag, not an engine string match. A
+# hypothesis is retired only when a reasoning agent puts its id in
+# decision.rejected[] (its own researcher/critic judgment) or when 2+
+# siblings reject an id this branch holds live (the sibling-consensus
+# directive). The engine MUST NOT infer criterion satisfaction from
+# token overlap between the criterion and tool-body observations -- that
+# heuristic fired on keyword coincidences ("body" from @Body, "java"
+# from a .java path, "header" from @HeaderMap) and burned a rebuttal
+# turn each time. absorb() only clears any pre-removal banner a
+# persisted case_state carried.
 # ----------------------------------------------------------------------
 
 
-def test_absorb_kill_criterion_ignores_tool_verb_in_observation_key() -> None:
-    """The directive MUST NOT fire when the criterion word lives only in
-    the observation KEY's tool-verb segment, not in the body text.
-
-    Regression: a kill_criterion of "read happens before auth check"
-    used to trip on the key ``audit_mcp.read_function.source.X`` (token
-    "read") every turn regardless of what the tool actually returned.
-    """
+def test_absorb_never_sets_kill_criterion_directive() -> None:
+    """Even when a criterion word appears verbatim in a tool-body
+    observation, the engine does NOT inject
+    ``_directive.kill_criterion_met``: judging criterion satisfaction is
+    the agent's job (decision.rejected[] / sibling consensus), not a
+    string match performed by absorb()."""
     engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
     initial = ReasoningCaseState(
         hypotheses=[
             Hypothesis(
                 id="h_auth",
-                claim="read happens before auth check",
-                kill_criterion="read happens before auth check",
-            ),
-        ],
-        observables={
-            # Key contains 'read' (read_function) + 'source' but the
-            # BODY contains neither -- no genuine evidence landed.
-            "audit_mcp.read_function.source.RequestHandler":
-                "void doRequest() { checkLogin(); render(view); }",
-        },
-    )
-
-    merged = engine.absorb(initial, _noop_decision(), turn_number=1)
-
-    assert "_directive.kill_criterion_met" not in merged.observables
-
-
-def test_absorb_kill_criterion_fires_on_body_token_hit() -> None:
-    """Positive control: when the criterion token appears in the
-    observation BODY (real evidence), the directive fires and names the
-    matched token + observation key."""
-    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
-    initial = ReasoningCaseState(
-        hypotheses=[
-            Hypothesis(
-                id="h_auth",
-                claim="read happens before auth check",
-                kill_criterion="read happens before auth check",
+                claim="deserialization happens before auth check",
+                kill_criterion="readObject called before checkLogin",
             ),
         ],
         observables={
             "audit_mcp.read_lines.slice.RequestHandler.java:180-470":
-                "ObjectInputStream ois = new ObjectInputStream(req.getInputStream()); "
-                "Object obj = ois.readObject();  // deserialization BEFORE checkLogin",
-        },
-    )
-
-    merged = engine.absorb(initial, _noop_decision(), turn_number=1)
-
-    directive = merged.observables.get("_directive.kill_criterion_met")
-    assert isinstance(directive, str), merged.observables
-    assert "h_auth" in directive
-    assert "matched token" in directive
-    assert "audit_mcp.read_lines.slice.RequestHandler.java:180-470" in directive
-
-
-def test_absorb_kill_criterion_clears_when_no_body_match() -> None:
-    """The directive persists only while a body-token match is live;
-    once the matching observation is gone, the directive clears on the
-    same absorb call."""
-    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
-    initial = ReasoningCaseState(
-        hypotheses=[
-            Hypothesis(
-                id="h_auth",
-                claim="read happens before auth check",
-                kill_criterion="read happens before auth check",
-            ),
-        ],
-        observables={
-            "audit_mcp.read_function.source.RequestHandler":
-                "void doRequest() { checkLogin(); render(view); }",
+                "Object obj = ois.readObject();  // BEFORE checkLogin",
         },
     )
 
     merged = engine.absorb(initial, _noop_decision(), turn_number=1)
 
     assert "_directive.kill_criterion_met" not in merged.observables
-    # Prior-turn banner must not linger either.
-    initial2 = ReasoningCaseState(
-        hypotheses=merged.hypotheses,
+
+
+def test_absorb_clears_stale_kill_criterion_directive() -> None:
+    """A ``_directive.kill_criterion_met`` value persisted by a
+    pre-removal case_state is cleared on the next absorb so a stale
+    banner never lingers in the prompt."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    initial = ReasoningCaseState(
+        hypotheses=[
+            Hypothesis(id="h_auth", claim="x", kill_criterion="y"),
+        ],
         observables={
-            **merged.observables,
             "_directive.kill_criterion_met": "prior stale banner",
         },
     )
-    merged2 = engine.absorb(initial2, _noop_decision(), turn_number=2)
-    assert "_directive.kill_criterion_met" not in merged2.observables
+
+    merged = engine.absorb(initial, _noop_decision(), turn_number=1)
+
+    assert "_directive.kill_criterion_met" not in merged.observables

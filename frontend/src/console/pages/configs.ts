@@ -1,5 +1,7 @@
 import { createElement } from "react";
 
+import { css } from "../css";
+import { StatusBadge } from "./badges";
 import type { PageColumn, PageConfig } from "./DataPage";
 import { LlmChatTranscript, llmPreviewLine } from "./LlmLogEntry";
 
@@ -62,7 +64,76 @@ export const PAGE_CONFIGS = {
     title: "vr \u00b7 investigations",
     endpoint: "/vr/investigations",
     blurb: "click a row to raise its x-ray; the targets page drills down per target",
-    columns: [c("title"), c("kind"), c("status"), c("strategy_family", "strategy"), c("branch_count", "branches"), c("message_count", "turns"), c("outcome_count", "outcomes"), c("cost_actual_usd", "cost $")],
+    // Server-side pagination + filters: /vr/investigations paginates by
+    // offset/limit (meta.total) and accepts ?q=&status=&kind= (api_router
+    // list_investigations). The filters below are marked server:true so they
+    // narrow the full catalogue and the page count reflects the filtered
+    // total, not just the loaded page.
+    pagination: true,
+    paginationParams: "offset",
+    filters: [
+      { name: "q", label: "search title", type: "text", server: true },
+      { name: "status", label: "status", type: "select", server: true, options: [
+        { value: "running", label: "running" },
+        { value: "paused", label: "paused" },
+        { value: "stalled", label: "stalled" },
+        { value: "completed", label: "completed" },
+        { value: "failed", label: "failed" },
+        { value: "abandoned", label: "abandoned" },
+        { value: "created", label: "created" },
+      ] },
+      { name: "kind", label: "kind", type: "select", server: true, options: [
+        { value: "discovery", label: "discovery" },
+        { value: "variant_hunt", label: "variant hunt" },
+        { value: "triage", label: "triage" },
+        { value: "n_day", label: "n-day" },
+        { value: "audit", label: "audit" },
+        { value: "masvs_audit", label: "masvs audit" },
+        { value: "apk_static_audit", label: "apk static audit" },
+      ] },
+    ],
+    // Result-first columns. `kind` is the operator's classification of the
+    // investigation (discovery / variant_hunt / triage / n_day / audit);
+    // `strategy_family` is the reasoning playbook the engine runs, which the
+    // server derives from `kind` by default -- so it duplicates `kind` on
+    // almost every row and is dropped here (still visible in the x-ray when
+    // overridden). `verdict` is the polarity of the primary outcome, `outcome`
+    // its type, `findings` the concrete finding records produced, `outcomes`
+    // the count of typed reasoning outcomes.
+    columns: [
+      c("title"),
+      c("kind"),
+      c("status"),
+      {
+        field: "primary_outcome_polarity",
+        label: "verdict",
+        render: (v) => {
+          if (v === null || v === undefined || v === "") return "\u2014";
+          const s = String(v);
+          const tone = s === "finding" ? "ok" : s === "inconclusive" ? "warn" : "muted";
+          return createElement(StatusBadge, { value: s.replace(/_/g, " "), tone });
+        },
+      },
+      {
+        field: "primary_outcome_kind",
+        label: "outcome",
+        render: (v) => (v === null || v === undefined || v === "" ? "\u2014" : String(v).replace(/_/g, " ")),
+      },
+      {
+        field: "linked_finding_ids",
+        label: "findings",
+        render: (v) => {
+          const n = Array.isArray(v) ? v.length : 0;
+          return createElement(
+            "span",
+            { style: css(`font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:${n > 0 ? "var(--accent)" : "var(--text-faint)"};`) },
+            String(n),
+          );
+        },
+      },
+      c("outcome_count", "outcomes"),
+      c("cost_actual_usd", "cost $"),
+    ],
   },
   "vr:patterns": {
     title: "vr \u00b7 patterns",

@@ -64,18 +64,25 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
 
   const rows: RailRow[] = useMemo(() => {
     const raw = source.data ?? [];
-    // Pinned / favorite first, then by activity (branches weigh heavily, then
-    // messages) so the data-rich investigations surface at the top -- clicking
-    // one opens a full X-Ray rather than an empty case. For forensics, the
-    // hook synthesises branch_count/message_count from evidence + investigation
-    // + lead counts so the busiest projects sort to the top.
+    // The rail is a live worklist, not a full catalogue: show only what needs
+    // eyes on it -- currently-running investigations plus anything explicitly
+    // pinned/favorited. Completed/paused/failed rows are reachable from the
+    // investigations page, so they stay out of the rail. Pinned first, then by
+    // activity (branches weigh heavily, then messages) so the data-rich cases
+    // sit at the top. For forensics the hook synthesises branch/message counts
+    // from evidence + investigation + lead counts.
     const score = (v: RailRow): number =>
       (v.branch_count ?? 0) * 1000 + (v.message_count ?? 0);
+    const isPinned = (v: RailRow): boolean => pinned.includes(v.id) || Boolean(v.is_favorite);
+    const isRunning = (v: RailRow): boolean => {
+      const s = (v.status ?? "").toLowerCase();
+      return s === "running" || s === "active";
+    };
     return raw
-      .slice()
+      .filter((v) => isRunning(v) || isPinned(v))
       .sort((a, b) => {
-        const ap = pinned.includes(a.id) || a.is_favorite ? 1 : 0;
-        const bp = pinned.includes(b.id) || b.is_favorite ? 1 : 0;
+        const ap = isPinned(a) ? 1 : 0;
+        const bp = isPinned(b) ? 1 : 0;
         if (ap !== bp) return bp - ap;
         return score(b) - score(a);
       })
