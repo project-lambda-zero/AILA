@@ -243,7 +243,6 @@ HONESTY_WHITELIST = [
     # propagate -- only truncation-induced exceptions are suppressed.
     ("api/middleware/body_size_limit.py", "broad_exception_catch", "catches everything"),
     ("api/routers/dashboard.py", "broad_exception_catch", "catches everything"),
-    ("api/routers/executive.py", "broad_exception_catch", "catches everything"),
     ("api/routers/findings_workflow.py", "broad_exception_catch", "catches everything"),
     ("api/routers/health.py", "broad_exception_catch", "catches everything"),
     ("api/routers/oidc.py", "broad_exception_catch", "catches everything"),

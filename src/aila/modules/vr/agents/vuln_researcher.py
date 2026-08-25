@@ -462,7 +462,10 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         async with UnitOfWork() as uow:
             rows = (await uow.session.exec(
                 _select(VRInvestigationOutcomeRecord)
-                .where(VRInvestigationOutcomeRecord.investigation_id == self.investigation_id)
+                .where(
+                    VRInvestigationOutcomeRecord.investigation_id == self.investigation_id,
+                    VRInvestigationOutcomeRecord.superseded_at.is_(None),
+                )
                 .order_by(VRInvestigationOutcomeRecord.created_at.asc()),
             )).all()
         out: list[dict[str, Any]] = []
@@ -507,6 +510,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                     _select(VRInvestigationOutcomeRecord)
                     .where(VRInvestigationOutcomeRecord.investigation_id == self.investigation_id)
                     .where(VRInvestigationOutcomeRecord.branch_id == s.id)
+                    .where(VRInvestigationOutcomeRecord.superseded_at.is_(None))
                     .order_by(VRInvestigationOutcomeRecord.created_at.desc())
                     .limit(1),
                 )).first()

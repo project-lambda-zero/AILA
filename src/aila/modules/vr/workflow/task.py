@@ -266,7 +266,10 @@ async def run_vr_draft_poc(
     async with UnitOfWork() as uow:
         canonical = (await uow.session.exec(
             select(VRInvestigationOutcomeRecord)
-            .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
+            .where(
+                VRInvestigationOutcomeRecord.investigation_id == investigation_id,
+                VRInvestigationOutcomeRecord.superseded_at.is_(None),
+            )
             .order_by(VRInvestigationOutcomeRecord.created_at.asc())
             .limit(1)
         )).first()
@@ -582,7 +585,10 @@ async def _run_vr_auto_patch(investigation_id: str) -> dict[str, Any]:
     async with UnitOfWork() as uow:
         inv = (await uow.session.exec(
             select(VRInvestigationOutcomeRecord)
-            .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
+            .where(
+                VRInvestigationOutcomeRecord.investigation_id == investigation_id,
+                VRInvestigationOutcomeRecord.superseded_at.is_(None),
+            )
             .order_by(VRInvestigationOutcomeRecord.created_at.asc())
             .limit(1)
         )).first()

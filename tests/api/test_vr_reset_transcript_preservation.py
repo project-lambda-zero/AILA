@@ -5,10 +5,12 @@ leaving findings the run produced orphaned (referenced by
 ``inv.linked_finding_ids_json`` but with no surviving outcome or transcript).
 
 The fix soft-supersedes messages (they survive for display + audit, but
-agent-context reads filter ``superseded_at IS NULL``), keeps message-bearing
-forked branches as FK parents for those rows while GC-ing zero-message forks,
-and detaches the investigation from its findings (clears
-``linked_finding_ids_json``) so nothing is left orphaned. The finding rows
+agent-context reads filter ``superseded_at IS NULL`` to see a fresh
+slate), keeps message-bearing forked branches as FK parents for those
+rows while GC-ing zero-message forks, archives outcomes the same way
+(rows survive, stamped ``superseded_at``), and relinks the
+investigation to the findings its archived run produced -- the
+back-pointer survives, so nothing is orphaned. The finding rows
 themselves are preserved.
 """
 from __future__ import annotations
@@ -30,6 +32,7 @@ from aila.modules.vr.db_models import (
     VRWorkspaceRecord,
 )
 from aila.platform.contracts.message_base import active_messages
+from aila.platform.contracts.outcome_base import active_outcomes
 from aila.platform.uow import UnitOfWork
 
 pytestmark = pytest.mark.asyncio
@@ -118,7 +121,7 @@ async def _seed() -> dict[str, str]:
 
 
 @pytest.mark.usefixtures("test_db")
-async def test_reset_preserves_transcript_and_detaches_findings(
+async def test_reset_preserves_transcript_and_archives_outcomes(
     async_client: AsyncClient, admin_token: str,
 ) -> None:
     ids = await _seed()
@@ -142,6 +145,11 @@ async def test_reset_preserves_transcript_and_detaches_findings(
         )).all()
         outcomes = (await uow.session.exec(
             select(VRInvestigationOutcomeRecord).where(
+                VRInvestigationOutcomeRecord.investigation_id == inv_id,
+            ),
+        )).all()
+        active_oc = (await uow.session.exec(
+            active_outcomes(VRInvestigationOutcomeRecord).where(
                 VRInvestigationOutcomeRecord.investigation_id == inv_id,
             ),
         )).all()
@@ -178,13 +186,18 @@ async def test_reset_preserves_transcript_and_detaches_findings(
     assert all(m.superseded_at is not None for m in all_msgs)
     assert active == []
 
-    # Outcomes are transient run artifacts and are still cleared on reset.
-    assert outcomes == []
+    # Outcomes are archived, not cleared: the seeded row survives stamped
+    # superseded_at, and the active-outcome read sees a clean slate.
+    assert len(outcomes) == 1
+    assert all(o.superseded_at is not None for o in outcomes)
+    assert active_oc == []
 
-    # The finding row is preserved, and the investigation is detached from it
-    # so nothing is left orphaned pointing at an archived transcript.
+    # The finding row is preserved and the investigation stays linked to it:
+    # relinking means the back-pointer survives, so the archived outcome's
+    # dispatch_target and the investigation's linked list both still reach
+    # the finding -- nothing is orphaned.
     assert finding is not None
-    assert json.loads(inv.linked_finding_ids_json) == []
+    assert json.loads(inv.linked_finding_ids_json) == [finding.id]
     assert inv.status == InvestigationStatus.CREATED.value
 
     # Root branch reset to turn 0; the message-bearing fork is kept (as the

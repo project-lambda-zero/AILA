@@ -4523,6 +4523,7 @@ def create_vr_router() -> APIRouter:
             if has_outcomes:
                 oc_exists = sa_exists().where(
                     VRInvestigationOutcomeRecord.investigation_id == VRInvestigationRecord.id,
+                    VRInvestigationOutcomeRecord.superseded_at.is_(None),
                 )
                 base = base.where(oc_exists)
                 count_base = count_base.where(oc_exists)
@@ -4604,7 +4605,10 @@ def create_vr_router() -> APIRouter:
                         VRInvestigationOutcomeRecord.investigation_id,
                         sa_func.count(),
                     )
-                    .where(VRInvestigationOutcomeRecord.investigation_id.in_(row_ids))
+                    .where(
+                        VRInvestigationOutcomeRecord.investigation_id.in_(row_ids),
+                        VRInvestigationOutcomeRecord.superseded_at.is_(None),
+                    )
                     .group_by(VRInvestigationOutcomeRecord.investigation_id),
                 )).all()
                 oc_counts = {iid: int(c) for iid, c in oc_pairs}
@@ -4612,7 +4616,10 @@ def create_vr_router() -> APIRouter:
                 if primary_ids:
                     outcome_rows = (await uow.session.exec(
                         select(VRInvestigationOutcomeRecord)
-                        .where(VRInvestigationOutcomeRecord.id.in_(list(primary_ids.values()))),
+                        .where(
+                            VRInvestigationOutcomeRecord.id.in_(list(primary_ids.values())),
+                            VRInvestigationOutcomeRecord.superseded_at.is_(None),
+                        ),
                     )).all()
                 primary_by_inv: dict[str, Any] = {}
                 for o in outcome_rows:
@@ -4726,7 +4733,10 @@ def create_vr_router() -> APIRouter:
             )).one()
             outcome_count = (await uow.session.exec(
                 select(sa_func.count()).select_from(VRInvestigationOutcomeRecord)
-                .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
+                .where(
+                    VRInvestigationOutcomeRecord.investigation_id == investigation_id,
+                    VRInvestigationOutcomeRecord.superseded_at.is_(None),
+                )
             )).one()
 
             primary_outcome_kind: str | None = None
@@ -4739,6 +4749,7 @@ def create_vr_router() -> APIRouter:
                 primary = (await uow.session.exec(
                     select(VRInvestigationOutcomeRecord).where(
                         VRInvestigationOutcomeRecord.id == inv.primary_outcome_id,
+                        VRInvestigationOutcomeRecord.superseded_at.is_(None),
                     ),
                 )).first()
                 if primary is not None:
@@ -4883,7 +4894,10 @@ def create_vr_router() -> APIRouter:
                 )
             oc = (await uow.session.exec(
                 select(VRInvestigationOutcomeRecord)
-                .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
+                .where(
+                    VRInvestigationOutcomeRecord.investigation_id == investigation_id,
+                    VRInvestigationOutcomeRecord.superseded_at.is_(None),
+                )
                 .order_by(VRInvestigationOutcomeRecord.created_at.asc())
                 .limit(1)
             )).first()
@@ -5628,14 +5642,21 @@ def create_vr_router() -> APIRouter:
                     m.superseded_at = _now
                     uow.session.add(m)
 
-            # 2) Delete every outcome for this investigation.
+            # 2) Archive every outcome for this investigation. The prior
+            # run's ratified outcomes survive on disk for display + audit
+            # (the evidence graph and outcome endpoints still render them);
+            # agent-context reads filter superseded_at IS NULL to see a
+            # fresh slate. Only stamp rows currently active so a re-reset
+            # does not re-stamp already-archived history.
             outcomes = (await uow.session.exec(
                 select(VRInvestigationOutcomeRecord).where(
                     VRInvestigationOutcomeRecord.investigation_id == investigation_id,
+                    VRInvestigationOutcomeRecord.superseded_at.is_(None),
                 ),
             )).all()
             for o in outcomes:
-                await uow.session.delete(o)
+                o.superseded_at = _now
+                uow.session.add(o)
 
             # 3) Drop forked branches; reset root branches to turn 0. A root
             # branch is one whose parent_branch_id was NULL in the original
@@ -5704,12 +5725,13 @@ def create_vr_router() -> APIRouter:
             # carry into the fresh 6h budget. The dispatch-hub setup
             # re-stamps ``started_at = now`` on the next worker pick-up.
             inv.started_at = None
-            # Detach the investigation from any findings its archived run
-            # produced. The findings rows are preserved intact; only this
-            # inv's back-pointer is cleared so a fresh run starts with no
-            # linked findings and prior findings are not left orphaned
-            # pointing at a superseded transcript.
-            inv.linked_finding_ids_json = "[]"
+            # Keep the investigation linked to the findings its archived
+            # run produced: the findings rows are preserved intact and the
+            # archived outcomes (superseded above) still carry the
+            # dispatch_target back-pointers, so relinking here means simply
+            # not clearing the back-pointer. A fresh run appends new
+            # findings to the same list (outcome_dispatcher). Nothing is
+            # orphaned.
             inv.updated_at = utc_now()
             uow.session.add(inv)
 
