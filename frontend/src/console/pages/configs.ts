@@ -547,12 +547,6 @@ export const PAGE_CONFIGS = {
     },
   },
   // ---- Admin: platform (added -- previously unlisted features) ----------
-  "admin:dashboard": {
-    title: "admin \u00b7 dashboard",
-    endpoint: "/dashboard",
-    blurb: "fleet risk + stats snapshot",
-    columns: [],
-  },
   "admin:systems": {
     title: "admin \u00b7 systems",
     endpoint: "/systems",
