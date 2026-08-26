@@ -731,6 +731,87 @@ async def test_notification_isolation(async_client, admin_token, operator_token,
     assert notif_id not in ids
 
 
+@pytest.mark.asyncio
+async def test_notification_system_rows_visible_to_any_user(
+    async_client, admin_token, operator_token, test_db
+):
+    """System rows (user_id='__system__') appear in every user's list + unread count (req 44)."""
+    async with async_session_scope() as session:
+        n = NotificationRecord(
+            user_id="__system__",
+            title="Configure LLM pricing for gpt-4o",
+            body="No pricing configuration found.",
+            category="warning",
+            source_module="llm_cost",
+            source_entity_id="pricing_missing:gpt-4o",
+            is_read=False,
+            created_at=utc_now(),
+        )
+        session.add(n)
+        await session.commit()
+        await session.refresh(n)
+        system_id = n.id
+
+    for token in (admin_token, operator_token):
+        resp = await async_client.get(
+            "/notifications",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        ids = [row["id"] for row in resp.json()["data"]]
+        assert system_id in ids
+
+        resp = await async_client.get(
+            "/notifications/unread",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+        body = resp.json()["data"]
+        assert any(row["id"] == system_id for row in body["items"])
+        assert body["unread_count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_notification_system_rows_read_only(
+    async_client, admin_token, test_db
+):
+    """System rows are read-only: mark-read and delete reject non-owners with 404."""
+    async with async_session_scope() as session:
+        n = NotificationRecord(
+            user_id="__system__",
+            title="Budget 80% reached",
+            body="Team spend crossed the ceiling.",
+            category="warning",
+            source_module="llm_cost",
+            source_entity_id="budget:team",
+            is_read=False,
+            created_at=utc_now(),
+        )
+        session.add(n)
+        await session.commit()
+        await session.refresh(n)
+        system_id = n.id
+
+    resp = await async_client.post(
+        f"/notifications/{system_id}/read",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 404
+
+    resp = await async_client.delete(
+        f"/notifications/{system_id}",
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 404
+
+    # Row survives both attempts.
+    from sqlmodel import select  # noqa: PLC0415
+
+    async with async_session_scope() as session:
+        row = (await session.exec(select(NotificationRecord).where(NotificationRecord.id == system_id))).first()
+        assert row is not None
+
+
 # ---------------------------------------------------------------------------
 # Envelope shape tests (D-27)
 # ---------------------------------------------------------------------------
