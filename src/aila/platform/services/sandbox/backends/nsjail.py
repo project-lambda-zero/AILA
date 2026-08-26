@@ -88,8 +88,6 @@ def build_nsjail_argv(
         "--chroot", "/",  # keep host FS visible; the bind-mount below is R/W
         "--bindmount", f"{workspace_remote_root}:{spec.workdir}",
         "--cwd", spec.workdir,
-        "--user", "nobody",
-        "--group", "nogroup",
         # Wall-clock ceiling. nsjail SIGKILLs the child at expiry.
         "--time_limit", str(int(max(1, round(spec.timeout_s)))),
         # Address-space ceiling (bytes). rlimit_as bounds mmap + malloc.

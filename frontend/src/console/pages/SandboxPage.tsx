@@ -83,8 +83,17 @@ const inputStyle: CSSProperties = css(
 /* ------------------------------ helpers ---------------------------------- */
 
 function apiErrMessage(err: unknown): string {
-  if (err instanceof ApiError) return err.message || `HTTP ${err.status}`;
-  if (err instanceof Error) return err.message;
+  if (err instanceof Error) {
+    try {
+      const parsed = JSON.parse(err.message);
+      if (parsed && typeof parsed === "object" && parsed.detail) {
+        return String(parsed.detail);
+      }
+    } catch {
+      // not JSON, use message directly
+    }
+    return err.message;
+  }
   return String(err);
 }
 
@@ -100,6 +109,7 @@ interface TerminalEntry {
   text: string;
   exitCode?: number | null;
   durationS?: number;
+  showInstallButton?: boolean;
 }
 
 /* ------------------------ INTERACTIVE TERMINAL --------------------------- */
@@ -107,9 +117,13 @@ interface TerminalEntry {
 function InteractiveSandboxTerminal({
   status,
   onRunSuccess,
+  onInstallTooling,
+  isInstalling,
 }: {
   status: SandboxStatus | undefined;
   onRunSuccess?: () => void;
+  onInstallTooling?: () => void;
+  isInstalling?: boolean;
 }): JSX.Element {
   const terminalScrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -119,19 +133,7 @@ function InteractiveSandboxTerminal({
   const [historyIndex, setHistoryIndex] = useState<number>(-1);
   const [networkEgress, setNetworkEgress] = useState<boolean>(false);
   const [timeoutS] = useState<number>(30);
-
-  const [entries, setEntries] = useState<TerminalEntry[]>([
-    {
-      id: "banner-1",
-      kind: "system",
-      text: "AILA Platform Sandbox Isolation Terminal",
-    },
-    {
-      id: "banner-2",
-      kind: "meta",
-      text: `Backend: ${status?.backend || "none"} \u00b7 Target: ${status?.ssh_host || "not selected"} \u00b7 Status: ${status?.provisioned ? "READY" : "NOT PROVISIONED"}`,
-    },
-  ]);
+  const [entries, setEntries] = useState<TerminalEntry[]>([]);
 
   const execMut = useSandboxExec();
 
@@ -193,12 +195,18 @@ function InteractiveSandboxTerminal({
 
       if (onRunSuccess) onRunSuccess();
     } catch (err) {
+      const errMsg = apiErrMessage(err);
+      const isMissingTool =
+        errMsg.toLowerCase().includes("missing required binary") ||
+        errMsg.toLowerCase().includes("not installed");
+
       setEntries((prev) => [
         ...prev,
         {
           id: `err-${Date.now()}`,
           kind: "stderr",
-          text: `[EXEC ERROR] ${apiErrMessage(err)}`,
+          text: `[EXEC ERROR] ${errMsg}`,
+          showInstallButton: isMissingTool,
         },
       ]);
     } finally {
@@ -236,14 +244,10 @@ function InteractiveSandboxTerminal({
   };
 
   const handleClear = () => {
-    setEntries([
-      {
-        id: `banner-${Date.now()}`,
-        kind: "meta",
-        text: `Terminal buffer cleared \u00b7 ${status?.backend || "none"} on ${status?.ssh_host || "unbound"}`,
-      },
-    ]);
+    setEntries([]);
   };
+
+  const targetTool = status?.backend === "firecracker" ? "firecracker" : "nsjail";
 
   return (
     <div style={css("flex:1;min-height:0;display:flex;flex-direction:column;background:#080808;overflow:hidden;")}>
@@ -296,6 +300,33 @@ function InteractiveSandboxTerminal({
           "flex:1;min-height:0;padding:12px 14px;overflow-y:auto;font-family:var(--font-mono, monospace);font-size:12px;line-height:1.45;color:#d4d4d4;",
         )}
       >
+        {/* Dynamic Reactive Banner Header */}
+        <div style={css("color:#50fa7b;font-weight:700;padding-bottom:2px;")}>
+          AILA Platform Sandbox Isolation Terminal
+        </div>
+        <div style={css("color:#888;font-size:11px;padding-bottom:8px;border-bottom:1px solid #1a1a1a;margin-bottom:8px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;")}>
+          <div>
+            Backend: <span style={css("color:#fff;font-weight:600;")}>{status?.backend || "none"}</span>
+            {" \u00b7 "}
+            Target: <span style={css("color:#00ffff;font-weight:600;")}>{status?.ssh_host || "not selected"}</span>
+            {" \u00b7 "}
+            Status: <span style={css(`color:${status?.provisioned ? "#50fa7b" : H_WARN};font-weight:600;`)}>
+              {status?.provisioned ? "READY" : "NOT PROVISIONED"}
+            </span>
+          </div>
+
+          {!status?.provisioned && status?.ssh_host ? (
+            <button
+              type="button"
+              onClick={() => void onInstallTooling?.()}
+              disabled={isInstalling}
+              style={isInstalling ? btnPrimaryDisabled : btnPrimary}
+            >
+              {isInstalling ? "installing tooling over ssh..." : `\u26a1 install ${targetTool} on host`}
+            </button>
+          ) : null}
+        </div>
+
         {entries.map((entry) => {
           if (entry.kind === "system") {
             return (
@@ -332,20 +363,35 @@ function InteractiveSandboxTerminal({
           }
           if (entry.kind === "stderr") {
             return (
-              <pre
-                key={entry.id}
-                style={{
-                  margin: 0,
-                  padding: 0,
-                  fontFamily: "inherit",
-                  fontSize: "inherit",
-                  color: "#ff5555",
-                  whiteSpace: "pre-wrap",
-                  wordBreak: "break-word",
-                }}
-              >
-                {entry.text}
-              </pre>
+              <div key={entry.id} style={css("display:flex;flex-direction:column;gap:6px;")}>
+                <pre
+                  style={{
+                    margin: 0,
+                    padding: 0,
+                    fontFamily: "inherit",
+                    fontSize: "inherit",
+                    color: "#ff5555",
+                    whiteSpace: "pre-wrap",
+                    wordBreak: "break-word",
+                  }}
+                >
+                  {entry.text}
+                </pre>
+                {entry.showInstallButton ? (
+                  <div style={css("padding:4px 0 6px;")}>
+                    <button
+                      type="button"
+                      onClick={() => void onInstallTooling?.()}
+                      disabled={isInstalling}
+                      style={isInstalling ? btnPrimaryDisabled : btnPrimary}
+                    >
+                      {isInstalling
+                        ? "installing tooling over ssh..."
+                        : `\u26a1 1-Click: Install ${targetTool} on ${status?.ssh_host || "host"}`}
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             );
           }
           return (
@@ -380,7 +426,7 @@ function InteractiveSandboxTerminal({
           placeholder={
             status?.provisioned
               ? "Type command to execute inside sandbox (e.g. gcc -O2 poc.c -o poc && ./poc)..."
-              : "Sandbox not provisioned \u2014 select a fleet host above."
+              : "Sandbox not provisioned \u2014 select a fleet host or click install above."
           }
           style={inputStyle}
           disabled={execMut.isPending}
@@ -615,9 +661,10 @@ export default function SandboxPage(props: ModulePageProps): JSX.Element {
     await statusQ.refetch();
   };
 
+  const targetTool = status?.backend === "firecracker" ? "firecracker" : "nsjail";
+
   const handleInstallTooling = async () => {
     setBootstrapOutput(null);
-    const targetTool = status?.backend === "firecracker" ? "firecracker" : "nsjail";
     try {
       const res = await bootstrapTool.mutateAsync({ tool: targetTool });
       setBootstrapOutput(res.output || res.detail);
@@ -639,6 +686,8 @@ export default function SandboxPage(props: ModulePageProps): JSX.Element {
       <span style={{ flex: 1 }} />
     </>
   );
+
+  const isMissingTool = probeData?.tool_missing || (!status?.provisioned && Boolean(status?.ssh_host));
 
   return (
     <ConsoleWindow
@@ -710,8 +759,8 @@ export default function SandboxPage(props: ModulePageProps): JSX.Element {
             <span style={chipFaint}>unprobed</span>
           )}
 
-          {/* 1-Click Install Tooling Button */}
-          {probeData?.tool_missing ? (
+          {/* 1-Click Install Tooling Button in Top Toolbar */}
+          {isMissingTool ? (
             <button
               type="button"
               onClick={handleInstallTooling}
@@ -719,8 +768,8 @@ export default function SandboxPage(props: ModulePageProps): JSX.Element {
               style={bootstrapTool.isPending ? btnPrimaryDisabled : btnPrimary}
             >
               {bootstrapTool.isPending
-                ? "installing\u2026"
-                : `\u26a1 install ${status?.backend === "firecracker" ? "firecracker" : "nsjail"} on host`}
+                ? "installing on host\u2026"
+                : `\u26a1 install ${targetTool} on host`}
             </button>
           ) : null}
 
@@ -799,7 +848,7 @@ export default function SandboxPage(props: ModulePageProps): JSX.Element {
               fontFamily: "var(--font-mono, monospace)",
               fontSize: 10,
               color: "#e0e0e0",
-              maxHeight: 120,
+              maxHeight: 140,
               overflow: "auto",
               whiteSpace: "pre-wrap",
             }}
@@ -811,7 +860,11 @@ export default function SandboxPage(props: ModulePageProps): JSX.Element {
 
       {/* Main Surface Body */}
       {activeTab === "terminal" ? (
-        <InteractiveSandboxTerminal status={status} />
+        <InteractiveSandboxTerminal
+          status={status}
+          onInstallTooling={handleInstallTooling}
+          isInstalling={bootstrapTool.isPending}
+        />
       ) : activeTab === "history" ? (
         <SandboxHistoryTab />
       ) : (

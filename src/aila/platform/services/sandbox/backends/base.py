@@ -51,12 +51,9 @@ __all__ = [
 
 _log = logging.getLogger(__name__)
 
-# Where per-run host workspaces live. A single top-level directory keeps
-# operators' cleanup story simple (``rm -rf /var/tmp/aila-sandbox/*``);
-# the per-run uuid subdir is the actual isolation boundary. ``/var/tmp``
-# is preferred over ``/tmp`` because most distros do not wipe it on
-# tmpfiles clean-up and Firecracker jailer expects a stable parent.
-_HOST_WORKSPACE_ROOT = "/var/tmp/aila-sandbox"
+# Where per-run host workspaces live. ``/tmp/aila-sandbox`` is world-accessible
+# with standard 1777 sticky bit so non-root users can write without permissions errors.
+_HOST_WORKSPACE_ROOT = "/tmp/aila-sandbox"
 
 
 class HostWorkspace:
@@ -79,21 +76,27 @@ class HostWorkspace:
 async def probe_binary(ssh: SSHService, host_payload, binary: str) -> str:
     """Return the absolute path of ``binary`` on the host, or raise.
 
-    Uses ``command -v`` because it is a POSIX-mandated shell builtin,
-    unlike ``which`` which is not always installed on minimal images.
+    Uses ``command -v`` and fallback search locations so custom and
+    system paths (/usr/local/bin, /usr/bin) resolve properly.
     """
     quoted = shlex.quote(binary)
-    stdout, stderr, exit_code = await ssh.run_command_full(
-        host_payload,
-        f"command -v {quoted}",
-        timeout_seconds=15.0,
-    )
-    resolved = stdout.strip()
+    try:
+        stdout, stderr, exit_code = await ssh.run_command_full(
+            host_payload,
+            f"command -v {quoted} || which {quoted} || ls -1 /usr/local/bin/{quoted} /usr/bin/{quoted} 2>/dev/null | head -n 1",
+            timeout_seconds=15.0,
+            connect_timeout=8.0,
+        )
+    except (paramiko.SSHException, OSError, TimeoutError) as exc:
+        raise SandboxExecutionError(
+            f"SSH connection to {host_payload.host}:{host_payload.port} timed out or failed ({exc}). Check that the remote host is powered on and reachable."
+        ) from exc
+
+    resolved = stdout.strip().splitlines()[0] if stdout.strip() else ""
     if exit_code != 0 or not resolved:
         raise SandboxExecutionError(
-            f"sandbox host is missing required binary {binary!r} "
-            f"(command -v exit={exit_code}, stderr={stderr.strip()[:200]}). "
-            "Install it on the sandbox host and retry."
+            f"Sandbox isolation binary {binary!r} is not installed on {host_payload.host}. "
+            f"Use the '[⚡ Install {binary} on Host]' action in the header to compile/install it automatically over SSH."
         )
     return resolved
 
@@ -116,9 +119,14 @@ async def host_workspace(ssh: SSHService, host_payload):
         f"mkdir -p {shlex.quote(_HOST_WORKSPACE_ROOT)} && "
         f"mkdir {shlex.quote(remote_root)}"
     )
-    stdout, stderr, exit_code = await ssh.run_command_full(
-        host_payload, cmd, timeout_seconds=30.0,
-    )
+    try:
+        stdout, stderr, exit_code = await ssh.run_command_full(
+            host_payload, cmd, timeout_seconds=30.0, connect_timeout=8.0,
+        )
+    except (paramiko.SSHException, OSError, TimeoutError) as exc:
+        raise SandboxExecutionError(
+            f"SSH connection to {host_payload.host}:{host_payload.port} timed out or failed ({exc}). Check that the remote host is powered on."
+        ) from exc
     if exit_code != 0:
         raise SandboxExecutionError(
             f"sandbox host workspace mkdir failed (exit={exit_code}): {stderr.strip()[:200]}"
