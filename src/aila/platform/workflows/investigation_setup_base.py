@@ -403,16 +403,28 @@ def state_investigation_setup(
                     # this can't happen) OR all prior primaries reached
                     # terminal disposition and re-enqueue wants a fresh
                     # round. Fork a new ACTIVE primary so the run has
-                    # somewhere live to land. Prior outcomes context loads
-                    # via the existing re-enqueue blindness fix
-                    # (vuln_researcher.run_turn loads prior_outcomes from
-                    # the investigation, not from a single branch).
+                    # somewhere live to land. Carry forward the latest
+                    # prior primary's case state and turn count so the
+                    # agent retains hypotheses, discoveries, and observables
+                    # across re-enqueues instead of starting from a blank slate.
                     _log.warning(
                         "investigation_setup: no live primary branch for "
                         "inv=%s -- forking fresh primary (persona=%s); prior "
                         "primaries were terminal or absent",
                         investigation_id, bindings.primary_persona_value,
                     )
+                    prior_primary = (await uow.session.exec(
+                        _select(bindings.branch_model).where(
+                            bindings.branch_model.investigation_id == investigation_id,
+                            bindings.branch_model.parent_branch_id.is_(None),
+                        ).order_by(bindings.branch_model.created_at.desc()).limit(1)
+                    )).first()
+                    inherited_case_state = "{}"
+                    inherited_turn_count = 0
+                    if prior_primary is not None:
+                        inherited_case_state = prior_primary.case_state_json or "{}"
+                        inherited_turn_count = prior_primary.turn_count or 0
+
                     branch = bindings.branch_model(
                         investigation_id=investigation_id,
                         parent_branch_id=None,
@@ -424,6 +436,8 @@ def state_investigation_setup(
                         # branch lands in the right strategy bucket instead
                         # of the NULL/empty bucket the dormancy audit found.
                         strategy_family=inv.strategy_family,
+                        case_state_json=inherited_case_state,
+                        turn_count=inherited_turn_count,
                     )
                     uow.session.add(branch)
                     await uow.session.flush()

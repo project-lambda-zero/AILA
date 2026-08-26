@@ -278,7 +278,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         async with UnitOfWork() as uow:
             rows = (await uow.session.exec(
                 _select(VRInvestigationMessageRecord)
-                .where(VRInvestigationMessageRecord.branch_id == self.branch_id)
+                .where(VRInvestigationMessageRecord.investigation_id == self.investigation_id)
                 .where(VRInvestigationMessageRecord.superseded_at.is_(None))
                 .order_by(VRInvestigationMessageRecord.created_at.desc())
             )).all()

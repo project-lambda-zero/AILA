@@ -346,12 +346,19 @@ _NO_INGEST_KINDS: frozenset[TargetKind] = frozenset({
     TargetKind.PATCH_DIFF,
 })
 
-# Per-kind applicable stage sets (PRD §C-20). Source-repo / binary /
-# no-ingest kinds run the legacy INGESTION / CAPABILITY_PROFILE /
-# FUNCTION_RANKING trio. Android APKs run the five android-mcp stages
-# instead. Stages NOT in the kind's applicable set are pre-marked
-# DONE-skipped by ``_skip_inapplicable_stages`` at analyze() entry,
-# so ``roll_up_overall_state`` (which requires every stage at DONE
+_NO_INGEST_STAGES: frozenset[StageName] = frozenset({
+    StageName.INGESTION,
+    StageName.CAPABILITY_PROFILE,
+})
+
+# Per-kind applicable stage sets (PRD §C-20). Source-repo / binary
+# kinds run the legacy INGESTION / CAPABILITY_PROFILE /
+# FUNCTION_RANKING trio. No-ingest kinds (CVE, crash input, patch diff)
+# run only INGESTION + CAPABILITY_PROFILE (they are not rankable).
+# Android APKs run the five android-mcp stages instead. Stages NOT
+# in the kind's applicable set are pre-marked DONE-skipped by
+# ``_skip_inapplicable_stages`` at analyze() entry, so
+# ``roll_up_overall_state`` (which requires every stage at DONE
 # before returning READY) converges once the applicable subset runs.
 _LEGACY_STAGES: frozenset[StageName] = frozenset({
     StageName.INGESTION,
@@ -371,6 +378,8 @@ def _applicable_stages_for(kind: TargetKind) -> frozenset[StageName]:
     """Return the stage set that applies to a given target kind."""
     if kind == TargetKind.ANDROID_APK:
         return _ANDROID_STAGES
+    if kind in _NO_INGEST_KINDS:
+        return _NO_INGEST_STAGES
     return _LEGACY_STAGES
 
 
@@ -708,17 +717,18 @@ class TargetAnalysisService:
         target_id: str,
         applicable: frozenset[StageName],
     ) -> None:
-        """Mark stages NOT in ``applicable`` as DONE if still untouched.
+        """Mark stages NOT in ``applicable`` as DONE if not actively running.
 
         ``roll_up_overall_state`` requires every StageName entry to be
         DONE before returning READY. Targets only run a subset of stages
         relevant to their kind, so the inapplicable ones get marked
-        DONE-skipped here. Idempotent: only stages currently at PENDING
-        with ``attempts == 0`` are mutated; anything already DONE /
-        RUNNING / FAILED is left alone so a real failure can never be
-        masked by this helper.
+        DONE-skipped here. Idempotent: stages already DONE without errors
+        are left untouched; RUNNING stages are left alone so an active
+        worker is never raced. PENDING or historically FAILED inapplicable
+        stages are resolved to DONE-skipped so roll_up_overall_state can
+        converge cleanly.
 
-        Skipped stages carry ``started_at=None`` and ``attempts=0`` so
+        Skipped stages carry ``started_at=None`` and ``error=None`` so
         operators can distinguish them from stages that genuinely ran.
         """
         stages = await load_target_stages(target_id)
@@ -727,13 +737,15 @@ class TargetAnalysisService:
         for stage_name, status in stages.all_stages():
             if stage_name in applicable:
                 continue
-            if status.state != StageState.PENDING or status.attempts != 0:
+            if status.state == StageState.RUNNING:
+                continue
+            if status.state == StageState.DONE and status.error is None:
                 continue
             stages.set(stage_name, StageStatus(
                 state=StageState.DONE,
-                started_at=None,
+                started_at=status.started_at,
                 completed_at=now,
-                attempts=0,
+                attempts=status.attempts,
                 error=None,
             ))
             mutated = True

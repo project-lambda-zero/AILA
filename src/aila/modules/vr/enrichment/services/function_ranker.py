@@ -200,10 +200,12 @@ class FunctionRankingDispatcher:
                 }:
                     ranking = await self._rank_binary(target_id, handles)
                 else:
-                    raise FunctionRankerError(
-                        f"target_id={target_id} kind={target_row.kind!r} "
-                        "is not rankable (only SOURCE_REPO + binary kinds supported)",
+                    _log.info(
+                        "function_ranker: target_id=%s kind=%s is not rankable "
+                        "(only SOURCE_REPO and binary kinds supported) -- skipping",
+                        target_id, target_row.kind,
                     )
+                    return None
 
                 # Persist into capability_profile.function_ranking -- same
                 # commit as the stage's DONE transition (no crash window
