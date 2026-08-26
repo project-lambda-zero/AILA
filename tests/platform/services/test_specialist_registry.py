@@ -11,11 +11,11 @@ async def test_seed_defaults_is_idempotent(test_db) -> None:
     del test_db
     reg = SpecialistAgentRegistry()
     first = await reg.seed_defaults("vr")
-    assert first == 4  # snake, jak, kratos, lara
+    assert first == 7  # snake, jak, kratos, lara, gordon, garrett, ratchet
     again = await reg.seed_defaults("vr")
     assert again == 0  # nothing re-inserted
     names = {s.name for s in await reg.list_by_module("vr")}
-    assert names == {"snake", "jak", "kratos", "lara"}
+    assert names == {"snake", "jak", "kratos", "lara", "gordon", "garrett", "ratchet"}
 
 
 async def test_resolve_capability_specialist_vs_core(test_db) -> None:

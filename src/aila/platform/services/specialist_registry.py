@@ -14,7 +14,9 @@ code change; every module inherits the mechanism.
 A spawned specialist branch carries the specialist ``name`` as its
 ``persona_voice``; the setup state resolves that name back to a capability
 through this registry and threads ``_branch_capability`` into the dispatch
-hub input, so the (already-tested) capability filter finally routes.
+hub input, so the capability filter routes the specialist branch to its
+capability-scoped phase. This routing is active for modules that set
+``module_id`` in their setup bindings (such as "vr" and "malware").
 """
 from __future__ import annotations
 
