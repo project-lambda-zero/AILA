@@ -27,7 +27,10 @@ from dataclasses import dataclass
 from typing import Any
 
 import paramiko
+from sqlmodel import select
 
+from ....storage.database import async_session_scope
+from ....storage.db_models import ManagedSystemRecord
 from ....storage.registry import ConfigRegistry
 from ...config import PlatformSettings
 from ...contracts.platform import SSHIntegrationInput
@@ -79,6 +82,8 @@ class SandboxConfig:
     jailer_bin: str
     rootfs_path: str
     kernel_path: str
+    system_name: str = ""
+    system_id: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,7 +156,12 @@ class SandboxService:
             )
 
         normalized = self._apply_policy(spec, cfg)
-        host_payload = self._build_host_payload(cfg)
+        managed_sys = await self._resolve_managed_system(
+            system_name=cfg.system_name,
+            system_id=cfg.system_id,
+            host=cfg.ssh_host,
+        )
+        host_payload = self._build_host_payload(cfg, managed_sys)
 
         _log.info(
             "sandbox.dispatch backend=%s argv0=%s timeout_s=%.1f network=%s",
@@ -211,13 +221,74 @@ class SandboxService:
             "mem_mb": max(1, int(effective_mem)),
         })
 
-    def _build_host_payload(self, cfg: SandboxConfig) -> SSHIntegrationInput:
+    async def _resolve_managed_system(
+        self,
+        *,
+        system_name: str = "",
+        system_id: int | None = None,
+        host: str = "",
+    ) -> ManagedSystemRecord | None:
+        """Resolve a ManagedSystemRecord from the platform systems registry.
+
+        Resolution precedence:
+        1. Explicit system_id from config
+        2. Explicit system_name from config
+        3. Registered system with role == "sandbox"
+        4. Registered system matching the configured host IP/hostname
+        """
+        try:
+            async with async_session_scope() as session:
+                if system_id is not None:
+                    row = await session.get(ManagedSystemRecord, system_id)
+                    if row is not None:
+                        return row
+                if system_name:
+                    stmt = select(ManagedSystemRecord).where(ManagedSystemRecord.name == system_name)
+                    row = (await session.exec(stmt)).first()
+                    if row is not None:
+                        return row
+                # Fallback: check for system explicitly tagged with role == "sandbox"
+                stmt = select(ManagedSystemRecord).where(ManagedSystemRecord.role == "sandbox")
+                row = (await session.exec(stmt)).first()
+                if row is not None:
+                    return row
+                # Fallback: check for registered system matching the host
+                if host:
+                    stmt = select(ManagedSystemRecord).where(ManagedSystemRecord.host == host)
+                    row = (await session.exec(stmt)).first()
+                    if row is not None:
+                        return row
+        except (OSError, RuntimeError, TimeoutError, ValueError, AttributeError) as exc:
+            _log.debug("failed to resolve managed system for sandbox: %s", exc)
+        return None
+
+    def _build_host_payload(
+        self,
+        cfg: SandboxConfig,
+        managed_sys: Any | None = None,
+    ) -> SSHIntegrationInput:
         """Compose the SSH integration payload for the sandbox host.
 
-        The sandbox host is a platform-owned surface (no team scoping),
-        so the caller does not choose the host per-request -- the
-        platform config is the single source of truth.
+        When a registered system from the platform Systems Registry
+        (:class:`ManagedSystemRecord`) is resolved, its stored credentials,
+        private key secret, and known host keys are passed directly so
+        operators configure SSH authentication once in the fleet registry.
         """
+        if managed_sys is not None:
+            return SSHIntegrationInput(
+                name=managed_sys.name or "sandbox-host",
+                host=managed_sys.host,
+                username=managed_sys.username or cfg.ssh_user or "root",
+                port=managed_sys.port or cfg.ssh_port or 22,
+                distro=managed_sys.distro or "linux",
+                description=managed_sys.description or "Platform managed sandbox host.",
+                private_key_path=managed_sys.private_key_path,
+                private_key_secret_id=managed_sys.private_key_secret_id,
+                private_key_passphrase_secret_id=managed_sys.private_key_passphrase_secret_id,
+                password_secret_id=managed_sys.password_secret_id,
+                known_hosts_path=managed_sys.known_hosts_path,
+                host_key_fingerprint=managed_sys.host_key_fingerprint,
+            )
         return SSHIntegrationInput(
             name="sandbox-host",
             host=cfg.ssh_host,
@@ -263,17 +334,22 @@ class SandboxService:
                 ok=False,
                 detail=(
                     "sandbox_backend is 'none'; set it to 'nsjail' or "
-                    "'firecracker' and point sandbox_ssh_host at a Linux host."
+                    "'firecracker' and select a registered system or set sandbox_ssh_host."
                 ),
                 duration_ms=0,
             )
         if not cfg.ssh_host.strip():
             return SandboxProbe(
                 ok=False,
-                detail="sandbox_ssh_host is empty; point it at a Linux sandbox host reachable via SSH.",
+                detail="No sandbox host configured or registered; select a registered system or set sandbox_ssh_host.",
                 duration_ms=0,
             )
-        payload = self._build_host_payload(cfg)
+        managed_sys = await self._resolve_managed_system(
+            system_name=cfg.system_name,
+            system_id=cfg.system_id,
+            host=cfg.ssh_host,
+        )
+        payload = self._build_host_payload(cfg, managed_sys)
         start = time.monotonic()
         try:
             _, _, exit_code = await asyncio.wait_for(
@@ -298,10 +374,11 @@ class SandboxService:
                 duration_ms=int((time.monotonic() - start) * 1000),
             )
         duration_ms = int((time.monotonic() - start) * 1000)
+        sys_desc = f" [{managed_sys.name}]" if managed_sys and managed_sys.name else ""
         if exit_code == 0:
             return SandboxProbe(
                 ok=True,
-                detail=f"ssh round-trip ok ({cfg.ssh_user or 'root'}@{cfg.ssh_host}:{cfg.ssh_port})",
+                detail=f"ssh round-trip ok ({payload.username}@{payload.host}:{payload.port}){sys_desc}",
                 duration_ms=duration_ms,
             )
         return SandboxProbe(
@@ -329,6 +406,12 @@ class SandboxService:
         backend = str(await _get("sandbox_backend", "none")).strip() or "none"
         ssh_host = str(await _get("sandbox_ssh_host", "")).strip()
         ssh_user = str(await _get("sandbox_ssh_user", "")).strip()
+        system_name = str(await _get("sandbox_system_name", "")).strip()
+        try:
+            system_id_raw = await _get("sandbox_system_id", None)
+            system_id = int(system_id_raw) if system_id_raw is not None else None
+        except (TypeError, ValueError):
+            system_id = None
         try:
             ssh_port = int(await _get("sandbox_ssh_port", 22))
         except (TypeError, ValueError):
@@ -364,6 +447,20 @@ class SandboxService:
         rootfs_path = str(await _get("sandbox_rootfs_path", "")).strip()
         kernel_path = str(await _get("sandbox_kernel_path", "")).strip()
 
+        # If ssh_host is unset or system_name/id is specified, resolve from Systems Registry
+        if not ssh_host or system_name or system_id is not None:
+            managed_sys = await self._resolve_managed_system(
+                system_name=system_name,
+                system_id=system_id,
+                host=ssh_host,
+            )
+            if managed_sys is not None:
+                ssh_host = managed_sys.host or ssh_host
+                ssh_user = managed_sys.username or ssh_user or "root"
+                ssh_port = managed_sys.port or ssh_port or 22
+                system_name = managed_sys.name or system_name
+                system_id = managed_sys.id or system_id
+
         return SandboxConfig(
             backend=backend,
             ssh_host=ssh_host,
@@ -380,4 +477,6 @@ class SandboxService:
             jailer_bin=jailer_bin,
             rootfs_path=rootfs_path,
             kernel_path=kernel_path,
+            system_name=system_name,
+            system_id=system_id,
         )

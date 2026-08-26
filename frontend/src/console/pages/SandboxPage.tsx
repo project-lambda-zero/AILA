@@ -41,6 +41,7 @@ import type {
   SandboxSpec,
   SandboxStatus,
 } from "../../api/sandbox";
+import { useSystems, type SystemEnriched } from "../../api/systems";
 import type { ModulePageProps } from "../contract";
 import { css } from "../css";
 import { ConsoleWindow } from "../window";
@@ -191,15 +192,37 @@ function SandboxQuickSetup({
   onConfigured?: () => void;
 }): JSX.Element {
   const [backend, setBackend] = useState<string>("nsjail");
+  const [selectedSystemId, setSelectedSystemId] = useState<string>("");
   const [sshHost, setSshHost] = useState<string>(defaultHost);
   const [sshUser, setSshUser] = useState<string>("root");
   const [sshPort, setSshPort] = useState<string>("22");
+  const [systemName, setSystemName] = useState<string>("");
   const [isSettingUp, setIsSettingUp] = useState<boolean>(false);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [setupSuccess, setSetupSuccess] = useState<boolean>(false);
 
+  const systemsQ = useSystems(1, 200);
   const updateConfig = useUpdateSandboxConfig();
   const probe = useSandboxProbe();
+
+  const systemsList = useMemo(() => {
+    return systemsQ.data?.items ?? [];
+  }, [systemsQ.data]);
+
+  const handleSelectSystem = (sysId: string) => {
+    setSelectedSystemId(sysId);
+    if (!sysId || sysId === "custom") {
+      setSystemName("");
+      return;
+    }
+    const found = systemsList.find((s) => String(s.id) === sysId);
+    if (found) {
+      setSshHost(found.host || "");
+      setSshUser(found.username || "root");
+      setSshPort(String(found.port || 22));
+      setSystemName(found.name || "");
+    }
+  };
 
   const handleSetup = async (e?: FormEvent) => {
     if (e) e.preventDefault();
@@ -224,6 +247,18 @@ function SandboxQuickSetup({
         key: "sandbox_ssh_port",
         body: { value: sshPort.trim(), value_type: "str" },
       });
+      if (systemName.trim()) {
+        await updateConfig.mutateAsync({
+          key: "sandbox_system_name",
+          body: { value: systemName.trim(), value_type: "str" },
+        });
+      }
+      if (selectedSystemId && selectedSystemId !== "custom") {
+        await updateConfig.mutateAsync({
+          key: "sandbox_system_id",
+          body: { value: selectedSystemId, value_type: "str" },
+        });
+      }
 
       await probe.mutateAsync();
       setSetupSuccess(true);
@@ -236,6 +271,8 @@ function SandboxQuickSetup({
   };
 
   const applyPreset = (presetBackend: string, presetHost: string, presetUser: string, presetPort: string) => {
+    setSelectedSystemId("custom");
+    setSystemName("");
     setBackend(presetBackend);
     setSshHost(presetHost);
     setSshUser(presetUser);
@@ -250,7 +287,7 @@ function SandboxQuickSetup({
     >
       <div style={css("display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;")}>
         <div style={css("display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent);")}>
-          <span>{"\u26a1"} 1-click sandbox ssh setup</span>
+          <span>{"\u26a1"} 1-click sandbox setup (fleet systems registry)</span>
         </div>
         <div style={css("display:flex;gap:4px;")}>
           <button
@@ -273,10 +310,29 @@ function SandboxQuickSetup({
       </div>
 
       <div style={css("font-family:var(--font-mono);font-size:10px;color:var(--text-muted);line-height:1.45;")}>
-        Because AILA backend runs on Windows, isolated sandboxes (<code>nsjail</code> / <code>firecracker</code>) execute on a Linux host reachable via SSH. Choose your host below:
+        Select any registered machine from the platform <strong>Systems Registry</strong> (or provide a custom host) to back the <code>nsjail</code> / <code>firecracker</code> sandbox:
       </div>
 
-      <form onSubmit={handleSetup} style={css("display:grid;grid-template-columns:repeat(auto-fit, minmax(110px, 1fr));gap:8px;align-items:end;")}>
+      <form onSubmit={handleSetup} style={css("display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:8px;align-items:end;")}>
+        {systemsList.length > 0 ? (
+          <label style={labelStyle}>
+            registered system
+            <select
+              value={selectedSystemId}
+              onChange={(e) => handleSelectSystem(e.target.value)}
+              style={selectStyle}
+            >
+              <option value="">-- select fleet system --</option>
+              {systemsList.map((s) => (
+                <option key={s.id} value={String(s.id)}>
+                  {s.name} ({s.host}:{s.port}{s.role ? ` \u00b7 role: ${s.role}` : ""})
+                </option>
+              ))}
+              <option value="custom">Custom / Unregistered Host</option>
+            </select>
+          </label>
+        ) : null}
+
         <label style={labelStyle}>
           backend
           <select
@@ -331,7 +387,7 @@ function SandboxQuickSetup({
             disabled={isSettingUp || !sshHost.trim()}
             style={isSettingUp || !sshHost.trim() ? btnPrimaryDisabled : btnPrimary}
           >
-            {isSettingUp ? "configuring\u2026" : "\u26a1 setup & probe"}
+            {isSettingUp ? "configuring\u2026" : "\u26a1 bind & probe"}
           </button>
         </div>
       </form>
@@ -344,7 +400,7 @@ function SandboxQuickSetup({
 
       {setupSuccess ? (
         <div style={css("color:var(--color-success, #4ade80);font-family:var(--font-mono);font-size:10px;padding:3px 0 0;")}>
-          {"\u2713"} Configuration saved and SSH backend probed successfully.
+          {"\u2713"} Configuration saved and sandbox host probed successfully.
         </div>
       ) : null}
     </div>
