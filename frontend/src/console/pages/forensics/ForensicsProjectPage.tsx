@@ -366,7 +366,7 @@ function renderTab(
   const p = { projectId, onOpenInvestigation };
   switch (tab) {
     case "overview":
-      return <OverviewTab projectId={projectId} project={project} />;
+      return <OverviewTab projectId={projectId} project={project} onOpenInvestigation={onOpenInvestigation} />;
     case "evidence":
       return <EvidenceTab {...p} />;
     case "artifacts":
@@ -396,7 +396,7 @@ function renderTab(
     case "registry-analysis":
       return <RegistryAnalysisTab {...p} />;
     default:
-      return <OverviewTab projectId={projectId} project={project} />;
+      return <OverviewTab projectId={projectId} project={project} onOpenInvestigation={onOpenInvestigation} />;
   }
 }
 
