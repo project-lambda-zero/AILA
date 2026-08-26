@@ -317,6 +317,17 @@ function toRows(data: unknown, itemsKey?: string): Record<string, unknown>[] {
   if (Array.isArray(data)) return wrap(data);
   const obj = asRecord(data);
   if (obj) {
+    if (obj.data && !Array.isArray(obj.data) && typeof obj.data === "object") {
+      const nested = asRecord(obj.data);
+      if (nested) {
+        const preferred = itemsKey ? readArray(nested, itemsKey) : null;
+        if (preferred) return wrap(preferred);
+        for (const k of ROW_KEYS) {
+          const arr = readArray(nested, k);
+          if (arr) return wrap(arr);
+        }
+      }
+    }
     const preferred = itemsKey ? readArray(obj, itemsKey) : null;
     if (preferred) return wrap(preferred);
     for (const k of ROW_KEYS) {
