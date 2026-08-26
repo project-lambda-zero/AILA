@@ -197,10 +197,17 @@ def persist_domain_event(event: DomainEvent) -> None:
                 exc_info=True,
             )
         return
-    # Inside a running loop -- offload so we do not nest loops. The
-    # future is deliberately fire-and-forget: the emitter contract
-    # returns synchronously and the journal write must not add latency
-    # to the caller's turn.
-    executor = _get_persist_executor()
-    del loop  # only needed to detect "loop is running"
-    executor.submit(_run_persist_in_thread, event)
+
+    # Inside a running loop -- schedule directly on the active loop so
+    # connection pool resources (asyncpg) stay on their owning event loop.
+    task = loop.create_task(_append_domain_event(event))
+
+    def _on_done(t: asyncio.Task[None]) -> None:
+        if not t.cancelled() and (exc := t.exception()):
+            _log.warning(
+                "domain_event persist failed for %s: %s",
+                event.event_type or event.__class__.__name__,
+                exc,
+            )
+
+    task.add_done_callback(_on_done)

@@ -7,6 +7,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.51] - 2026-08-26 -- Unified specialist registry, prompt version management, and scan pipeline resilience
+
+### Added
+
+- Added Unified Specialist Agent Registry with migration 141 (`agent_registry_extensions`), exposing `GET /admin/specialist-agents` and `GET /admin/specialist-agents/{id}` for querying seeded agent personas across modules (`vr`, `malware`, `forensics`, `platform`) with support for agent type, model role, prompt key, and RAG scope filtering.
+- Added Prompt Version Store and admin management endpoints (`GET /admin/prompts` and `GET /admin/prompts/body`) allowing dynamic inspection and body retrieval for all platform and module prompt keys.
+- Added admin console views for specialist agent management and prompt version inspection wired into platform settings navigation and configuration panels.
+- Added `useScanTasks()` live polling hook for vulnerability scans with dynamic interval backoff and active-scan banner in the vulnerability scan console.
+
+### Fixed
+
+- Added `__natural_key__ = ("namespace", "cache_key")` to `CacheRecord` in the vulnerability module to ensure `PersistContract.upsert_many` generates conflict resolution statements, preventing unique constraint integrity failures during concurrent OSV advisory synchronization.
+- Added defensive validation in vulnerability runtime before parsing terminal workflow responses, raising descriptive runtime errors when response bodies are missing.
+- Updated project environment loading to prioritize repository `.env` definitions over inherited shell environment exports.
+- Fixed asynchronous domain event persistence to schedule background tasks on running event loops without blocking execution threads.
+- Fixed vulnerability scan detail modal viewport styling and scrolling constraints to allow complete review of long report artifacts.
+
 ## [0.5.50] - 2026-08-24 -- A never-ran investigation waits and resumes instead of hard-failing
 
 ### Fixed

@@ -201,6 +201,24 @@ export const PAGE_CONFIGS = {
       c("cost_actual_usd", "cost $"),
       c("message_count", "turns"),
     ],
+    actions: [
+      {
+        label: "delete",
+        method: "DELETE",
+        endpoint: "/vr/investigations/{id}",
+        destructive: true,
+        confirm: "Permanently delete this investigation and its reasoning records?",
+      },
+    ],
+    bulkActions: [
+      {
+        label: "delete selected",
+        method: "DELETE",
+        endpoint: "/vr/investigations/{id}",
+        destructive: true,
+        confirm: "Permanently delete the selected investigations?",
+      },
+    ],
   },
   "vr:patterns": {
     title: "vr \u00b7 patterns",
@@ -1045,28 +1063,69 @@ export const PAGE_CONFIGS = {
     ],
   },
   "admin:specialist-agents": {
-    title: "admin \u00b7 specialist agents",
+    title: "admin \u00b7 agent registry",
     endpoint: "/agents/specialists",
-    columns: [c("name"), c("module_id", "module"), c("capability"), c("strategy_family", "strategy"), c("enabled"), c("created_at", "created")],
+    columns: [
+      c("name"),
+      c("agent_type", "type"),
+      c("module_id", "module"),
+      c("capability"),
+      c("model_role", "model role"),
+      c("prompt_key", "prompt"),
+      c("rag_scope", "rag scope"),
+      c("description"),
+      c("enabled"),
+      c("created_at", "created"),
+    ],
     filters: [
-      // `module_id` is required by the backend list handler; seed with vr so
-      // the first fetch is well-formed, and let the operator switch modules
-      // from the same page without reloading the shell.
-      { name: "module_id", label: "module", type: "select", server: true, defaultValue: "vr", options: [
+      { name: "module_id", label: "module", type: "select", server: true, options: [
+        { value: "", label: "all modules" },
         { value: "vr", label: "vr" },
+        { value: "platform", label: "platform" },
         { value: "malware", label: "malware" },
         { value: "forensics", label: "forensics" },
       ] },
+      { name: "agent_type", label: "type", type: "select", server: true, options: [
+        { value: "", label: "all types" },
+        { value: "core", label: "core" },
+        { value: "specialist", label: "specialist" },
+        { value: "system", label: "system" },
+      ] },
       { name: "name", label: "name", type: "text" },
-      { name: "created_at", label: "created", type: "date-range" },
+      { name: "capability", label: "capability", type: "text" },
     ],
-    // Seed endpoints are per-module and idempotent; a filter-substituted
-    // pageAction is not expressible (PageAction only templates `{id}`/`{scope}`
-    // from the selected row), so expose one fixed seed button per module.
     pageActions: [
+      { label: "seed all defaults", method: "POST", endpoint: "/agents/specialists/all/seed" },
       { label: "seed vr", method: "POST", endpoint: "/agents/specialists/vr/seed" },
+      { label: "seed platform", method: "POST", endpoint: "/agents/specialists/platform/seed" },
       { label: "seed malware", method: "POST", endpoint: "/agents/specialists/malware/seed" },
       { label: "seed forensics", method: "POST", endpoint: "/agents/specialists/forensics/seed" },
+    ],
+  },
+  "admin:prompts": {
+    title: "admin \u00b7 prompts",
+    endpoint: "/admin/prompts",
+    idField: "key",
+    columns: [
+      c("key", "prompt key"),
+      c("version", "latest"),
+      c("production_version", "production"),
+      c("aliases"),
+      c("author"),
+      c("body_snippet", "body preview"),
+      c("body_length", "chars"),
+      c("created_at", "registered"),
+    ],
+    filters: [
+      { name: "prefix", label: "module / domain", type: "select", server: true, options: [
+        { value: "", label: "all domains" },
+        { value: "vr", label: "vr" },
+        { value: "platform", label: "platform" },
+        { value: "malware", label: "malware" },
+        { value: "forensics", label: "forensics" },
+      ] },
+      { name: "key", label: "prompt key", type: "text" },
+      { name: "author", label: "author", type: "text" },
     ],
   },
   // ---- VR: additional (previously unmapped) ----------------------------

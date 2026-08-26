@@ -55,22 +55,31 @@ def _team_view(auth: AuthContext) -> tuple[str | None, bool]:
 @router.get(
     "",
     response_model=DataEnvelope[list[SpecialistAgentSummary]],
-    summary="List a module's specialist agents",
+    summary="List registered agents and specialists",
 )
 @limiter.limit("120/minute")
 async def list_specialists(
     request: Request,
-    module_id: str = Query(..., min_length=1, max_length=64),
+    module_id: str | None = Query(default=None, max_length=64),
+    agent_type: str | None = Query(default=None, max_length=32),
     enabled_only: bool = Query(default=False),
     auth: AuthContext = Depends(require_user_or_api_key),
 ) -> DataEnvelope[list[SpecialistAgentSummary]]:
     team_id, is_admin = _team_view(auth)
-    rows = await _registry().list_by_module(
-        module_id,
-        enabled_only=enabled_only,
-        team_id=team_id,
-        is_admin=is_admin,
-    )
+    if not module_id or module_id == "all":
+        rows = await _registry().list_all(
+            enabled_only=enabled_only,
+            team_id=team_id,
+            is_admin=is_admin,
+            agent_type=agent_type,
+        )
+    else:
+        rows = await _registry().list_by_module(
+            module_id,
+            enabled_only=enabled_only,
+            team_id=team_id,
+            is_admin=is_admin,
+        )
     return DataEnvelope(data=rows)
 
 

@@ -11,11 +11,11 @@ async def test_seed_defaults_is_idempotent(test_db) -> None:
     del test_db
     reg = SpecialistAgentRegistry()
     first = await reg.seed_defaults("vr")
-    assert first == 7  # snake, jak, kratos, lara, gordon, garrett, ratchet
+    assert first == 10  # 3 core (halvar, maddie, renzo) + 7 specialists (snake, jak, kratos, lara, gordon, garrett, ratchet)
     again = await reg.seed_defaults("vr")
     assert again == 0  # nothing re-inserted
     names = {s.name for s in await reg.list_by_module("vr")}
-    assert names == {"snake", "jak", "kratos", "lara", "gordon", "garrett", "ratchet"}
+    assert names == {"halvar", "maddie", "renzo", "snake", "jak", "kratos", "lara", "gordon", "garrett", "ratchet"}
 
 
 async def test_resolve_capability_specialist_vs_core(test_db) -> None:
@@ -24,7 +24,7 @@ async def test_resolve_capability_specialist_vs_core(test_db) -> None:
     await reg.seed_defaults("vr")
     # A registered specialist resolves to its capability.
     assert await reg.resolve_capability("vr", "snake") == "binary-audit"
-    # A core role (not in the registry) resolves to None -> walks all phases.
+    # A core role (agent_type='core') resolves to None -> walks all phases.
     assert await reg.resolve_capability("vr", "halvar") is None
 
 

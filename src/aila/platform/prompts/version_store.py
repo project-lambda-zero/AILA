@@ -164,6 +164,46 @@ class PromptVersionStore:
                 select(PromptAliasRecord).where(PromptAliasRecord.key == key)
             )).all())
 
+    async def list_all_prompts(self, prefix: str | None = None) -> list[dict[str, Any]]:
+        """List distinct prompt keys with their active aliases and latest versions."""
+        async with async_session_scope() as session:
+            stmt = select(PromptVersionRecord).order_by(
+                PromptVersionRecord.key,
+                PromptVersionRecord.created_at.desc(),
+            )
+            if prefix:
+                stmt = stmt.where(PromptVersionRecord.key.startswith(prefix))
+            versions = list((await session.exec(stmt)).all())
+
+            aliases = list((await session.exec(select(PromptAliasRecord))).all())
+            alias_map: dict[tuple[str, str], list[str]] = {}
+            prod_map: dict[str, str] = {}
+            for a in aliases:
+                alias_map.setdefault((a.key, a.version), []).append(a.alias)
+                if a.alias == "production":
+                    prod_map[a.key] = a.version
+
+            seen_keys: set[str] = set()
+            summaries: list[dict[str, Any]] = []
+            for v in versions:
+                if v.key in seen_keys:
+                    continue
+                seen_keys.add(v.key)
+                active_aliases = alias_map.get((v.key, v.version), [])
+                summaries.append({
+                    "key": v.key,
+                    "version": v.version,
+                    "production_version": prod_map.get(v.key),
+                    "aliases": active_aliases,
+                    "author": v.author or "",
+                    "notes": v.notes or "",
+                    "content_hash": v.content_hash,
+                    "body_snippet": (v.body[:200] + "…") if len(v.body) > 200 else v.body,
+                    "body_length": len(v.body) if v.body else 0,
+                    "created_at": v.created_at,
+                })
+            return sorted(summaries, key=lambda s: s["key"])
+
     async def resolve(
         self,
         key: str,
