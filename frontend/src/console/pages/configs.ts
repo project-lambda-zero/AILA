@@ -830,6 +830,7 @@ export const PAGE_CONFIGS = {
     // the full body. Filters ride the req 28 primitive server-side and
     // compose with pagination + true meta.total.
     pagination: true,
+    paginationParams: "offset",
     columns: [
       c("timestamp", "when"),
       c("model"),
