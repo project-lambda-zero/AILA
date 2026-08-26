@@ -621,6 +621,8 @@ class PlatformConfigSchema(BaseModel):
     training_output_dir: str = ""
 
     sandbox_backend: str = "none"
+    sandbox_system_id: str = ""
+    sandbox_system_name: str = ""
     sandbox_ssh_host: str = ""
     sandbox_ssh_user: str = ""
     sandbox_ssh_port: int = 22

@@ -209,6 +209,31 @@ export function useSandboxProbe(): UseMutationResult<SandboxProbe, Error, void> 
   });
 }
 
+export interface SandboxTargetPayload {
+  system_id?: string | null;
+  system_name?: string | null;
+  host: string;
+  username?: string;
+  port?: number;
+  backend?: string | null;
+}
+
+/** Atomically bind a target host / fleet system and trigger an immediate probe. */
+export function useSetSandboxTarget(): UseMutationResult<SandboxProbe, Error, SandboxTargetPayload> {
+  const qc = useQueryClient();
+  return useMutation<SandboxProbe, Error, SandboxTargetPayload>({
+    mutationFn: (payload) =>
+      apiFetch<SandboxProbe>("/platform/sandbox/target", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["sandbox", "status"] });
+      void qc.invalidateQueries({ queryKey: ["sandbox", "config"] });
+    },
+  });
+}
+
 export interface SandboxBootstrapResult {
   ok: boolean;
   detail: string;

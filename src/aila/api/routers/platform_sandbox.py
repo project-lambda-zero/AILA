@@ -26,6 +26,7 @@ from sqlmodel import select
 
 from aila.api.auth import AuthContext, require_user_or_api_key
 from aila.api.constants import ROLE_ADMIN
+from aila.api.deps import get_config_registry
 from aila.api.limiter import limiter
 from aila.api.schemas.envelope import DataEnvelope
 from aila.config import get_settings
@@ -171,6 +172,19 @@ class SandboxBootstrapResponse(BaseModel):
     detail: str
     output: str
     duration_ms: int
+
+
+class SandboxTargetRequest(BaseModel):
+    """Request body for ``POST /platform/sandbox/target``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    system_id: str | None = Field(default=None, description="Registered system ID from Systems Registry.")
+    system_name: str | None = Field(default=None, description="System name.")
+    host: str = Field(..., description="SSH host IP or hostname.")
+    username: str = Field(default="root", description="SSH username.")
+    port: int = Field(default=22, description="SSH port.")
+    backend: str | None = Field(default=None, description="Target backend: 'nsjail' or 'firecracker'.")
 
 
 class SandboxHistoryRow(BaseModel):
@@ -360,8 +374,41 @@ async def probe_sandbox(
     plus an actionable ``detail`` so the governance panel can flip
     ``ssh_reachable`` and surface the reason inline.
     """
-    del request, ctx
-    service = SandboxService(build_platform_settings(get_settings()))
+    del ctx
+    registry = get_config_registry(request)
+    service = SandboxService(build_platform_settings(get_settings()), config_registry=registry)
+    probe: SandboxProbe = await service.probe()
+    return DataEnvelope(data=SandboxProbeResponse(
+        ok=probe.ok,
+        detail=probe.detail,
+        duration_ms=probe.duration_ms,
+        tool_installed=probe.tool_installed,
+        tool_missing=probe.tool_missing,
+        installed_path=probe.installed_path,
+    ))
+
+
+@router.post("/target", status_code=status.HTTP_200_OK)
+@limiter.limit("30/minute")
+async def set_sandbox_target(
+    request: Request,
+    body: SandboxTargetRequest,
+    ctx: AuthContext = Depends(_require_admin),
+) -> DataEnvelope[SandboxProbeResponse]:
+    """Atomically configure the sandbox host target and run an immediate probe."""
+    del ctx
+    registry = get_config_registry(request)
+    if body.backend:
+        await registry.set("platform", "sandbox_backend", body.backend)
+    if body.system_id is not None:
+        await registry.set("platform", "sandbox_system_id", str(body.system_id))
+    if body.system_name is not None:
+        await registry.set("platform", "sandbox_system_name", body.system_name)
+    await registry.set("platform", "sandbox_ssh_host", body.host.strip())
+    await registry.set("platform", "sandbox_ssh_user", body.username.strip())
+    await registry.set("platform", "sandbox_ssh_port", body.port)
+
+    service = SandboxService(build_platform_settings(get_settings()), config_registry=registry)
     probe: SandboxProbe = await service.probe()
     return DataEnvelope(data=SandboxProbeResponse(
         ok=probe.ok,

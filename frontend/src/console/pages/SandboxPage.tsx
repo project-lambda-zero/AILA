@@ -1,16 +1,12 @@
 /**
  * SandboxPage -- Dedicated platform isolation & sandbox terminal window.
  *
- * Designed around an interactive terminal window backed by the platform's
- * Systems Registry (`ManagedSystemRecord` / `SystemService`) and remote
- * isolation backends (`nsjail` + `firecracker` over SSH).
+ * Backed by the platform Systems Registry (`ManagedSystemRecord`) and
+ * remote isolation backends (`nsjail` + `firecracker` over SSH).
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { CSSProperties, FormEvent, JSX } from "react";
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import "@xterm/xterm/css/xterm.css";
+import { useEffect, useRef, useState } from "react";
+import type { CSSProperties, FormEvent, JSX, KeyboardEvent } from "react";
 
 import { ApiError } from "../../api/client";
 import {
@@ -20,6 +16,7 @@ import {
   useSandboxHistory,
   useSandboxProbe,
   useSandboxStatus,
+  useSetSandboxTarget,
   useUpdateSandboxConfig,
 } from "../../api/sandbox";
 import type {
@@ -28,16 +25,14 @@ import type {
   SandboxResult,
   SandboxStatus,
 } from "../../api/sandbox";
-import { useSystems, type SystemEnriched } from "../../api/systems";
+import { useSystems } from "../../api/systems";
 import type { ModulePageProps } from "../contract";
 import { css } from "../css";
 import { ConsoleWindow } from "../window";
-import StructuredValue from "./StructuredValue";
 
 /* ------------------------------ constants -------------------------------- */
 
 const H_WARN = "#ffb85f";
-const H_OK = "var(--status-ok, #4ade80)";
 
 /* ------------------------------- styles ---------------------------------- */
 
@@ -50,7 +45,7 @@ const controlGroup: CSSProperties = css(
 );
 
 const selectStyle: CSSProperties = css(
-  "background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:2px;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;padding:4px 8px;min-width:160px;outline:none;",
+  "background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:2px;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;padding:4px 8px;min-width:180px;outline:none;",
 );
 
 const btnPrimary: CSSProperties = css(
@@ -81,10 +76,6 @@ const chipFaint: CSSProperties = css(
   "display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border:1px solid var(--border-faint);border-radius:2px;font-family:var(--font-mono);font-size:9.5px;line-height:1.5;color:var(--text-faint);background:transparent;",
 );
 
-const chipAccent: CSSProperties = css(
-  "display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border:1px solid color-mix(in srgb,var(--accent) 55%,transparent);border-radius:2px;font-family:var(--font-mono);font-size:9.5px;line-height:1.5;letter-spacing:0.04em;color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent);",
-);
-
 const inputStyle: CSSProperties = css(
   "flex:1;background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:2px;color:var(--text-primary);font-family:var(--font-mono);font-size:12px;padding:6px 10px;outline:none;",
 );
@@ -103,6 +94,14 @@ function fmtDuration(seconds: number): string {
   return `${seconds.toFixed(2)}s`;
 }
 
+interface TerminalEntry {
+  id: string;
+  kind: "system" | "input" | "stdout" | "stderr" | "meta";
+  text: string;
+  exitCode?: number | null;
+  durationS?: number;
+}
+
 /* ------------------------ INTERACTIVE TERMINAL --------------------------- */
 
 function InteractiveSandboxTerminal({
@@ -112,95 +111,52 @@ function InteractiveSandboxTerminal({
   status: SandboxStatus | undefined;
   onRunSuccess?: () => void;
 }): JSX.Element {
-  const terminalElRef = useRef<HTMLDivElement>(null);
-  const termRef = useRef<Terminal | null>(null);
-  const fitAddonRef = useRef<FitAddon | null>(null);
+  const terminalScrollRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const [commandInput, setCommandInput] = useState<string>("");
+  const [historyStack, setHistoryStack] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState<number>(-1);
   const [networkEgress, setNetworkEgress] = useState<boolean>(false);
-  const [timeoutS, setTimeoutS] = useState<number>(30);
+  const [timeoutS] = useState<number>(30);
+
+  const [entries, setEntries] = useState<TerminalEntry[]>([
+    {
+      id: "banner-1",
+      kind: "system",
+      text: "AILA Platform Sandbox Isolation Terminal",
+    },
+    {
+      id: "banner-2",
+      kind: "meta",
+      text: `Backend: ${status?.backend || "none"} \u00b7 Target: ${status?.ssh_host || "not selected"} \u00b7 Status: ${status?.provisioned ? "READY" : "NOT PROVISIONED"}`,
+    },
+  ]);
+
   const execMut = useSandboxExec();
 
   useEffect(() => {
-    if (!terminalElRef.current) return;
-
-    const term = new Terminal({
-      cursorBlink: true,
-      fontFamily: "var(--font-mono, 'Spline Sans Mono', monospace)",
-      fontSize: 12,
-      lineHeight: 1.3,
-      theme: {
-        background: "#080808",
-        foreground: "#d4d4d4",
-        cursor: "#00ff66",
-        selectionBackground: "rgba(255, 255, 255, 0.2)",
-        black: "#000000",
-        red: "#ff5555",
-        green: "#50fa7b",
-        yellow: "#f1fa8c",
-        blue: "#bd93f9",
-        magenta: "#ff79c6",
-        cyan: "#8be9fd",
-        white: "#bfbfbf",
-        brightBlack: "#4d4d4d",
-        brightRed: "#ff6e6e",
-        brightGreen: "#69ff94",
-        brightYellow: "#ffffa5",
-        brightBlue: "#d6acff",
-        brightMagenta: "#ff92df",
-        brightCyan: "#a4ffff",
-        brightWhite: "#ffffff",
-      },
-      convertEol: true,
-      scrollback: 5000,
-    });
-
-    const fitAddon = new FitAddon();
-    term.loadAddon(fitAddon);
-    term.open(terminalElRef.current);
-
-    try {
-      fitAddon.fit();
-    } catch {
-      // ignore
+    if (terminalScrollRef.current) {
+      terminalScrollRef.current.scrollTop = terminalScrollRef.current.scrollHeight;
     }
-
-    term.writeln("\x1b[38;2;120;220;140m\x1b[1mAILA Platform Sandbox Isolation Terminal\x1b[0m");
-    term.writeln(
-      `\x1b[90mBackend: ${status?.backend || "none"} \u00b7 Target: ${status?.ssh_host || "not configured"} \u00b7 State: ${status?.provisioned ? "READY" : "NOT PROVISIONED"}\x1b[0m\n`,
-    );
-
-    termRef.current = term;
-    fitAddonRef.current = fitAddon;
-
-    const handleResize = () => {
-      try {
-        fitAddon.fit();
-      } catch {
-        // ignore
-      }
-    };
-    window.addEventListener("resize", handleResize);
-
-    return () => {
-      window.removeEventListener("resize", handleResize);
-      term.dispose();
-      termRef.current = null;
-      fitAddonRef.current = null;
-    };
-  }, [status?.backend, status?.ssh_host, status?.provisioned]);
+  }, [entries]);
 
   const runCommand = async (cmd: string) => {
     const trimmed = cmd.trim();
     if (!trimmed) return;
 
-    const term = termRef.current;
-    if (term) {
-      term.writeln(`\r\n\x1b[38;2;0;200;255m$\x1b[0m \x1b[1m${trimmed}\x1b[0m`);
-    }
+    const inputId = `cmd-${Date.now()}`;
+    setEntries((prev) => [
+      ...prev,
+      { id: inputId, kind: "input", text: trimmed },
+    ]);
 
-    // Convert bash-style command string to argv array
-    const argv = trimmed.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)?.map((s) => s.replace(/^['"]|['"]$/g, "")) || [trimmed];
+    setHistoryStack((prev) => [...prev, trimmed]);
+    setHistoryIndex(-1);
+
+    const argv = trimmed
+      .match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)
+      ?.map((s) => s.replace(/^['"]|['"]$/g, "")) || [trimmed];
 
     try {
       const res: SandboxResult = await execMut.mutateAsync({
@@ -209,26 +165,44 @@ function InteractiveSandboxTerminal({
         network: networkEgress,
       });
 
-      if (term) {
+      setEntries((prev) => {
+        const next = [...prev];
         if (res.stdout) {
-          term.write(res.stdout);
-          if (!res.stdout.endsWith("\n")) term.writeln("");
+          next.push({
+            id: `out-${Date.now()}`,
+            kind: "stdout",
+            text: res.stdout,
+          });
         }
         if (res.stderr) {
-          term.write(`\x1b[31m${res.stderr}\x1b[0m`);
-          if (!res.stderr.endsWith("\n")) term.writeln("");
+          next.push({
+            id: `err-${Date.now()}`,
+            kind: "stderr",
+            text: res.stderr,
+          });
         }
-        const statusColor = res.exit_code === 0 ? "\x1b[32m" : "\x1b[31m";
-        term.writeln(
-          `\x1b[90m[\x1b[0m${statusColor}exit ${res.exit_code ?? "\u2014"}\x1b[90m \u00b7 duration: ${fmtDuration(res.duration_s)}${res.timed_out ? " \u00b7 \x1b[33mTIMED OUT\x1b[90m" : ""}${res.oom ? " \u00b7 \x1b[31mOOM\x1b[90m" : ""}]\x1b[0m`,
-        );
-      }
+        next.push({
+          id: `meta-${Date.now()}`,
+          kind: "meta",
+          text: `[exit ${res.exit_code ?? "\u2014"} \u00b7 duration: ${fmtDuration(res.duration_s)}${res.timed_out ? " \u00b7 TIMED OUT" : ""}${res.oom ? " \u00b7 OOM" : ""}]`,
+          exitCode: res.exit_code,
+          durationS: res.duration_s,
+        });
+        return next;
+      });
 
       if (onRunSuccess) onRunSuccess();
     } catch (err) {
-      if (term) {
-        term.writeln(`\x1b[31m[EXEC ERROR]\x1b[0m ${apiErrMessage(err)}`);
-      }
+      setEntries((prev) => [
+        ...prev,
+        {
+          id: `err-${Date.now()}`,
+          kind: "stderr",
+          text: `[EXEC ERROR] ${apiErrMessage(err)}`,
+        },
+      ]);
+    } finally {
+      setTimeout(() => inputRef.current?.focus(), 50);
     }
   };
 
@@ -240,8 +214,35 @@ function InteractiveSandboxTerminal({
     await runCommand(cmd);
   };
 
+  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (historyStack.length === 0) return;
+      const nextIdx = historyIndex === -1 ? historyStack.length - 1 : Math.max(0, historyIndex - 1);
+      setHistoryIndex(nextIdx);
+      setCommandInput(historyStack[nextIdx] || "");
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (historyIndex === -1) return;
+      const nextIdx = historyIndex + 1;
+      if (nextIdx >= historyStack.length) {
+        setHistoryIndex(-1);
+        setCommandInput("");
+      } else {
+        setHistoryIndex(nextIdx);
+        setCommandInput(historyStack[nextIdx] || "");
+      }
+    }
+  };
+
   const handleClear = () => {
-    termRef.current?.clear();
+    setEntries([
+      {
+        id: `banner-${Date.now()}`,
+        kind: "meta",
+        text: `Terminal buffer cleared \u00b7 ${status?.backend || "none"} on ${status?.ssh_host || "unbound"}`,
+      },
+    ]);
   };
 
   return (
@@ -288,8 +289,77 @@ function InteractiveSandboxTerminal({
         </div>
       </div>
 
-      {/* Main Terminal View */}
-      <div ref={terminalElRef} style={css("flex:1;min-height:0;padding:6px 10px;overflow:hidden;")} />
+      {/* Main Terminal Output View */}
+      <div
+        ref={terminalScrollRef}
+        style={css(
+          "flex:1;min-height:0;padding:12px 14px;overflow-y:auto;font-family:var(--font-mono, monospace);font-size:12px;line-height:1.45;color:#d4d4d4;",
+        )}
+      >
+        {entries.map((entry) => {
+          if (entry.kind === "system") {
+            return (
+              <div key={entry.id} style={css("color:#50fa7b;font-weight:700;padding-bottom:2px;")}>
+                {entry.text}
+              </div>
+            );
+          }
+          if (entry.kind === "input") {
+            return (
+              <div key={entry.id} style={css("padding:6px 0 2px;color:#f8f8f2;display:flex;gap:6px;")}>
+                <span style={css("color:#00ffff;font-weight:700;")}>$</span>
+                <span style={css("font-weight:600;word-break:break-all;")}>{entry.text}</span>
+              </div>
+            );
+          }
+          if (entry.kind === "stdout") {
+            return (
+              <pre
+                key={entry.id}
+                style={{
+                  margin: 0,
+                  padding: 0,
+                  fontFamily: "inherit",
+                  fontSize: "inherit",
+                  color: "#d4d4d4",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {entry.text}
+              </pre>
+            );
+          }
+          if (entry.kind === "stderr") {
+            return (
+              <pre
+                key={entry.id}
+                style={{
+                  margin: 0,
+                  padding: 0,
+                  fontFamily: "inherit",
+                  fontSize: "inherit",
+                  color: "#ff5555",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {entry.text}
+              </pre>
+            );
+          }
+          return (
+            <div
+              key={entry.id}
+              style={css(
+                `color:${entry.exitCode === 0 ? "#50fa7b" : entry.exitCode !== undefined ? "#ff5555" : "#666"};font-size:10px;padding:2px 0 6px;`,
+              )}
+            >
+              {entry.text}
+            </div>
+          );
+        })}
+      </div>
 
       {/* Terminal Input Bar */}
       <form
@@ -302,13 +372,15 @@ function InteractiveSandboxTerminal({
           $
         </span>
         <input
+          ref={inputRef}
           type="text"
           value={commandInput}
           onChange={(e) => setCommandInput(e.target.value)}
+          onKeyDown={handleKeyDown}
           placeholder={
             status?.provisioned
               ? "Type command to execute inside sandbox (e.g. gcc -O2 poc.c -o poc && ./poc)..."
-              : "Sandbox not provisioned \u2014 select a registered fleet host above."
+              : "Sandbox not provisioned \u2014 select a fleet host above."
           }
           style={inputStyle}
           disabled={execMut.isPending}
@@ -331,7 +403,18 @@ function InteractiveSandboxTerminal({
 function SandboxSettingsTab(): JSX.Element {
   const configQ = useSandboxConfig();
   const updateConfig = useUpdateSandboxConfig();
-  const rows: SandboxConfigRow[] = configQ.data ?? [];
+  const rawRows: SandboxConfigRow[] = configQ.data ?? [];
+
+  // Internal connection strings managed directly by the Systems Registry
+  const hiddenKeys = new Set([
+    "sandbox_ssh_host",
+    "sandbox_ssh_user",
+    "sandbox_ssh_port",
+    "sandbox_system_id",
+    "sandbox_system_name",
+  ]);
+
+  const rows = rawRows.filter((r) => !hiddenKeys.has(r.key));
 
   const [editKey, setEditKey] = useState<string | null>(null);
   const [editVal, setEditVal] = useState<string>("");
@@ -356,14 +439,14 @@ function SandboxSettingsTab(): JSX.Element {
   return (
     <div style={css("flex:1;min-height:0;overflow:auto;padding:16px 20px;display:flex;flex-direction:column;gap:14px;")}>
       <div style={css("font-family:var(--font-mono);font-size:11px;color:var(--text-muted);")}>
-        Platform isolation policies, limits, and binary path configurations:
+        Platform isolation limits, execution timeouts, and guest binary paths:
       </div>
 
       <div style={css("border:1px solid var(--border);border-radius:3px;background:var(--surface-card);overflow:hidden;")}>
         <table style={css("width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:11px;")}>
           <thead>
             <tr style={css("background:var(--surface-chrome);border-bottom:1px solid var(--border);text-align:left;color:var(--text-muted);font-size:10px;text-transform:uppercase;letter-spacing:0.06em;")}>
-              <th style={css("padding:8px 12px;")}>Key</th>
+              <th style={css("padding:8px 12px;")}>Setting Key</th>
               <th style={css("padding:8px 12px;")}>Effective Value</th>
               <th style={css("padding:8px 12px;")}>Source</th>
               <th style={css("padding:8px 12px;text-align:right;")}>Actions</th>
@@ -483,10 +566,12 @@ export default function SandboxPage(props: ModulePageProps): JSX.Element {
 
   const [activeTab, setActiveTab] = useState<"terminal" | "history" | "settings">("terminal");
   const [bootstrapOutput, setBootstrapOutput] = useState<string | null>(null);
+  const [targetError, setTargetError] = useState<string | null>(null);
 
   const statusQ = useSandboxStatus();
   const probe = useSandboxProbe();
   const systemsQ = useSystems(1, 200);
+  const setTarget = useSetSandboxTarget();
   const updateConfig = useUpdateSandboxConfig();
   const bootstrapTool = useBootstrapSandboxTooling();
 
@@ -500,38 +585,24 @@ export default function SandboxPage(props: ModulePageProps): JSX.Element {
 
   const handleSelectSystem = async (sysId: string) => {
     if (!sysId) return;
+    setTargetError(null);
 
     const found = systemsList.find((s) => String(s.id) === sysId);
     if (found) {
-      if (status?.backend === "none" || !status?.backend) {
-        await updateConfig.mutateAsync({
-          key: "sandbox_backend",
-          body: { value: "nsjail", value_type: "str" },
+      const targetBackend = (status?.backend === "none" || !status?.backend) ? "nsjail" : status.backend;
+      try {
+        await setTarget.mutateAsync({
+          system_id: String(found.id),
+          system_name: found.name || "",
+          host: found.host,
+          username: found.username || "root",
+          port: found.port || 22,
+          backend: targetBackend,
         });
+        await statusQ.refetch();
+      } catch (err) {
+        setTargetError(`Failed to bind host: ${apiErrMessage(err)}`);
       }
-      await updateConfig.mutateAsync({
-        key: "sandbox_system_id",
-        body: { value: String(found.id), value_type: "str" },
-      });
-      await updateConfig.mutateAsync({
-        key: "sandbox_system_name",
-        body: { value: found.name || "", value_type: "str" },
-      });
-      await updateConfig.mutateAsync({
-        key: "sandbox_ssh_host",
-        body: { value: found.host || "", value_type: "str" },
-      });
-      await updateConfig.mutateAsync({
-        key: "sandbox_ssh_user",
-        body: { value: found.username || "root", value_type: "str" },
-      });
-      await updateConfig.mutateAsync({
-        key: "sandbox_ssh_port",
-        body: { value: String(found.port || 22), value_type: "str" },
-      });
-
-      await probe.mutateAsync();
-      await statusQ.refetch();
     }
   };
 
@@ -563,7 +634,7 @@ export default function SandboxPage(props: ModulePageProps): JSX.Element {
         admin &middot; sandbox
       </span>
       <span style={{ display: "flex", alignItems: "center", padding: "0 11px", textTransform: "none", letterSpacing: "0.03em", color: "var(--text-muted)" }}>
-        {status?.backend || "nsjail"} &middot; {status?.ssh_host || "no target host"}
+        {status?.backend || "nsjail"} &middot; {activeSys ? activeSys.name : status?.ssh_host || "no host"}
       </span>
       <span style={{ flex: 1 }} />
     </>
@@ -582,7 +653,7 @@ export default function SandboxPage(props: ModulePageProps): JSX.Element {
       onToggleFullscreen={onToggleFullscreen}
       footerExtras={statusStrip}
     >
-      {/* Top Controls: Systems Registry Binding, Backend Switcher, Live Health */}
+      {/* Top Controls: Fleet Host Selector, Backend, Live Status */}
       <div style={topBar}>
         <div style={controlGroup}>
           <span style={css("font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);")}>
@@ -591,14 +662,13 @@ export default function SandboxPage(props: ModulePageProps): JSX.Element {
           <select
             value={activeSys ? String(activeSys.id) : ""}
             onChange={(e) => void handleSelectSystem(e.target.value)}
+            disabled={setTarget.isPending || systemsQ.isLoading}
             style={selectStyle}
           >
-            <option value="">
-              {activeSys
-                ? `${activeSys.name} (${activeSys.host}:${activeSys.port})`
-                : status?.ssh_host
-                  ? `custom (${status.ssh_host})`
-                  : "-- select registered fleet system --"}
+            <option value="" disabled>
+              {systemsQ.isLoading
+                ? "Loading fleet systems..."
+                : "-- select registered fleet system --"}
             </option>
             {systemsList.map((s) => (
               <option key={s.id} value={String(s.id)}>
@@ -620,7 +690,7 @@ export default function SandboxPage(props: ModulePageProps): JSX.Element {
           </select>
 
           {/* Live Status Indicators */}
-          {probe.isPending ? (
+          {setTarget.isPending || probe.isPending ? (
             <span style={chipFaint}>probing&#8230;</span>
           ) : probeData ? (
             probeData.ok ? (
@@ -657,7 +727,7 @@ export default function SandboxPage(props: ModulePageProps): JSX.Element {
           <button
             type="button"
             onClick={() => void probe.mutate()}
-            disabled={probe.isPending}
+            disabled={probe.isPending || setTarget.isPending}
             style={btnGhost}
           >
             probe
@@ -689,6 +759,20 @@ export default function SandboxPage(props: ModulePageProps): JSX.Element {
           </button>
         </div>
       </div>
+
+      {/* Target Binding Error Banner */}
+      {targetError ? (
+        <div
+          style={css(
+            `flex:0 0 auto;padding:8px 14px;background:color-mix(in srgb,${H_WARN} 10%,transparent);border-bottom:1px solid ${H_WARN};color:${H_WARN};font-family:var(--font-mono);font-size:11px;display:flex;align-items:center;justify-content:space-between;`,
+          )}
+        >
+          <span>{"\u26a0"} {targetError}</span>
+          <button type="button" onClick={() => setTargetError(null)} style={btnGhost}>
+            dismiss
+          </button>
+        </div>
+      ) : null}
 
       {/* Bootstrap Installer Log Output Banner */}
       {bootstrapOutput ? (
