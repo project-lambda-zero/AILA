@@ -198,6 +198,7 @@ class PromptVersionStore:
                     "author": v.author or "",
                     "notes": v.notes or "",
                     "content_hash": v.content_hash,
+                    "body": v.body or "",
                     "body_snippet": (v.body[:200] + "…") if len(v.body) > 200 else v.body,
                     "body_length": len(v.body) if v.body else 0,
                     "created_at": v.created_at,

@@ -105,6 +105,7 @@ class PromptSummary(BaseModel):
     author: str = ""
     notes: str = ""
     content_hash: str = ""
+    body: str = ""
     body_snippet: str = ""
     body_length: int = 0
     created_at: datetime

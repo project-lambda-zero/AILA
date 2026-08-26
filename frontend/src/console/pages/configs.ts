@@ -6,6 +6,7 @@ import { SeverityBadge, StatusBadge, WorkflowStateBadge } from "./badges";
 import { formatFireTime, humanizeCron, nextRuns } from "./cronPreview";
 import type { PageAction, PageColumn, PageConfig } from "./DataPage";
 import { LlmLogViewer } from "./LlmLogViewer";
+import { AgentPromptViewer, PromptBodyDetail, PromptFullViewer } from "./PromptViewer";
 
 /** Build a workflow-transition PageAction for a findings DataPage. Each POST
  * hits /findings/{id}/transition with the module id and target state; the
@@ -1077,6 +1078,14 @@ export const PAGE_CONFIGS = {
       c("enabled"),
       c("created_at", "created"),
     ],
+    detailLinks: {
+      prompt_key: { module: "admin", section: "prompts", label: "prompts" },
+    },
+    rowViewer: {
+      actionLabel: "view prompt",
+      title: (row) => `prompt \u00b7 ${String(row["prompt_key"] || row["name"] || "agent")}`,
+      render: (row, close) => createElement(AgentPromptViewer, { row, close }),
+    },
     filters: [
       { name: "module_id", label: "module", type: "select", server: true, options: [
         { value: "", label: "all modules" },
@@ -1116,6 +1125,15 @@ export const PAGE_CONFIGS = {
       c("body_length", "chars"),
       c("created_at", "registered"),
     ],
+    detailRenderers: {
+      body: (val, row) => createElement(PromptBodyDetail, { body: String(val || row["body_snippet"] || "") }),
+      body_snippet: (val, row) => createElement(PromptBodyDetail, { body: String(row["body"] || val || "") }),
+    },
+    rowViewer: {
+      actionLabel: "view full prompt",
+      title: (row) => `prompt \u00b7 ${String(row["key"] || "prompt")}`,
+      render: (row, close) => createElement(PromptFullViewer, { row, close }),
+    },
     filters: [
       { name: "prefix", label: "module / domain", type: "select", server: true, options: [
         { value: "", label: "all domains" },
