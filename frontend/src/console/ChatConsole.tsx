@@ -16,6 +16,7 @@ import {
   type DanteAction,
   type SessionMessage,
 } from "../api/sessions";
+import { apiFetch } from "../api/client";
 import { useCreateVocabEntry, useDeleteVocabEntry } from "../api/systems";
 import { useSubmitVulnScan } from "../api/vulnerability";
 import type { ChatConsoleProps } from "./contract";
@@ -417,6 +418,37 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
       markActed(messageId);
       return;
     }
+    if (a.kind === "steer_investigation") {
+      const invId = a.investigation_id;
+      const text = a.steering_text;
+      if (!invId || !text) return;
+      const mod = a.module_id || "vr";
+      apiFetch(`/${mod}/investigations/${invId}/messages`, {
+        method: "POST",
+        body: JSON.stringify({ text }),
+      })
+        .then(() => {
+          markActed(messageId);
+        })
+        .catch((err) => {
+          console.error("Failed to post steering message to investigation:", err);
+          markActed(messageId);
+        });
+      return;
+    }
+  };
+
+  const handleNewChat = (): void => {
+    createSession.mutate(
+      { title: "New Conversation" },
+      {
+        onSuccess: (newSess) => {
+          setActiveSessionId(newSess.session_id);
+          setDraft("");
+          setActed(new Set<string>());
+        },
+      },
+    );
   };
 
   const rowCtx: RowRenderCtx = { acted, onAction, onDismiss: markActed };
@@ -521,6 +553,25 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
         <span style={panelBarDot} />
         <span style={panelBarLabel}>dante</span>
         <span aria-hidden="true" style={panelBarHatch} />
+        <button
+          type="button"
+          onClick={handleNewChat}
+          title="Start a fresh chat session"
+          style={{
+            background: "transparent",
+            border: "1px solid var(--border-soft)",
+            borderRadius: "2px",
+            color: "var(--text-muted)",
+            fontFamily: "var(--font-mono)",
+            fontSize: "9px",
+            letterSpacing: "0.1em",
+            textTransform: "uppercase",
+            padding: "2px 7px",
+            cursor: "pointer",
+          }}
+        >
+          + new chat
+        </button>
         {adv && investigationId && onOpenXray ? (
           <button type="button" onClick={onOpenXray} style={xrayBtnStyle}>
             x-ray {"\u25b8"}

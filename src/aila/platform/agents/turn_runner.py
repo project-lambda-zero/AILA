@@ -572,6 +572,34 @@ class AgentTurnRunnerBase:
                     idempotency_key=f"{self.branch_id}:hyp:{hid}",
                     session=session,
                 )
+        else:
+            # Audit & deep analysis phases: auto-promote strong/exact hypotheses
+            # with concrete taint/mechanism to shared ledger discoveries marked
+            # with source="taint_confirmed". This allows downstream gated exploit
+            # states (poc_development, exploit_primitive_composition, filter_bypass)
+            # to activate in discovery-driven graphs without requiring manual
+            # ledger_writes JSON emission.
+            for hyp in decision.hypotheses:
+                hid = (hyp.id or "").strip()
+                if not hid:
+                    continue
+                conf = getattr(decision, "confidence", None) or "strong"
+                if conf in ("exact", "strong") or bool(hyp.why_plausible):
+                    await service.append_general(
+                        self.investigation_id,
+                        self.branch_id,
+                        "discovery",
+                        {
+                            "hypothesis_id": hid,
+                            "claim": hyp.claim,
+                            "why_plausible": hyp.why_plausible,
+                            "kill_criterion": hyp.kill_criterion,
+                            "source": "taint_confirmed",
+                            "phase_mission": phase_mission[:64] if phase_mission else "audit",
+                        },
+                        idempotency_key=f"{self.branch_id}:discovery:{hid}",
+                        session=session,
+                    )
         writes = decision.ledger_writes[:_MAX_LEDGER_WRITES_PER_TURN]
         if not writes:
             return

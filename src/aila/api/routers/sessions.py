@@ -37,6 +37,7 @@ from aila.api.schemas.sessions import (
     SessionResponse,
     SessionSummary,
 )
+from aila.platform.llm.errors import LLMError
 from aila.platform.services.audit import record_audit_event
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import SessionMessageRecord, SessionRecord
@@ -346,8 +347,8 @@ async def _sync_message(
             actions_payload = list(reply.actions)
             if not response_text:
                 response_text = EMPTY_RESPONSE_TEXT
-        except (RuntimeError, ValueError, TypeError, KeyError, OSError):
-            _log.exception("dante console_reply failed for session %s", session_id)
+        except (LLMError, RuntimeError, ValueError, TypeError, KeyError, OSError) as exc:
+            _log.exception("dante console_reply failed for session %s: %s", session_id, exc)
             response_text = "I encountered an error processing your request."
             actions_payload = []
         # dante does not trigger a background scan directly; the
@@ -486,10 +487,11 @@ async def _stream_message(
                 )
                 full_text = (reply.text or "").strip()
                 actions_payload = list(reply.actions)
-            except (RuntimeError, ValueError, TypeError, KeyError, OSError):
+            except (LLMError, RuntimeError, ValueError, TypeError, KeyError, OSError) as exc:
                 _log.exception(
-                    "dante console_reply failed during SSE streaming for session %s",
+                    "dante console_reply failed during SSE streaming for session %s: %s",
                     session_id,
+                    exc,
                 )
                 full_text = "I encountered an error processing your request."
                 actions_payload = []

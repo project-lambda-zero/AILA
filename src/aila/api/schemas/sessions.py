@@ -48,7 +48,8 @@ class DanteActionModel(BaseModel):
     always present; each kind carries its own subset of the remaining
     optional params (``module_id`` / ``target_id`` for ``open_wizard``,
     ``query`` / ``system_ids`` for ``enqueue_scan``, ``key`` for
-    ``create_tag`` / ``delete_tag``). Extras are ignored rather than
+    ``create_tag`` / ``delete_tag``, ``investigation_id`` / ``steering_text``
+    for ``steer_investigation``). Extras are ignored rather than
     rejected so downstream additions to the contract cannot break the
     response serializer.
     """
@@ -60,6 +61,8 @@ class DanteActionModel(BaseModel):
     summary: str = ""
     module_id: str | None = None
     target_id: str | None = None
+    investigation_id: str | None = None
+    steering_text: str | None = None
     query: str | None = None
     system_ids: list[str] | None = None
     key: str | None = None

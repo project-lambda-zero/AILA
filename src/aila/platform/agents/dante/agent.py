@@ -18,9 +18,12 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
+
+from sqlalchemy import text
 
 from aila.platform.agents.dante.prompt import (
     _REGISTRY,
@@ -28,7 +31,9 @@ from aila.platform.agents.dante.prompt import (
 )
 from aila.platform.llm.client import AilaLLMClient
 from aila.platform.llm.correlation import correlation_scope
+from aila.platform.llm.errors import LLMError
 from aila.platform.routing.persona_model import resolve_effective_task_type
+from aila.storage.database import async_session_scope
 
 __all__ = ["DanteAgent", "DanteReply", "validate_dante_actions"]
 
@@ -67,12 +72,15 @@ _RESPONSE_SCHEMA: dict[str, Any] = {
                             "enqueue_scan",
                             "create_tag",
                             "delete_tag",
+                            "steer_investigation",
                         ],
                     },
                     "label": {"type": "string"},
                     "summary": {"type": "string"},
                     "module_id": {"type": "string"},
                     "target_id": {"type": ["string", "null"]},
+                    "investigation_id": {"type": ["string", "null"]},
+                    "steering_text": {"type": ["string", "null"]},
                     "query": {"type": "string"},
                     "system_ids": {
                         "type": "array",
@@ -173,6 +181,20 @@ def _validate_one(raw: Mapping[str, Any]) -> dict[str, Any] | None:
         base["key"] = key
         return base
 
+    if kind == "steer_investigation":
+        inv_id = _clean_str(raw.get("investigation_id"))
+        steering_text = _clean_str(raw.get("steering_text"))
+        if not inv_id or not steering_text:
+            return None
+        base["investigation_id"] = inv_id
+        base["steering_text"] = steering_text
+        mod = _clean_str(raw.get("module_id")) or "vr"
+        base["module_id"] = mod if mod in _ALLOWED_MODULE_IDS else "vr"
+        target_id = _clean_optional_str(raw.get("target_id"))
+        if target_id:
+            base["target_id"] = target_id
+        return base
+
     # Unknown kind -- schema enum should already reject it, but be
     # defensive against a lenient provider.
     return None
@@ -194,6 +216,132 @@ def validate_dante_actions(raw_actions: object) -> list[dict[str, Any]]:
         if cleaned is not None:
             validated.append(cleaned)
     return validated
+
+
+async def _build_investigations_context(
+    query: str = "",
+    team_id: str | None = None,
+    bound_investigation_id: str | None = None,
+) -> str:
+    """Build real-time summary of active and recent investigations for Dante."""
+    del team_id
+    lines: list[str] = [
+        "## Real-Time Platform Investigations Summary (LIVE DATA)",
+        "The following active investigations are currently loaded in platform memory and database:",
+        "CRITICAL INSTRUCTION: You HAVE full real-time access to the investigations below. When the operator asks about any investigation by name, short-code (e.g. VR-E8A5, VR-1E14), or UUID, ALWAYS report the factual details provided below. NEVER state that you lack access to investigations data.",
+    ]
+
+    # Look for short-code patterns or UUID prefixes in query or bound ID (e.g. VR-E8A5, e8a52875)
+    matched_prefixes: list[str] = []
+    if bound_investigation_id:
+        matched_prefixes.append(bound_investigation_id[:4].lower())
+        matched_prefixes.append(bound_investigation_id.lower())
+
+    for m in re.finditer(r"(?:VR|MW|FOR)-([0-9a-fA-F]{4})", query):
+        matched_prefixes.append(m.group(1).lower())
+    for m in re.finditer(r"\b([0-9a-fA-F]{4,8})\b", query):
+        matched_prefixes.append(m.group(1).lower())
+
+    try:
+        async with async_session_scope() as db:
+            # 1. VR investigations query
+            vr_q = text("""
+                SELECT i.id, i.status, i.title, i.initial_question, i.strategy_family, i.target_id,
+                       t.display_name, t.kind as target_kind, t.analysis_state
+                FROM vr_investigations i
+                LEFT JOIN vr_targets t ON i.target_id = t.id
+                ORDER BY i.created_at DESC
+                LIMIT 6
+            """)
+            vr_res = list((await db.exec(vr_q)).all())
+
+            # Targeted VR lookups if matched
+            for prefix in matched_prefixes:
+                t_q = text("""
+                    SELECT i.id, i.status, i.title, i.initial_question, i.strategy_family, i.target_id,
+                           t.display_name, t.kind as target_kind, t.analysis_state
+                    FROM vr_investigations i
+                    LEFT JOIN vr_targets t ON i.target_id = t.id
+                    WHERE i.id LIKE :p
+                    LIMIT 2
+                """).bindparams(p=f"{prefix}%")
+                t_res = list((await db.exec(t_q)).all())
+                vr_res.extend(t_res)
+
+            # Dedup VR records
+            seen_vr: set[str] = set()
+            dedup_vr: list[Any] = []
+            for r in vr_res:
+                if r[0] not in seen_vr:
+                    seen_vr.add(r[0])
+                    dedup_vr.append(r)
+
+            if dedup_vr:
+                lines.append("\n### Vulnerability Research (VR) Investigations:")
+                for r in dedup_vr:
+                    inv_id, status, title, init_q, strategy, target_id, t_name, t_kind, t_state = r
+                    short_code = f"VR-{inv_id[:4].upper()}"
+                    target_desc = f"{t_name} ({t_kind}, state: {t_state})" if t_name else "target pending"
+                    lines.append(
+                        f"- [{short_code}] (UUID: {inv_id})\n"
+                        f"  * Status: {status}\n"
+                        f"  * Target: {target_desc} (target_id: {target_id})\n"
+                        f"  * Strategy: {strategy}\n"
+                        f"  * Title: {title or 'Untitled'}\n"
+                        f"  * Question: {init_q or 'N/A'}"
+                    )
+
+            # 2. Malware investigations
+            try:
+                mw_q = text("""
+                    SELECT i.id, i.status, i.title, t.display_name, t.kind as target_kind
+                    FROM malware_investigations i
+                    LEFT JOIN malware_targets t ON i.target_id = t.id
+                    ORDER BY i.created_at DESC
+                    LIMIT 4
+                """)
+                mw_res = list((await db.exec(mw_q)).all())
+                if mw_res:
+                    lines.append("\n### Malware Investigations:")
+                    for r in mw_res:
+                        inv_id, status, title, t_name, t_kind = r
+                        short_code = f"MW-{inv_id[:4].upper()}"
+                        target_desc = f"{t_name} ({t_kind})" if t_name else "sample pending"
+                        lines.append(
+                            f"- [{short_code}] (UUID: {inv_id})\n"
+                            f"  * Status: {status}\n"
+                            f"  * Target: {target_desc}\n"
+                            f"  * Title: {title or 'Untitled'}"
+                        )
+            except (RuntimeError, ValueError, OSError):
+                _log.debug("dante: malware query skipped")
+
+            # 3. Forensics investigations
+            try:
+                for_q = text("""
+                    SELECT id, status, question
+                    FROM forensics_investigations
+                    ORDER BY created_at DESC
+                    LIMIT 4
+                """)
+                for_res = list((await db.exec(for_q)).all())
+                if for_res:
+                    lines.append("\n### Forensics Investigations:")
+                    for r in for_res:
+                        inv_id, status, question = r
+                        short_code = f"FOR-{inv_id[:4].upper()}"
+                        lines.append(
+                            f"- [{short_code}] (UUID: {inv_id})\n"
+                            f"  * Status: {status}\n"
+                            f"  * Question: {question or 'N/A'}"
+                        )
+            except (RuntimeError, ValueError, OSError, KeyError, TypeError, AttributeError) as e:
+                _log.debug("dante: forensics query skipped: %s", e)
+
+    except (RuntimeError, ValueError, OSError, KeyError, TypeError) as exc:
+        _log.warning("dante: failed to query investigations context: %s", exc)
+
+    return "\n".join(lines)
 
 
 def _fallback_reply(reason: str) -> DanteReply:
@@ -248,19 +396,23 @@ class DanteAgent:
         """
         loaded = await _REGISTRY.resolve("dante")
         base_prompt = loaded.body
-        system_prompt = base_prompt
+        inv_context = await _build_investigations_context(
+            query=query,
+            team_id=team_id,
+            bound_investigation_id=bound_investigation_id,
+        )
+        system_prompt = f"{inv_context}\n\n---\n\n{base_prompt}"
         if bound_investigation_id:
             module_hint = bound_module_id or "unknown"
-            system_prompt = (
-                f"{base_prompt}\n\n"
-                f"Console context: the operator is currently viewing "
+            system_prompt += (
+                f"\n\nConsole context: the operator is currently viewing "
                 f"investigation {bound_investigation_id} in the "
                 f"{module_hint} module. The module worker owns that "
                 "investigation's deep analysis. You advise at the "
                 "console level -- for example, propose opening the "
                 "module wizard, review a finding with the operator, "
-                "or answer questions about the module -- but do not "
-                "restart or drive the investigation yourself."
+                "or steer the investigation when requested -- but do not "
+                "restart the investigation yourself."
             )
 
         messages: list[dict[str, Any]] = [
@@ -302,9 +454,24 @@ class DanteAgent:
                     _RESPONSE_SCHEMA,
                     team_id=team_id,
                 )
-        except (RuntimeError, ValueError, TypeError, KeyError, OSError):
-            _log.exception("dante: chat_json call failed")
-            return _fallback_reply("chat_json raised")
+        except LLMError as exc:
+            _log.warning("dante: chat_json raised LLMError (%s) -- falling back to plain chat", exc)
+            try:
+                with correlation_scope(
+                    prompt_content_hash=prompt_hash,
+                    prompt_version=DANTE_PROMPT_VERSION,
+                ):
+                    response = await self._client.chat(
+                        effective_task_type,
+                        messages,
+                        team_id=team_id,
+                    )
+            except (LLMError, RuntimeError, ValueError, TypeError, KeyError, OSError) as chat_exc:
+                _log.exception("dante: plain chat fallback failed: %s", chat_exc)
+                return _fallback_reply(f"chat failed: {chat_exc}")
+        except (RuntimeError, ValueError, TypeError, KeyError, OSError) as exc:
+            _log.exception("dante: chat_json call failed: %s", exc)
+            return _fallback_reply(f"chat_json raised: {exc}")
 
         if response.disabled:
             return DanteReply(

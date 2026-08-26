@@ -6,12 +6,14 @@ import { apiFetch } from "./client";
  *  `actions: DanteAction[]` (empty when the reply is pure conversation). The
  *  backend validates every action; only well-formed actions arrive here. */
 export interface DanteAction {
-  kind: "open_wizard" | "enqueue_scan" | "create_tag" | "delete_tag";
+  kind: "open_wizard" | "enqueue_scan" | "create_tag" | "delete_tag" | "steer_investigation";
   label: string;
   summary?: string;
-  // open_wizard
+  // open_wizard / steer_investigation
   module_id?: string;
   target_id?: string | null;
+  investigation_id?: string | null;
+  steering_text?: string;
   // enqueue_scan
   query?: string;
   system_ids?: string[];

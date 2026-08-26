@@ -78,12 +78,14 @@ export default function DanteActionsWidget(_props: WidgetProps): JSX.Element {
     enqueue_scan: "var(--accent)",
     create_tag: "var(--status-ok)",
     delete_tag: "var(--status-warn)",
+    steer_investigation: "var(--accent)",
   };
   const LABEL_BY_KIND: Record<DanteAction["kind"], string> = {
     open_wizard: "wizard",
     enqueue_scan: "scan",
     create_tag: "tag+",
     delete_tag: "tag-",
+    steer_investigation: "steer",
   };
   function pillStyle(kind: DanteAction["kind"]) {
     const tone = TONE_BY_KIND[kind];
