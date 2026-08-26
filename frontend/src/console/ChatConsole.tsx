@@ -8,7 +8,6 @@ import {
   type KeyboardEvent,
 } from "react";
 
-import { useMessages, usePostMessage } from "../api/hooks";
 import {
   useCreateSession,
   usePostSessionMessage,
@@ -18,7 +17,6 @@ import {
   type SessionMessage,
 } from "../api/sessions";
 import { useCreateVocabEntry, useDeleteVocabEntry } from "../api/systems";
-import type { Message } from "../api/types";
 import { useSubmitVulnScan } from "../api/vulnerability";
 import type { ChatConsoleProps } from "./contract";
 import { useChatSession } from "./chatSessionStore";
@@ -62,88 +60,6 @@ const H = {
 } as const;
 
 /* ------------------------------ tiny helpers ------------------------------ */
-
-// Read an unknown-typed payload field as string without an inline cast --
-// the linter blocks `(payload as {x:string}).x`; this is the shared narrow.
-function readStr(o: Record<string, unknown>, k: string): string | null {
-  const v = o[k];
-  return typeof v === "string" ? v : null;
-}
-
-// HH:MM:SS from an ISO string, empty if unparseable. Zero-padded.
-function formatClock(iso?: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  const hh = String(d.getHours()).padStart(2, "0");
-  const mm = String(d.getMinutes()).padStart(2, "0");
-  const ss = String(d.getSeconds()).padStart(2, "0");
-  return `${hh}:${mm}:${ss}`;
-}
-
-// Compact JSON preview for non-text payloads: single-line, capped so the
-// bubble doesn't unroll a full tool_call body.
-function previewPayload(payload: Record<string, unknown>): string {
-  try {
-    const s = JSON.stringify(payload);
-    if (!s) return "";
-    return s.length > 220 ? s.slice(0, 220) + "..." : s;
-  } catch {
-    return "";
-  }
-}
-
-// Read an unknown-typed field as a finite number, else null. Mirrors readStr.
-function readNum(o: Record<string, unknown>, k: string): number | null {
-  const v = o[k];
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
-}
-
-// Narrow an unknown (a JSON.parse result, a nested field) to an indexable
-// record so readStr/readNum can read it. Not a cast-access: no field is read
-// off the assertion here, callers go through the typed helpers.
-function asRecord(v: unknown): Record<string, unknown> | null {
-  return typeof v === "object" && v !== null && !Array.isArray(v)
-    ? (v as Record<string, unknown>)
-    : null;
-}
-
-// A tool_call payload carries `command` as a JSON string of the form
-// {"tool": "audit_mcp.semantic_search", "args": {...}}. Pull the tool name and
-// one short argument hint (query / path / target) so the row reads like the
-// mock's chips instead of unrolling the raw command body.
-function parseToolCommand(payload: Record<string, unknown>): {
-  tool: string | null;
-  hint: string | null;
-} {
-  const raw = readStr(payload, "command");
-  if (!raw) return { tool: null, hint: null };
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { tool: null, hint: null };
-  }
-  const rec = asRecord(parsed);
-  if (!rec) return { tool: null, hint: null };
-  const args = asRecord(rec["args"]);
-  const hint = args
-    ? readStr(args, "query") ??
-      readStr(args, "file_path") ??
-      readStr(args, "apk_path") ??
-      readStr(args, "name") ??
-      readStr(args, "target")
-    : null;
-  return { tool: readStr(rec, "tool"), hint };
-}
-
-// Collapse a path/query hint to a short chip label: basename for paths,
-// truncated otherwise. Ellipsis lives in a string literal (safe outside JSX).
-function shortHint(s: string): string {
-  const segs = s.split(/[\\/]/);
-  const base = segs[segs.length - 1] || s;
-  return base.length > 42 ? base.slice(0, 42) + "\u2026" : base;
-}
 
 type ChipTone = "info" | "ok" | "warn" | "acc" | "sig" | "mut";
 
@@ -333,11 +249,11 @@ function renderRow(key: string, r: RowProps, ctx?: RowRenderCtx): JSX.Element {
 }
 
 // Bind one live Message to a RowProps -- no fabrication: every value
-// comes off the payload we actually received.
 function bindSessionMessage(m: SessionMessage): RowProps {
   const you = m.role === "user";
-  const chips: RowProps["chips"] = [];
-  if (m.run_id) chips.push({ label: `run ${m.run_id.slice(0, 8)}`, tone: "info" });
+  const chips: Array<{ label: string; tone: ChipTone }> = [];
+  if (m.role === "assistant") chips.push({ label: "dante", tone: "acc" });
+
   const meta = m.created_at ? new Date(m.created_at).toLocaleTimeString() : "";
   return {
     who: you ? "you" : "dante",
@@ -348,94 +264,6 @@ function bindSessionMessage(m: SessionMessage): RowProps {
     actions: m.actions ?? [],
     messageId: m.message_id,
   };
-}
-
-function bindMessage(m: Message): RowProps {
-  const you = m.sender_kind === "operator";
-  const payload: Record<string, unknown> = m.payload ?? {};
-  const kind = m.payload_kind || "text";
-
-  let meta = formatClock(m.created_at);
-  if (!meta && typeof m.at_turn === "number") meta = `t${m.at_turn}`;
-
-  const chips: Array<{ label: string; tone: ChipTone }> = [];
-  let body = "";
-  let card: RowProps["card"] = null;
-
-  if (kind === "tool_call") {
-    const { tool, hint } = parseToolCommand(payload);
-    body = readStr(payload, "reasoning") ?? (tool ? `calling ${tool}` : "tool call");
-    if (tool) chips.push({ label: tool, tone: "warn" });
-    if (hint) chips.push({ label: shortHint(hint), tone: "info" });
-  } else if (kind === "text") {
-    const text = readStr(payload, "text");
-    if (text) {
-      body = text;
-    } else {
-      // Engine tool results arrive as text-kind carrying a `tool` field.
-      const tool = readStr(payload, "tool");
-      if (tool) {
-        const mc = readNum(payload, "match_count");
-        const q = readStr(payload, "query");
-        body =
-          tool +
-          (mc !== null ? ` -- ${mc} match${mc === 1 ? "" : "es"}` : "") +
-          (q ? `: ${q}` : "");
-        chips.push({ label: tool, tone: "warn" });
-      } else {
-        body = previewPayload(payload);
-      }
-    }
-  } else if (kind === "decompiled_function") {
-    const fn = readStr(payload, "function_name") ?? "function";
-    const addr = readStr(payload, "address");
-    const lc = readNum(payload, "line_count");
-    body =
-      `decompiled ${fn}` +
-      (addr ? ` @ ${addr}` : "") +
-      (lc !== null ? ` (${lc} lines)` : "");
-    chips.push({ label: "decompiled", tone: "info" });
-  } else if (kind === "xref_view") {
-    const total = readNum(payload, "total");
-    const note = readStr(payload, "bridge_note");
-    const tgt = readStr(payload, "target");
-    body = note ?? `xrefs of ${tgt ?? "target"}: ${total !== null ? total : "?"}`;
-    chips.push({ label: "xref", tone: "info" });
-  } else if (kind === "outcome_pending" || kind === "outcome_review") {
-    body =
-      readStr(payload, "answer") ??
-      readStr(payload, "reasoning") ??
-      readStr(payload, "comment") ??
-      kind.replace(/_/g, " ");
-    const vote = readStr(payload, "vote");
-    if (vote) chips.push({ label: vote, tone: "acc" });
-    const conf = readNum(payload, "confidence");
-    if (conf !== null) chips.push({ label: `confidence ${conf.toFixed(2)}`, tone: "info" });
-  } else if (kind === "taint_flow") {
-    const src = readStr(payload, "source") ?? "?";
-    const tgt = readStr(payload, "target") ?? "?";
-    const total = readNum(payload, "total");
-    body = `taint ${src} -> ${tgt}: ${total !== null ? total : "?"} path${total === 1 ? "" : "s"}`;
-    chips.push({ label: "taint_flow", tone: "sig" });
-  } else if (kind === "hypothesis_update") {
-    const claim = readStr(payload, "claim") ?? readStr(payload, "text") ?? "";
-    const hid = readStr(payload, "hypothesis_id") ?? readStr(payload, "id") ?? "";
-    const state = readStr(payload, "state") ?? "";
-    const conf = readNum(payload, "confidence");
-    const confLabel =
-      conf !== null ? `confidence ${conf.toFixed(2)}` : state ? `state ${state}` : "";
-    const summary = readStr(payload, "summary");
-    body = summary ?? (hid ? `hypothesis ${hid} ${state}`.trim() : "hypothesis update");
-    card = { id: hid, conf: confLabel, body: claim || summary || "" };
-  } else {
-    body = readStr(payload, "text") ?? `${kind}: ${previewPayload(payload)}`;
-  }
-
-  const evCount = m.evidence_refs?.length ?? 0;
-  if (evCount > 0) chips.push({ label: `evidence x${evCount}`, tone: "ok" });
-  if (typeof m.at_turn === "number") chips.push({ label: `t${m.at_turn}`, tone: "info" });
-
-  return { who: you ? "you" : "dante", meta, body, chips, card };
 }
 
 /* ---------------------------------- root ---------------------------------- */
@@ -450,20 +278,11 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
   // selection or when the operator clicks the button again.
   const [pickerOpen, setPickerOpen] = useState<boolean>(false);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  // Separate dante session for advanced mode: dante replies land here and
-  // render in the chat panel WITHOUT being written to the investigation
-  // transcript. Reset when the bound case changes so each case owns its
-  // conversation with dante.
-  const [advSessionId, setAdvSessionId] = useState<string | null>(null);
   // Message ids for which the operator has already confirmed or dismissed a
   // dante proposal. Prevents double-firing a mutation from the same row.
   const [acted, setActed] = useState<Set<string>>(() => new Set<string>());
   const threadRef = useRef<HTMLDivElement | null>(null);
   const seenLen = useRef<number | null>(null);
-
-  const messagesQuery = useMessages(investigationId);
-  const postMessage = usePostMessage(investigationId);
-  const messages: Message[] = messagesQuery.data ?? [];
 
   const sessionsQ = useSessions();
   const createSession = useCreateSession();
@@ -474,13 +293,7 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
     }
   }, [activeSessionId, sessionsQ.data?.items]);
 
-  useEffect(() => {
-    // Case change clears the advanced-mode dante session so we lazy-create a
-    // fresh one on the next send for the new investigation.
-    setAdvSessionId(null);
-  }, [investigationId]);
-
-  const chatSessionId = adv ? advSessionId : activeSessionId;
+  const chatSessionId = activeSessionId;
   const sessionMessagesQ = useSessionMessages(chatSessionId);
   const postSessionMessage = usePostSessionMessage(chatSessionId);
   const sessionMessages: SessionMessage[] = sessionMessagesQ.data?.items ?? [];
@@ -491,24 +304,15 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
   const createVocab = useCreateVocabEntry();
   const deleteVocab = useDeleteVocabEntry();
 
-  // Reset the scroll baseline when the bound case or session changes.
+  // Reset the scroll baseline when the session changes.
   useEffect(() => {
     seenLen.current = null;
-  }, [investigationId, activeSessionId, advSessionId, mode]);
+  }, [activeSessionId, mode]);
 
-  // Dante assistant replies (advanced mode only) that render alongside the
-  // transcript. Filter to assistant-only so the operator's session-side turn
-  // doesn't double-render with the transcript row.
-  const advDanteRows: SessionMessage[] = adv
-    ? sessionMessages.filter((m) => m.role === "assistant")
-    : [];
-
-  const totalMessageCount = adv
-    ? messages.length + advDanteRows.length
-    : sessionMessages.length;
+  const totalMessageCount = sessionMessages.length;
 
   // The design opens with the greeting at the top of the thread. On first load
-  // of a case we stay at the top; once new turns actually arrive we follow them
+  // of a session we stay at the top; once new turns actually arrive we follow them
   // down to the bottom.
   useEffect(() => {
     const el = threadRef.current;
@@ -532,42 +336,13 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
   const suggestions = adv ? ADV_SUGGESTIONS : BASIC_SUGGESTIONS;
 
   const trimmed = draft.trim();
-  const isSending = adv
-    ? postMessage.isPending
-    : postSessionMessage.isPending || createSession.isPending;
+  const isSending = postSessionMessage.isPending || createSession.isPending;
 
-  const canSend =
-    trimmed.length > 0 &&
-    !(adv && !investigationId) &&
-    !isSending;
+  const canSend = trimmed.length > 0 && !isSending;
 
   const doSend = (): void => {
     if (!canSend) return;
     const content = trimmed;
-    if (adv && investigationId) {
-      // Advanced mode dual-post: the operator turn hits the investigation
-      // transcript (existing behavior) AND the same content posts to the
-      // per-case dante session so dante can reply in the chat panel without
-      // writing into the transcript. Lazy-create the dante session on the
-      // first send for this case.
-      postMessage.mutate(content, {
-        onSuccess: () => setDraft(""),
-      });
-      if (advSessionId) {
-        postSessionMessage.mutate({ content, sessionId: advSessionId });
-      } else {
-        createSession.mutate(
-          { title: `dante \u00b7 ${bindLabel}`.slice(0, 40) },
-          {
-            onSuccess: (newSess) => {
-              setAdvSessionId(newSess.session_id);
-              postSessionMessage.mutate({ content, sessionId: newSess.session_id });
-            },
-          },
-        );
-      }
-      return;
-    }
     if (!activeSessionId) {
       // Create the session, then post THIS message to it. Without the nested
       // post the operator's first message is dropped (session made, draft
@@ -729,53 +504,13 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
 
   /* ------------------------------- thread -------------------------------- */
 
-  // Merge the investigation transcript with dante's assistant-only replies
-  // from the per-case dante session by created_at ascending. Rows without a
-  // timestamp fall to the end in insertion order.
-  interface MergedRow { key: string; ts: number; el: JSX.Element }
-  const mergedAdvRows = (): JSX.Element[] => {
-    const rows: MergedRow[] = [];
-    for (const m of messages) {
-      const t = m.created_at ? Date.parse(m.created_at) : Number.NaN;
-      rows.push({
-        key: `t:${m.id}`,
-        ts: Number.isFinite(t) ? t : Number.POSITIVE_INFINITY,
-        el: renderRow(`t:${m.id}`, bindMessage(m), rowCtx),
-      });
-    }
-    for (const s of advDanteRows) {
-      const t = s.created_at ? Date.parse(s.created_at) : Number.NaN;
-      rows.push({
-        key: `d:${s.message_id}`,
-        ts: Number.isFinite(t) ? t : Number.POSITIVE_INFINITY,
-        el: renderRow(`d:${s.message_id}`, bindSessionMessage(s), rowCtx),
-      });
-    }
-    rows.sort((a, b) => a.ts - b.ts);
-    return rows.map((r) => r.el);
-  };
-
   let threadContent: JSX.Element | JSX.Element[];
-  if (adv && investigationId) {
-    if (messagesQuery.isLoading) {
-      threadContent = <div key="_load" style={emptyStyle}>loading conversation...</div>;
-    } else if (messagesQuery.isError) {
-      threadContent = <div key="_err" style={emptyStyle}>could not load messages for this investigation.</div>;
-    } else if (messages.length === 0 && advDanteRows.length === 0) {
-      threadContent = <div key="_empty" style={emptyStyle}>no turns yet -- send a message below</div>;
-    } else {
-      threadContent = mergedAdvRows();
-    }
-  } else if (!adv) {
-    if (sessionMessagesQ.isLoading && !sessionMessagesQ.data) {
-      threadContent = <div key="_load" style={emptyStyle}>connecting to assistant session...</div>;
-    } else if (sessionMessages.length === 0) {
-      threadContent = [];
-    } else {
-      threadContent = sessionMessages.map((m) => renderRow(m.message_id, bindSessionMessage(m), rowCtx));
-    }
-  } else {
+  if (sessionMessagesQ.isLoading && !sessionMessagesQ.data) {
+    threadContent = <div key="_load" style={emptyStyle}>connecting to assistant session...</div>;
+  } else if (sessionMessages.length === 0) {
     threadContent = [];
+  } else {
+    threadContent = sessionMessages.map((m) => renderRow(m.message_id, bindSessionMessage(m), rowCtx));
   }
 
   /* -------------------------------- render ------------------------------- */

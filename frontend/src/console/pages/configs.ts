@@ -219,6 +219,9 @@ export const PAGE_CONFIGS = {
       { label: "promote to active", method: "PATCH", endpoint: "/vr/patterns/{id}", body: { status: "active" }, whenField: "status", whenStatus: ["draft"] },
       { label: "archive", method: "PATCH", endpoint: "/vr/patterns/{id}", body: { status: "archived" }, whenField: "status", whenStatus: ["active"], confirm: "archive this pattern? archived patterns are no longer returned by applicable-pattern retrieval." },
     ],
+    bulkActions: [
+      { label: "archive selected", method: "PATCH", endpoint: "/vr/patterns/{id}", body: { status: "archived" }, confirm: "Archive the selected patterns?" },
+    ],
     filters: [
       { name: "kind", label: "kind", type: "select", server: true, options: [
         { value: "exploitation_technique", label: "exploitation technique" },
@@ -436,6 +439,14 @@ export const PAGE_CONFIGS = {
         confirm: "Run this playbook now?",
       },
     ],
+    bulkActions: [
+      {
+        label: "run selected",
+        method: "POST",
+        endpoint: "/malware/playbooks/{id}/run",
+        confirm: "Run the selected playbooks now?",
+      },
+    ],
   },
 
   // ---- Forensics (prefix /forensics) -----------------------------------
@@ -553,6 +564,15 @@ export const PAGE_CONFIGS = {
         confirm: "Revoke this API key? This cannot be undone.",
       },
     ],
+    bulkActions: [
+      {
+        label: "revoke selected",
+        method: "DELETE",
+        endpoint: "/auth/keys/{id}",
+        destructive: true,
+        confirm: "Revoke the selected API keys? This cannot be undone.",
+      },
+    ],
   },
   "admin:oidc-providers": {
     title: "admin \u00b7 oidc providers",
@@ -621,6 +641,14 @@ export const PAGE_CONFIGS = {
         method: "POST",
         endpoint: "/admin/tasks/dead-letter/{id}/requeue",
         confirm: "Requeue this dead-lettered task?",
+      },
+    ],
+    bulkActions: [
+      {
+        label: "requeue selected",
+        method: "POST",
+        endpoint: "/admin/tasks/dead-letter/{id}/requeue",
+        confirm: "Requeue the selected dead-lettered tasks?",
       },
     ],
   },
@@ -925,6 +953,14 @@ export const PAGE_CONFIGS = {
         fields: [
           { name: "reason", label: "reason", type: "textarea", required: true, placeholder: "why this instance is being revoked (recorded on the approval-change record)" },
         ],
+      },
+    ],
+    bulkActions: [
+      {
+        label: "approve selected",
+        method: "POST",
+        endpoint: "/platform/mcp/instances/{id}/approve",
+        confirm: "Approve the selected MCP instances?",
       },
     ],
   },
