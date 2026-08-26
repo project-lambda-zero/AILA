@@ -183,6 +183,174 @@ const SANDBOX_KEY_RANK: Record<string, number> = Object.fromEntries(
   SANDBOX_KEY_ORDER.map((k, i) => [k, i]),
 );
 
+function SandboxQuickSetup({
+  defaultHost = "127.0.0.1",
+  onConfigured,
+}: {
+  defaultHost?: string;
+  onConfigured?: () => void;
+}): JSX.Element {
+  const [backend, setBackend] = useState<string>("nsjail");
+  const [sshHost, setSshHost] = useState<string>(defaultHost);
+  const [sshUser, setSshUser] = useState<string>("root");
+  const [sshPort, setSshPort] = useState<string>("22");
+  const [isSettingUp, setIsSettingUp] = useState<boolean>(false);
+  const [setupError, setSetupError] = useState<string | null>(null);
+  const [setupSuccess, setSetupSuccess] = useState<boolean>(false);
+
+  const updateConfig = useUpdateSandboxConfig();
+  const probe = useSandboxProbe();
+
+  const handleSetup = async (e?: FormEvent) => {
+    if (e) e.preventDefault();
+    setIsSettingUp(true);
+    setSetupError(null);
+    setSetupSuccess(false);
+
+    try {
+      await updateConfig.mutateAsync({
+        key: "sandbox_backend",
+        body: { value: backend, value_type: "str" },
+      });
+      await updateConfig.mutateAsync({
+        key: "sandbox_ssh_host",
+        body: { value: sshHost.trim(), value_type: "str" },
+      });
+      await updateConfig.mutateAsync({
+        key: "sandbox_ssh_user",
+        body: { value: sshUser.trim(), value_type: "str" },
+      });
+      await updateConfig.mutateAsync({
+        key: "sandbox_ssh_port",
+        body: { value: sshPort.trim(), value_type: "str" },
+      });
+
+      await probe.mutateAsync();
+      setSetupSuccess(true);
+      if (onConfigured) onConfigured();
+    } catch (err) {
+      setSetupError(apiErrMessage(err));
+    } finally {
+      setIsSettingUp(false);
+    }
+  };
+
+  const applyPreset = (presetBackend: string, presetHost: string, presetUser: string, presetPort: string) => {
+    setBackend(presetBackend);
+    setSshHost(presetHost);
+    setSshUser(presetUser);
+    setSshPort(presetPort);
+  };
+
+  return (
+    <div
+      style={css(
+        `padding:11px 13px;border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);border-radius:3px;background:color-mix(in srgb,var(--surface-card) 95%,transparent);display:flex;flex-direction:column;gap:10px;box-shadow:var(--bevel-raised);`
+      )}
+    >
+      <div style={css("display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;")}>
+        <div style={css("display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent);")}>
+          <span>{"\u26a1"} 1-click sandbox ssh setup</span>
+        </div>
+        <div style={css("display:flex;gap:4px;")}>
+          <button
+            type="button"
+            style={btnGhost}
+            onClick={() => applyPreset("nsjail", "127.0.0.1", "root", "22")}
+            title="Local Linux SSH Host (WSL2 / Localhost)"
+          >
+            WSL/Local (127.0.0.1:22)
+          </button>
+          <button
+            type="button"
+            style={btnGhost}
+            onClick={() => applyPreset("nsjail", "192.168.1.100", "root", "22")}
+            title="Remote VM / Server"
+          >
+            Remote VM
+          </button>
+        </div>
+      </div>
+
+      <div style={css("font-family:var(--font-mono);font-size:10px;color:var(--text-muted);line-height:1.45;")}>
+        Because AILA backend runs on Windows, isolated sandboxes (<code>nsjail</code> / <code>firecracker</code>) execute on a Linux host reachable via SSH. Choose your host below:
+      </div>
+
+      <form onSubmit={handleSetup} style={css("display:grid;grid-template-columns:repeat(auto-fit, minmax(110px, 1fr));gap:8px;align-items:end;")}>
+        <label style={labelStyle}>
+          backend
+          <select
+            value={backend}
+            onChange={(e) => setBackend(e.target.value)}
+            style={selectStyle}
+          >
+            <option value="nsjail">nsjail</option>
+            <option value="firecracker">firecracker</option>
+          </select>
+        </label>
+
+        <label style={labelStyle}>
+          ssh host
+          <input
+            type="text"
+            value={sshHost}
+            onChange={(e) => setSshHost(e.target.value)}
+            placeholder="127.0.0.1"
+            style={inputStyle}
+            required
+          />
+        </label>
+
+        <label style={labelStyle}>
+          ssh user
+          <input
+            type="text"
+            value={sshUser}
+            onChange={(e) => setSshUser(e.target.value)}
+            placeholder="root"
+            style={inputStyle}
+            required
+          />
+        </label>
+
+        <label style={labelStyle}>
+          ssh port
+          <input
+            type="text"
+            value={sshPort}
+            onChange={(e) => setSshPort(e.target.value)}
+            placeholder="22"
+            style={inputStyle}
+            required
+          />
+        </label>
+
+        <div style={css("display:flex;gap:6px;")}>
+          <button
+            type="submit"
+            disabled={isSettingUp || !sshHost.trim()}
+            style={isSettingUp || !sshHost.trim() ? btnPrimaryDisabled : btnPrimary}
+          >
+            {isSettingUp ? "configuring\u2026" : "\u26a1 setup & probe"}
+          </button>
+        </div>
+      </form>
+
+      {setupError ? (
+        <div style={css(`color:${H_WARN};font-family:var(--font-mono);font-size:10px;padding:3px 0 0;`)}>
+          Setup error: {setupError}
+        </div>
+      ) : null}
+
+      {setupSuccess ? (
+        <div style={css("color:var(--color-success, #4ade80);font-family:var(--font-mono);font-size:10px;padding:3px 0 0;")}>
+          {"\u2713"} Configuration saved and SSH backend probed successfully.
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /* --------------------------- BACKEND & HEALTH ---------------------------- */
 
 function HealthPanel({ status }: { status: SandboxStatus | undefined | null }): JSX.Element | null {
@@ -245,21 +413,8 @@ function HealthPanel({ status }: { status: SandboxStatus | undefined | null }): 
         </span>
       </div>
 
-      {status.backend === "none" && status.host_os === "nt" ? (
-        <div style={css(`padding:9px 11px;border:1px solid color-mix(in srgb,${H_WARN} 55%,transparent);border-radius:2px;background:color-mix(in srgb,${H_WARN} 8%,transparent);color:${H_WARN};font-family:var(--font-mono);font-size:10.5px;line-height:1.55;`)}>
-          the <code>nsjail</code> and <code>firecracker</code> backends run
-          on a Linux host reached over SSH. this host is Windows and has no
-          local sandbox exec path. set <code>sandbox_backend</code> to
-          <code>&nbsp;nsjail</code> or <code>firecracker</code> and point
-          <code>&nbsp;sandbox_ssh_host</code> at a Linux host in the config
-          editor below.
-        </div>
-      ) : status.backend === "none" ? (
-        <div style={css(`padding:8px 10px;border:1px solid color-mix(in srgb,${H_WARN} 55%,transparent);border-radius:2px;background:color-mix(in srgb,${H_WARN} 8%,transparent);color:${H_WARN};font-family:var(--font-mono);font-size:10.5px;`)}>
-          backend not provisioned (sandbox_backend=none). set sandbox_backend
-          to <code>nsjail</code> or <code>firecracker</code> in the config
-          editor below to enable exec.
-        </div>
+      {status.backend === "none" || !status.provisioned ? (
+        <SandboxQuickSetup defaultHost={status.ssh_host || "127.0.0.1"} />
       ) : null}
 
       <div style={css("display:flex;flex-direction:column;")}>
