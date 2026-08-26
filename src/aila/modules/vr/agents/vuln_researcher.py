@@ -99,6 +99,13 @@ from aila.platform.prompts.pinning import (
     resolve_canary_key_for_investigation,
     resolve_pinned_prompt,
 )
+from aila.platform.prompts.seeds import (
+    VR_APK_STATIC_TEXT,
+    VR_MASVS_TEXT,
+    VR_NARRATIVE_TEXT,
+    VR_NDAY_TEXT,
+    VR_SYNTHESIS_TEXT,
+)
 from aila.platform.prompts.version_store import PromptVersionStore
 from aila.platform.services.context_assembler import (
     ContextSection,
@@ -3320,8 +3327,11 @@ async def _load_prompt(
         file_body = _PROMPT_REGISTRY.load(
             strategy_family, persona_voice, model_family=model_family,
         )
-    except PromptNotFoundError as exc:
-        raise VulnResearcherError(str(exc)) from exc
+    except PromptNotFoundError:
+        try:
+            file_body = _load_prompt_seed_from_file(strategy_family, persona_voice)
+        except PromptNotFoundError as exc:
+            raise VulnResearcherError(str(exc)) from exc
     return LoadedPrompt(body=file_body, version=None, canary_key=canary_key)
 
 
@@ -3334,6 +3344,24 @@ _SEED_STRATEGY_FAMILIES: tuple[str, ...] = (
     "vulnerability_research.masvs_audit",
     "vulnerability_research.apk_static_audit",
 )
+
+
+def _load_prompt_seed_from_file(strategy_family: str, persona_voice: str | None = None) -> str:
+    """Read a VR prompt from disk during seed time."""
+    leaf = strategy_family.rsplit(".", 1)[-1]
+    base_path = _PROMPT_DIR / f"system_{leaf}.md"
+    if not base_path.exists():
+        base_path = _PROMPT_DIR / "system_audit.md"
+    if not base_path.exists():
+        raise PromptNotFoundError(f"VR base prompt missing: {base_path}")
+    base = base_path.read_text(encoding="utf-8")
+    if not persona_voice:
+        return base
+    persona_path = _PROMPT_DIR / f"persona_{persona_voice.lower()}.md"
+    if not persona_path.exists():
+        return base
+    persona_prefix = persona_path.read_text(encoding="utf-8")
+    return f"{persona_prefix}\n\n---\n\n{base}"
 
 
 async def seed_prompt_versions() -> int:
@@ -3362,7 +3390,7 @@ async def seed_prompt_versions() -> int:
     for strategy_family in _SEED_STRATEGY_FAMILIES:
         for persona in personas:
             try:
-                body = _PROMPT_REGISTRY.load(strategy_family, persona)
+                body = _load_prompt_seed_from_file(strategy_family, persona)
             except PromptNotFoundError:
                 continue
             key = _prompt_key(strategy_family, persona)
@@ -3378,32 +3406,15 @@ async def seed_prompt_versions() -> int:
             )
             seeded += 1
 
-    # RFC-09 rule-58 migration keys: bodies were lifted out of module-level
-    # ``_*_PROMPT*`` literals into versioned ``.md`` files (narrative,
+    # RFC-09 rule-58 migration keys: bodies are the platform prompt seeds
+    # extracted from the now-removed versioned ``.md`` files (narrative,
     # n-day, synthesis, apk-static seed template, masvs seed template).
-    # Lazy imports avoid an aila-agents<->aila-vr circular pull.
-    from aila.modules.vr.agents.narrative_agent import (
-        _load_system_prompt as _load_vr_narrative_prompt,
-    )
-    from aila.modules.vr.agents.nday_researcher import (
-        _load_system_prompt as _load_vr_nday_prompt,
-    )
-    from aila.modules.vr.agents.synthesis_agent import (
-        _load_system_prompt as _load_vr_synthesis_prompt,
-    )
-    from aila.modules.vr.apk_static.seed import (
-        _load_prompt_template as _load_apk_static,
-    )
-    from aila.modules.vr.masvs.seed import (
-        _load_prompt_template as _load_masvs,
-    )
-
     migration_entries: tuple[tuple[str, str], ...] = (
-        ("vr/narrative/base", _load_vr_narrative_prompt()),
-        ("vr/nday/base", _load_vr_nday_prompt()),
-        ("vr/synthesis/base", _load_vr_synthesis_prompt()),
-        ("vr/apk_static_seed/base", _load_apk_static()),
-        ("vr/masvs_seed/base", _load_masvs()),
+        ("vr/narrative/base", VR_NARRATIVE_TEXT),
+        ("vr/nday/base", VR_NDAY_TEXT),
+        ("vr/synthesis/base", VR_SYNTHESIS_TEXT),
+        ("vr/apk_static_seed/base", VR_APK_STATIC_TEXT),
+        ("vr/masvs_seed/base", VR_MASVS_TEXT),
     )
     for key, body in migration_entries:
         version = await _PROMPT_VERSION_STORE.register(

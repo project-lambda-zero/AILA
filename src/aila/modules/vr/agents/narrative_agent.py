@@ -38,7 +38,6 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 from typing import Any
 
 from sqlmodel import select as _select
@@ -58,7 +57,9 @@ from aila.platform.agents.narrative_agent import (
     NarrativeTone,
 )
 from aila.platform.llm.sanitize import sanitize_input
-from aila.platform.prompts import PromptRegistry
+from aila.platform.prompts import PromptNotFoundError, PromptRegistry
+from aila.platform.prompts.seeds import VR_NARRATIVE_TEXT
+from aila.platform.prompts.version_store import PromptVersionStore
 from aila.platform.uow import UnitOfWork
 
 __all__ = [
@@ -71,21 +72,18 @@ __all__ = [
 
 _log = logging.getLogger(__name__)
 
-_PROMPT_DIR = Path(__file__).parent / "prompts"
 _PROMPT_REGISTRY = PromptRegistry(
-    _PROMPT_DIR,
     module="vr",
-    fallback_base="system_narrative.md",
+    version_store=PromptVersionStore(),
 )
 
 
 def _load_system_prompt() -> str:
-    """Return the VR narrative system prompt from the registry.
-
-    Kept module-local because :mod:`aila.modules.vr.agents.vuln_researcher`
-    lazily imports it for RFC-09 rule-58 migration seeding.
-    """
-    return _PROMPT_REGISTRY.load("narrative")
+    """Return the VR narrative system prompt from the registry."""
+    try:
+        return _PROMPT_REGISTRY.load("narrative")
+    except PromptNotFoundError:
+        return VR_NARRATIVE_TEXT
 
 
 def _summarize_message_payload(

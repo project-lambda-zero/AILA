@@ -23,8 +23,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from aila.platform.agents.dante.prompt import (
+    _REGISTRY,
     DANTE_PROMPT_VERSION,
-    DANTE_SYSTEM_PROMPT,
 )
 from aila.platform.llm.client import AilaLLMClient
 from aila.platform.llm.correlation import correlation_scope
@@ -246,7 +246,8 @@ class DanteAgent:
         the system prompt when the operator is chatting from inside a
         module investigation view.
         """
-        base_prompt = DANTE_SYSTEM_PROMPT
+        loaded = await _REGISTRY.resolve("dante")
+        base_prompt = loaded.body
         system_prompt = base_prompt
         if bound_investigation_id:
             module_hint = bound_module_id or "unknown"

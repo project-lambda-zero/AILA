@@ -16,8 +16,8 @@ import pytest
 
 from aila.modules.malware.agents import malware_researcher
 from aila.modules.vr.agents.vuln_researcher import (
-    _PROMPT_REGISTRY,
     _PROMPT_VERSION_STORE,
+    _load_prompt_seed_from_file,
     _prompt_key,
     seed_prompt_versions,
 )
@@ -32,7 +32,7 @@ async def test_seed_sets_production_alias_from_file_body() -> None:
     assert count > 0
     rec = await _PROMPT_VERSION_STORE.resolve(_AUDIT_KEY, alias="production")
     assert rec is not None
-    assert rec.body == _PROMPT_REGISTRY.load("vulnerability_research.audit", None)
+    assert rec.body == _load_prompt_seed_from_file("vulnerability_research.audit", None)
 
 
 async def test_seed_is_idempotent() -> None:

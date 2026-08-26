@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pydantic
@@ -30,6 +29,7 @@ from pydantic import BaseModel
 
 from ..exceptions import AILAError
 from ..prompts import PromptRegistry
+from ..prompts.version_store import PromptVersionStore
 from .correlation import correlation_scope, current_join_keys, current_prompt_version
 from .errors import LLMError
 
@@ -41,18 +41,17 @@ _log = structlog.get_logger(__name__)
 
 _DEFAULT_HOURLY_RATE = 150.0
 
-_PROMPT_DIR = Path(__file__).resolve().parents[1] / "prompts"
-_PROMPT_REGISTRY = PromptRegistry(_PROMPT_DIR, fallback_base="system_human_cost.md")
+_PROMPT_REGISTRY = PromptRegistry(
+    module="platform",
+    version_store=PromptVersionStore(),
+)
 
 
 def _load_human_cost_prompt() -> str:
     """Return the estimator system prompt from the platform prompt registry.
 
-    RFC-09 criterion 1: prompt lives in a versionable ``.md`` file, not an
-    inline literal. ``PromptRegistry.load("human_cost")`` reads
-    ``system_human_cost.md`` under the platform prompts directory (its
-    canonical fallback base), so the callable stays honest even if a
-    strategy-specific variant is later dropped in.
+    RFC-09 / req 20: prompt is resolved from the DB prompt version store
+    via ``PromptRegistry.load("human_cost")``.
     """
     return _PROMPT_REGISTRY.load("human_cost")
 

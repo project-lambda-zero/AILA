@@ -43,7 +43,6 @@ import json
 import logging
 import re
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any, ClassVar
 from uuid import uuid4
 
@@ -54,7 +53,12 @@ from sqlmodel import select as _select
 from aila.platform.agents.idempotent_llm import idempotent_llm_call
 from aila.platform.contracts import utc_now
 from aila.platform.mcp.factory import make_bridge
-from aila.platform.prompts import PromptRegistry
+from aila.platform.prompts import PromptNotFoundError, PromptRegistry
+from aila.platform.prompts.seeds import (
+    CLAIM_VERIFIER_EXTRACTOR_TEXT,
+    CLAIM_VERIFIER_VERDICT_TEXT,
+)
+from aila.platform.prompts.version_store import PromptVersionStore
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.uow import UnitOfWork
 
@@ -96,38 +100,38 @@ def _normalize_probe_tool_name(tool: str) -> str:
     return tool.split(".", 1)[1] if "." in tool else tool
 
 
-_PROMPT_DIR = Path(__file__).parent / "prompts"
 _EXTRACTOR_REGISTRY = PromptRegistry(
-    _PROMPT_DIR,
     module="platform",
-    fallback_base="system_claim_verifier_extractor.md",
+    version_store=PromptVersionStore(),
 )
 _VERDICT_REGISTRY = PromptRegistry(
-    _PROMPT_DIR,
     module="platform",
-    fallback_base="system_claim_verifier_verdict.md",
+    version_store=PromptVersionStore(),
 )
 
 
 def _load_extractor_prompt() -> str:
     """Return the extractor system prompt from the platform prompt registry.
 
-    RFC-09 criterion 1: prompt body lives in a versioned ``.md`` file
-    beside this module, resolved via :class:`PromptRegistry` so cost /
-    seal rows carry the prompt_content_hash + prompt_version stamp.
-    The strategy leaf ``claim_verifier_extractor`` matches the fallback
-    base filename so the resolver returns the same file either way.
+    RFC-09 / req 20: prompt body is resolved from the version store via
+    :class:`PromptRegistry` so cost / seal rows carry the prompt_content_hash +
+    prompt_version stamp.
     """
-    return _EXTRACTOR_REGISTRY.load("claim_verifier_extractor")
+    try:
+        return _EXTRACTOR_REGISTRY.load("claim_verifier_extractor")
+    except PromptNotFoundError:
+        return CLAIM_VERIFIER_EXTRACTOR_TEXT
 
 
 def _load_verdict_prompt() -> str:
     """Return the verdict system prompt from the platform prompt registry.
 
-    Sibling to :func:`_load_extractor_prompt`; same platform-owned
-    versioned ``.md`` file layout.
+    Sibling to :func:`_load_extractor_prompt`.
     """
-    return _VERDICT_REGISTRY.load("claim_verifier_verdict")
+    try:
+        return _VERDICT_REGISTRY.load("claim_verifier_verdict")
+    except PromptNotFoundError:
+        return CLAIM_VERIFIER_VERDICT_TEXT
 
 
 def platform_claim_verifier_seed_entries() -> tuple[tuple[str, str], ...]:
@@ -145,8 +149,8 @@ def platform_claim_verifier_seed_entries() -> tuple[tuple[str, str], ...]:
     the row, the second returns the existing version.
     """
     return (
-        ("platform/claim_verifier/extractor", _load_extractor_prompt()),
-        ("platform/claim_verifier/verdict", _load_verdict_prompt()),
+        ("platform/claim_verifier/extractor", CLAIM_VERIFIER_EXTRACTOR_TEXT),
+        ("platform/claim_verifier/verdict", CLAIM_VERIFIER_VERDICT_TEXT),
     )
 
 

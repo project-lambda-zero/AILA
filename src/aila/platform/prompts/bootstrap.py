@@ -12,6 +12,8 @@ from __future__ import annotations
 import structlog
 from sqlalchemy.exc import SQLAlchemyError
 
+from aila.platform.prompts.seeds import seed_platform_prompts
+
 __all__ = ["seed_module_prompts"]
 
 _log = structlog.get_logger(__name__)
@@ -21,6 +23,8 @@ async def seed_module_prompts(module_registry: object) -> dict[str, int]:
     """Seed every registered module's file-backed prompts.
 
     Returns a map of ``module_id -> count of production aliases newly set``.
+    Platform-owned prompts are seeded under the reserved ``"platform"`` key
+    via :func:`aila.platform.prompts.seeds.seed_platform_prompts`.
     A missing registry (test doubles) or a module without a ``seed_prompts``
     hook is skipped; a module whose hook raises is logged and recorded as 0.
     """
@@ -47,4 +51,19 @@ async def seed_module_prompts(module_registry: object) -> dict[str, int]:
                 "module_prompt_seed_failed", module_id=module_id, error=str(exc),
             )
             results[module_id] = 0
+    # Seed the platform-owned prompts (dante, claim verifier, human cost,
+    # knowledge enrichment, oracle) alongside the module hooks so every
+    # DB-only resolver has a production row before first use.
+    try:
+        results["platform"] = await seed_platform_prompts()
+    except (
+        OSError,
+        TimeoutError,
+        RuntimeError,
+        ValueError,
+        LookupError,
+        SQLAlchemyError,
+    ) as exc:
+        _log.warning("platform_prompt_seed_failed", error=str(exc))
+        results["platform"] = 0
     return results

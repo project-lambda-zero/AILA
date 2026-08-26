@@ -593,6 +593,8 @@ HONESTY_WHITELIST = [
      "promotion_without_gate"),
     ("forensics/agents/investigator.py", "seed_prompt_versions",
      "promotion_without_gate"),
+    ("platform/prompts/seeds.py", "seed_platform_prompts",
+     "promotion_without_gate"),
 
     # Category (b): rule 68 content_slice_truncation. These cap the query
     # string written to an AUDIT-LOG detail field (record_audit_event

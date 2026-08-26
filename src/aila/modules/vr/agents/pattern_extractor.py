@@ -15,7 +15,6 @@ Design contract -- DO NOT relax these without updating the prompt:
 """
 from __future__ import annotations
 
-from pathlib import Path
 from typing import ClassVar
 
 from aila.modules.vr.contracts.outcome import OutcomeKind
@@ -37,6 +36,7 @@ from aila.platform.agents.pattern_extractor import (
     PatternExtractorBase,
     PatternExtractorError,
 )
+from aila.platform.prompts.seeds import VR_PATTERN_EXTRACTION_TEXT
 
 __all__ = [
     "PatternExtractionResult",
@@ -80,6 +80,4 @@ class PatternExtractor(PatternExtractorBase):
     _target_model: ClassVar[type[VRTargetRecord]] = VRTargetRecord
     _message_model: ClassVar[type[VRInvestigationMessageRecord]] = VRInvestigationMessageRecord
     _branch_model: ClassVar[type[VRInvestigationBranchRecord]] = VRInvestigationBranchRecord
-    _prompt_path: ClassVar[Path] = (
-        Path(__file__).parent / "prompts" / "pattern_extraction.md"
-    )
+    _prompt_template: ClassVar[str] = VR_PATTERN_EXTRACTION_TEXT

@@ -11,32 +11,34 @@ capabilities enumerated in ``prompts/system_dante.md``. Every proposed
 action is inert on the backend; the frontend performs the mutation via
 an existing endpoint after the operator confirms.
 
-RFC-09: the prompt body lives in a versioned ``.md`` file resolved
-through :class:`PromptRegistry` (mirroring the claim-verifier prompts)
-so the cost / seal rows for a console turn carry a prompt_content_hash
-+ prompt_version stamp instead of NULL attribution.
+RFC-09 / req 20: the prompt body is the DB-only single source of truth.
+At import time dante exposes the static text (``DANTE_PROMPT_TEXT``) for
+backward compatibility, but the live turn path resolves the prompt from
+the version store each call via ``_REGISTRY.resolve("dante")`` so a
+released / canary version is honoured and the cost / seal rows for a
+console turn carry a prompt_content_hash + prompt_version stamp instead
+of NULL attribution.
 """
 from __future__ import annotations
 
-from pathlib import Path
-
 from aila.platform.prompts import PromptRegistry
+from aila.platform.prompts.seeds import DANTE_TEXT
+from aila.platform.prompts.version_store import PromptVersionStore
 
 __all__ = ["DANTE_PROMPT_VERSION", "DANTE_SYSTEM_PROMPT"]
 
 # Version label stamped onto the correlation scope for every dante turn.
-# Bump when the prompt body in ``prompts/system_dante.md`` changes so the
-# (cost, prompt) join can tell one prompt generation from the next.
+# Bump when the prompt body changes so the (cost, prompt) join can tell one
+# prompt generation from the next.
 DANTE_PROMPT_VERSION = "dante:v1"
 
-_PROMPT_DIR = Path(__file__).parent / "prompts"
 _REGISTRY = PromptRegistry(
-    _PROMPT_DIR,
     module="platform",
-    fallback_base="system_dante.md",
+    version_store=PromptVersionStore(),
 )
 
-# Resolved once at import from the versioned ``system_dante.md`` file. dante
-# has no bound version store, so the file body is the single source of truth;
-# the strategy leaf ``dante`` falls back to that file through the registry.
-DANTE_SYSTEM_PROMPT: str = _REGISTRY.load("dante")
+# Backward-compatible static body. The live turn path in ``dante/agent.py``
+# resolves the prompt from the version store each call via
+# ``_REGISTRY.resolve("dante")`` so a released version is honoured; this
+# constant is the seeded baseline (identical to ``DANTE_TEXT``).
+DANTE_SYSTEM_PROMPT: str = DANTE_TEXT

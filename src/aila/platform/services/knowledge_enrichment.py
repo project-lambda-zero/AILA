@@ -26,11 +26,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from ..agents.idempotent_llm import idempotent_llm_call
 from ..prompts import PromptRegistry
+from ..prompts.version_store import PromptVersionStore
 
 if TYPE_CHECKING:
     from ..llm.client import AilaLLMClient
@@ -57,15 +57,11 @@ ENRICHMENT_TASK_TYPE: str = "knowledge_enrichment"
 # 8000 chars keeps a typical enrichment call under ~2k prompt tokens.
 MAX_DOCUMENT_CHARS: int = 8000
 
-# Enrichment system prompt lives at
-# ``src/aila/platform/prompts/system_knowledge_enrichment.md`` and is loaded
-# through :class:`PromptRegistry` so an operator may drop in a strategy-specific
-# variant later without editing this module. The registry is process-cached
-# (:func:`functools.lru_cache`) so repeated per-chunk lookups during an ingest
-# never re-read the file (RFC-09 criterion 1: no inline literal prompts).
-_PROMPT_DIR = Path(__file__).resolve().parents[1] / "prompts"
+# Enrichment system prompt is loaded through :class:`PromptRegistry` from the
+# DB version store (RFC-09 / req 20: DB-only single source of truth).
 _PROMPT_REGISTRY = PromptRegistry(
-    _PROMPT_DIR, fallback_base="system_knowledge_enrichment.md",
+    module="platform",
+    version_store=PromptVersionStore(),
 )
 
 
