@@ -149,6 +149,28 @@ class SandboxProbeResponse(BaseModel):
     ok: bool
     detail: str
     duration_ms: int
+    tool_installed: bool = True
+    tool_missing: bool = False
+    installed_path: str | None = None
+
+
+class SandboxBootstrapRequest(BaseModel):
+    """Request body for ``POST /platform/sandbox/install``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tool: str = Field(default="nsjail", description="Sandbox tool to install: 'nsjail' or 'firecracker'.")
+
+
+class SandboxBootstrapResponse(BaseModel):
+    """Response body for ``POST /platform/sandbox/install``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool
+    detail: str
+    output: str
+    duration_ms: int
 
 
 class SandboxHistoryRow(BaseModel):
@@ -345,6 +367,28 @@ async def probe_sandbox(
         ok=probe.ok,
         detail=probe.detail,
         duration_ms=probe.duration_ms,
+        tool_installed=probe.tool_installed,
+        tool_missing=probe.tool_missing,
+        installed_path=probe.installed_path,
+    ))
+
+
+@router.post("/install", status_code=status.HTTP_200_OK)
+@limiter.limit("5/minute")
+async def install_sandbox_tooling(
+    request: Request,
+    body: SandboxBootstrapRequest,
+    ctx: AuthContext = Depends(_require_admin),
+) -> DataEnvelope[SandboxBootstrapResponse]:
+    """Automated installation of sandbox binaries on the configured remote host."""
+    del request, ctx
+    service = SandboxService(build_platform_settings(get_settings()))
+    result = await service.bootstrap_tooling(tool=body.tool)
+    return DataEnvelope(data=SandboxBootstrapResponse(
+        ok=result.ok,
+        detail=result.detail,
+        output=result.output,
+        duration_ms=result.duration_ms,
     ))
 
 

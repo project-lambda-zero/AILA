@@ -45,7 +45,7 @@ from .contracts import (
     SandboxUnavailableError,
 )
 
-__all__ = ["SandboxConfig", "SandboxProbe", "SandboxService"]
+__all__ = ["SandboxBootstrapResult", "SandboxConfig", "SandboxProbe", "SandboxService"]
 
 _log = logging.getLogger(__name__)
 
@@ -92,6 +92,19 @@ class SandboxProbe:
 
     ok: bool
     detail: str
+    duration_ms: int
+    tool_installed: bool = True
+    tool_missing: bool = False
+    installed_path: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxBootstrapResult:
+    """Outcome of an automated sandbox tooling bootstrap on the remote host."""
+
+    ok: bool
+    detail: str
+    output: str
     duration_ms: int
 
 
@@ -323,10 +336,11 @@ class SandboxService:
         })
 
     async def probe(self, *, connect_timeout: float = 5.0, command_timeout: float = 8.0) -> SandboxProbe:
-        """Bounded live SSH round-trip using the configured sandbox host.
+        """Bounded live SSH round-trip checking connectivity and tooling presence.
 
         Returns ok=False with an actionable detail (never raises) when the
-        backend is 'none', the host is empty, or the SSH round-trip fails.
+        backend is 'none', the host is empty, the SSH round-trip fails, or
+        the target sandbox binary is not installed on the remote machine.
         """
         cfg = await self._load_config()
         if cfg.backend == "none" or not cfg.backend.strip():
@@ -337,12 +351,16 @@ class SandboxService:
                     "'firecracker' and select a registered system or set sandbox_ssh_host."
                 ),
                 duration_ms=0,
+                tool_installed=False,
+                tool_missing=False,
             )
         if not cfg.ssh_host.strip():
             return SandboxProbe(
                 ok=False,
                 detail="No sandbox host configured or registered; select a registered system or set sandbox_ssh_host.",
                 duration_ms=0,
+                tool_installed=False,
+                tool_missing=False,
             )
         managed_sys = await self._resolve_managed_system(
             system_name=cfg.system_name,
@@ -352,6 +370,7 @@ class SandboxService:
         payload = self._build_host_payload(cfg, managed_sys)
         start = time.monotonic()
         try:
+            # 1. Test basic reachability
             _, _, exit_code = await asyncio.wait_for(
                 self._ssh.run_command_full(
                     payload,
@@ -361,29 +380,160 @@ class SandboxService:
                 ),
                 timeout=connect_timeout + command_timeout + 5.0,
             )
-        except (AuthenticationError, UpstreamError, AILATimeoutError, ValidationError) as exc:
+        except (AuthenticationError, UpstreamError, AILATimeoutError, ValidationError, paramiko.SSHException, OSError, TimeoutError) as exc:
             return SandboxProbe(
                 ok=False,
                 detail=f"SSH probe failed: {exc}",
                 duration_ms=int((time.monotonic() - start) * 1000),
+                tool_installed=False,
+                tool_missing=False,
             )
-        except (paramiko.SSHException, OSError, TimeoutError) as exc:
+
+        if exit_code != 0:
             return SandboxProbe(
                 ok=False,
-                detail=f"SSH probe failed: {exc}",
+                detail=f"remote probe command exited {exit_code}",
                 duration_ms=int((time.monotonic() - start) * 1000),
+                tool_installed=False,
+                tool_missing=False,
             )
+
+        # 2. Test if the configured sandboxing tool is installed on the host
+        target_bin = cfg.nsjail_bin if cfg.backend == "nsjail" else cfg.firecracker_bin
+        target_bin = target_bin.strip() or ("nsjail" if cfg.backend == "nsjail" else "firecracker")
+        check_cmd = f"command -v {target_bin} || which {target_bin} || ls -1 /usr/local/bin/{target_bin} /usr/bin/{target_bin} 2>/dev/null | head -n 1"
+        try:
+            tool_stdout, _, tool_exit = await asyncio.wait_for(
+                self._ssh.run_command_full(
+                    payload,
+                    check_cmd,
+                    timeout_seconds=command_timeout,
+                    connect_timeout=connect_timeout,
+                ),
+                timeout=connect_timeout + command_timeout + 5.0,
+            )
+        except (AuthenticationError, UpstreamError, AILATimeoutError, ValidationError, paramiko.SSHException, OSError, TimeoutError):
+            tool_exit = 1
+            tool_stdout = ""
+
         duration_ms = int((time.monotonic() - start) * 1000)
         sys_desc = f" [{managed_sys.name}]" if managed_sys and managed_sys.name else ""
-        if exit_code == 0:
+        resolved_path = tool_stdout.strip().splitlines()[0] if tool_stdout.strip() else None
+
+        if tool_exit == 0 and resolved_path:
             return SandboxProbe(
                 ok=True,
-                detail=f"ssh round-trip ok ({payload.username}@{payload.host}:{payload.port}){sys_desc}",
+                detail=f"ssh ok ({payload.username}@{payload.host}:{payload.port}){sys_desc} \u00b7 {cfg.backend} ready ({resolved_path})",
                 duration_ms=duration_ms,
+                tool_installed=True,
+                tool_missing=False,
+                installed_path=resolved_path,
             )
+
         return SandboxProbe(
             ok=False,
-            detail=f"remote probe command exited {exit_code}",
+            detail=f"ssh ok ({payload.username}@{payload.host}:{payload.port}){sys_desc} \u2014 but {cfg.backend} binary is not installed on this host",
+            duration_ms=duration_ms,
+            tool_installed=False,
+            tool_missing=True,
+            installed_path=None,
+        )
+
+    async def bootstrap_tooling(
+        self,
+        tool: str = "nsjail",
+        *,
+        timeout_s: float = 240.0,
+    ) -> SandboxBootstrapResult:
+        """Automated installation of sandbox binaries on the remote Linux host."""
+        cfg = await self._load_config()
+        if not cfg.ssh_host.strip():
+            return SandboxBootstrapResult(
+                ok=False,
+                detail="No sandbox host configured or registered.",
+                output="",
+                duration_ms=0,
+            )
+        managed_sys = await self._resolve_managed_system(
+            system_name=cfg.system_name,
+            system_id=cfg.system_id,
+            host=cfg.ssh_host,
+        )
+        payload = self._build_host_payload(cfg, managed_sys)
+        start = time.monotonic()
+
+        if tool == "firecracker":
+            install_script = (
+                "set -e\n"
+                "ARCH=\"$(uname -m)\"\n"
+                "FC_VER=\"v1.7.0\"\n"
+                "mkdir -p /tmp/firecracker && cd /tmp/firecracker\n"
+                "curl -fsSL https://github.com/firecracker-microvm/firecracker/releases/download/${FC_VER}/firecracker-${FC_VER}-${ARCH}.tgz -o fc.tgz\n"
+                "tar -xzf fc.tgz\n"
+                "cp release-${FC_VER}-${ARCH}/firecracker-${FC_VER}-${ARCH} /usr/local/bin/firecracker\n"
+                "cp release-${FC_VER}-${ARCH}/jailer-${FC_VER}-${ARCH} /usr/local/bin/jailer\n"
+                "chmod +x /usr/local/bin/firecracker /usr/local/bin/jailer\n"
+                "which /usr/local/bin/firecracker\n"
+            )
+        else:
+            # Default to nsjail
+            install_script = (
+                "set -e\n"
+                "if [ -f /etc/debian_version ]; then\n"
+                "  export DEBIAN_FRONTEND=noninteractive\n"
+                "  apt-get update -qq && apt-get install -y -qq nsjail 2>/dev/null || {\n"
+                "    apt-get install -y -qq git build-essential autoconf bison flex libprotobuf-dev libnl-route-3-dev protobuf-compiler pkg-config libseccomp-dev make g++\n"
+                "    rm -rf /tmp/nsjail && git clone --depth 1 https://github.com/google/nsjail.git /tmp/nsjail\n"
+                "    cd /tmp/nsjail && make -j$(nproc 2>/dev/null || echo 2)\n"
+                "    cp nsjail /usr/local/bin/\n"
+                "  }\n"
+                "elif [ -f /etc/arch-release ]; then\n"
+                "  pacman -Sy --noconfirm nsjail\n"
+                "elif [ -f /etc/fedora-release ] || [ -f /etc/redhat-release ]; then\n"
+                "  dnf install -y nsjail 2>/dev/null || {\n"
+                "    dnf install -y git gcc-c++ autoconf bison flex protobuf-devel libnl3-devel pkgconfig libseccomp-devel make\n"
+                "    rm -rf /tmp/nsjail && git clone --depth 1 https://github.com/google/nsjail.git /tmp/nsjail\n"
+                "    cd /tmp/nsjail && make -j$(nproc 2>/dev/null || echo 2)\n"
+                "    cp nsjail /usr/local/bin/\n"
+                "  }\n"
+                "else\n"
+                "  echo 'Unsupported distro for auto-install' >&2; exit 1\n"
+                "fi\n"
+                "which nsjail || which /usr/local/bin/nsjail\n"
+            )
+
+        try:
+            stdout, stderr, exit_code = await asyncio.wait_for(
+                self._ssh.run_command_full(
+                    payload,
+                    f"sh -c '{install_script}'",
+                    timeout_seconds=timeout_s,
+                    connect_timeout=10.0,
+                ),
+                timeout=timeout_s + 15.0,
+            )
+        except (AuthenticationError, UpstreamError, AILATimeoutError, ValidationError, paramiko.SSHException, OSError, TimeoutError) as exc:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            return SandboxBootstrapResult(
+                ok=False,
+                detail=f"Bootstrap failed: {exc}",
+                output=str(exc),
+                duration_ms=duration_ms,
+            )
+
+        duration_ms = int((time.monotonic() - start) * 1000)
+        combined_output = f"{stdout}\n{stderr}".strip()
+        if exit_code == 0:
+            return SandboxBootstrapResult(
+                ok=True,
+                detail=f"Successfully installed {tool} on {payload.host}:{payload.port}",
+                output=combined_output,
+                duration_ms=duration_ms,
+            )
+        return SandboxBootstrapResult(
+            ok=False,
+            detail=f"Installation exited with code {exit_code}",
+            output=combined_output,
             duration_ms=duration_ms,
         )
 

@@ -1,32 +1,20 @@
 /**
- * SandboxPage -- bespoke admin window over the platform sandbox /
- * isolation subsystem (`aila.platform.services.sandbox`, backends
- * `nsjail` + `firecracker`).
+ * SandboxPage -- Dedicated platform isolation & sandbox terminal window.
  *
- * Four panels, honest loading / error / empty states throughout:
- *   BACKEND & HEALTH   GET  /platform/sandbox/status
- *   CONFIG EDITOR      GET  /config/platform  +  PUT /config/platform/{key}
- *                      (client-filtered to sandbox_* keys)
- *   EXEC CONSOLE       POST /platform/sandbox/exec  (mutation)
- *   RECENT EXECUTIONS  GET  /platform/sandbox/history
- *
- * Config is not raw JSON: each of the 15 sandbox_* keys renders as a
- * labelled row with a type-aware editor. The exec form is a typed form
- * (never a JSON blob) and the SandboxResult renders as prose + chips +
- * mono blocks + StructuredValue for output_files. Follows the DataPage
- * window-chrome convention: absolute-fill body + a footer strip that
- * carries the min / fullscreen / close controls the shell wired through
- * ModulePageProps.
+ * Designed around an interactive terminal window backed by the platform's
+ * Systems Registry (`ManagedSystemRecord` / `SystemService`) and remote
+ * isolation backends (`nsjail` + `firecracker` over SSH).
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ChangeEvent, CSSProperties, Dispatch, FormEvent, JSX, SetStateAction } from "react";
+import type { CSSProperties, FormEvent, JSX } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 
 import { ApiError } from "../../api/client";
 import {
+  useBootstrapSandboxTooling,
   useSandboxConfig,
   useSandboxExec,
   useSandboxHistory,
@@ -38,7 +26,6 @@ import type {
   SandboxConfigRow,
   SandboxHistoryRow,
   SandboxResult,
-  SandboxSpec,
   SandboxStatus,
 } from "../../api/sandbox";
 import { useSystems, type SystemEnriched } from "../../api/systems";
@@ -50,956 +37,138 @@ import StructuredValue from "./StructuredValue";
 /* ------------------------------ constants -------------------------------- */
 
 const H_WARN = "#ffb85f";
-
-/** Canonical order for the 15 sandbox_* keys, so the editor always reads
- *  top-to-bottom in the operator's mental order (backend + host first,
- *  then defaults, then per-backend binaries). Anything the backend hands
- *  back that isn't in this list is appended at the bottom in stable
- *  key order so a new key added upstream is visible immediately. */
-const SANDBOX_KEY_ORDER: string[] = [
-  "sandbox_backend",
-  "sandbox_ssh_host",
-  "sandbox_ssh_user",
-  "sandbox_ssh_port",
-  "sandbox_default_timeout_s",
-  "sandbox_max_timeout_s",
-  "sandbox_allow_network",
-  "sandbox_vcpu",
-  "sandbox_mem_mb",
-  "sandbox_output_max_bytes",
-  "sandbox_nsjail_bin",
-  "sandbox_firecracker_bin",
-  "sandbox_jailer_bin",
-  "sandbox_rootfs_path",
-  "sandbox_kernel_path",
-];
-
-const SANDBOX_BACKEND_CHOICES: string[] = ["none", "nsjail", "firecracker"];
+const H_OK = "var(--status-ok, #4ade80)";
 
 /* ------------------------------- styles ---------------------------------- */
 
-const panelBox: CSSProperties = css(
-  "min-height:0;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--radius-md,3px);background:color-mix(in srgb,var(--surface-card) 84%,transparent);overflow:hidden;box-shadow:var(--bevel-raised,inset 1px 1px 0 rgba(255,255,255,0.03));",
+const topBar: CSSProperties = css(
+  "flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 14px;background:var(--surface-chrome);border-bottom:1px solid var(--border);flex-wrap:wrap;",
 );
-const panelTitle: CSSProperties = css(
-  "flex:0 0 auto;display:flex;align-items:center;gap:10px;height:var(--panel-title-h,27px);padding:0 12px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:9.5px;text-transform:uppercase;letter-spacing:0.14em;color:var(--text-muted);",
+
+const controlGroup: CSSProperties = css(
+  "display:flex;align-items:center;gap:8px;flex-wrap:wrap;",
 );
-const dot: CSSProperties = css(
-  "width:8px;height:8px;border-radius:1px;background:var(--accent);box-shadow:0 0 6px var(--accent);flex:0 0 auto;",
-);
-const scroll: CSSProperties = css("flex:1;min-height:0;overflow:auto;");
-const pad: CSSProperties = css("padding:12px 13px;");
-const stack: CSSProperties = css("display:flex;flex-direction:column;gap:10px;");
-const emptyNote: CSSProperties = css(
-  "flex:1;display:flex;align-items:center;justify-content:center;padding:20px;font-family:var(--font-mono);font-size:11px;color:var(--text-faint);letter-spacing:0.04em;text-align:center;",
-);
-const inputStyle: CSSProperties = css(
-  "background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:2px;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;padding:5px 8px;min-width:0;outline:none;",
-);
+
 const selectStyle: CSSProperties = css(
-  "background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:2px;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;padding:5px 8px;min-width:0;outline:none;appearance:none;",
+  "background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:2px;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;padding:4px 8px;min-width:160px;outline:none;",
 );
-const textareaStyle: CSSProperties = css(
-  "background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:2px;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;padding:6px 8px;min-width:0;outline:none;resize:vertical;min-height:60px;",
-);
-const labelStyle: CSSProperties = css(
-  "display:flex;flex-direction:column;gap:3px;font-family:var(--font-mono);font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);min-width:0;",
-);
+
 const btnPrimary: CSSProperties = css(
-  "padding:5px 12px;border:1px solid var(--accent);border-radius:2px;background:transparent;color:var(--accent);font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;",
+  "padding:4px 12px;border:1px solid var(--accent);border-radius:2px;background:color-mix(in srgb,var(--accent) 15%,transparent);color:var(--accent);font-family:var(--font-mono);font-size:10.5px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;cursor:pointer;",
 );
+
 const btnPrimaryDisabled: CSSProperties = css(
-  "padding:5px 12px;border:1px solid var(--border-faint);border-radius:2px;background:transparent;color:var(--text-faint);font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;cursor:not-allowed;",
+  "padding:4px 12px;border:1px solid var(--border-faint);border-radius:2px;background:transparent;color:var(--text-faint);font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.06em;text-transform:uppercase;cursor:not-allowed;",
 );
+
 const btnGhost: CSSProperties = css(
-  "padding:4px 10px;border:1px solid var(--border-soft);border-radius:2px;background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;",
+  "padding:4px 9px;border:1px solid var(--border-soft);border-radius:2px;background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:10px;letter-spacing:0.04em;cursor:pointer;",
 );
-const btnGhostDisabled: CSSProperties = css(
-  "padding:4px 10px;border:1px solid var(--border-faint);border-radius:2px;background:transparent;color:var(--text-faint);font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;cursor:not-allowed;",
+
+const btnGhostActive: CSSProperties = css(
+  "padding:4px 9px;border:1px solid var(--accent);border-radius:2px;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent);font-family:var(--font-mono);font-size:10px;font-weight:600;letter-spacing:0.04em;cursor:pointer;",
 );
-const chip: CSSProperties = css(
-  "display:inline-block;padding:1px 6px;border:1px solid var(--border-soft);border-radius:2px;font-family:var(--font-mono);font-size:9.5px;line-height:1.5;color:var(--text-primary);background:var(--surface-sunk);word-break:break-word;",
-);
-const chipAccent: CSSProperties = css(
-  "display:inline-block;padding:1px 6px;border:1px solid color-mix(in srgb,var(--accent) 55%,transparent);border-radius:2px;font-family:var(--font-mono);font-size:9.5px;line-height:1.5;color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent);word-break:break-word;",
-);
-const chipFaint: CSSProperties = css(
-  "display:inline-block;padding:1px 6px;border:1px solid var(--border-faint);border-radius:2px;font-family:var(--font-mono);font-size:9.5px;line-height:1.5;color:var(--text-faint);background:transparent;word-break:break-word;",
-);
+
 const chipOk: CSSProperties = css(
-  "display:inline-block;padding:1px 6px;border:1px solid color-mix(in srgb,var(--status-ok) 55%,transparent);border-radius:2px;font-family:var(--font-mono);font-size:9.5px;line-height:1.5;letter-spacing:0.08em;text-transform:uppercase;color:var(--status-ok);background:color-mix(in srgb,var(--status-ok) 10%,transparent);",
+  "display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border:1px solid color-mix(in srgb,var(--status-ok,#4ade80) 55%,transparent);border-radius:2px;font-family:var(--font-mono);font-size:9.5px;line-height:1.5;letter-spacing:0.04em;color:var(--status-ok,#4ade80);background:color-mix(in srgb,var(--status-ok,#4ade80) 10%,transparent);",
 );
+
 const chipWarn: CSSProperties = css(
-  `display:inline-block;padding:1px 6px;border:1px solid color-mix(in srgb,${H_WARN} 55%,transparent);border-radius:2px;font-family:var(--font-mono);font-size:9.5px;line-height:1.5;letter-spacing:0.08em;text-transform:uppercase;color:${H_WARN};background:color-mix(in srgb,${H_WARN} 12%,transparent);`,
-);
-const chipRow: CSSProperties = css(
-  "display:inline-flex;flex-wrap:wrap;gap:5px;max-width:100%;align-items:center;",
-);
-const monoBlock: CSSProperties = css(
-  "margin:0;padding:8px 10px;border:1px solid var(--border-soft);border-radius:2px;background:var(--surface-sunk);font-family:var(--font-mono);font-size:10.5px;line-height:1.5;color:var(--text-primary);white-space:pre-wrap;word-break:break-word;max-height:280px;overflow:auto;",
-);
-const kvGrid: CSSProperties = css(
-  "display:grid;grid-template-columns:minmax(120px,140px) 1fr;gap:5px 12px;font-size:10.5px;font-family:var(--font-mono);color:var(--text-primary);align-content:start;",
-);
-const kvLabel: CSSProperties = css(
-  "color:var(--text-faint);letter-spacing:0.04em;text-transform:uppercase;font-size:9px;",
-);
-const kvVal: CSSProperties = css("color:var(--text-primary);word-break:break-word;min-width:0;");
-const twoUp: CSSProperties = css(
-  "display:grid;grid-template-columns:1fr 1fr;gap:12px;min-height:0;min-width:0;",
-);
-const checkRow: CSSProperties = css(
-  "display:grid;grid-template-columns:auto 1fr;gap:6px 10px;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--border-faint);font-family:var(--font-mono);font-size:10.5px;",
-);
-const configRow: CSSProperties = css(
-  "display:grid;grid-template-columns:minmax(180px,220px) 1fr auto;gap:8px 12px;align-items:center;padding:7px 0;border-bottom:1px solid var(--border-faint);font-family:var(--font-mono);font-size:11px;",
-);
-const configMeta: CSSProperties = css(
-  "display:flex;flex-wrap:wrap;gap:4px;font-family:var(--font-mono);font-size:8.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);margin-top:2px;",
+  `display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border:1px solid color-mix(in srgb,${H_WARN} 55%,transparent);border-radius:2px;font-family:var(--font-mono);font-size:9.5px;line-height:1.5;letter-spacing:0.04em;color:${H_WARN};background:color-mix(in srgb,${H_WARN} 10%,transparent);`,
 );
 
-/* ----------------------------- helpers ---------------------------------- */
+const chipFaint: CSSProperties = css(
+  "display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border:1px solid var(--border-faint);border-radius:2px;font-family:var(--font-mono);font-size:9.5px;line-height:1.5;color:var(--text-faint);background:transparent;",
+);
 
-/** Sub-second durations render as ms, longer as seconds -- one glance
- *  reads either as a number an operator can compare to their timeout. */
-function fmtDuration(seconds: number): string {
-  if (!Number.isFinite(seconds)) return "\u2014";
-  if (seconds < 1) return `${(seconds * 1000).toFixed(0)}ms`;
-  return `${seconds.toFixed(2)}s`;
-}
+const chipAccent: CSSProperties = css(
+  "display:inline-flex;align-items:center;gap:4px;padding:2px 7px;border:1px solid color-mix(in srgb,var(--accent) 55%,transparent);border-radius:2px;font-family:var(--font-mono);font-size:9.5px;line-height:1.5;letter-spacing:0.04em;color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,transparent);",
+);
 
-/** ApiError carries the HTTP status; other Error subclasses only carry
- *  a message. Used by both the config editor and the exec console to
- *  render the same message text for every backend rejection shape. */
+const inputStyle: CSSProperties = css(
+  "flex:1;background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:2px;color:var(--text-primary);font-family:var(--font-mono);font-size:12px;padding:6px 10px;outline:none;",
+);
+
+/* ------------------------------ helpers ---------------------------------- */
+
 function apiErrMessage(err: unknown): string {
   if (err instanceof ApiError) return err.message || `HTTP ${err.status}`;
   if (err instanceof Error) return err.message;
   return String(err);
 }
 
-/** Static string-keyed lookup of the canonical position for each
- *  sandbox_* key; keys outside the list fall through to
- *  Number.POSITIVE_INFINITY and sort by name at the tail. */
-const SANDBOX_KEY_RANK: Record<string, number> = Object.fromEntries(
-  SANDBOX_KEY_ORDER.map((k, i) => [k, i]),
-);
+function fmtDuration(seconds: number): string {
+  if (!Number.isFinite(seconds)) return "\u2014";
+  if (seconds < 1) return `${(seconds * 1000).toFixed(0)}ms`;
+  return `${seconds.toFixed(2)}s`;
+}
 
-function SandboxQuickSetup({
-  defaultHost = "127.0.0.1",
-  onConfigured,
+/* ------------------------ INTERACTIVE TERMINAL --------------------------- */
+
+function InteractiveSandboxTerminal({
+  status,
+  onRunSuccess,
 }: {
-  defaultHost?: string;
-  onConfigured?: () => void;
+  status: SandboxStatus | undefined;
+  onRunSuccess?: () => void;
 }): JSX.Element {
-  const [backend, setBackend] = useState<string>("nsjail");
-  const [selectedSystemId, setSelectedSystemId] = useState<string>("");
-  const [sshHost, setSshHost] = useState<string>(defaultHost);
-  const [sshUser, setSshUser] = useState<string>("root");
-  const [sshPort, setSshPort] = useState<string>("22");
-  const [systemName, setSystemName] = useState<string>("");
-  const [isSettingUp, setIsSettingUp] = useState<boolean>(false);
-  const [setupError, setSetupError] = useState<string | null>(null);
-  const [setupSuccess, setSetupSuccess] = useState<boolean>(false);
-
-  const systemsQ = useSystems(1, 200);
-  const updateConfig = useUpdateSandboxConfig();
-  const probe = useSandboxProbe();
-
-  const systemsList = useMemo(() => {
-    return systemsQ.data?.items ?? [];
-  }, [systemsQ.data]);
-
-  const handleSelectSystem = (sysId: string) => {
-    setSelectedSystemId(sysId);
-    if (!sysId || sysId === "custom") {
-      setSystemName("");
-      return;
-    }
-    const found = systemsList.find((s) => String(s.id) === sysId);
-    if (found) {
-      setSshHost(found.host || "");
-      setSshUser(found.username || "root");
-      setSshPort(String(found.port || 22));
-      setSystemName(found.name || "");
-    }
-  };
-
-  const handleSetup = async (e?: FormEvent) => {
-    if (e) e.preventDefault();
-    setIsSettingUp(true);
-    setSetupError(null);
-    setSetupSuccess(false);
-
-    try {
-      await updateConfig.mutateAsync({
-        key: "sandbox_backend",
-        body: { value: backend, value_type: "str" },
-      });
-      await updateConfig.mutateAsync({
-        key: "sandbox_ssh_host",
-        body: { value: sshHost.trim(), value_type: "str" },
-      });
-      await updateConfig.mutateAsync({
-        key: "sandbox_ssh_user",
-        body: { value: sshUser.trim(), value_type: "str" },
-      });
-      await updateConfig.mutateAsync({
-        key: "sandbox_ssh_port",
-        body: { value: sshPort.trim(), value_type: "str" },
-      });
-      if (systemName.trim()) {
-        await updateConfig.mutateAsync({
-          key: "sandbox_system_name",
-          body: { value: systemName.trim(), value_type: "str" },
-        });
-      }
-      if (selectedSystemId && selectedSystemId !== "custom") {
-        await updateConfig.mutateAsync({
-          key: "sandbox_system_id",
-          body: { value: selectedSystemId, value_type: "str" },
-        });
-      }
-
-      await probe.mutateAsync();
-      setSetupSuccess(true);
-      if (onConfigured) onConfigured();
-    } catch (err) {
-      setSetupError(apiErrMessage(err));
-    } finally {
-      setIsSettingUp(false);
-    }
-  };
-
-  const applyPreset = (presetBackend: string, presetHost: string, presetUser: string, presetPort: string) => {
-    setSelectedSystemId("custom");
-    setSystemName("");
-    setBackend(presetBackend);
-    setSshHost(presetHost);
-    setSshUser(presetUser);
-    setSshPort(presetPort);
-  };
-
-  return (
-    <div
-      style={css(
-        `padding:11px 13px;border:1px solid color-mix(in srgb,var(--accent) 45%,transparent);border-radius:3px;background:color-mix(in srgb,var(--surface-card) 95%,transparent);display:flex;flex-direction:column;gap:10px;box-shadow:var(--bevel-raised);`
-      )}
-    >
-      <div style={css("display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;")}>
-        <div style={css("display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent);")}>
-          <span>{"\u26a1"} 1-click sandbox setup (fleet systems registry)</span>
-        </div>
-        <div style={css("display:flex;gap:4px;")}>
-          <button
-            type="button"
-            style={btnGhost}
-            onClick={() => applyPreset("nsjail", "127.0.0.1", "root", "22")}
-            title="Local Linux SSH Host (WSL2 / Localhost)"
-          >
-            WSL/Local (127.0.0.1:22)
-          </button>
-          <button
-            type="button"
-            style={btnGhost}
-            onClick={() => applyPreset("nsjail", "192.168.1.100", "root", "22")}
-            title="Remote VM / Server"
-          >
-            Remote VM
-          </button>
-        </div>
-      </div>
-
-      <div style={css("font-family:var(--font-mono);font-size:10px;color:var(--text-muted);line-height:1.45;")}>
-        Select any registered machine from the platform <strong>Systems Registry</strong> (or provide a custom host) to back the <code>nsjail</code> / <code>firecracker</code> sandbox:
-      </div>
-
-      <form onSubmit={handleSetup} style={css("display:grid;grid-template-columns:repeat(auto-fit, minmax(130px, 1fr));gap:8px;align-items:end;")}>
-        {systemsList.length > 0 ? (
-          <label style={labelStyle}>
-            registered system
-            <select
-              value={selectedSystemId}
-              onChange={(e) => handleSelectSystem(e.target.value)}
-              style={selectStyle}
-            >
-              <option value="">-- select fleet system --</option>
-              {systemsList.map((s) => (
-                <option key={s.id} value={String(s.id)}>
-                  {s.name} ({s.host}:{s.port}{s.role ? ` \u00b7 role: ${s.role}` : ""})
-                </option>
-              ))}
-              <option value="custom">Custom / Unregistered Host</option>
-            </select>
-          </label>
-        ) : null}
-
-        <label style={labelStyle}>
-          backend
-          <select
-            value={backend}
-            onChange={(e) => setBackend(e.target.value)}
-            style={selectStyle}
-          >
-            <option value="nsjail">nsjail</option>
-            <option value="firecracker">firecracker</option>
-          </select>
-        </label>
-
-        <label style={labelStyle}>
-          ssh host
-          <input
-            type="text"
-            value={sshHost}
-            onChange={(e) => setSshHost(e.target.value)}
-            placeholder="127.0.0.1"
-            style={inputStyle}
-            required
-          />
-        </label>
-
-        <label style={labelStyle}>
-          ssh user
-          <input
-            type="text"
-            value={sshUser}
-            onChange={(e) => setSshUser(e.target.value)}
-            placeholder="root"
-            style={inputStyle}
-            required
-          />
-        </label>
-
-        <label style={labelStyle}>
-          ssh port
-          <input
-            type="text"
-            value={sshPort}
-            onChange={(e) => setSshPort(e.target.value)}
-            placeholder="22"
-            style={inputStyle}
-            required
-          />
-        </label>
-
-        <div style={css("display:flex;gap:6px;")}>
-          <button
-            type="submit"
-            disabled={isSettingUp || !sshHost.trim()}
-            style={isSettingUp || !sshHost.trim() ? btnPrimaryDisabled : btnPrimary}
-          >
-            {isSettingUp ? "configuring\u2026" : "\u26a1 bind & probe"}
-          </button>
-        </div>
-      </form>
-
-      {setupError ? (
-        <div style={css(`color:${H_WARN};font-family:var(--font-mono);font-size:10px;padding:3px 0 0;`)}>
-          Setup error: {setupError}
-        </div>
-      ) : null}
-
-      {setupSuccess ? (
-        <div style={css("color:var(--color-success, #4ade80);font-family:var(--font-mono);font-size:10px;padding:3px 0 0;")}>
-          {"\u2713"} Configuration saved and sandbox host probed successfully.
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-/* --------------------------- BACKEND & HEALTH ---------------------------- */
-
-function HealthPanel({ status }: { status: SandboxStatus | undefined | null }): JSX.Element | null {
-  const probe = useSandboxProbe();
-  if (!status) return null;
-  const backendChip = status.backend === "none" ? chipFaint : chipAccent;
-  const provisionedChip = status.provisioned ? chipOk : chipWarn;
-  const reachable = status.ssh_reachable;
-  const probeData = probe.data;
-  return (
-    <div style={{ ...stack, ...pad }}>
-      <div style={kvGrid}>
-        <span style={kvLabel}>backend</span>
-        <span style={kvVal}><span style={backendChip}>{status.backend}</span></span>
-        <span style={kvLabel}>provisioned</span>
-        <span style={kvVal}>
-          <span style={provisionedChip}>{status.provisioned ? "ready" : "not provisioned"}</span>
-        </span>
-        <span style={kvLabel}>host os</span>
-        <span style={kvVal}><span style={chip}>{status.host_os}</span></span>
-        <span style={kvLabel}>ssh host</span>
-        <span style={kvVal}>
-          {status.ssh_host ? <span style={chip}>{status.ssh_host}</span> : <span style={chipFaint}>unset</span>}
-        </span>
-        <span style={kvLabel}>ssh reachable</span>
-        <span style={kvVal}>
-          <span style={css("display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;")}>
-            {probe.isPending ? (
-              <span style={chipFaint}>probing&#8230;</span>
-            ) : probeData ? (
-              probeData.ok ? <span style={chipOk}>reachable</span> : <span style={chipWarn}>unreachable</span>
-            ) : reachable === null ? (
-              <span style={chipFaint}>not probed</span>
-            ) : reachable ? (
-              <span style={chipOk}>reachable</span>
-            ) : (
-              <span style={chipWarn}>unreachable</span>
-            )}
-            <button
-              type="button"
-              onClick={() => probe.mutate()}
-              disabled={probe.isPending}
-              style={probe.isPending ? btnGhostDisabled : btnGhost}
-            >
-              probe
-            </button>
-            {probeData ? (
-              <span style={css("color:var(--text-faint);font-family:var(--font-mono);font-size:10px;word-break:break-word;")}>
-                {probeData.detail}
-                {"\u00a0\u00b7\u00a0"}
-                {probeData.duration_ms}ms
-              </span>
-            ) : null}
-          </span>
-          {probe.isError ? (
-            <div style={css(`color:${H_WARN};font-family:var(--font-mono);font-size:9.5px;padding:3px 0 0;`)}>
-              probe failed &mdash; {apiErrMessage(probe.error)}
-            </div>
-          ) : null}
-        </span>
-      </div>
-
-      {status.backend === "none" || !status.provisioned ? (
-        <SandboxQuickSetup defaultHost={status.ssh_host || "127.0.0.1"} />
-      ) : null}
-
-      <div style={css("display:flex;flex-direction:column;")}>
-        <div style={css("font-family:var(--font-mono);font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);padding:0 0 4px;")}>
-          checks
-        </div>
-        {status.checks.length === 0 ? (
-          <div style={emptyNote}>no checks returned by /platform/sandbox/status.</div>
-        ) : (
-          status.checks.map((c, i) => (
-            <div key={`${c.name}-${i}`} style={checkRow}>
-              <span style={c.ok ? chipOk : chipWarn}>{c.ok ? "pass" : "fail"}</span>
-              <span style={css("color:var(--text-primary);word-break:break-word;")}>
-                <span style={css("color:var(--text-muted);font-weight:600;")}>{c.name}</span>
-                {c.detail ? (
-                  <span style={css("color:var(--text-faint);")}>
-                    {"\u00a0\u2014\u00a0"}
-                    {c.detail}
-                  </span>
-                ) : null}
-              </span>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
-
-function StatusPanel(): JSX.Element {
-  const q = useSandboxStatus();
-  return (
-    <div style={panelBox}>
-      <div style={panelTitle}>
-        <span style={dot} />
-        <span style={css("color:var(--text-primary);")}>backend &amp; health</span>
-        <span style={css("flex:1;")} />
-        <button
-          type="button"
-          onClick={() => void q.refetch()}
-          style={q.isFetching ? btnGhostDisabled : btnGhost}
-          disabled={q.isFetching}
-        >
-          {q.isFetching ? "probing\u2026" : "re-probe"}
-        </button>
-      </div>
-      <div style={scroll}>
-        {q.isLoading && !q.data ? (
-          <div style={emptyNote}>probing /platform/sandbox/status&#8230;</div>
-        ) : q.isError ? (
-          <div style={{ ...emptyNote, color: H_WARN }}>
-            could not load /platform/sandbox/status &mdash; {apiErrMessage(q.error)}
-          </div>
-        ) : (
-          <HealthPanel status={q.data} />
-        )}
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------ CONFIG EDITOR ---------------------------- */
-
-function ConfigEditor(): JSX.Element {
-  const q = useSandboxConfig();
-  const rows = useMemo(() => {
-    const data = q.data ?? [];
-    return [...data].sort((a, b) => {
-      const ra = SANDBOX_KEY_RANK[a.key] ?? Number.POSITIVE_INFINITY;
-      const rb = SANDBOX_KEY_RANK[b.key] ?? Number.POSITIVE_INFINITY;
-      if (ra !== rb) return ra - rb;
-      return a.key.localeCompare(b.key);
-    });
-  }, [q.data]);
-
-  return (
-    <div style={panelBox}>
-      <div style={panelTitle}>
-        <span style={dot} />
-        <span style={css("color:var(--text-primary);")}>config editor</span>
-        <span style={css("flex:1;")} />
-        <span style={css("color:var(--text-faint);text-transform:none;letter-spacing:0.04em;")}>
-          platform.sandbox_* &middot; {rows.length} keys
-        </span>
-      </div>
-      <div style={scroll}>
-        {q.isLoading && !q.data ? (
-          <div style={emptyNote}>loading /config/platform&#8230;</div>
-        ) : q.isError ? (
-          <div style={{ ...emptyNote, color: H_WARN }}>
-            could not load /config/platform &mdash; {apiErrMessage(q.error)}
-          </div>
-        ) : rows.length === 0 ? (
-          <div style={emptyNote}>no sandbox_* keys returned by the config registry.</div>
-        ) : (
-          <div style={pad}>
-            {rows.map((row) => (
-              <ConfigRowEditor key={row.key} row={row} />
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function ConfigRowEditor({ row }: { row: SandboxConfigRow }): JSX.Element {
-  const [draft, setDraft] = useState<string>(row.effective_value);
-  const [dirty, setDirty] = useState<boolean>(false);
-  const mut = useUpdateSandboxConfig();
-
-  // Reset local draft when the row's effective value changes (e.g. after a
-  // sibling write or a refetch). Skip when the user has an in-flight edit
-  // so their typing isn't clobbered by a background refetch.
-  useEffect(() => {
-    if (!dirty) setDraft(row.effective_value);
-  }, [row.effective_value, dirty]);
-
-  const commit = (): void => {
-    if (!dirty) return;
-    mut.mutate(
-      { key: row.key, body: { value: draft, value_type: row.value_type } },
-      {
-        onSuccess: () => setDirty(false),
-      },
-    );
-  };
-
-  const revert = (): void => {
-    setDraft(row.effective_value);
-    setDirty(false);
-    mut.reset();
-  };
-
-  const sourceChip =
-    row.effective_source === "env"
-      ? chipWarn
-      : row.effective_source === "default"
-        ? chipFaint
-        : chipAccent;
-
-  return (
-    <div style={configRow}>
-      <div style={css("min-width:0;")}>
-        <div style={css("color:var(--text-primary);word-break:break-word;")}>{row.key}</div>
-        <div style={configMeta}>
-          <span style={chip}>{row.value_type}</span>
-          <span style={sourceChip}>src: {row.effective_source}</span>
-          {row.overridden_by_env ? (
-            <span style={chipWarn} title={row.env_key}>
-              env override
-            </span>
-          ) : null}
-        </div>
-      </div>
-
-      <div style={css("min-width:0;")}>
-        <ConfigInput
-          row={row}
-          value={draft}
-          onChange={(v: string) => {
-            setDraft(v);
-            setDirty(v !== row.effective_value);
-          }}
-        />
-        {mut.isError ? (
-          <div style={css(`color:${H_WARN};font-family:var(--font-mono);font-size:9.5px;padding:3px 0 0;`)}>
-            write failed &mdash; {apiErrMessage(mut.error)}
-          </div>
-        ) : null}
-        {row.overridden_by_env ? (
-          <div style={css("color:var(--text-faint);font-family:var(--font-mono);font-size:9px;letter-spacing:0.05em;padding:3px 0 0;")}>
-            written value is shadowed by env var <span style={chipFaint}>{row.env_key}</span>
-          </div>
-        ) : null}
-      </div>
-
-      <div style={css("display:flex;gap:4px;justify-self:end;")}>
-        <button
-          type="button"
-          onClick={commit}
-          disabled={!dirty || mut.isPending}
-          style={dirty && !mut.isPending ? btnPrimary : btnPrimaryDisabled}
-        >
-          {mut.isPending ? "\u2026" : "save"}
-        </button>
-        <button
-          type="button"
-          onClick={revert}
-          disabled={!dirty && !mut.isError}
-          style={dirty || mut.isError ? btnGhost : btnGhostDisabled}
-        >
-          revert
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ConfigInput({
-  row,
-  value,
-  onChange,
-}: {
-  row: SandboxConfigRow;
-  value: string;
-  onChange: (v: string) => void;
-}): JSX.Element {
-  // sandbox_backend is a fixed enum: never trust a free-text edit for a
-  // key that only accepts three values.
-  if (row.key === "sandbox_backend") {
-    return (
-      <select
-        style={selectStyle}
-        value={value}
-        onChange={(e: ChangeEvent<HTMLSelectElement>) => onChange(e.target.value)}
-      >
-        {SANDBOX_BACKEND_CHOICES.map((choice) => (
-          <option key={choice} value={choice}>
-            {choice}
-          </option>
-        ))}
-        {SANDBOX_BACKEND_CHOICES.includes(value) ? null : (
-          <option key={value} value={value}>
-            {value} (unknown)
-          </option>
-        )}
-      </select>
-    );
-  }
-
-  if (row.value_type === "bool") {
-    const checked = value === "true" || value === "True" || value === "1";
-    return (
-      <label style={css("display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;color:var(--text-primary);")}>
-        <input
-          type="checkbox"
-          checked={checked}
-          onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.checked ? "true" : "false")}
-        />
-        <span style={css("color:var(--text-faint);")}>{value}</span>
-      </label>
-    );
-  }
-
-  if (row.value_type === "int" || row.value_type === "float") {
-    return (
-      <input
-        type="number"
-        step={row.value_type === "float" ? "any" : 1}
-        value={value}
-        onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
-        style={{ ...inputStyle, width: "100%" }}
-      />
-    );
-  }
-
-  return (
-    <input
-      type="text"
-      value={value}
-      onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
-      style={{ ...inputStyle, width: "100%" }}
-      autoComplete="off"
-      spellCheck={false}
-    />
-  );
-}
-
-/* ------------------------------ EXEC CONSOLE ----------------------------- */
-
-interface ExecFormState {
-  argvLine: string;
-  stdin: string;
-  timeoutS: string;
-  network: boolean;
-  vcpu: string;
-  memMb: string;
-  workdir: string;
-}
-
-const DEFAULT_EXEC_FORM: ExecFormState = {
-  argvLine: "",
-  stdin: "",
-  timeoutS: "30",
-  network: false,
-  vcpu: "1",
-  memMb: "512",
-  workdir: "/work",
-};
-
-/** Tokenize an argv line the way an operator expects: split on whitespace
- *  but honor single/double-quoted segments so an argument with a space in
- *  it can still be passed. Backslash escapes are intentionally NOT
- *  supported -- the operator has a stdin textarea and an env dictionary
- *  is a separate future concern; the goal here is one honest way to type
- *  a command, not a full shell parser. */
-function parseArgv(line: string): string[] {
-  const out: string[] = [];
-  let cur = "";
-  let quote: '"' | "'" | null = null;
-  for (const ch of line) {
-    if (quote) {
-      if (ch === quote) {
-        quote = null;
-        continue;
-      }
-      cur += ch;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      continue;
-    }
-    if (ch === " " || ch === "\t" || ch === "\n") {
-      if (cur !== "") {
-        out.push(cur);
-        cur = "";
-      }
-      continue;
-    }
-    cur += ch;
-  }
-  if (cur !== "") out.push(cur);
-  return out;
-}
-
-/** Render argv tokens back into a single line the exec form's parser can
- *  re-tokenize. Any token that contains whitespace or a quote is wrapped
- *  in single quotes so it round-trips through parseArgv. */
-function argvToLine(argv: string[]): string {
-  return argv
-    .map((tok) => (/[\s'"]/.test(tok) ? `'${tok.replace(/'/g, "'\\''")}'` : tok))
-    .join(" ");
-}
-
-function ExecConsole({
-  form,
-  setForm,
-}: {
-  form: ExecFormState;
-  setForm: Dispatch<SetStateAction<ExecFormState>>;
-}): JSX.Element {
-  const [argvError, setArgvError] = useState<string | null>(null);
-  const mut = useSandboxExec();
-
-  const setField = <K extends keyof ExecFormState>(key: K, value: ExecFormState[K]): void => {
-    setForm((f) => ({ ...f, [key]: value }));
-  };
-
-  const submit = (e: FormEvent<HTMLFormElement>): void => {
-    e.preventDefault();
-    const argv = parseArgv(form.argvLine);
-    if (argv.length === 0) {
-      setArgvError("argv is required (at least one token).");
-      return;
-    }
-    setArgvError(null);
-
-    const spec: SandboxSpec = {
-      argv,
-      timeout_s: Number(form.timeoutS) || 30,
-      network: form.network,
-      vcpu: Number(form.vcpu) || 1,
-      mem_mb: Number(form.memMb) || 512,
-      workdir: form.workdir || "/work",
-    };
-    if (form.stdin !== "") spec.stdin = form.stdin;
-
-    mut.mutate(spec);
-  };
-
-  const reset = (): void => {
-    setForm(DEFAULT_EXEC_FORM);
-    setArgvError(null);
-    mut.reset();
-  };
-
-  return (
-    <div style={panelBox}>
-      <div style={panelTitle}>
-        <span style={dot} />
-        <span style={css("color:var(--text-primary);")}>exec console</span>
-        <span style={css("flex:1;")} />
-        <span style={css("color:var(--text-faint);text-transform:none;letter-spacing:0.04em;")}>
-          POST /platform/sandbox/exec &middot; 10/min
-        </span>
-      </div>
-      <div style={{ ...scroll, ...pad, ...stack }}>
-        <form onSubmit={submit} style={css("display:flex;flex-direction:column;gap:8px;")}>
-          <label style={labelStyle}>
-            argv
-            <input
-              type="text"
-              value={form.argvLine}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setField("argvLine", e.target.value)}
-              placeholder="/bin/echo hello 'a b c'"
-              style={inputStyle}
-              autoComplete="off"
-              spellCheck={false}
-            />
-          </label>
-          {argvError ? (
-            <div style={css(`color:${H_WARN};font-family:var(--font-mono);font-size:9.5px;`)}>{argvError}</div>
-          ) : null}
-
-          <label style={labelStyle}>
-            stdin
-            <textarea
-              value={form.stdin}
-              onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setField("stdin", e.target.value)}
-              placeholder="(optional) data piped to argv on stdin"
-              style={textareaStyle}
-              spellCheck={false}
-            />
-          </label>
-
-          <div style={css("display:grid;grid-template-columns:repeat(4,1fr);gap:8px;")}>
-            <label style={labelStyle}>
-              timeout_s
-              <input
-                type="number"
-                min={1}
-                value={form.timeoutS}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setField("timeoutS", e.target.value)}
-                style={inputStyle}
-              />
-            </label>
-            <label style={labelStyle}>
-              vcpu
-              <input
-                type="number"
-                min={1}
-                value={form.vcpu}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setField("vcpu", e.target.value)}
-                style={inputStyle}
-              />
-            </label>
-            <label style={labelStyle}>
-              mem_mb
-              <input
-                type="number"
-                min={1}
-                value={form.memMb}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setField("memMb", e.target.value)}
-                style={inputStyle}
-              />
-            </label>
-            <label style={labelStyle}>
-              workdir
-              <input
-                type="text"
-                value={form.workdir}
-                onChange={(e: ChangeEvent<HTMLInputElement>) => setField("workdir", e.target.value)}
-                style={inputStyle}
-                autoComplete="off"
-                spellCheck={false}
-              />
-            </label>
-          </div>
-
-          <label style={css("display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;color:var(--text-primary);")}>
-            <input
-              type="checkbox"
-              checked={form.network}
-              onChange={(e: ChangeEvent<HTMLInputElement>) => setField("network", e.target.checked)}
-            />
-            <span>enable network egress inside the sandbox</span>
-          </label>
-
-          <div style={css("display:flex;gap:6px;")}>
-            <button type="submit" disabled={mut.isPending} style={mut.isPending ? btnPrimaryDisabled : btnPrimary}>
-              {mut.isPending ? "running\u2026" : "run"}
-            </button>
-            <button type="button" onClick={reset} style={btnGhost}>
-              reset
-            </button>
-          </div>
-        </form>
-
-        <ExecResultView pending={mut.isPending} error={mut.error} data={mut.data ?? null} />
-      </div>
-    </div>
-  );
-}
-
-function XtermTerminalView({
-  text,
-  isError = false,
-}: {
-  text: string;
-  isError?: boolean;
-}): JSX.Element {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const terminalElRef = useRef<HTMLDivElement>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
 
+  const [commandInput, setCommandInput] = useState<string>("");
+  const [networkEgress, setNetworkEgress] = useState<boolean>(false);
+  const [timeoutS, setTimeoutS] = useState<number>(30);
+  const execMut = useSandboxExec();
+
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
+    if (!terminalElRef.current) return;
 
     const term = new Terminal({
-      cursorBlink: false,
-      disableStdin: true,
-      fontFamily: "var(--font-mono, monospace)",
-      fontSize: 11,
-      lineHeight: 1.25,
+      cursorBlink: true,
+      fontFamily: "var(--font-mono, 'Spline Sans Mono', monospace)",
+      fontSize: 12,
+      lineHeight: 1.3,
       theme: {
-        background: "#0a0a0a",
-        foreground: isError ? "#ff6b6b" : "#e0e0e0",
-        cursor: "transparent",
+        background: "#080808",
+        foreground: "#d4d4d4",
+        cursor: "#00ff66",
+        selectionBackground: "rgba(255, 255, 255, 0.2)",
+        black: "#000000",
+        red: "#ff5555",
+        green: "#50fa7b",
+        yellow: "#f1fa8c",
+        blue: "#bd93f9",
+        magenta: "#ff79c6",
+        cyan: "#8be9fd",
+        white: "#bfbfbf",
+        brightBlack: "#4d4d4d",
+        brightRed: "#ff6e6e",
+        brightGreen: "#69ff94",
+        brightYellow: "#ffffa5",
+        brightBlue: "#d6acff",
+        brightMagenta: "#ff92df",
+        brightCyan: "#a4ffff",
+        brightWhite: "#ffffff",
       },
       convertEol: true,
-      rows: 8,
+      scrollback: 5000,
     });
 
     const fitAddon = new FitAddon();
     term.loadAddon(fitAddon);
-    term.open(el);
-
-    if (text) {
-      term.write(text);
-    }
+    term.open(terminalElRef.current);
 
     try {
       fitAddon.fit();
     } catch {
       // ignore
     }
+
+    term.writeln("\x1b[38;2;120;220;140m\x1b[1mAILA Platform Sandbox Isolation Terminal\x1b[0m");
+    term.writeln(
+      `\x1b[90mBackend: ${status?.backend || "none"} \u00b7 Target: ${status?.ssh_host || "not configured"} \u00b7 State: ${status?.provisioned ? "READY" : "NOT PROVISIONED"}\x1b[0m\n`,
+    );
 
     termRef.current = term;
     fitAddonRef.current = fitAddon;
@@ -1011,7 +180,6 @@ function XtermTerminalView({
         // ignore
       }
     };
-
     window.addEventListener("resize", handleResize);
 
     return () => {
@@ -1020,229 +188,382 @@ function XtermTerminalView({
       termRef.current = null;
       fitAddonRef.current = null;
     };
-  }, [isError]);
+  }, [status?.backend, status?.ssh_host, status?.provisioned]);
 
-  useEffect(() => {
-    if (termRef.current) {
-      termRef.current.reset();
-      if (text) {
-        termRef.current.write(text);
+  const runCommand = async (cmd: string) => {
+    const trimmed = cmd.trim();
+    if (!trimmed) return;
+
+    const term = termRef.current;
+    if (term) {
+      term.writeln(`\r\n\x1b[38;2;0;200;255m$\x1b[0m \x1b[1m${trimmed}\x1b[0m`);
+    }
+
+    // Convert bash-style command string to argv array
+    const argv = trimmed.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)?.map((s) => s.replace(/^['"]|['"]$/g, "")) || [trimmed];
+
+    try {
+      const res: SandboxResult = await execMut.mutateAsync({
+        argv,
+        timeout_s: timeoutS,
+        network: networkEgress,
+      });
+
+      if (term) {
+        if (res.stdout) {
+          term.write(res.stdout);
+          if (!res.stdout.endsWith("\n")) term.writeln("");
+        }
+        if (res.stderr) {
+          term.write(`\x1b[31m${res.stderr}\x1b[0m`);
+          if (!res.stderr.endsWith("\n")) term.writeln("");
+        }
+        const statusColor = res.exit_code === 0 ? "\x1b[32m" : "\x1b[31m";
+        term.writeln(
+          `\x1b[90m[\x1b[0m${statusColor}exit ${res.exit_code ?? "\u2014"}\x1b[90m \u00b7 duration: ${fmtDuration(res.duration_s)}${res.timed_out ? " \u00b7 \x1b[33mTIMED OUT\x1b[90m" : ""}${res.oom ? " \u00b7 \x1b[31mOOM\x1b[90m" : ""}]\x1b[0m`,
+        );
       }
-      try {
-        fitAddonRef.current?.fit();
-      } catch {
-        // ignore
+
+      if (onRunSuccess) onRunSuccess();
+    } catch (err) {
+      if (term) {
+        term.writeln(`\x1b[31m[EXEC ERROR]\x1b[0m ${apiErrMessage(err)}`);
       }
     }
-  }, [text]);
+  };
+
+  const handleFormSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!commandInput.trim() || execMut.isPending) return;
+    const cmd = commandInput;
+    setCommandInput("");
+    await runCommand(cmd);
+  };
+
+  const handleClear = () => {
+    termRef.current?.clear();
+  };
 
   return (
-    <div
-      ref={containerRef}
-      style={{
-        width: "100%",
-        minHeight: 120,
-        background: "var(--surface-sunk, #0a0a0a)",
-        border: "1px solid var(--border-soft, #222)",
-        borderRadius: 2,
-        padding: "4px 6px",
-        overflow: "hidden",
-      }}
-    />
+    <div style={css("flex:1;min-height:0;display:flex;flex-direction:column;background:#080808;overflow:hidden;")}>
+      {/* Quick Action Preset Chips */}
+      <div
+        style={css(
+          "flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 12px;background:#0d0d0d;border-bottom:1px solid #1a1a1a;flex-wrap:wrap;",
+        )}
+      >
+        <div style={css("display:flex;align-items:center;gap:6px;flex-wrap:wrap;")}>
+          <span style={css("font-family:var(--font-mono);font-size:9.5px;color:var(--text-faint);text-transform:uppercase;letter-spacing:0.06em;")}>
+            quick exec:
+          </span>
+          <button type="button" onClick={() => void runCommand("uname -a")} style={btnGhost} disabled={execMut.isPending}>
+            uname -a
+          </button>
+          <button type="button" onClick={() => void runCommand("id && whoami")} style={btnGhost} disabled={execMut.isPending}>
+            id &amp; whoami
+          </button>
+          <button type="button" onClick={() => void runCommand("nsjail --help")} style={btnGhost} disabled={execMut.isPending}>
+            nsjail --help
+          </button>
+          <button type="button" onClick={() => void runCommand("gcc --version || clang --version")} style={btnGhost} disabled={execMut.isPending}>
+            compiler check
+          </button>
+          <button type="button" onClick={() => void runCommand("cat /etc/os-release")} style={btnGhost} disabled={execMut.isPending}>
+            os-release
+          </button>
+        </div>
+
+        <div style={css("display:flex;align-items:center;gap:10px;")}>
+          <label style={css("display:flex;align-items:center;gap:4px;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);cursor:pointer;")}>
+            <input
+              type="checkbox"
+              checked={networkEgress}
+              onChange={(e) => setNetworkEgress(e.target.checked)}
+            />
+            enable network egress
+          </label>
+          <button type="button" onClick={handleClear} style={btnGhost}>
+            clear
+          </button>
+        </div>
+      </div>
+
+      {/* Main Terminal View */}
+      <div ref={terminalElRef} style={css("flex:1;min-height:0;padding:6px 10px;overflow:hidden;")} />
+
+      {/* Terminal Input Bar */}
+      <form
+        onSubmit={handleFormSubmit}
+        style={css(
+          "flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:8px 12px;background:#0d0d0d;border-top:1px solid #1a1a1a;",
+        )}
+      >
+        <span style={css("font-family:var(--font-mono);font-size:13px;font-weight:700;color:var(--accent);")}>
+          $
+        </span>
+        <input
+          type="text"
+          value={commandInput}
+          onChange={(e) => setCommandInput(e.target.value)}
+          placeholder={
+            status?.provisioned
+              ? "Type command to execute inside sandbox (e.g. gcc -O2 poc.c -o poc && ./poc)..."
+              : "Sandbox not provisioned \u2014 select a registered fleet host above."
+          }
+          style={inputStyle}
+          disabled={execMut.isPending}
+          autoFocus
+        />
+        <button
+          type="submit"
+          disabled={execMut.isPending || !commandInput.trim() || !status?.provisioned}
+          style={execMut.isPending || !commandInput.trim() || !status?.provisioned ? btnPrimaryDisabled : btnPrimary}
+        >
+          {execMut.isPending ? "executing\u2026" : "run \u23ce"}
+        </button>
+      </form>
+    </div>
   );
 }
 
-function ExecResultView({
-  pending,
-  error,
-  data,
-}: {
-  pending: boolean;
-  error: Error | null;
-  data: SandboxResult | null;
-}): JSX.Element {
-  if (pending) {
-    return <div style={emptyNote}>{"waiting on backend exec\u2026"}</div>;
-  }
-  if (error) {
-    const status = error instanceof ApiError ? error.status : null;
-    const msg = apiErrMessage(error);
-    let banner: string;
-    if (status === 503) {
-      banner = "backend not provisioned \u2014 set sandbox_backend and configure the SSH host in the config editor above.";
-    } else if (status === 502) {
-      banner = "sandbox backend transport error \u2014 the SSH host or the backend binary rejected the run.";
-    } else {
-      banner = `request failed${status !== null ? ` (HTTP ${status})` : ""}`;
+/* ------------------------- SETTINGS & POLICY ----------------------------- */
+
+function SandboxSettingsTab(): JSX.Element {
+  const configQ = useSandboxConfig();
+  const updateConfig = useUpdateSandboxConfig();
+  const rows: SandboxConfigRow[] = configQ.data ?? [];
+
+  const [editKey, setEditKey] = useState<string | null>(null);
+  const [editVal, setEditVal] = useState<string>("");
+
+  const handleStartEdit = (row: SandboxConfigRow) => {
+    setEditKey(row.key);
+    setEditVal(row.effective_value ?? row.value ?? "");
+  };
+
+  const handleSave = async (row: SandboxConfigRow) => {
+    try {
+      await updateConfig.mutateAsync({
+        key: row.key,
+        body: { value: editVal, value_type: row.value_type },
+      });
+      setEditKey(null);
+    } catch {
+      // handled by mutation state
     }
-    return (
-      <div style={css(`padding:9px 10px;border:1px solid color-mix(in srgb,${H_WARN} 55%,transparent);border-radius:2px;background:color-mix(in srgb,${H_WARN} 8%,transparent);color:${H_WARN};font-family:var(--font-mono);font-size:10.5px;display:flex;flex-direction:column;gap:4px;`)}>
-        <span style={css("font-weight:700;letter-spacing:0.06em;")}>{banner}</span>
-        <span style={css("color:var(--text-faint);word-break:break-word;")}>{msg}</span>
-      </div>
-    );
-  }
-  if (!data) {
-    return <div style={emptyNote}>{"no result yet \u2014 fill argv and press run."}</div>;
-  }
+  };
+
   return (
-    <div style={stack}>
-      <div style={chipRow}>
-        <span style={data.exit_code === 0 ? chipOk : chipWarn}>
-          exit {data.exit_code === null ? "\u2014" : data.exit_code}
-        </span>
-        <span style={chipAccent}>{data.backend}</span>
-        <span style={chip}>{fmtDuration(data.duration_s)}</span>
-        {data.timed_out ? <span style={chipWarn}>timed out</span> : null}
-        {data.oom ? <span style={chipWarn}>oom</span> : null}
-        {data.truncated ? <span style={chipWarn}>truncated</span> : null}
+    <div style={css("flex:1;min-height:0;overflow:auto;padding:16px 20px;display:flex;flex-direction:column;gap:14px;")}>
+      <div style={css("font-family:var(--font-mono);font-size:11px;color:var(--text-muted);")}>
+        Platform isolation policies, limits, and binary path configurations:
       </div>
 
-      <div style={twoUp}>
-        <div style={stack}>
-          <div style={css("font-family:var(--font-mono);font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);")}>
-            stdout
-          </div>
-          {data.stdout === "" ? (
-            <div style={emptyNote}>(empty)</div>
-          ) : (
-            <XtermTerminalView text={data.stdout} />
-          )}
-        </div>
-        <div style={stack}>
-          <div style={css("font-family:var(--font-mono);font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);")}>
-            stderr
-          </div>
-          {data.stderr === "" ? (
-            <div style={emptyNote}>(empty)</div>
-          ) : (
-            <XtermTerminalView text={data.stderr} isError={true} />
-          )}
-        </div>
-      </div>
-
-      <div style={stack}>
-        <div style={css("font-family:var(--font-mono);font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);")}>
-          output files
-        </div>
-        {Object.keys(data.output_files).length === 0 ? (
-          <div style={emptyNote}>no matches for output_globs.</div>
-        ) : (
-          <StructuredValue value={data.output_files} />
-        )}
+      <div style={css("border:1px solid var(--border);border-radius:3px;background:var(--surface-card);overflow:hidden;")}>
+        <table style={css("width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:11px;")}>
+          <thead>
+            <tr style={css("background:var(--surface-chrome);border-bottom:1px solid var(--border);text-align:left;color:var(--text-muted);font-size:10px;text-transform:uppercase;letter-spacing:0.06em;")}>
+              <th style={css("padding:8px 12px;")}>Key</th>
+              <th style={css("padding:8px 12px;")}>Effective Value</th>
+              <th style={css("padding:8px 12px;")}>Source</th>
+              <th style={css("padding:8px 12px;text-align:right;")}>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.key} style={css("border-bottom:1px solid var(--border-soft);")}>
+                <td style={css("padding:8px 12px;color:var(--text-primary);font-weight:600;")}>
+                  {r.key}
+                </td>
+                <td style={css("padding:8px 12px;color:var(--text-muted);")}>
+                  {editKey === r.key ? (
+                    <input
+                      type="text"
+                      value={editVal}
+                      onChange={(e) => setEditVal(e.target.value)}
+                      style={css("background:var(--surface-sunk);border:1px solid var(--accent);color:var(--text-primary);padding:3px 6px;border-radius:2px;width:100%;")}
+                    />
+                  ) : (
+                    <span>{r.effective_value || r.value || "\u2014"}</span>
+                  )}
+                </td>
+                <td style={css("padding:8px 12px;color:var(--text-faint);")}>
+                  {r.effective_source}
+                </td>
+                <td style={css("padding:8px 12px;text-align:right;")}>
+                  {editKey === r.key ? (
+                    <div style={css("display:inline-flex;gap:4px;")}>
+                      <button type="button" onClick={() => void handleSave(r)} style={btnPrimary} disabled={updateConfig.isPending}>
+                        save
+                      </button>
+                      <button type="button" onClick={() => setEditKey(null)} style={btnGhost}>
+                        cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <button type="button" onClick={() => handleStartEdit(r)} style={btnGhost}>
+                      edit
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
 }
 
-/* ---------------------------- RECENT EXECUTIONS -------------------------- */
+/* -------------------------- HISTORY TAB ---------------------------------- */
 
-function RecentExecutionsPanel({ onLoad }: { onLoad: (argv: string[]) => void }): JSX.Element {
+function SandboxHistoryTab(): JSX.Element {
   const q = useSandboxHistory();
   const rows: SandboxHistoryRow[] = q.data ?? [];
+
   return (
-    <div style={panelBox}>
-      <div style={panelTitle}>
-        <span style={dot} />
-        <span style={css("color:var(--text-primary);")}>recent executions</span>
-        <span style={css("flex:1;")} />
-        <span style={css("color:var(--text-faint);text-transform:none;letter-spacing:0.04em;")}>
-          GET /platform/sandbox/history &middot; {rows.length} runs
+    <div style={css("flex:1;min-height:0;overflow:auto;padding:16px 20px;display:flex;flex-direction:column;gap:12px;")}>
+      <div style={css("display:flex;align-items:center;justify-content:space-between;gap:8px;")}>
+        <span style={css("font-family:var(--font-mono);font-size:11px;color:var(--text-muted);")}>
+          Recent executions dispatched across the platform ({rows.length} records):
         </span>
+        <button type="button" onClick={() => void q.refetch()} style={btnGhost}>
+          refresh
+        </button>
       </div>
-      <div style={scroll}>
-        {q.isLoading && !q.data ? (
-          <div style={emptyNote}>loading /platform/sandbox/history&#8230;</div>
-        ) : q.isError ? (
-          <div style={{ ...emptyNote, color: H_WARN }}>
-            could not load /platform/sandbox/history &mdash; {apiErrMessage(q.error)}
-          </div>
-        ) : rows.length === 0 ? (
-          <div style={emptyNote}>no sandbox executions recorded yet.</div>
-        ) : (
-          <div style={pad}>
-            {rows.map((row) => {
-              const argvDisplay = argvToLine(row.argv);
-              return (
-                <div
-                  key={row.id}
-                  style={css("display:grid;grid-template-columns:auto 1fr auto;gap:6px 12px;align-items:baseline;padding:7px 0;border-bottom:1px solid var(--border-faint);font-family:var(--font-mono);font-size:10.5px;")}
-                >
-                  <span style={chipRow}>
-                    <span style={row.exit_code === 0 ? chipOk : chipWarn}>
-                      exit {row.exit_code === null ? "\u2014" : row.exit_code}
+
+      <div style={css("border:1px solid var(--border);border-radius:3px;background:var(--surface-card);overflow:hidden;")}>
+        <table style={css("width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:11px;")}>
+          <thead>
+            <tr style={css("background:var(--surface-chrome);border-bottom:1px solid var(--border);text-align:left;color:var(--text-muted);font-size:10px;text-transform:uppercase;letter-spacing:0.06em;")}>
+              <th style={css("padding:8px 12px;")}>Time</th>
+              <th style={css("padding:8px 12px;")}>Command (argv)</th>
+              <th style={css("padding:8px 12px;")}>Exit</th>
+              <th style={css("padding:8px 12px;")}>Duration</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.length === 0 ? (
+              <tr>
+                <td colSpan={4} style={css("padding:24px;text-align:center;color:var(--text-faint);")}>
+                  No recent execution records found.
+                </td>
+              </tr>
+            ) : (
+              rows.map((r) => (
+                <tr key={r.id} style={css("border-bottom:1px solid var(--border-soft);")}>
+                  <td style={css("padding:8px 12px;color:var(--text-faint);white-space:nowrap;")}>
+                    {new Date(r.created_at).toLocaleTimeString()}
+                  </td>
+                  <td style={css("padding:8px 12px;color:var(--text-primary);font-family:var(--font-mono);word-break:break-all;")}>
+                    <code>{r.argv.join(" ")}</code>
+                  </td>
+                  <td style={css("padding:8px 12px;")}>
+                    <span style={r.exit_code === 0 ? chipOk : chipWarn}>
+                      exit {r.exit_code ?? "\u2014"}
                     </span>
-                    <span style={chip}>{fmtDuration(row.duration_s)}</span>
-                    {row.timed_out ? <span style={chipWarn}>timed out</span> : null}
-                    {row.oom ? <span style={chipWarn}>oom</span> : null}
-                    {row.truncated ? <span style={chipWarn}>truncated</span> : null}
-                  </span>
-                  <span style={css("min-width:0;color:var(--text-primary);word-break:break-word;")}>
-                    <span style={css("color:var(--text-primary);")}>{argvDisplay || <span style={chipFaint}>(empty argv)</span>}</span>
-                    <span style={css("display:block;color:var(--text-faint);font-size:9.5px;letter-spacing:0.04em;padding:2px 0 0;")}>
-                      {new Date(row.created_at).toLocaleString()}
-                      {row.actor_user_id ? `\u00a0\u00b7\u00a0${row.actor_user_id}` : ""}
-                    </span>
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => onLoad(row.argv)}
-                    style={btnGhost}
-                    title="populate the exec form's argv with this row's tokens"
-                  >
-                    load
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        )}
+                  </td>
+                  <td style={css("padding:8px 12px;color:var(--text-muted);white-space:nowrap;")}>
+                    {fmtDuration(r.duration_s)}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );
 }
 
-/* --------------------------------- page ---------------------------------- */
+/* ----------------------------- MAIN PAGE --------------------------------- */
 
 export default function SandboxPage(props: ModulePageProps): JSX.Element {
-  const {
-    onBack,
-    onMinimize,
-    isFullscreen,
-    onToggleFullscreen,
-    windowId,
-    title,
-    isFocused,
-    onFocus,
-  } = props;
-  const [form, setForm] = useState<ExecFormState>(DEFAULT_EXEC_FORM);
+  const { windowId, title, isFocused, onFocus, onBack, onMinimize, isFullscreen, onToggleFullscreen } = props;
+
+  const [activeTab, setActiveTab] = useState<"terminal" | "history" | "settings">("terminal");
+  const [bootstrapOutput, setBootstrapOutput] = useState<string | null>(null);
+
+  const statusQ = useSandboxStatus();
+  const probe = useSandboxProbe();
+  const systemsQ = useSystems(1, 200);
+  const updateConfig = useUpdateSandboxConfig();
+  const bootstrapTool = useBootstrapSandboxTooling();
+
+  const status = statusQ.data;
+  const probeData = probe.data;
+  const systemsList = systemsQ.data?.items ?? [];
+
+  const activeSys = systemsList.find(
+    (s) => s.host === status?.ssh_host || s.name === status?.ssh_host,
+  );
+
+  const handleSelectSystem = async (sysId: string) => {
+    if (!sysId) return;
+
+    const found = systemsList.find((s) => String(s.id) === sysId);
+    if (found) {
+      if (status?.backend === "none" || !status?.backend) {
+        await updateConfig.mutateAsync({
+          key: "sandbox_backend",
+          body: { value: "nsjail", value_type: "str" },
+        });
+      }
+      await updateConfig.mutateAsync({
+        key: "sandbox_system_id",
+        body: { value: String(found.id), value_type: "str" },
+      });
+      await updateConfig.mutateAsync({
+        key: "sandbox_system_name",
+        body: { value: found.name || "", value_type: "str" },
+      });
+      await updateConfig.mutateAsync({
+        key: "sandbox_ssh_host",
+        body: { value: found.host || "", value_type: "str" },
+      });
+      await updateConfig.mutateAsync({
+        key: "sandbox_ssh_user",
+        body: { value: found.username || "root", value_type: "str" },
+      });
+      await updateConfig.mutateAsync({
+        key: "sandbox_ssh_port",
+        body: { value: String(found.port || 22), value_type: "str" },
+      });
+
+      await probe.mutateAsync();
+      await statusQ.refetch();
+    }
+  };
+
+  const handleBackendChange = async (newBackend: string) => {
+    await updateConfig.mutateAsync({
+      key: "sandbox_backend",
+      body: { value: newBackend, value_type: "str" },
+    });
+    await probe.mutateAsync();
+    await statusQ.refetch();
+  };
+
+  const handleInstallTooling = async () => {
+    setBootstrapOutput(null);
+    const targetTool = status?.backend === "firecracker" ? "firecracker" : "nsjail";
+    try {
+      const res = await bootstrapTool.mutateAsync({ tool: targetTool });
+      setBootstrapOutput(res.output || res.detail);
+      await probe.mutateAsync();
+      await statusQ.refetch();
+    } catch (err) {
+      setBootstrapOutput(`Install failed: ${apiErrMessage(err)}`);
+    }
+  };
 
   const statusStrip = (
     <>
-      <span
-        style={{
-          display: "flex",
-          alignItems: "center",
-          padding: "0 11px",
-          background: "var(--status-ok)",
-          color: "var(--text-on-accent)",
-          fontWeight: 700,
-          letterSpacing: "0.14em",
-        }}
-      >
+      <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 700, letterSpacing: "0.14em" }}>
         admin &middot; sandbox
       </span>
-      <span
-        style={{
-          display: "flex",
-          alignItems: "center",
-          padding: "0 11px",
-          textTransform: "none",
-          letterSpacing: "0.03em",
-          color: "var(--text-muted)",
-        }}
-      >
-        SandboxService &middot; nsjail &middot; firecracker &middot; SSH
+      <span style={{ display: "flex", alignItems: "center", padding: "0 11px", textTransform: "none", letterSpacing: "0.03em", color: "var(--text-muted)" }}>
+        {status?.backend || "nsjail"} &middot; {status?.ssh_host || "no target host"}
       </span>
       <span style={{ flex: 1 }} />
     </>
@@ -1261,58 +582,157 @@ export default function SandboxPage(props: ModulePageProps): JSX.Element {
       onToggleFullscreen={onToggleFullscreen}
       footerExtras={statusStrip}
     >
-      <header
-        style={{
-          flex: "0 0 auto",
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          padding: "8px 14px",
-          background: "var(--surface-chrome)",
-          borderBottom: "1px solid var(--border)",
-          fontSize: 10.5,
-          letterSpacing: "0.12em",
-          textTransform: "uppercase",
-          color: "var(--text-muted)",
-        }}
-      >
-        <span
-          style={{
-            width: 9,
-            height: 9,
-            borderRadius: 1,
-            background: "var(--accent)",
-            boxShadow: "0 0 7px var(--accent)",
-          }}
-        />
-        <span style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)", fontWeight: 400, letterSpacing: "0.16em" }}>
-          admin &middot; sandbox
-        </span>
-        <span style={{ color: "var(--text-faint)", textTransform: "none", letterSpacing: "0.04em" }}>
-          platform isolation &mdash; nsjail / firecracker over SSH
-        </span>
-      </header>
+      {/* Top Controls: Systems Registry Binding, Backend Switcher, Live Health */}
+      <div style={topBar}>
+        <div style={controlGroup}>
+          <span style={css("font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);")}>
+            fleet host:
+          </span>
+          <select
+            value={activeSys ? String(activeSys.id) : ""}
+            onChange={(e) => void handleSelectSystem(e.target.value)}
+            style={selectStyle}
+          >
+            <option value="">
+              {activeSys
+                ? `${activeSys.name} (${activeSys.host}:${activeSys.port})`
+                : status?.ssh_host
+                  ? `custom (${status.ssh_host})`
+                  : "-- select registered fleet system --"}
+            </option>
+            {systemsList.map((s) => (
+              <option key={s.id} value={String(s.id)}>
+                {s.name} ({s.host}:{s.port}{s.role ? ` \u00b7 ${s.role}` : ""})
+              </option>
+            ))}
+          </select>
 
-      <main
-        style={{
-          flex: 1,
-          minHeight: 0,
-          display: "grid",
-          gridTemplateRows: "minmax(220px,34%) minmax(240px,32%) minmax(240px,34%)",
-          gap: 10,
-          padding: 12,
-        }}
-      >
-        <div style={twoUp}>
-          <StatusPanel />
-          <ConfigEditor />
+          <span style={css("font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);")}>
+            backend:
+          </span>
+          <select
+            value={status?.backend || "nsjail"}
+            onChange={(e) => void handleBackendChange(e.target.value)}
+            style={css("background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:2px;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;padding:4px 8px;outline:none;")}
+          >
+            <option value="nsjail">nsjail</option>
+            <option value="firecracker">firecracker</option>
+          </select>
+
+          {/* Live Status Indicators */}
+          {probe.isPending ? (
+            <span style={chipFaint}>probing&#8230;</span>
+          ) : probeData ? (
+            probeData.ok ? (
+              <span style={chipOk}>
+                {"\u2713"} {probeData.installed_path ? `${status?.backend || "nsjail"} ready` : "reachable"}
+              </span>
+            ) : probeData.tool_missing ? (
+              <span style={chipWarn}>
+                {"\u26a0"} {status?.backend || "nsjail"} missing
+              </span>
+            ) : (
+              <span style={chipWarn}>unreachable</span>
+            )
+          ) : status?.provisioned ? (
+            <span style={chipOk}>ready</span>
+          ) : (
+            <span style={chipFaint}>unprobed</span>
+          )}
+
+          {/* 1-Click Install Tooling Button */}
+          {probeData?.tool_missing ? (
+            <button
+              type="button"
+              onClick={handleInstallTooling}
+              disabled={bootstrapTool.isPending}
+              style={bootstrapTool.isPending ? btnPrimaryDisabled : btnPrimary}
+            >
+              {bootstrapTool.isPending
+                ? "installing\u2026"
+                : `\u26a1 install ${status?.backend === "firecracker" ? "firecracker" : "nsjail"} on host`}
+            </button>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={() => void probe.mutate()}
+            disabled={probe.isPending}
+            style={btnGhost}
+          >
+            probe
+          </button>
         </div>
-        <ExecConsole form={form} setForm={setForm} />
-        <RecentExecutionsPanel
-          onLoad={(argv) => setForm((f) => ({ ...f, argvLine: argvToLine(argv) }))}
-        />
-      </main>
 
+        {/* View Switcher Tabs */}
+        <div style={controlGroup}>
+          <button
+            type="button"
+            onClick={() => setActiveTab("terminal")}
+            style={activeTab === "terminal" ? btnGhostActive : btnGhost}
+          >
+            &gt;_ Terminal
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("history")}
+            style={activeTab === "history" ? btnGhostActive : btnGhost}
+          >
+            Recent Runs
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("settings")}
+            style={activeTab === "settings" ? btnGhostActive : btnGhost}
+          >
+            Settings &amp; Policy
+          </button>
+        </div>
+      </div>
+
+      {/* Bootstrap Installer Log Output Banner */}
+      {bootstrapOutput ? (
+        <div
+          style={css(
+            "flex:0 0 auto;padding:8px 14px;background:#0d0d0d;border-bottom:1px solid #222;display:flex;flex-direction:column;gap:4px;",
+          )}
+        >
+          <div style={css("display:flex;align-items:center;justify-content:space-between;")}>
+            <span style={css("font-family:var(--font-mono);font-size:10px;font-weight:700;color:var(--accent);")}>
+              Installer Output:
+            </span>
+            <button type="button" onClick={() => setBootstrapOutput(null)} style={btnGhost}>
+              dismiss
+            </button>
+          </div>
+          <pre
+            style={{
+              margin: 0,
+              padding: "6px 8px",
+              background: "#050505",
+              border: "1px solid #1a1a1a",
+              borderRadius: 2,
+              fontFamily: "var(--font-mono, monospace)",
+              fontSize: 10,
+              color: "#e0e0e0",
+              maxHeight: 120,
+              overflow: "auto",
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {bootstrapOutput}
+          </pre>
+        </div>
+      ) : null}
+
+      {/* Main Surface Body */}
+      {activeTab === "terminal" ? (
+        <InteractiveSandboxTerminal status={status} />
+      ) : activeTab === "history" ? (
+        <SandboxHistoryTab />
+      ) : (
+        <SandboxSettingsTab />
+      )}
     </ConsoleWindow>
   );
 }

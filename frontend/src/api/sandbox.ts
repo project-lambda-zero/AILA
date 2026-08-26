@@ -189,11 +189,14 @@ export function useSandboxExec(): UseMutationResult<SandboxResult, Error, Sandbo
 /* --------------------------------- probe --------------------------------- */
 
 /** Response of POST /platform/sandbox/probe: a live SSH reachability
- *  check that the operator drives on demand. */
+ *  and tooling check that the operator drives on demand. */
 export interface SandboxProbe {
   ok: boolean;
   detail: string;
   duration_ms: number;
+  tool_installed?: boolean;
+  tool_missing?: boolean;
+  installed_path?: string | null;
 }
 
 /** One-shot probe. Flips the ssh_reachable chip in the health panel from
@@ -203,6 +206,28 @@ export function useSandboxProbe(): UseMutationResult<SandboxProbe, Error, void> 
   return useMutation<SandboxProbe, Error, void>({
     mutationFn: () =>
       apiFetch<SandboxProbe>("/platform/sandbox/probe", { method: "POST" }),
+  });
+}
+
+export interface SandboxBootstrapResult {
+  ok: boolean;
+  detail: string;
+  output: string;
+  duration_ms: number;
+}
+
+/** Automated installation of sandbox tooling (nsjail / firecracker) on the remote host. */
+export function useBootstrapSandboxTooling(): UseMutationResult<SandboxBootstrapResult, Error, { tool?: string }> {
+  const qc = useQueryClient();
+  return useMutation<SandboxBootstrapResult, Error, { tool?: string }>({
+    mutationFn: ({ tool = "nsjail" }) =>
+      apiFetch<SandboxBootstrapResult>("/platform/sandbox/install", {
+        method: "POST",
+        body: JSON.stringify({ tool }),
+      }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["sandbox", "status"] });
+    },
   });
 }
 
