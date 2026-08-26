@@ -466,7 +466,7 @@ function Console() {
             display: "flex",
             flexDirection: "column",
             borderRight: adv ? "1px solid var(--border-soft)" : "1px solid transparent",
-            background: "transparent",
+            background: "color-mix(in srgb,#131314 90%,transparent)",
             transition: "flex-basis 260ms cubic-bezier(0.22,1,0.36,1),width 260ms cubic-bezier(0.22,1,0.36,1)",
           }}
         >

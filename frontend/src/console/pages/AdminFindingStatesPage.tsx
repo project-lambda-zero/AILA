@@ -58,9 +58,6 @@ function AdminFindingStatesPage(props: ModulePageProps): JSX.Element {
           <div style={css("font-family:var(--font-mono);font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-primary);")}>
             {"finding workflow \u00b7 read-only overview"}
           </div>
-          <div style={css("margin-top:4px;font-size:11px;color:var(--text-muted);line-height:1.5;")}>
-            merged view of every registered finding state (platform base + each module extension). transitions run per-finding on the module's findings view; this page is intentionally read-only.
-          </div>
         </div>
 
         {machineQ.isLoading ? (

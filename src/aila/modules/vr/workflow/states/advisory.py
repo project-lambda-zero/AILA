@@ -40,6 +40,7 @@ from aila.platform.llm.correlation import (
 from aila.platform.prompts import PromptRegistry
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import StateResult
+from aila.storage.db_models import FindingWorkflowRecord
 
 __all__ = ["state_advisory"]
 
@@ -206,6 +207,16 @@ async def _persist_finding(
     try:
         async with UnitOfWork() as uow:
             uow.session.add(record)
+            await uow.session.flush()
+            uow.session.add(FindingWorkflowRecord(
+                finding_id=record.id,
+                module_id="vr",
+                current_state="new",
+                previous_state=None,
+                transitioned_by="system",
+                notes="",
+                team_id=team_id,
+            ))
             await uow.commit()
             return record.id
     except (OSError, RuntimeError, AILAError) as exc:

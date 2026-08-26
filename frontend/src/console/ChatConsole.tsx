@@ -177,11 +177,6 @@ const BASIC_SUGGESTIONS: readonly string[] = [
   "add a tag to the vocabulary",
 ];
 
-// Assistant copy for the boot bubble (basic mode / unbound). This is
-// static assistant COPY, not fabricated investigation data.
-const BOOT_COPY =
-  "aila online. point me at a target \u2014 a repo, a binary, a CVE, an apk \u2014 and I open an investigation. every step stays in the record.";
-
 /* --------------------------- message row rendering ------------------------ */
 
 interface RowProps {
@@ -734,21 +729,6 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
 
   /* ------------------------------- thread -------------------------------- */
 
-  // The console opens with the assistant greeting -- the same static copy the
-  // design page leads with -- and the live turns follow it. This is UI chrome,
-  // not investigation data, so it is honest to show above any bound thread.
-  const bootRow = renderRow(
-    "boot",
-    {
-      who: "dante",
-      meta: "boot",
-      body: BOOT_COPY,
-      chips: [],
-      card: null,
-    },
-    rowCtx,
-  );
-
   // Merge the investigation transcript with dante's assistant-only replies
   // from the per-case dante session by created_at ascending. Rows without a
   // timestamp fall to the end in insertion order.
@@ -778,33 +758,24 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
   let threadContent: JSX.Element | JSX.Element[];
   if (adv && investigationId) {
     if (messagesQuery.isLoading) {
-      threadContent = [bootRow, <div key="_load" style={emptyStyle}>loading conversation...</div>];
+      threadContent = <div key="_load" style={emptyStyle}>loading conversation...</div>;
     } else if (messagesQuery.isError) {
-      threadContent = [
-        bootRow,
-        <div key="_err" style={emptyStyle}>could not load messages for this investigation.</div>,
-      ];
+      threadContent = <div key="_err" style={emptyStyle}>could not load messages for this investigation.</div>;
     } else if (messages.length === 0 && advDanteRows.length === 0) {
-      threadContent = [
-        bootRow,
-        <div key="_empty" style={emptyStyle}>no turns yet -- send a message below</div>,
-      ];
+      threadContent = <div key="_empty" style={emptyStyle}>no turns yet -- send a message below</div>;
     } else {
-      threadContent = [bootRow, ...mergedAdvRows()];
+      threadContent = mergedAdvRows();
     }
   } else if (!adv) {
     if (sessionMessagesQ.isLoading && !sessionMessagesQ.data) {
-      threadContent = [bootRow, <div key="_load" style={emptyStyle}>connecting to assistant session...</div>];
+      threadContent = <div key="_load" style={emptyStyle}>connecting to assistant session...</div>;
     } else if (sessionMessages.length === 0) {
-      threadContent = bootRow;
+      threadContent = [];
     } else {
-      threadContent = [
-        bootRow,
-        ...sessionMessages.map((m) => renderRow(m.message_id, bindSessionMessage(m), rowCtx)),
-      ];
+      threadContent = sessionMessages.map((m) => renderRow(m.message_id, bindSessionMessage(m), rowCtx));
     }
   } else {
-    threadContent = bootRow;
+    threadContent = [];
   }
 
   /* -------------------------------- render ------------------------------- */

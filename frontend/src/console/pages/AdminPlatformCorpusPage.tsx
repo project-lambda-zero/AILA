@@ -512,16 +512,6 @@ export default function AdminPlatformCorpusPage(props: ModulePageProps): JSX.Ele
     content = (
       <div style={scroll}>
         <div style={body}>
-          <div style={panel}>
-            <span style={sectionTitle}>what this is</span>
-            <p style={prose}>
-              The corpus is the platform's export of investigation trajectories into SFT and DPO jsonl bundles used for
-              calibration and fine-tune datasets. Each build walks every configured module's outcome table and writes
-              manifest.json, sft.jsonl, and dpo.jsonl into the corpus output directory. This page reads only
-              manifest.json (cheap even when the corpus is large) and never re-opens the jsonl bodies.
-            </p>
-          </div>
-
           {wizard}
 
           {stats.has_corpus ? (

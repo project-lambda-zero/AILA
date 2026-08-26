@@ -107,7 +107,6 @@ export const PAGE_CONFIGS = {
   "vr:investigations": {
     title: "vr \u00b7 investigations",
     endpoint: "/vr/investigations",
-    blurb: "click a row to raise its x-ray; the targets page drills down per target",
     // Server-side pagination + filters: /vr/investigations paginates by
     // offset/limit (meta.total) and accepts ?q=&status=&kind= (api_router
     // list_investigations). The filters below are marked server:true so they
@@ -200,6 +199,7 @@ export const PAGE_CONFIGS = {
       },
       c("outcome_count", "outcomes"),
       c("cost_actual_usd", "cost $"),
+      c("message_count", "turns"),
     ],
   },
   "vr:patterns": {
@@ -374,7 +374,6 @@ export const PAGE_CONFIGS = {
     title: "malware \u00b7 observations",
     endpoint: "/malware/observations",
     scopeFrom: { endpoint: "/malware/targets", param: "target_id" },
-    blurb: "scoped to the first target; pick another target in the header scope selector",
     columns: [c("kind"), c("polarity"), c("source"), c("target_id", "target"), c("investigation_id", "investigation"), c("created_at", "created")],
     filters: [{ name: "kind", label: "kind", type: "text" }, { name: "polarity", label: "polarity", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
@@ -419,7 +418,6 @@ export const PAGE_CONFIGS = {
     title: "malware \u00b7 families",
     endpoint: "/malware/families",
     scopeFrom: { endpoint: "/malware/workspaces", param: "workspace_id" },
-    blurb: "scoped to the first workspace; pick another workspace in the header scope selector",
     columns: [c("name"), c("actor_cluster", "actor"), c("status"), c("sample_count", "samples"), c("playbook_count", "playbooks"), c("created_at", "created")],
     filters: [{ name: "name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
@@ -427,7 +425,6 @@ export const PAGE_CONFIGS = {
     title: "malware \u00b7 playbooks",
     endpoint: "/malware/playbooks",
     scopeFrom: { endpoint: "/malware/workspaces", param: "workspace_id" },
-    blurb: "scoped to the first workspace; pick another workspace in the header scope selector",
     columns: [c("name"), c("description"), c("status"), c("run_count", "runs"), c("last_run_at", "last run"), c("created_at", "created")],
     filters: [{ name: "name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "last_run_at", label: "last run", type: "date-range" }],
     actions: [
@@ -631,7 +628,6 @@ export const PAGE_CONFIGS = {
     title: "admin \u00b7 health",
     endpoint: "/health/comprehensive",
     itemsKey: "subsystems",
-    blurb: "per-subsystem comprehensive health",
     columns: [],
     // subsystems is a real multi-row list (SubsystemHealth per probe); both
     // controls narrow auto-derived columns the table actually renders --
@@ -645,7 +641,6 @@ export const PAGE_CONFIGS = {
   "admin:automation": {
     title: "admin \u00b7 automation",
     endpoint: "/automation/schedules",
-    blurb: "an automation schedule is a registered action the platform runs on a cron against a target system",
     columns: [
       c("action_id", "action"),
       c("target_name", "target"),
@@ -701,7 +696,6 @@ export const PAGE_CONFIGS = {
   "admin:scheduled-reports": {
     title: "admin \u00b7 scheduled reports",
     endpoint: "/scheduled-reports",
-    blurb: "a scheduled report is a recurring server-side generation of a named report kind, delivered to a fixed recipient list on a cron",
     columns: [
       c("name"),
       c("report_type", "type"),
@@ -1017,7 +1011,6 @@ export const PAGE_CONFIGS = {
   "admin:specialist-agents": {
     title: "admin \u00b7 specialist agents",
     endpoint: "/agents/specialists",
-    blurb: "per-module specialist roster \u00b7 pick a module to list, or seed its built-in defaults",
     columns: [c("name"), c("module_id", "module"), c("capability"), c("strategy_family", "strategy"), c("enabled"), c("created_at", "created")],
     filters: [
       // `module_id` is required by the backend list handler; seed with vr so
@@ -1044,7 +1037,6 @@ export const PAGE_CONFIGS = {
   "vr:cves": {
     title: "vr \u00b7 cves",
     endpoint: "/vr/cves",
-    blurb: "known-cve registry \u00b7 open a row to reproduce it as an n-day project, or + new for a blank reproduction",
     columns: [c("cve_id", "cve"), c("title"), c("source"), c("cvss_score", "cvss"), c("published_at", "published")],
     filters: [
       { name: "cve_id", label: "cve", type: "text" },
@@ -1069,7 +1061,6 @@ export const PAGE_CONFIGS = {
   "admin:automation-actions": {
     title: "admin \u00b7 automation actions",
     endpoint: "/automation/actions",
-    blurb: "the live AutomationRegistry -- every registered action a module exposes for scheduling",
     idField: "action_id",
     columns: [c("action_id", "action"), c("description"), c("module_id", "module")],
     filters: [
@@ -1080,7 +1071,6 @@ export const PAGE_CONFIGS = {
   "admin:eval-calibrators": {
     title: "admin \u00b7 eval calibrators",
     endpoint: "/admin/eval/calibrators",
-    blurb: "a calibrator maps raw model confidence to an empirical accept rate for a task_type; training fits isotonic + temperature from that task's accept/reject history and keeps the lower ECE; promoting flips a candidate to active behind an ECE-beats-baseline + quorum gate. benchmark registration + run scoring live at /admin/eval/benchmarks and /admin/eval/runs.",
     columns: [
       c("task_type", "task type"),
       c("method"),
@@ -1129,7 +1119,6 @@ export const PAGE_CONFIGS = {
   "admin:calibration-proposals": {
     title: "admin \u00b7 calibration proposals",
     endpoint: "/admin/eval/calibration-proposals",
-    blurb: "a proposal maps a raw confidence threshold to a promoted one per outcome_kind; promoting writes into live config platform.calibration_threshold_{outcome_kind} behind a quorum gate.",
     columns: [
       c("outcome_kind", "outcome kind"),
       c("before_threshold", "before"),
@@ -1180,7 +1169,6 @@ export const PAGE_CONFIGS = {
   "admin:queue-depth": {
     title: "admin \u00b7 queue depth",
     endpoint: "/tasks/queue-depth",
-    blurb: "task counts by status",
     columns: [],
     // No filters by design: /tasks/queue-depth returns a single dict[str,int]
     // aggregate, which toRows renders as exactly ONE row (status keys become

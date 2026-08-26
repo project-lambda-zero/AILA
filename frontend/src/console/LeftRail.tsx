@@ -107,7 +107,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
   return (
     <aside
       style={css(
-        `height:100%;display:flex;flex-direction:column;overflow:hidden;background:transparent;border-right:1px solid var(--border-soft);`,
+        `height:100%;display:flex;flex-direction:column;overflow:hidden;background:color-mix(in srgb,#131314 90%,transparent);border-right:1px solid var(--border-soft);`,
       )}
     >
       {/* 1. module header */}
@@ -183,7 +183,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
                   {showGroup ? (
                     <div
                       style={css(
-                        `padding:${i === 0 ? "0" : "7px"} 8px 3px;font-family:var(--font-display);font-weight:400;font-size:8px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-faint);`,
+                        `padding:${i === 0 ? "0" : "7px"} 8px 3px;font-family:var(--font-mono);font-weight:400;font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-muted);`,
                       )}
                     >
                       {p.group}

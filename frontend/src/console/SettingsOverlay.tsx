@@ -22,7 +22,7 @@ export default function SettingsOverlay(props: SettingsOverlayProps) {
   return (
     <div
       style={css(
-        `position:absolute;inset:0;z-index:16;overflow:auto;background:var(--surface-page);display:block;`,
+        `position:fixed;inset:0;z-index:50;overflow:auto;background:var(--surface-page);display:block;`,
       )}
     >
       <button
@@ -102,10 +102,7 @@ export default function SettingsOverlay(props: SettingsOverlayProps) {
             `border:1px solid var(--border);background:var(--surface-card);border-radius:4px;padding:14px 16px;`,
           )}
         >
-          <div style={css(`font-size:12px;color:var(--text-muted);line-height:1.5;`)}>
-            Review and revoke active login sessions across all your devices.
-          </div>
-          <div style={css(`margin-top:10px;display:flex;align-items:center;gap:16px;`)}>
+          <div style={css(`margin-top:0;display:flex;align-items:center;gap:16px;`)}>
             <button
               type="button"
               onClick={() => {
@@ -144,11 +141,6 @@ export default function SettingsOverlay(props: SettingsOverlayProps) {
             `border:1px solid var(--border);background:var(--surface-card);border-radius:4px;padding:14px 16px;`,
           )}
         >
-          <div style={css(`display:flex;align-items:center;`)}>
-            <span style={css(`font-size:11px;color:var(--text-muted);`)}>
-              Twelve themes. Each its own era. Click a preview to switch.
-            </span>
-          </div>
           <div
             style={css(
               `margin-top:12px;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;`,

@@ -158,11 +158,6 @@ export default function WidgetLayoutPage(p: ModulePageProps): JSX.Element {
     }
     return (
       <div style={scrollStyle}>
-        <p style={blurbStyle}>
-          Widgets dock around the chat panel as always-on-top floaters. This editor controls which kinds
-          show and their stacking order. Reorder with the up/down buttons; uncheck a row to hide it.
-          Layout persists per user.
-        </p>
         <div style={listStyle}>
           {rows.map((entry, i) => {
             const cat = WIDGET_CATALOG[entry.kind];
