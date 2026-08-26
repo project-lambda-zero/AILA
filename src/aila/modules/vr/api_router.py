@@ -4597,7 +4597,6 @@ def create_vr_router() -> APIRouter:
                     )
                     .where(
                         VRInvestigationMessageRecord.investigation_id.in_(row_ids),
-                        VRInvestigationMessageRecord.superseded_at.is_(None),
                     )
                     .group_by(VRInvestigationMessageRecord.investigation_id),
                 )).all()
@@ -4730,7 +4729,6 @@ def create_vr_router() -> APIRouter:
                 select(sa_func.count()).select_from(VRInvestigationMessageRecord)
                 .where(
                     VRInvestigationMessageRecord.investigation_id == investigation_id,
-                    VRInvestigationMessageRecord.superseded_at.is_(None),
                 )
             )).one()
             outcome_count = (await uow.session.exec(

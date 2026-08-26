@@ -283,6 +283,7 @@ def state_investigation_emit(
         dispatch_visited: list[str] | None = None,
         auto_continue_count: int = 0,
         index_wait_count: int = 0,
+        defer_seconds: float = 0.0,
     ) -> None:
         """Submit the investigate task so the agent continues reasoning on
         the SAME branch it was running.
@@ -325,13 +326,8 @@ def state_investigation_emit(
             user_id="system",
             group_id=f"{bindings.track}_auto_continue",
             team_id=team_id,
-            # AUTO_CONTINUE submits from INSIDE a running task body. Without
-            # this flag, dedup_session matches the caller's own
-            # TaskRecord (status='running'), returns its id without
-            # enqueueing a new task, the worker exits, the queue stays
-            # empty, and the branch idles forever. Diagnosed 2026-06-12
-            # on inv <inv-uuid-a> maddie branch <inv-uuid-b>.
             bypass_dedup=True,
+            defer_seconds=defer_seconds,
         )
 
 
@@ -374,6 +370,9 @@ def state_investigation_emit(
                     )).first()
                     team_id = _inv.team_id if _inv is not None else None
                 try:
+                    # 15s backoff (capped at 60s) stops tight 1-second spin
+                    # while the code index finishes building.
+                    wait_delay = min(60.0, max(15.0, 15.0 * (index_wait_count // 4 + 1)))
                     await _enqueue_next_investigation_run(
                         investigation_id, team_id, branch_id=branch_id,
                         dispatch_visited=(
@@ -382,6 +381,7 @@ def state_investigation_emit(
                         ),
                         auto_continue_count=auto_continue_count,
                         index_wait_count=index_wait_count + 1,
+                        defer_seconds=wait_delay,
                     )
                 except (
                     OSError, TimeoutError, RuntimeError, ConnectionError,
