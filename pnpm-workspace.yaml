@@ -57,10 +57,13 @@ catalogs:
   query:
     "@tanstack/react-query": 5.101.0
     "@tanstack/react-table": 8.21.3
+    "@tanstack/react-virtual": 3.13.23
 
   ui:
     "@base-ui/react": 1.5.0
     "@phosphor-icons/react": 2.1.10
+    "@xterm/xterm": 5.5.0
+    "@xterm/addon-fit": 0.10.0
     motion: 12.40.0
     sonner: 2.0.7
     lucide-react: 1.18.0

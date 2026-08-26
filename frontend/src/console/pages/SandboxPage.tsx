@@ -19,8 +19,11 @@
  * ModulePageProps.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, CSSProperties, Dispatch, FormEvent, JSX, SetStateAction } from "react";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import "@xterm/xterm/css/xterm.css";
 
 import { ApiError } from "../../api/client";
 import {
@@ -743,6 +746,91 @@ function ExecConsole({
   );
 }
 
+function XtermTerminalView({
+  text,
+  isError = false,
+}: {
+  text: string;
+  isError?: boolean;
+}): JSX.Element {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<Terminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const term = new Terminal({
+      cursorBlink: false,
+      disableStdin: true,
+      fontFamily: "var(--font-mono, monospace)",
+      fontSize: 11,
+      theme: {
+        background: "#0a0a0a",
+        foreground: isError ? "#ff6b6b" : "#e0e0e0",
+        cursor: "transparent",
+      },
+      convertEol: true,
+      rows: 8,
+    });
+    const fitAddon = new FitAddon();
+    term.loadAddon(fitAddon);
+    term.open(containerRef.current);
+    try {
+      fitAddon.fit();
+    } catch {
+      // ignore
+    }
+
+    termRef.current = term;
+    fitAddonRef.current = fitAddon;
+
+    const handleResize = () => {
+      try {
+        fitAddon.fit();
+      } catch {
+        // ignore
+      }
+    };
+    window.addEventListener("resize", handleResize);
+
+    return () => {
+      window.removeEventListener("resize", handleResize);
+      term.dispose();
+      termRef.current = null;
+      fitAddonRef.current = null;
+    };
+  }, [isError]);
+
+  useEffect(() => {
+    if (termRef.current) {
+      termRef.current.reset();
+      if (text) {
+        termRef.current.write(text);
+      }
+      try {
+        fitAddonRef.current?.fit();
+      } catch {
+        // ignore
+      }
+    }
+  }, [text]);
+
+  return (
+    <div
+      ref={containerRef}
+      style={{
+        width: "100%",
+        minHeight: 120,
+        background: "var(--surface-sunk)",
+        border: "1px solid var(--border-soft)",
+        borderRadius: 2,
+        padding: "4px 6px",
+        overflow: "hidden",
+      }}
+    />
+  );
+}
+
 function ExecResultView({
   pending,
   error,
@@ -797,7 +885,7 @@ function ExecResultView({
           {data.stdout === "" ? (
             <div style={emptyNote}>(empty)</div>
           ) : (
-            <pre style={monoBlock}>{data.stdout}</pre>
+            <XtermTerminalView text={data.stdout} />
           )}
         </div>
         <div style={stack}>
@@ -807,7 +895,7 @@ function ExecResultView({
           {data.stderr === "" ? (
             <div style={emptyNote}>(empty)</div>
           ) : (
-            <pre style={monoBlock}>{data.stderr}</pre>
+            <XtermTerminalView text={data.stderr} isError={true} />
           )}
         </div>
       </div>

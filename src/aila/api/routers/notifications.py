@@ -154,11 +154,11 @@ async def mark_notification_read(
 ) -> DataEnvelope[NotificationResponse]:
     """Mark a notification as read. Sets read_at timestamp.
 
-    Per T-138-18: validates notification belongs to auth.user_id.
+    Per T-138-18: validates notification belongs to auth.user_id or is a __system__ alert.
     """
     async with async_session_scope() as session:
         record = await session.get(NotificationRecord, notification_id)
-        if record is None or record.user_id != auth.user_id:
+        if record is None or (record.user_id != auth.user_id and record.user_id != _SYSTEM_USER_ID):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Notification '{notification_id}' not found",
@@ -183,11 +183,14 @@ async def mark_all_notifications_read(
     request: Request,
     auth: AuthContext = Depends(require_user_or_api_key),
 ) -> DataEnvelope[dict[str, int]]:
-    """Mark all unread notifications for the current user as read."""
+    """Mark all unread notifications for the current user and visible system alerts as read."""
     now = utc_now()
     async with async_session_scope() as session:
         stmt = select(NotificationRecord).where(
-            NotificationRecord.user_id == auth.user_id,
+            or_(
+                NotificationRecord.user_id == auth.user_id,
+                NotificationRecord.user_id == _SYSTEM_USER_ID,
+            ),
             NotificationRecord.is_read == False,
         )
         unread = (await session.exec(stmt)).all()
@@ -216,7 +219,7 @@ async def delete_notification(
     """Delete a notification. Per T-138-18: validates ownership before deletion."""
     async with async_session_scope() as session:
         record = await session.get(NotificationRecord, notification_id)
-        if record is None or record.user_id != auth.user_id:
+        if record is None or (record.user_id != auth.user_id and record.user_id != _SYSTEM_USER_ID):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Notification '{notification_id}' not found",

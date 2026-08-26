@@ -189,6 +189,18 @@ _BUILTINS: dict[str, tuple[dict[str, str], ...]] = {
          "prompt_key": "forensics/freeflow/linux", "rag_scope": "evtx_logs,mft_records,pcap_flow",
          "strategy_family": "timeline",
          "description": "Chronological timeline reconstruction and correlated event attribution across hosts."},
+        {"name": "memory-analyst", "agent_type": "specialist", "capability": "memory-forensics", "model_role": "reasoning",
+         "prompt_key": "forensics/freeflow/linux", "rag_scope": "volatility_dumps,process_trees,kernel_hooks",
+         "description": "Memory forensics specialist: Volatility dump analysis, process injection, and rootkit detection."},
+        {"name": "log-correlator", "agent_type": "specialist", "capability": "log-correlation", "model_role": "reasoning",
+         "prompt_key": "forensics/freeflow/linux", "rag_scope": "evtx_logs,sysmon,auditd,siem_events",
+         "description": "Log correlation specialist: EVTX, Sysmon, auditd, and SIEM event correlation and pivot analysis."},
+        {"name": "disk-analyst", "agent_type": "specialist", "capability": "disk-forensics", "model_role": "reasoning",
+         "prompt_key": "forensics/freeflow/linux", "rag_scope": "mft_records,usnjrnl,prefetch,shimcache",
+         "description": "Disk & filesystem forensics: MFT parsing, unallocated space carving, prefetch, and shimcache analysis."},
+        {"name": "network-tracer", "agent_type": "specialist", "capability": "network-forensics", "model_role": "reasoning",
+         "prompt_key": "forensics/freeflow/linux", "rag_scope": "pcap_streams,zeek_logs,c2_beacons",
+         "description": "Network forensics specialist: PCAP inspection, beaconing detection, TLS fingerprinting, and C2 extraction."},
     ),
 }
 
