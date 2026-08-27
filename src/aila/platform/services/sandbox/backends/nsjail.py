@@ -81,9 +81,7 @@ def build_nsjail_argv(
     is mapped directly to ``workspace_remote_root`` (which already exists
     under ``/tmp`` with full user ownership) and chdirs there.
     """
-    target_workdir = (
-        workspace_remote_root if spec.workdir == "/work" else spec.workdir
-    )
+    target_workdir = spec.workdir
     bin_dir = posixpath.dirname(nsjail_bin)
     argv: list[str] = [
         nsjail_bin,
@@ -97,17 +95,15 @@ def build_nsjail_argv(
         "--bindmount_ro", "/lib64",
         "--bindmount_ro", "/etc",
         "--bindmount_ro", "/dev",
-        # Mount /tmp read-write for the ephemeral execution workspace
-        "--bindmount", "/tmp",
+        # Fresh in-memory tmpfs for /tmp -- isolates from host /tmp (no host sockets or other users' temp files).
+        "--tmpfsmount", "/tmp",
+        # Bind-mount ONLY this run's specific workspace directory to spec.workdir (e.g. /work) R/W.
+        "--bindmount", f"{workspace_remote_root}:{target_workdir}",
     ]
     # If nsjail or local tools live in a user-local directory (e.g. ~/.local/bin),
     # mount ONLY that specific bin directory read-only so binaries can be resolved without exposing /home.
     if bin_dir and bin_dir not in ("/usr/bin", "/bin", "/usr/local/bin", "/sbin", "/usr/sbin", "."):
         argv.extend(["--bindmount_ro", bin_dir])
-
-    # If the target workdir is outside /tmp (e.g. /custom/work), bind-mount it explicitly.
-    if target_workdir != "/tmp" and not target_workdir.startswith("/tmp/"):
-        argv.extend(["--bindmount", f"{workspace_remote_root}:{target_workdir}"])
 
     argv.extend([
         "--cwd", target_workdir,
