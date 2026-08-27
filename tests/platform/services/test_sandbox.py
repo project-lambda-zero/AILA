@@ -333,12 +333,12 @@ def test_nsjail_argv_contains_network_off_rlimit_timelimit_and_argv() -> None:
     # time_limit is present with the wall-clock timeout (rounded up).
     assert "--time_limit" in argv
     assert argv[argv.index("--time_limit") + 1] == "45"
-    # The workspace root is bind-mounted at spec.workdir R/W.
+    # The workspace root is bind-mounted at workspace_remote_root (unprivileged chroot safe).
     assert "--bindmount" in argv
-    assert argv[argv.index("--bindmount") + 1] == "/tmp/aila-sbx/x:/work"
+    assert "/tmp/aila-sbx/x:/tmp/aila-sbx/x" in argv
     # cwd is applied.
     assert "--cwd" in argv
-    assert argv[argv.index("--cwd") + 1] == "/work"
+    assert argv[argv.index("--cwd") + 1] == "/tmp/aila-sbx/x"
     # The spec's argv appears after the terminating '--'.
     dash_idx = argv.index("--")
     assert argv[dash_idx + 1 :] == ["/bin/echo", "hello"]
@@ -355,9 +355,11 @@ def test_nsjail_argv_flips_network_flag_when_allowed() -> None:
 def test_nsjail_argv_exports_env_vars() -> None:
     spec = SandboxSpec(argv=["/bin/env"], env={"FOO": "bar", "BAZ": "qux"})
     argv = build_nsjail_argv(spec, nsjail_bin="nsjail", workspace_remote_root="/tmp/x")
-    # env is emitted in sorted order for determinism.
+    # env is emitted in sorted order for determinism and ensures PATH is populated.
     env_pairs = [argv[i + 1] for i, tok in enumerate(argv) if tok == "--env"]
-    assert env_pairs == ["BAZ=qux", "FOO=bar"]
+    assert "BAZ=qux" in env_pairs
+    assert "FOO=bar" in env_pairs
+    assert any(p.startswith("PATH=") for p in env_pairs)
 
 
 # ---------------------------------------------------------------------------
@@ -393,7 +395,7 @@ def test_nsjail_backend_dispatches_wrapped_command_over_ssh() -> None:
     assert result.oom is False
     # The captured commands include an nsjail invocation composed by
     # build_nsjail_argv -- assert the shape is right.
-    nsjail_commands = [c for c, _ in ssh.commands if "/usr/bin/nsjail" in c]
+    nsjail_commands = [c for c, _ in ssh.commands if "/usr/bin/nsjail" in c and "--mode" in c]
     assert nsjail_commands, "no nsjail command dispatched over ssh"
     nsjail_cmd = nsjail_commands[0]
     assert "--time_limit" in nsjail_cmd

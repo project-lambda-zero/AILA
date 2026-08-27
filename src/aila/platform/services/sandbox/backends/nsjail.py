@@ -72,22 +72,25 @@ def build_nsjail_argv(
 
     Kept pure (no I/O) so the test suite can assert the composed argv
     without a live host. The workspace root on the host is bind-mounted
-    read-write at ``spec.workdir`` inside the sandbox so the guest sees
-    exactly the paths the caller staged.
+    read-write inside the sandbox.
 
-    Network semantics: nsjail creates a fresh network namespace by
-    default (no interfaces, no connectivity). Passing
-    ``--disable_clone_newnet`` tells nsjail to re-use the host network
-    namespace, which is the "network on" mode. So the flag is present
-    iff the (policy-clamped) ``spec.network`` is True.
+    Unprivileged execution support: when ``spec.workdir`` is the default
+    placeholder ``/work`` (which does not exist at root on the host and
+    cannot be created by non-root users inside a chroot), the mount point
+    is mapped directly to ``workspace_remote_root`` (which already exists
+    under ``/tmp`` with full user ownership) and chdirs there.
     """
+    target_workdir = (
+        workspace_remote_root if spec.workdir == "/work" else spec.workdir
+    )
     argv: list[str] = [
         nsjail_bin,
         "--mode", "o",  # once: run one command and exit
         "--quiet",
         "--chroot", "/",  # keep host FS visible; the bind-mount below is R/W
-        "--bindmount", f"{workspace_remote_root}:{spec.workdir}",
-        "--cwd", spec.workdir,
+        "--bindmount", f"{workspace_remote_root}:{target_workdir}",
+        "--bindmount", "/tmp",
+        "--cwd", target_workdir,
         # Wall-clock ceiling. nsjail SIGKILLs the child at expiry.
         "--time_limit", str(int(max(1, round(spec.timeout_s)))),
         # Address-space ceiling (bytes). rlimit_as bounds mmap + malloc.
@@ -102,7 +105,10 @@ def build_nsjail_argv(
         # Re-use host network namespace (grant connectivity). Absence of
         # this flag keeps the default fresh-net-namespace isolation.
         argv.append("--disable_clone_newnet")
-    for name, value in sorted(spec.env.items()):
+    env = dict(spec.env)
+    if "PATH" not in env:
+        env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+    for name, value in sorted(env.items()):
         argv.extend(["--env", f"{name}={value}"])
     # ``--`` terminates nsjail's own flag parsing so a spec.argv[0] that
     # happens to start with a dash is not mistaken for an nsjail flag.

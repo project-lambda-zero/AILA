@@ -156,9 +156,14 @@ function InteractiveSandboxTerminal({
     setHistoryStack((prev) => [...prev, trimmed]);
     setHistoryIndex(-1);
 
-    const argv = trimmed
-      .match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)
-      ?.map((s) => s.replace(/^['"]|['"]$/g, "")) || [trimmed];
+    // If the command contains shell operators (pipes, logical OR/AND, redirections, expansions),
+    // dispatch through the host's shell so compound commands like `gcc --version || clang --version` evaluate properly.
+    const isShellCompound = /[|&;><*$`!]/.test(trimmed);
+    const argv = isShellCompound
+      ? ["/bin/sh", "-c", trimmed]
+      : trimmed
+          .match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)
+          ?.map((s) => s.replace(/^['"]|['"]$/g, "")) || [trimmed];
 
     try {
       const res: SandboxResult = await execMut.mutateAsync({

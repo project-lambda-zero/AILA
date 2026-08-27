@@ -504,53 +504,56 @@ class SandboxService:
                 "command -v \"$BIN_DIR/firecracker\" || command -v firecracker || command -v /usr/local/bin/firecracker\n"
             )
         else:
-            # Default to nsjail
+            # Default to nsjail (compiled from source to avoid broken distro packages with mismatched abseil/protobuf shared libraries)
             install_script = priv_preamble + (
                 "if [ -f /etc/debian_version ]; then\n"
                 "  export DEBIAN_FRONTEND=noninteractive\n"
                 "  if [ -n \"$SUDO\" ]; then\n"
-                "    $SUDO apt-get update -qq && $SUDO apt-get install -y -qq nsjail 2>/dev/null || {\n"
-                "      $SUDO apt-get update -qq && $SUDO apt-get install -y -qq git build-essential autoconf bison flex libprotobuf-dev libnl-route-3-dev protobuf-compiler pkg-config libseccomp-dev make g++\n"
-                "      WORK_DIR=$(mktemp -d 2>/dev/null || echo \"/tmp/nsjail-build\")\n"
-                "      rm -rf \"$WORK_DIR/nsjail\" && git clone --depth 1 https://github.com/google/nsjail.git \"$WORK_DIR/nsjail\"\n"
-                "      cd \"$WORK_DIR/nsjail\" && make -j$(nproc 2>/dev/null || echo 2)\n"
-                "      $SUDO mkdir -p \"$BIN_DIR\"\n"
-                "      $SUDO cp nsjail \"$BIN_DIR/\"\n"
-                "      $SUDO chmod +x \"$BIN_DIR/nsjail\"\n"
-                "    }\n"
+                "    $SUDO apt-get update -qq && $SUDO apt-get install -y -qq git build-essential autoconf bison flex libprotobuf-dev libnl-route-3-dev protobuf-compiler pkg-config libseccomp-dev make g++\n"
+                "  fi\n"
+                "  WORK_DIR=$(mktemp -d 2>/dev/null || echo \"/tmp/nsjail-build\")\n"
+                "  rm -rf \"$WORK_DIR/nsjail\" && git clone --depth 1 https://github.com/google/nsjail.git \"$WORK_DIR/nsjail\"\n"
+                "  cd \"$WORK_DIR/nsjail\" && make -j$(nproc 2>/dev/null || echo 2)\n"
+                "  if [ -n \"$SUDO\" ]; then\n"
+                "    $SUDO mkdir -p \"$BIN_DIR\"\n"
+                "    $SUDO cp nsjail \"$BIN_DIR/\"\n"
+                "    $SUDO chmod +x \"$BIN_DIR/nsjail\"\n"
                 "  else\n"
-                "    WORK_DIR=$(mktemp -d 2>/dev/null || echo \"/tmp/nsjail-build\")\n"
-                "    rm -rf \"$WORK_DIR/nsjail\" && git clone --depth 1 https://github.com/google/nsjail.git \"$WORK_DIR/nsjail\"\n"
-                "    cd \"$WORK_DIR/nsjail\" && make -j$(nproc 2>/dev/null || echo 2)\n"
                 "    mkdir -p \"$BIN_DIR\"\n"
                 "    cp nsjail \"$BIN_DIR/\"\n"
                 "    chmod +x \"$BIN_DIR/nsjail\"\n"
                 "  fi\n"
                 "elif [ -f /etc/arch-release ]; then\n"
                 "  if [ -n \"$SUDO\" ]; then\n"
-                "    $SUDO pacman -Sy --noconfirm nsjail\n"
+                "    $SUDO pacman -Sy --noconfirm git base-devel protobuf libnl seccomp pkgconf 2>/dev/null || true\n"
+                "  fi\n"
+                "  WORK_DIR=$(mktemp -d 2>/dev/null || echo \"/tmp/nsjail-build\")\n"
+                "  rm -rf \"$WORK_DIR/nsjail\" && git clone --depth 1 https://github.com/google/nsjail.git \"$WORK_DIR/nsjail\"\n"
+                "  cd \"$WORK_DIR/nsjail\" && make -j$(nproc 2>/dev/null || echo 2)\n"
+                "  if [ -n \"$SUDO\" ]; then\n"
+                "    $SUDO mkdir -p \"$BIN_DIR\"\n"
+                "    $SUDO cp nsjail \"$BIN_DIR/\"\n"
+                "    $SUDO chmod +x \"$BIN_DIR/nsjail\"\n"
                 "  else\n"
-                "    WORK_DIR=$(mktemp -d 2>/dev/null || echo \"/tmp/nsjail-build\")\n"
-                "    rm -rf \"$WORK_DIR/nsjail\" && git clone --depth 1 https://github.com/google/nsjail.git \"$WORK_DIR/nsjail\"\n"
-                "    cd \"$WORK_DIR/nsjail\" && make -j$(nproc 2>/dev/null || echo 2)\n"
-                "    mkdir -p \"$BIN_DIR\" && cp nsjail \"$BIN_DIR/\" && chmod +x \"$BIN_DIR/nsjail\"\n"
+                "    mkdir -p \"$BIN_DIR\"\n"
+                "    cp nsjail \"$BIN_DIR/\"\n"
+                "    chmod +x \"$BIN_DIR/nsjail\"\n"
                 "  fi\n"
                 "elif [ -f /etc/fedora-release ] || [ -f /etc/redhat-release ]; then\n"
                 "  if [ -n \"$SUDO\" ]; then\n"
-                "    $SUDO dnf install -y nsjail 2>/dev/null || {\n"
-                "      $SUDO dnf install -y git gcc-c++ autoconf bison flex protobuf-devel libnl3-devel pkgconfig libseccomp-devel make\n"
-                "      WORK_DIR=$(mktemp -d 2>/dev/null || echo \"/tmp/nsjail-build\")\n"
-                "      rm -rf \"$WORK_DIR/nsjail\" && git clone --depth 1 https://github.com/google/nsjail.git \"$WORK_DIR/nsjail\"\n"
-                "      cd \"$WORK_DIR/nsjail\" && make -j$(nproc 2>/dev/null || echo 2)\n"
-                "      $SUDO mkdir -p \"$BIN_DIR\"\n"
-                "      $SUDO cp nsjail \"$BIN_DIR/\"\n"
-                "      $SUDO chmod +x \"$BIN_DIR/nsjail\"\n"
-                "    }\n"
+                "    $SUDO dnf install -y git gcc-c++ autoconf bison flex protobuf-devel libnl3-devel pkgconfig libseccomp-devel make\n"
+                "  fi\n"
+                "  WORK_DIR=$(mktemp -d 2>/dev/null || echo \"/tmp/nsjail-build\")\n"
+                "  rm -rf \"$WORK_DIR/nsjail\" && git clone --depth 1 https://github.com/google/nsjail.git \"$WORK_DIR/nsjail\"\n"
+                "  cd \"$WORK_DIR/nsjail\" && make -j$(nproc 2>/dev/null || echo 2)\n"
+                "  if [ -n \"$SUDO\" ]; then\n"
+                "    $SUDO mkdir -p \"$BIN_DIR\"\n"
+                "    $SUDO cp nsjail \"$BIN_DIR/\"\n"
+                "    $SUDO chmod +x \"$BIN_DIR/nsjail\"\n"
                 "  else\n"
-                "    WORK_DIR=$(mktemp -d 2>/dev/null || echo \"/tmp/nsjail-build\")\n"
-                "    rm -rf \"$WORK_DIR/nsjail\" && git clone --depth 1 https://github.com/google/nsjail.git \"$WORK_DIR/nsjail\"\n"
-                "    cd \"$WORK_DIR/nsjail\" && make -j$(nproc 2>/dev/null || echo 2)\n"
-                "    mkdir -p \"$BIN_DIR\" && cp nsjail \"$BIN_DIR/\" && chmod +x \"$BIN_DIR/nsjail\"\n"
+                "    mkdir -p \"$BIN_DIR\"\n"
+                "    cp nsjail \"$BIN_DIR/\"\n"
+                "    chmod +x \"$BIN_DIR/nsjail\"\n"
                 "  fi\n"
                 "else\n"
                 "  WORK_DIR=$(mktemp -d 2>/dev/null || echo \"/tmp/nsjail-build\")\n"
@@ -565,11 +568,11 @@ class SandboxService:
             stdout, stderr, exit_code = await asyncio.wait_for(
                 self._ssh.run_command_full(
                     payload,
-                    f"sh -c '{install_script}'",
+                    f"bash -s << 'EOF_AILA_INSTALL'\n{install_script}\nEOF_AILA_INSTALL",
                     timeout_seconds=timeout_s,
-                    connect_timeout=10.0,
+                    connect_timeout=15.0,
                 ),
-                timeout=timeout_s + 15.0,
+                timeout=timeout_s + 5.0,
             )
         except (AuthenticationError, UpstreamError, AILATimeoutError, ValidationError, paramiko.SSHException, OSError, TimeoutError) as exc:
             duration_ms = int((time.monotonic() - start) * 1000)
