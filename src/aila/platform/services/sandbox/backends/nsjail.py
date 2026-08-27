@@ -84,17 +84,28 @@ def build_nsjail_argv(
     target_workdir = (
         workspace_remote_root if spec.workdir == "/work" else spec.workdir
     )
+    bin_dir = posixpath.dirname(nsjail_bin)
     argv: list[str] = [
         nsjail_bin,
         "--mode", "o",  # once: run one command and exit
         "--quiet",
-        "--chroot", "/",  # keep host FS visible; the bind-mount below is R/W
+        # Isolate system runtime: mount standard OS binary and library trees read-only.
+        # /home, /root, /var, /proc (host), and private user directories are completely unmounted and invisible.
+        "--bindmount_ro", "/usr",
+        "--bindmount_ro", "/bin",
+        "--bindmount_ro", "/lib",
+        "--bindmount_ro", "/lib64",
+        "--bindmount_ro", "/etc",
+        "--bindmount_ro", "/dev",
+        # Mount /tmp read-write for the ephemeral execution workspace
         "--bindmount", "/tmp",
     ]
+    # If nsjail or local tools live in a user-local directory (e.g. ~/.local/bin),
+    # mount ONLY that specific bin directory read-only so binaries can be resolved without exposing /home.
+    if bin_dir and bin_dir not in ("/usr/bin", "/bin", "/usr/local/bin", "/sbin", "/usr/sbin", "."):
+        argv.extend(["--bindmount_ro", bin_dir])
+
     # If the target workdir is outside /tmp (e.g. /custom/work), bind-mount it explicitly.
-    # When target_workdir is inside /tmp (like workspace_remote_root /tmp/aila-sandbox/...),
-    # the --bindmount /tmp already provides R/W access. Adding a nested bindmount inside /tmp
-    # shadows the mount point and causes nsjail's remountPt() to fail with EINVAL on Linux.
     if target_workdir != "/tmp" and not target_workdir.startswith("/tmp/"):
         argv.extend(["--bindmount", f"{workspace_remote_root}:{target_workdir}"])
 
@@ -116,7 +127,6 @@ def build_nsjail_argv(
         argv.append("--disable_clone_newnet")
     env = dict(spec.env)
     if "PATH" not in env:
-        bin_dir = posixpath.dirname(nsjail_bin)
         paths = ["/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"]
         if bin_dir and bin_dir not in paths and bin_dir != ".":
             paths.insert(0, bin_dir)

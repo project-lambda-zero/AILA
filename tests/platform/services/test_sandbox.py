@@ -336,6 +336,10 @@ def test_nsjail_argv_contains_network_off_rlimit_timelimit_and_argv() -> None:
     # /tmp is bind-mounted read-write, covering the /tmp/aila-sbx/x workspace.
     assert "--bindmount" in argv
     assert argv[argv.index("--bindmount") + 1] == "/tmp"
+    # System runtime trees are mounted read-only; host /home is not mounted.
+    assert "--bindmount_ro" in argv
+    assert "/usr" in argv
+    assert "--chroot" not in argv
     # cwd is applied to workspace.
     assert "--cwd" in argv
     assert argv[argv.index("--cwd") + 1] == "/tmp/aila-sbx/x"
