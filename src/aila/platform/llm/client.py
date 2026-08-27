@@ -261,6 +261,43 @@ def _strip_json_fences(content: str) -> str:
     return text
 
 
+def _clean_and_repair_json(content: str) -> str:
+    """Extract and repair JSON from model output containing reasoning, code fences, or commentary."""
+    if not content:
+        return content
+    cleaned = _strip_json_fences(content)
+    try:
+        json.loads(cleaned)
+        return cleaned
+    except json.JSONDecodeError:
+        pass
+
+    # Try raw_decode on first { or [
+    start_obj = cleaned.find("{")
+    start_arr = cleaned.find("[")
+    starts = [s for s in (start_obj, start_arr) if s >= 0]
+    if starts:
+        start = min(starts)
+        try:
+            parsed, _ = json.JSONDecoder().raw_decode(cleaned[start:])
+            return json.dumps(parsed)
+        except json.JSONDecodeError:
+            pass
+
+    # Try matching outer object { ... }
+    if start_obj >= 0:
+        end_obj = cleaned.rfind("}")
+        if end_obj > start_obj:
+            slice_text = cleaned[start_obj : end_obj + 1]
+            try:
+                parsed = json.loads(slice_text)
+                return json.dumps(parsed)
+            except json.JSONDecodeError:
+                pass
+
+    return cleaned
+
+
 def _inject_strict_schema_requirements(schema: dict[str, Any]) -> dict[str, Any]:
     """Recursively inject OpenAI strict structured output requirements.
 
@@ -2015,34 +2052,9 @@ class AilaLLMClient:
         If the model wrapped JSON in <think> tags, markdown code fences, or commentary,
         strip them and extract the inner JSON.
 
-        Returns the validated JSON string.
-        Raises LLMError if validation fails completely.
+        Returns the repaired JSON string.
         """
-        try:
-            json.loads(content)
-            return content
-        except json.JSONDecodeError:
-            cleaned = _strip_json_fences(content)
-            try:
-                json.loads(cleaned)
-                return cleaned
-            except json.JSONDecodeError:
-                # Fallback: extract the first top-level JSON object or array using raw_decode
-                start_obj = cleaned.find("{")
-                start_arr = cleaned.find("[")
-                starts = [s for s in (start_obj, start_arr) if s >= 0]
-                if starts:
-                    start = min(starts)
-                    try:
-                        parsed, _ = json.JSONDecoder().raw_decode(cleaned[start:])
-                        return json.dumps(parsed)
-                    except json.JSONDecodeError:
-                        pass
-
-            raise LLMError(
-                "LLM response is not valid JSON and could not be recovered",
-                retryable=True,
-            )
+        return _clean_and_repair_json(content)
 
     @staticmethod
     def _parse_model(content: str, model_class: type[BaseModel]) -> BaseModel | None:
@@ -2080,7 +2092,7 @@ class AilaLLMClient:
         simpler ``_parse_model`` stays for call sites that only care
         whether the response parsed.
         """
-        cleaned = _strip_json_fences(content)
+        cleaned = _clean_and_repair_json(content)
         data = None
         decode_err: Exception | None = None
         try:
