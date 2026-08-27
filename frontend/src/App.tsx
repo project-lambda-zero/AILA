@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuth } from "./api/auth";
 import { useInvestigations } from "./api/hooks";
@@ -84,10 +84,21 @@ function Console() {
     return () => clearInterval(id);
   }, []);
 
+  const pageWindows = windows.filter((w) => w.kind === "page" || w.kind === "overlay");
+  const activePage = [...pageWindows].reverse().find((w) => !w.minimized) ?? null;
+  const minimizedWindows = windows.filter((w) => w.minimized);
+
   const adv = mode === "advanced";
   const modDef = MODULES.find((m) => m.id === moduleId) ?? MODULES[0];
-  const boundLabel = bound ? shortCaseId(moduleId, bound.id) : modDef.id;
-  const engineLabel = adv ? `${boundLabel} \u00b7 ${moduleId}` : "idle \u00b7 ready";
+  const engineLabel = useMemo(() => {
+    if (activePage) {
+      return activePage.title;
+    }
+    if (adv) {
+      return bound ? `${shortCaseId(moduleId, bound.id)} \u00b7 ${moduleId}` : `${modDef.id} \u00b7 ready`;
+    }
+    return "idle \u00b7 ready";
+  }, [activePage, adv, bound, moduleId, modDef.id]);
 
   const nav: { label: string; on: boolean; onClick: () => void }[] = [
     { label: "console", on: !adv, onClick: () => setMode("basic") },
@@ -248,14 +259,6 @@ function Console() {
 
   const toggleFullscreen = (id: string) => setWindows(windows.map((w) => (w.id === id ? { ...w, fullscreen: !w.fullscreen } : w)));
   const updateSection = (id: string, section: string) => setWindows(windows.map((w) => (w.id === id ? { ...w, section } : w)));
-
-  // The focused non-minimized page/overlay renders in the center column; the
-  // page's own ConsoleWindow owns the chrome + fullscreen. Minimized windows
-  // collapse to the dock strip. Floater surfaces (later reqs) render
-  // concurrently on top -- their render branch lands with their consumer.
-  const pageWindows = windows.filter((w) => w.kind === "page" || w.kind === "overlay");
-  const activePage = [...pageWindows].reverse().find((w) => !w.minimized) ?? null;
-  const minimizedWindows = windows.filter((w) => w.minimized);
 
   // A drill window (or full viewport when fullscreen). Intake-wizard windows
   // are hosted inline (wrapped in <ConsoleWindow> so they share the dock /
@@ -428,6 +431,7 @@ function Console() {
         <div style={{ flex: 1 }} />
         <NotificationsCenter />
         <div
+          title={engineLabel}
           style={{
             display: "flex",
             alignItems: "center",
@@ -437,7 +441,7 @@ function Console() {
             color: "var(--text-muted)",
             textTransform: "none",
             letterSpacing: "0.05em",
-            maxWidth: 320,
+            maxWidth: 380,
             overflow: "hidden",
           }}
         >
@@ -445,8 +449,10 @@ function Console() {
             style={{
               width: 8,
               height: 8,
-              background: adv ? "var(--status-ok)" : "var(--text-muted)",
-              boxShadow: adv ? "0 0 7px var(--status-ok)" : "none",
+              borderRadius: 1,
+              flex: "0 0 auto",
+              background: activePage || adv ? "var(--status-ok)" : "var(--text-muted)",
+              boxShadow: activePage || adv ? "0 0 7px var(--status-ok)" : "none",
             }}
           />
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{engineLabel}</span>
