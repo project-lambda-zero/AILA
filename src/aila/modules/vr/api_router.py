@@ -5616,32 +5616,19 @@ def create_vr_router() -> APIRouter:
                 clear_for_investigation,
             )
             from aila.platform.services.investigation_lifecycle import (
+                cancel_investigation_tasks,
                 purge_arq_jobs_for_investigation,
                 purge_investigation_cursors,
             )
-            from aila.platform.tasks.models import TaskStatus
 
             _now = utc_now()
 
-            cancel_stmt = sa_text(
-                "UPDATE taskrecord "
-                "SET status = :cancelled, "
-                "    completed_at = :ts, "
-                "    error = COALESCE(error, '') || :marker "
-                "WHERE status = ANY(:active_statuses) "
-                "  AND kwargs_json LIKE :inv_pat"
-            ).bindparams(
-                cancelled=TaskStatus.CANCELLED.value,
-                active_statuses=[
-                    TaskStatus.QUEUED.value,
-                    TaskStatus.RUNNING.value,
-                    TaskStatus.WAITING.value,
-                ],
-                ts=_now,
+            await cancel_investigation_tasks(
+                uow.session,
+                investigation_id,
                 marker="operator_reset\n",
-                inv_pat=f'%"{investigation_id}"%',
+                now=_now,
             )
-            await uow.session.exec(cancel_stmt)
             await purge_investigation_cursors(uow.session, investigation_id, only_crashed=False)
             try:
                 cancel_for_investigation(investigation_id)
