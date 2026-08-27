@@ -104,9 +104,9 @@ const VR_KINDS: KindSpec[] = [
     key: "protocol_capture",
     label: "protocol capture",
     group: "capture",
-    mode: "vr-descriptor",
+    mode: "vr-upload",
+    file: { accept: ".pcap,.pcapng,.cap", hint: "PCAP / PCAPNG packet capture" },
     descriptor: [
-      { name: "pcap_path", label: "pcap path", placeholder: "", required: true },
       { name: "protocol", label: "protocol", placeholder: "rtsp" },
     ],
   },
@@ -114,9 +114,9 @@ const VR_KINDS: KindSpec[] = [
     key: "crash_input",
     label: "crash input",
     group: "capture",
-    mode: "vr-descriptor",
+    mode: "vr-upload",
+    file: { accept: "", hint: "crash artifact / seed payload" },
     descriptor: [
-      { name: "crash_artifact_path", label: "crash artifact", placeholder: "", required: true },
       { name: "parent_finding_id", label: "parent finding", placeholder: "" },
     ],
   },
