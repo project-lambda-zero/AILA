@@ -352,6 +352,13 @@ def test_nsjail_argv_flips_network_flag_when_allowed() -> None:
     assert "--disable_clone_newnet" in argv
 
 
+def test_nsjail_argv_wraps_bare_command_in_shell() -> None:
+    spec = SandboxSpec(argv=["uname", "-a"])
+    argv = build_nsjail_argv(spec, nsjail_bin="nsjail", workspace_remote_root="/tmp/x")
+    dash_idx = argv.index("--")
+    assert argv[dash_idx + 1 :] == ["/bin/sh", "-c", "uname -a"]
+
+
 def test_nsjail_argv_exports_env_vars() -> None:
     spec = SandboxSpec(argv=["/bin/env"], env={"FOO": "bar", "BAZ": "qux"})
     argv = build_nsjail_argv(spec, nsjail_bin="nsjail", workspace_remote_root="/tmp/x")

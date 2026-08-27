@@ -19,6 +19,7 @@ Backend contract:
 """
 from __future__ import annotations
 
+import posixpath
 import shlex
 import time
 from typing import Any
@@ -115,13 +116,24 @@ def build_nsjail_argv(
         argv.append("--disable_clone_newnet")
     env = dict(spec.env)
     if "PATH" not in env:
-        env["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        bin_dir = posixpath.dirname(nsjail_bin)
+        paths = ["/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"]
+        if bin_dir and bin_dir not in paths and bin_dir != ".":
+            paths.insert(0, bin_dir)
+        env["PATH"] = ":".join(paths)
     for name, value in sorted(env.items()):
         argv.extend(["--env", f"{name}={value}"])
     # ``--`` terminates nsjail's own flag parsing so a spec.argv[0] that
     # happens to start with a dash is not mistaken for an nsjail flag.
     argv.append("--")
-    argv.extend(spec.argv)
+    # If spec.argv[0] is a bare command name (e.g. "uname", "gcc", "id", "cat"),
+    # wrap through /bin/sh -c so the host shell resolves the binary against PATH.
+    # (nsjail's internal newProc() calls Linux execve() directly, which does not do PATH lookup).
+    if spec.argv and not spec.argv[0].startswith(("/", "./", "../")):
+        cmd_str = " ".join(shlex.quote(a) for a in spec.argv)
+        argv.extend(["/bin/sh", "-c", cmd_str])
+    else:
+        argv.extend(spec.argv)
     return argv
 
 

@@ -156,14 +156,9 @@ function InteractiveSandboxTerminal({
     setHistoryStack((prev) => [...prev, trimmed]);
     setHistoryIndex(-1);
 
-    // If the command contains shell operators (pipes, logical OR/AND, redirections, expansions),
-    // dispatch through the host's shell so compound commands like `gcc --version || clang --version` evaluate properly.
-    const isShellCompound = /[|&;><*$`!]/.test(trimmed);
-    const argv = isShellCompound
-      ? ["/bin/sh", "-c", trimmed]
-      : trimmed
-          .match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)
-          ?.map((s) => s.replace(/^['"]|['"]$/g, "")) || [trimmed];
+    // Interactive sandbox terminal commands run through the host's shell
+    // so PATH lookup, pipes, redirections, and multi-word commands execute naturally.
+    const argv = ["/bin/sh", "-c", trimmed];
 
     try {
       const res: SandboxResult = await execMut.mutateAsync({
