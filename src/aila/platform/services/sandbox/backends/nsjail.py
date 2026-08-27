@@ -88,8 +88,16 @@ def build_nsjail_argv(
         "--mode", "o",  # once: run one command and exit
         "--quiet",
         "--chroot", "/",  # keep host FS visible; the bind-mount below is R/W
-        "--bindmount", f"{workspace_remote_root}:{target_workdir}",
         "--bindmount", "/tmp",
+    ]
+    # If the target workdir is outside /tmp (e.g. /custom/work), bind-mount it explicitly.
+    # When target_workdir is inside /tmp (like workspace_remote_root /tmp/aila-sandbox/...),
+    # the --bindmount /tmp already provides R/W access. Adding a nested bindmount inside /tmp
+    # shadows the mount point and causes nsjail's remountPt() to fail with EINVAL on Linux.
+    if target_workdir != "/tmp" and not target_workdir.startswith("/tmp/"):
+        argv.extend(["--bindmount", f"{workspace_remote_root}:{target_workdir}"])
+
+    argv.extend([
         "--cwd", target_workdir,
         # Wall-clock ceiling. nsjail SIGKILLs the child at expiry.
         "--time_limit", str(int(max(1, round(spec.timeout_s)))),
@@ -100,7 +108,7 @@ def build_nsjail_argv(
         # are explicit so an operator can override by patching argv.
         "--rlimit_nofile", "1024",
         "--rlimit_stack", "64",
-    ]
+    ])
     if spec.network:
         # Re-use host network namespace (grant connectivity). Absence of
         # this flag keeps the default fresh-net-namespace isolation.

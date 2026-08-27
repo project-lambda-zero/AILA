@@ -333,10 +333,10 @@ def test_nsjail_argv_contains_network_off_rlimit_timelimit_and_argv() -> None:
     # time_limit is present with the wall-clock timeout (rounded up).
     assert "--time_limit" in argv
     assert argv[argv.index("--time_limit") + 1] == "45"
-    # The workspace root is bind-mounted at workspace_remote_root (unprivileged chroot safe).
+    # /tmp is bind-mounted read-write, covering the /tmp/aila-sbx/x workspace.
     assert "--bindmount" in argv
-    assert "/tmp/aila-sbx/x:/tmp/aila-sbx/x" in argv
-    # cwd is applied.
+    assert argv[argv.index("--bindmount") + 1] == "/tmp"
+    # cwd is applied to workspace.
     assert "--cwd" in argv
     assert argv[argv.index("--cwd") + 1] == "/tmp/aila-sbx/x"
     # The spec's argv appears after the terminating '--'.
