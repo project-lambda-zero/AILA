@@ -236,7 +236,7 @@ const BESPOKE: Record<string, PageEntry> = {
             workspaceId={String(row.id ?? "")}
             targetsEndpoint="/vr/targets"
             investigationsEndpoint="/vr/investigations"
-            onOpenXray={(inv) => p.onOpenPage?.("vr", "xray", `vr \u00b7 x-ray`, inv.id)}
+            onOpenXray={(inv) => p.onOpenPage?.("vr", "xray", "x-ray", inv.id)}
           />
         )}
       />
@@ -255,7 +255,7 @@ const BESPOKE: Record<string, PageEntry> = {
         detailBody={(row) => (
           <VRTargetDetail
             row={row}
-            onOpenXray={(inv) => p.onOpenPage?.("vr", "xray", `vr \u00b7 x-ray`, inv.id)}
+            onOpenXray={(inv) => p.onOpenPage?.("vr", "xray", "x-ray", inv.id)}
           />
         )}
       />
@@ -288,7 +288,7 @@ const BESPOKE: Record<string, PageEntry> = {
         config={PAGE_CONFIGS["vr:investigations"]}
         configKey="vr:investigations"
         {...p}
-        onRowActivate={(row) => p.onOpenPage?.("vr", "xray", `vr \u00b7 x-ray`, String(row.id ?? ""))}
+        onRowActivate={(row) => p.onOpenPage?.("vr", "xray", "x-ray", String(row.id ?? ""))}
       />
     ),
   },
@@ -303,7 +303,7 @@ const BESPOKE: Record<string, PageEntry> = {
         detailBody={(row) => (
           <MalwareTargetDetail
             row={row}
-            onOpenXray={(inv) => p.onOpenPage?.("malware", "xray", `malware \u00b7 x-ray`, inv.id)}
+            onOpenXray={(inv) => p.onOpenPage?.("malware", "xray", "x-ray", inv.id)}
           />
         )}
       />
@@ -316,7 +316,7 @@ const BESPOKE: Record<string, PageEntry> = {
         config={PAGE_CONFIGS["malware:investigations"]}
         configKey="malware:investigations"
         {...p}
-        onRowActivate={(row) => p.onOpenPage?.("malware", "xray", `malware \u00b7 x-ray`, String(row.id ?? ""))}
+        onRowActivate={(row) => p.onOpenPage?.("malware", "xray", "x-ray", String(row.id ?? ""))}
       />
     ),
   },

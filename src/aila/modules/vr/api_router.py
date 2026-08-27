@@ -5607,16 +5607,46 @@ def create_vr_router() -> APIRouter:
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Investigation {investigation_id} not found.",
                 )
-            # Refuse to reset a running investigation -- operator must
-            # pause first so the engine isn't writing while we wipe.
-            if inv.status == InvestigationStatus.RUNNING.value:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=(
-                        "Cannot reset a RUNNING investigation. Pause it "
-                        "first via POST /pause, then call reset."
-                    ),
-                )
+
+            # Stop any in-flight or queued worker tasks and purge
+            # cursors so the investigation resets cleanly even if it was
+            # previously running or stalled with orphan tasks.
+            from aila.platform.llm.cancellation import (
+                cancel_for_investigation,
+                clear_for_investigation,
+            )
+            from aila.platform.services.investigation_lifecycle import (
+                purge_arq_jobs_for_investigation,
+                purge_investigation_cursors,
+            )
+            from aila.platform.tasks.models import TaskStatus
+
+            _now = utc_now()
+
+            cancel_stmt = sa_text(
+                "UPDATE taskrecord "
+                "SET status = :cancelled, "
+                "    completed_at = :ts, "
+                "    error = COALESCE(error, '') || :marker "
+                "WHERE status = ANY(:active_statuses) "
+                "  AND kwargs_json LIKE :inv_pat"
+            ).bindparams(
+                cancelled=TaskStatus.CANCELLED.value,
+                active_statuses=[
+                    TaskStatus.QUEUED.value,
+                    TaskStatus.RUNNING.value,
+                    TaskStatus.WAITING.value,
+                ],
+                ts=_now,
+                marker="operator_reset\n",
+                inv_pat=f'%"{investigation_id}"%',
+            )
+            await uow.session.exec(cancel_stmt)
+            await purge_investigation_cursors(uow.session, investigation_id, only_crashed=False)
+            try:
+                cancel_for_investigation(investigation_id)
+            except (OSError, RuntimeError, ValueError, TypeError):
+                pass
 
             branches = (await uow.session.exec(
                 select(VRInvestigationBranchRecord).where(
@@ -5630,7 +5660,6 @@ def create_vr_router() -> APIRouter:
             # agent-context reads filter superseded_at IS NULL to see a
             # fresh slate. Only stamp rows currently active so a re-reset
             # does not re-stamp already-archived history.
-            _now = utc_now()
             for bid in branch_ids:
                 msgs = (await uow.session.exec(
                     select(VRInvestigationMessageRecord).where(
@@ -5737,6 +5766,15 @@ def create_vr_router() -> APIRouter:
 
             await uow.session.commit()
             await uow.session.refresh(inv)
+
+        try:
+            await purge_arq_jobs_for_investigation(investigation_id, track="vr")
+        except (OSError, RuntimeError, ValueError, TypeError):
+            pass
+        try:
+            clear_for_investigation(investigation_id)
+        except (OSError, RuntimeError, ValueError, TypeError):
+            pass
 
         return DataEnvelope(data=_investigation_summary(inv))
 

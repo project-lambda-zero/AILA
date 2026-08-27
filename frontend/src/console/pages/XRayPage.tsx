@@ -1174,6 +1174,21 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
                 >
                   re-enqueue
                 </button>
+                {control.isPending ? (
+                  <span style={css(`font-size:8px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);border:1px solid var(--border-soft);padding:1px 6px;border-radius:2px;`)}>
+                    working{"\u2026"}
+                  </span>
+                ) : null}
+                {control.isError ? (
+                  <span style={css(`font-size:8px;letter-spacing:0.08em;text-transform:uppercase;color:${H.acc};border:1px solid ${H.acc}66;padding:1px 6px;border-radius:2px;`)}>
+                    {control.error instanceof Error ? control.error.message : "action failed"}
+                  </span>
+                ) : null}
+                {control.isSuccess ? (
+                  <span style={css(`font-size:8px;letter-spacing:0.08em;text-transform:uppercase;color:${H.mint};border:1px solid ${H.mint}66;padding:1px 6px;border-radius:2px;`)}>
+                    action applied
+                  </span>
+                ) : null}
               </div>
             }
             right={

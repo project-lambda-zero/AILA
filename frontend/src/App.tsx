@@ -150,7 +150,22 @@ function Console() {
     const baseSection = colon >= 0 ? section.slice(0, colon) : section;
     const key = `${moduleKey}:${baseSection}`;
     if (!resolvePage(key)) return;
-    openWindow({ kind: "page", module: moduleKey, registryKey: key, title: `${moduleKey} \u00b7 ${label}`, section, investigationId });
+
+    // Clean label: strip any duplicated `${moduleKey} · ` prefix from label
+    const prefix = `${moduleKey} \u00b7 `;
+    let cleanLabel = label;
+    while (cleanLabel.startsWith(prefix)) {
+      cleanLabel = cleanLabel.slice(prefix.length);
+    }
+
+    let title: string;
+    if (investigationId && (cleanLabel === "x-ray" || cleanLabel.endsWith("\u00b7 x-ray"))) {
+      title = `${moduleKey} \u00b7 ${shortCaseId(moduleKey, investigationId)} \u00b7 x-ray`;
+    } else {
+      title = `${moduleKey} \u00b7 ${cleanLabel}`;
+    }
+
+    openWindow({ kind: "page", module: moduleKey, registryKey: key, title, section, investigationId });
   };
 
   // Intake wizards live in the same windows[] stack as every other page, as
