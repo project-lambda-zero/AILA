@@ -25,6 +25,7 @@ interface WidgetHostProps {
   boundId: string | null;
   adv: boolean;
   onOpenPage: (module: string, section: string, label: string, investigationId?: string | null) => void;
+  onUnbind?: () => void;
 }
 
 const MENU_BAR_H = 40; // 32px bar + 8px breathing room
@@ -221,7 +222,7 @@ export default function WidgetHost(props: WidgetHostProps): JSX.Element | null {
                 : undefined
             }
           >
-            {cat.render({ moduleId, boundId, onOpenPage })}
+            {cat.render({ moduleId, boundId, onOpenPage, onUnbind: props.onUnbind })}
           </ConsoleWindow>
         );
       })}

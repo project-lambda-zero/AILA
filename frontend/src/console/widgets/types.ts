@@ -49,6 +49,7 @@ export interface WidgetProps {
   moduleId: string;
   boundId: string | null;
   onOpenPage: (module: string, section: string, label: string, investigationId?: string | null) => void;
+  onUnbind?: () => void;
 }
 
 /** Catalog metadata + renderer for one widget kind. `canFullscreen` is false

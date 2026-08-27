@@ -44,7 +44,7 @@ function formatTime(iso: string | undefined | null): string {
 }
 
 export default function BoundCaseWidget(props: WidgetProps): JSX.Element {
-  const { moduleId, boundId } = props;
+  const { moduleId, boundId, onUnbind } = props;
   const q = useInvestigations();
 
   if (q.isLoading) {
@@ -90,7 +90,30 @@ export default function BoundCaseWidget(props: WidgetProps): JSX.Element {
 
   return (
     <div style={ROOT}>
-      <div style={LABEL}>bound case</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={LABEL}>bound case</div>
+        {onUnbind ? (
+          <button
+            type="button"
+            onClick={onUnbind}
+            title="Unbind this investigation"
+            style={{
+              background: "transparent",
+              border: "1px solid var(--border-soft)",
+              borderRadius: "2px",
+              color: "var(--text-faint)",
+              fontFamily: "var(--font-mono)",
+              fontSize: "8.5px",
+              letterSpacing: "0.08em",
+              textTransform: "uppercase",
+              padding: "1px 5px",
+              cursor: "pointer",
+            }}
+          >
+            unbind
+          </button>
+        ) : null}
+      </div>
       <div style={ROW}>
         <span style={KEY}>module</span>
         <span style={VAL}>{moduleId}</span>

@@ -17,7 +17,7 @@ export const DEFAULT_LAYOUT: WidgetLayout = {
     { id: "queue-depth", kind: "queue-depth", side: "left", order: 1 },
     { id: "recent-findings", kind: "recent-findings", side: "right", order: 0 },
     { id: "budget", kind: "budget", side: "right", order: 1 },
-    { id: "clock", kind: "clock", side: "bottom", order: 0 },
+    { id: "clock", kind: "clock", side: "bottom", order: 0, hidden: true },
     { id: "mcp-health", kind: "mcp-health", side: "right", order: 2, hidden: true },
     { id: "dante-actions", kind: "dante-actions", side: "left", order: 2, hidden: true },
   ],

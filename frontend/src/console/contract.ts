@@ -11,7 +11,7 @@ export interface LeftRailProps {
   moduleId: string;
   onSelectModule: (id: string) => void;
   bound: BoundInvestigation | null;
-  onBind: (inv: BoundInvestigation) => void;
+  onBind: (inv: BoundInvestigation | null) => void;
   pagesOpen: boolean;
   onTogglePages: () => void;
   adminOpen: boolean;

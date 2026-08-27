@@ -298,7 +298,14 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
             return (
               <div
                 key={inv.id}
-                onClick={() => onBind({ id: inv.id, title: inv.title })}
+                onClick={() => {
+                  if (isActive) {
+                    onBind(null);
+                  } else {
+                    onBind({ id: inv.id, title: inv.title });
+                  }
+                }}
+                title={isActive ? "Click to unbind investigation" : "Click to bind & open investigation"}
                 style={rowStyle}
               >
                 <div style={css(`display:flex;align-items:center;gap:7px;`)}>
@@ -310,6 +317,9 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
                   >
                     {shortCaseId(activeModule.id, inv.id)}
                   </span>
+                  {isActive ? (
+                    <span style={css("font-size:8px;padding:0 3px;background:var(--accent);color:var(--text-on-accent);border-radius:2px;letter-spacing:0.06em;text-transform:uppercase;")}>bound</span>
+                  ) : null}
                   <span style={css(`flex:1;`)} />
                   <span
                     onClick={(e: MouseEvent<HTMLSpanElement>) => {

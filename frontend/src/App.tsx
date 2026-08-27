@@ -51,29 +51,6 @@ function Console() {
   const winSeq = useRef(0);
   const [clock, setClock] = useState("");
 
-  // Open on the case that best fills the design: the most branches, which give
-  // a rich x-ray (multiple persona lanes, ledger, hypotheses, hundreds of MCP
-  // calls). Tie-break by the fewest turns so the console still opens at a
-  // readable length. The thread opens at the top (greeting first), so a longer
-  // case still reads cleanly from its start. Fall back to the richest by
-  // messages when nothing is branched.
-  const { data: invList } = useInvestigations();
-  useEffect(() => {
-    if (bound || !invList || invList.length === 0) return;
-    let pick = invList[0];
-    let best: { branches: number; msgs: number } | null = null;
-    for (const inv of invList) {
-      const branches = inv.branch_count ?? 0;
-      const msgs = inv.message_count ?? 0;
-      if (msgs < 4) continue;
-      if (!best || branches > best.branches || (branches === best.branches && msgs < best.msgs)) {
-        best = { branches, msgs };
-        pick = inv;
-      }
-    }
-    setBound({ id: pick.id, title: pick.title });
-  }, [invList, bound]);
-
   useEffect(() => {
     const tick = () => {
       const d = new Date();
@@ -479,9 +456,18 @@ function Console() {
           {adv ? (
             <LeftRail
               moduleId={moduleId}
-              onSelectModule={setModuleId}
+              onSelectModule={(m) => {
+                setModuleId(m);
+                setBound(null);
+              }}
               bound={bound}
-              onBind={openInvestigation}
+              onBind={(inv) => {
+                if (inv) {
+                  openInvestigation(inv);
+                } else {
+                  setBound(null);
+                }
+              }}
               pagesOpen={pagesOpen}
               onTogglePages={() => setPagesOpen((v) => !v)}
               adminOpen={adminOpen}
@@ -520,6 +506,7 @@ function Console() {
               boundId={bound?.id ?? null}
               adv={adv}
               onOpenPage={openNamedPage}
+              onUnbind={() => setBound(null)}
             />
           ) : null}
 
