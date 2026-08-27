@@ -675,18 +675,6 @@ export default function SandboxPage(props: ModulePageProps): JSX.Element {
     }
   };
 
-  const statusStrip = (
-    <>
-      <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, fontWeight: 700, letterSpacing: "0.14em" }}>
-        admin &middot; sandbox
-      </span>
-      <span style={{ display: "flex", alignItems: "center", padding: "0 11px", textTransform: "none", letterSpacing: "0.03em", color: "var(--text-muted)" }}>
-        {status?.backend || "nsjail"} &middot; {activeSys ? activeSys.name : status?.ssh_host || "no host"}
-      </span>
-      <span style={{ flex: 1 }} />
-    </>
-  );
-
   const isMissingTool = probeData?.tool_missing || (!status?.provisioned && Boolean(status?.ssh_host));
 
   return (
@@ -700,7 +688,6 @@ export default function SandboxPage(props: ModulePageProps): JSX.Element {
       onClose={onBack}
       onMinimize={onMinimize}
       onToggleFullscreen={onToggleFullscreen}
-      footerExtras={statusStrip}
     >
       {/* Top Controls: Fleet Host Selector, Backend, Live Status */}
       <div style={topBar}>
