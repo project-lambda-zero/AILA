@@ -333,12 +333,21 @@ def test_nsjail_argv_contains_network_off_rlimit_timelimit_and_argv() -> None:
     # time_limit is present with the wall-clock timeout (rounded up).
     assert "--time_limit" in argv
     assert argv[argv.index("--time_limit") + 1] == "45"
-    # Fresh in-memory tmpfs for /tmp isolates from host /tmp.
+    # Fresh in-memory bounded tmpfs for /tmp isolates from host /tmp.
     assert "--tmpfsmount" in argv
-    assert argv[argv.index("--tmpfsmount") + 1] == "/tmp"
+    assert argv[argv.index("--tmpfsmount") + 1] == "/tmp:size=256M"
     # Specific workspace directory is bind-mounted to spec.workdir R/W.
     assert "--bindmount" in argv
     assert "/tmp/aila-sbx/x:/work" in argv
+    # Host device tree and /home are omitted.
+    assert "/dev" not in argv
+    assert "--hostname" in argv
+    assert argv[argv.index("--hostname") + 1] == "sandbox"
+    # Process, file-size, and core ceilings are enforced.
+    assert "--rlimit_nproc" in argv
+    assert argv[argv.index("--rlimit_nproc") + 1] == "512"
+    assert "--rlimit_fsize" in argv
+    assert "--rlimit_core" in argv
     # System runtime trees are mounted read-only; host /home is not mounted.
     assert "--bindmount_ro" in argv
     assert "/usr" in argv

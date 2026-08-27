@@ -83,20 +83,22 @@ def build_nsjail_argv(
     """
     target_workdir = spec.workdir
     bin_dir = posixpath.dirname(nsjail_bin)
+    mem_mb_int = int(spec.mem_mb)
     argv: list[str] = [
         nsjail_bin,
         "--mode", "o",  # once: run one command and exit
         "--quiet",
+        "--hostname", "sandbox",
         # Isolate system runtime: mount standard OS binary and library trees read-only.
-        # /home, /root, /var, /proc (host), and private user directories are completely unmounted and invisible.
+        # /home, /root, /var, and private user directories are completely unmounted and invisible.
         "--bindmount_ro", "/usr",
         "--bindmount_ro", "/bin",
         "--bindmount_ro", "/lib",
         "--bindmount_ro", "/lib64",
         "--bindmount_ro", "/etc",
-        "--bindmount_ro", "/dev",
-        # Fresh in-memory tmpfs for /tmp -- isolates from host /tmp (no host sockets or other users' temp files).
-        "--tmpfsmount", "/tmp",
+        # Fresh bounded in-memory tmpfs for /tmp -- isolates from host /tmp (no host sockets or other users' temp files).
+        # Size is capped to prevent RAM exhaustion attacks.
+        "--tmpfsmount", f"/tmp:size={max(64, mem_mb_int)}M",
         # Bind-mount ONLY this run's specific workspace directory to spec.workdir (e.g. /work) R/W.
         "--bindmount", f"{workspace_remote_root}:{target_workdir}",
     ]
@@ -110,12 +112,16 @@ def build_nsjail_argv(
         # Wall-clock ceiling. nsjail SIGKILLs the child at expiry.
         "--time_limit", str(int(max(1, round(spec.timeout_s)))),
         # Address-space ceiling (bytes). rlimit_as bounds mmap + malloc.
-        "--rlimit_as", str(int(spec.mem_mb)),  # nsjail interprets --rlimit_as in MiB
-        # File-descriptor + stack ceilings prevent trivial DoS from
-        # unbounded fork/mmap loops; values match nsjail defaults but
-        # are explicit so an operator can override by patching argv.
+        "--rlimit_as", str(mem_mb_int),  # nsjail interprets --rlimit_as in MiB
+        # Process and thread limit prevents fork-bomb host PID exhaustion.
+        "--rlimit_nproc", "512",
+        # File-descriptor and stack ceilings prevent fd exhaustion and stack overflow loops.
         "--rlimit_nofile", "1024",
         "--rlimit_stack", "64",
+        # Maximum file write size (MiB) prevents disk-filling / RAM-exhaustion bombs.
+        "--rlimit_fsize", str(max(64, mem_mb_int)),
+        # Disable core dumps inside sandbox to prevent disk clutter and information leakage on crashes.
+        "--rlimit_core", "0",
     ])
     if spec.network:
         # Re-use host network namespace (grant connectivity). Absence of
