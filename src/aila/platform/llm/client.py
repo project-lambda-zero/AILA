@@ -2009,11 +2009,11 @@ class AilaLLMClient:
 
     @staticmethod
     def _validate_json_or_fallback(content: str) -> str:
-        """Validate that *content* is JSON, with a markdown-fence fallback (LLM-06 / D-10).
+        """Validate that *content* is JSON, with thinking-block and markdown-fence fallback (LLM-06 / D-10).
 
         If the model returned valid JSON, return it as-is.
-        If the model wrapped JSON in a ```json ... ``` fence, strip the fence
-        and return the inner JSON when it parses.
+        If the model wrapped JSON in <think> tags, markdown code fences, or commentary,
+        strip them and extract the inner JSON.
 
         Returns the validated JSON string.
         Raises LLMError if validation fails completely.
@@ -2022,17 +2022,22 @@ class AilaLLMClient:
             json.loads(content)
             return content
         except json.JSONDecodeError:
-            # Try to extract JSON from markdown code blocks
-            stripped = content.strip()
-            if stripped.startswith("```"):
-                lines = stripped.split("\n")
-                # Remove first and last lines (``` markers)
-                inner = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-                try:
-                    json.loads(inner)
-                    return inner
-                except json.JSONDecodeError:
-                    pass
+            cleaned = _strip_json_fences(content)
+            try:
+                json.loads(cleaned)
+                return cleaned
+            except json.JSONDecodeError:
+                # Fallback: extract the first top-level JSON object or array using raw_decode
+                start_obj = cleaned.find("{")
+                start_arr = cleaned.find("[")
+                starts = [s for s in (start_obj, start_arr) if s >= 0]
+                if starts:
+                    start = min(starts)
+                    try:
+                        parsed, _ = json.JSONDecoder().raw_decode(cleaned[start:])
+                        return json.dumps(parsed)
+                    except json.JSONDecodeError:
+                        pass
 
             raise LLMError(
                 "LLM response is not valid JSON and could not be recovered",
