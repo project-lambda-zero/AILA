@@ -1158,7 +1158,17 @@ export const PAGE_CONFIGS = {
     ],
   },
 
-  // ---- Vulnerability: reports (DataPage; scan/findings/radar/viz are bespoke) --
+  // ---- Vulnerability: reports & cves (DataPage; scan/findings/radar/viz/cves are bespoke) --
+  "vulnerability:cves": {
+    title: "vulnerability \u00b7 cves",
+    endpoint: "/vr/cves",
+    columns: [c("cve_id", "cve"), c("title"), c("source"), c("cvss_score", "cvss"), c("published_at", "published")],
+    filters: [
+      { name: "cve_id", label: "cve", type: "text" },
+      { name: "title", label: "title", type: "text" },
+      { name: "source", label: "source", type: "select" },
+    ],
+  },
   "vulnerability:reports": {
     title: "vulnerability \u00b7 reports",
     endpoint: "/vulnerability/reports/list",

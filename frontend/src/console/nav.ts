@@ -60,6 +60,7 @@ export const MODULES: ModuleDef[] = [
       // artifacts (systems moved to admin -- system-registry-platform.md
       // req 11: the SSH host registry is platform-owned)
       page("findings", "Vulnerability.dc.html#findings"),
+      page("cves", "Vulnerability.dc.html#cves"),
       page("reports"),
       // utility
       page("network radar", "Vulnerability.dc.html#radar"),
