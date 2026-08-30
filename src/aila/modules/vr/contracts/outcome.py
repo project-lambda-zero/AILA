@@ -23,7 +23,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -33,9 +33,13 @@ __all__ = [
     "OutcomeConfidence",
     "OutcomeDispatchStatus",
     "OutcomeKind",
+    "OutcomePolarity",
     "VROutcomeCreate",
     "VROutcomeSummary",
+    "outcome_polarity",
 ]
+
+OutcomePolarity = Literal["positive", "negative", "inconclusive"]
 
 
 class OutcomeKind(StrEnum):
@@ -52,6 +56,45 @@ class OutcomeKind(StrEnum):
     CRASH_TRIAGE_REPORT = "crash_triage_report"
     CAMPAIGN_LAUNCH = "campaign_launch"
     SUB_INVESTIGATION = "sub_investigation"
+
+
+# Truth polarity of an outcome kind, derived (no stored column, no
+# migration). A finding kind asserts a proven positive; audit_memo is a
+# settled no-finding negative; everything else -- assessments, action
+# orders, reusable artifacts -- neither asserts nor denies a
+# vulnerability and is inconclusive. This replaces the prose
+# negative-claim regex (``is_negative_finding_claim``) for VR: the submit
+# gate and the claim verifier read polarity from the typed kind instead
+# of classifying free text, so kind no longer turns on a prose match.
+_POSITIVE_KINDS: frozenset[OutcomeKind] = frozenset({
+    OutcomeKind.DIRECT_FINDING,
+    OutcomeKind.CRASH_TRIAGE_REPORT,
+})
+_NEGATIVE_KINDS: frozenset[OutcomeKind] = frozenset({
+    OutcomeKind.AUDIT_MEMO,
+})
+
+
+def outcome_polarity(kind: OutcomeKind | str) -> OutcomePolarity:
+    """Return the truth polarity of an outcome kind.
+
+    ``direct_finding`` / ``crash_triage_report`` are positive (a proven
+    vulnerability or reproduced crash). ``audit_memo`` is negative (a
+    settled no-finding close). Every other kind -- assessment and patch
+    reports, variant/campaign/sub-investigation action orders, strategy
+    and profile artifacts, config deltas -- is inconclusive: it continues
+    or summarizes the hunt without asserting or denying a finding. An
+    unknown string defaults to inconclusive, the conservative polarity.
+    """
+    try:
+        resolved = OutcomeKind(kind)
+    except ValueError:
+        return "inconclusive"
+    if resolved in _POSITIVE_KINDS:
+        return "positive"
+    if resolved in _NEGATIVE_KINDS:
+        return "negative"
+    return "inconclusive"
 
 
 class VROutcomeCreate(BaseModel):

@@ -65,7 +65,12 @@ from .ida_headless import (
     adapt_xrefs_from,
     adapt_xrefs_to,
 )
-from .known_tools import _ALWAYS_SUPPRESS, _VIRTUAL_TOOLS, KNOWN_TOOLS
+from .known_tools import (
+    _ALWAYS_SUPPRESS,
+    _VIRTUAL_TOOLS,
+    KNOWN_TOOLS,
+    canonicalize_tool_id,
+)
 
 __all__ = [
     "get_adapter",
@@ -227,6 +232,14 @@ def get_adapter(server_id: str, tool_name: str) -> AdapterFn | None:
     server/tool combinations so the executor can surface a 'no such
     tool' error to the engine.
     """
+    # Issue #251 / doc #15 sec 1.2 -- collapse spelling drift
+    # (``audit-mcp.foo``, ``audit_mcp:foo``, bare ``foo``) to the
+    # canonical ``(server_id, tool_name)`` at the adapter boundary so
+    # the specialised-adapter table, ``_effective_tools`` catalog, and
+    # every downstream observable key see one identity per tool.
+    server_id, tool_name = canonicalize_tool_id(server_id, tool_name)
+    if not server_id or not tool_name:
+        return None
     if tool_name in _ALWAYS_SUPPRESS.get(server_id, frozenset()):
         return None
     specific = _SPECIALIZED.get((server_id, tool_name))

@@ -82,5 +82,9 @@ async def test_consolidator_reads_ledger_with_confirmed_only(monkeypatch) -> Non
     call = ledger.read_calls[0]
     assert call["investigation_id"] == "inv-conf-1"
     assert call["confirmed_only"] is True
-    # kinds contract is unchanged: discoveries + notes only.
-    assert set(call["kinds"]) == {"discovery", "note"}
+    # Kinds contract widens under issue #07 -- adjudication rows carry
+    # reject / refute verdicts that the distiller ingests as negative
+    # knowledge alongside discoveries and notes. Adjudications are not
+    # discovery entries, so ``confirmed_only=True`` upstream leaves them
+    # untouched (the filter is discovery-only by construction).
+    assert set(call["kinds"]) == {"discovery", "note", "adjudication"}

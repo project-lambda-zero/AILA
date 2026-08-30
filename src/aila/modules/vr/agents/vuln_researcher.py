@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -46,6 +47,7 @@ from aila.modules.vr.contracts import (
     SenderKind,
 )
 from aila.modules.vr.contracts.evidence_ref import EvidenceRefList
+from aila.modules.vr.contracts.outcome import outcome_polarity
 from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
     VRInvestigationMessageRecord,
@@ -53,6 +55,11 @@ from aila.modules.vr.db_models import (
     VRInvestigationOutcomeReviewRecord,
     VRInvestigationRecord,
     VRTargetRecord,
+)
+from aila.modules.vr.services.distinctness import (
+    compute_distinctness_score,
+    extract_candidate_text,
+    extract_corpus_texts,
 )
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.services.outcome_polarity import (
@@ -94,6 +101,7 @@ from aila.platform.mcp.adapters import (
 from aila.platform.mcp.adapters.known_tools import tools_for_language
 from aila.platform.mcp.adapters.registry import register_bridge_tools
 from aila.platform.mcp.bridges.knowledge import KnowledgeBridgeTool
+from aila.platform.mcp.call_log_record import McpCallLogRecord
 from aila.platform.mcp.factory import make_bridge
 from aila.platform.prompts import LoadedPrompt, PromptNotFoundError, PromptRegistry
 from aila.platform.prompts.pinning import (
@@ -112,6 +120,7 @@ from aila.platform.services.context_assembler import (
     ContextSection,
     ContextTier,
 )
+from aila.platform.services.ledger import LedgerService
 from aila.platform.services.reasoning import CyberReasoningEngine
 from aila.platform.uow import UnitOfWork
 
@@ -252,6 +261,32 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         )
         self._promote_confirmed_findings = await _cfg.get_bool(
             "promote_confirmed_findings",
+        )
+        # Wave-2 deferred/partial VR-truth gates (issues #247, #249,
+        # #251, #254, #256). Each knob is defined in
+        # ``aila.modules.vr.config_schema.VRConfigSchema``.
+        self._require_confirmed_evidence_on_positive_submit = (
+            await _cfg.get_bool(
+                "require_confirmed_evidence_on_positive_submit",
+            )
+        )
+        self._contradiction_gate_enabled = await _cfg.get_bool(
+            "contradiction_gate_enabled",
+        )
+        self._tool_telemetry_crosscheck_enabled = await _cfg.get_bool(
+            "tool_telemetry_crosscheck_enabled",
+        )
+        self._tool_work_floor_probes = await _cfg.get_int(
+            "tool_work_floor_probes",
+        )
+        self._kill_criterion_scan_cap = await _cfg.get_int(
+            "kill_criterion_scan_cap",
+        )
+        self._kill_criterion_overlap_threshold = await _cfg.get_float(
+            "kill_criterion_overlap_threshold",
+        )
+        self._distinctness_score_enabled = await _cfg.get_bool(
+            "distinctness_score_enabled",
         )
 
     async def _build_recall_fetcher(
@@ -1317,8 +1352,30 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         for that hypothesis before it tries to close on a weaker
         polarity. Cleared on the same call when no confirmed hypothesis
         remains, so a resolved directive never lingers.
+
+        Wave-2 addition (issue #249 W10 / #262): schedules the per-turn
+        kill_criterion evaluator against the running loop before
+        returning. Fire-and-forget: the evaluator writes truth signals
+        to the shared ledger; a scheduling failure logs and returns
+        without blocking the turn.
         """
-        del turn_number
+        # F2 kill_criterion evaluator (issue #249 W10 / #262). Kept
+        # outside the F1 toggle so the truth signal fires even when the
+        # promote-confirmed toggle is off.
+        try:
+            import asyncio
+            loop = asyncio.get_running_loop()
+            loop.create_task(
+                self._evaluate_kill_criteria_this_turn(
+                    case_state=case_state, turn_number=turn_number,
+                ),
+            )
+        except RuntimeError:
+            _log.debug(
+                "kill_criterion evaluator not scheduled (no running loop) "
+                "inv=%s branch=%s turn=%d",
+                self.investigation_id, self.branch_id, turn_number,
+            )
         if not getattr(self, "_promote_confirmed_findings", False):
             return case_state
         confirmed = self._confirmed_open_hypotheses(
@@ -1735,6 +1792,39 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         case_state: ReasoningCaseState,
         turn_number: int,
     ) -> ReasoningTurnDecision:
+        """Draft-pending gate + wave-2 async submit-time gate hop.
+
+        Runs the historic draft-pending check first (may reject and
+        return early). When that clears, chains the wave-2 async gates
+        (issue #247 tool telemetry, issue #251 tool-work floor) so
+        their DB reads happen inside a hook the platform base already
+        invokes on every submit -- no touching of the platform runner
+        required.
+        """
+        decision = await self._draft_pending_check(
+            decision=decision, case_state=case_state, turn_number=turn_number,
+        )
+        if decision.action != "submit":
+            return decision
+        # Prior outcomes are cheaply reloaded here so the sync-path
+        # distinctness stamp lands with the same corpus a full run
+        # would see. Ledger + call-log lookups are already hot on
+        # the async path.
+        prior_outcomes = await self._load_prior_outcomes()
+        return await self._apply_wave2_submit_gates(
+            decision=decision,
+            case_state=case_state,
+            turn_number=turn_number,
+            prior_outcomes=prior_outcomes,
+        )
+
+    async def _draft_pending_check(
+        self,
+        *,
+        decision: ReasoningTurnDecision,
+        case_state: ReasoningCaseState,
+        turn_number: int,
+    ) -> ReasoningTurnDecision:
         """Intercept a terminal_submit when another sibling already has
         a draft outcome up for review on this investigation, and this
         branch has not yet voted on that draft.
@@ -2012,6 +2102,813 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                 "_already_voted_outcome_id": outcome_id,
             },
         })
+
+    # ------------------------------------------------------------------
+    # Wave-2 deferred / partial VR-truth gates (issues #247, #249,
+    # #251, #254, #256).
+    #
+    # Each gate mirrors the reject-under-cap / force-through-over-cap
+    # shape of the existing hypothesis gates (see
+    # ``_maybe_reject_submit_with_unresolved_hypotheses``). New
+    # counters and directives use the reserved ``_gate.`` observable
+    # prefix (issue #248 L2) so they never collide with the agent
+    # scratchpad namespace and are exempt from the observable-cap
+    # eviction the runner applies to plain agent keys.
+    #
+    # Orchestration: they run as a single override of
+    # ``_maybe_reject_fanout_submit`` (the last-in-chain gate the
+    # platform base already invokes on every submit). Ordering inside
+    # that dispatcher matters -- see ``_apply_wave2_submit_gates``.
+    # ------------------------------------------------------------------
+
+    def _maybe_reject_positive_submit_without_confirmed_evidence(
+        self,
+        *,
+        decision: ReasoningTurnDecision,
+        case_state: ReasoningCaseState,
+        turn_number: int,
+    ) -> ReasoningTurnDecision:
+        """Issue #254 / W3: a positive-polarity submit MUST cite
+        checkable evidence.
+
+        A ``direct_finding`` / ``crash_triage_report`` closes on a
+        proven positive; the branch must have at least one live
+        hypothesis carrying a ``confirmed_by`` citation AND the
+        payload must expose non-empty ``evidence_refs``. Without both,
+        the reviewer sees a finding that names no verifiable source
+        and the whole audit trail collapses to the answer prose.
+
+        Gate shape: reject under cap with a directive that names the
+        missing side (refs / confirmation); force-through over cap
+        stamps a ``positive_submit_evidence_advisory`` on the payload.
+        """
+        if not getattr(
+            self,
+            "_require_confirmed_evidence_on_positive_submit",
+            False,
+        ):
+            return decision
+        kind = self._terminal_outcome_kind(decision)
+        if outcome_polarity(kind) != "positive":
+            self._clear_gate("positive_submit_refs", case_state)
+            return decision
+        payload = decision.payload or {}
+        refs = payload.get("evidence_refs") or []
+        has_refs = isinstance(refs, list) and any(
+            (isinstance(r, str) and r.strip())
+            or (isinstance(r, dict) and r)
+            for r in refs
+        )
+        confirmed = self._confirmed_open_hypotheses(
+            case_state=case_state, decision=decision,
+        )
+        has_confirmed_cite = any(
+            (getattr(h, "confirmed_by", "") or "").strip()
+            for h in confirmed
+        )
+        if has_refs and has_confirmed_cite:
+            self._clear_gate("positive_submit_refs", case_state)
+            return decision
+        missing_bits: list[str] = []
+        if not has_refs:
+            missing_bits.append("payload.evidence_refs is empty")
+        if not has_confirmed_cite:
+            missing_bits.append(
+                "no live hypothesis carries a `confirmed_by` citation",
+            )
+        directive_body = (
+            "*** POSITIVE SUBMIT BLOCKED -- MISSING CHECKABLE EVIDENCE ***\n"
+            f"outcome_kind={kind.value} polarity=positive. Missing: "
+            + "; ".join(missing_bits)
+            + ".\n\n"
+            "REQUIRED for your next decision:\n"
+            "  (a) add each supporting source citation to "
+            "``payload.evidence_refs`` (message id, outcome id, or "
+            "source_citation ref). Do not restate reasoning; cite the "
+            "artifact.\n"
+            "  (b) re-emit the hypothesis in ``decision.hypotheses[]`` "
+            "with a non-empty ``confirmed_by`` string that names the "
+            "concrete file:line, tool observation id, or probe id that "
+            "confirms it.\n\n"
+            "This is issue #254: a positive finding without both a "
+            "confirmed hypothesis AND checkable refs cannot be audited."
+        )
+        return self._reject_or_force(
+            gate="positive_submit_refs",
+            decision=decision,
+            case_state=case_state,
+            turn_number=turn_number,
+            directive=directive_body,
+            payload_advisory_key="positive_submit_evidence_advisory",
+            advisory_payload={
+                "outcome_kind": kind.value,
+                "missing": missing_bits,
+            },
+            log_label="positive_submit_refs",
+        )
+
+    def _maybe_reject_negative_submit_contradicting_observable(
+        self,
+        *,
+        decision: ReasoningTurnDecision,
+        case_state: ReasoningCaseState,
+        turn_number: int,
+    ) -> ReasoningTurnDecision:
+        """Issue #249 W7 pre-draft contradiction gate (cited-observable
+        variant).
+
+        A branch that concludes ``no_finding`` / ``inconclusive`` while
+        the observables it cites contain strong-positive markers
+        (crash, exploit, overflow, reproduced, confirmed) contradicts
+        its own case. The F1 gate above catches the confirmed-
+        hypothesis case; this gate closes the cited-observable case
+        F1 does not cover.
+        """
+        if not getattr(self, "_contradiction_gate_enabled", False):
+            return decision
+        kind = self._terminal_outcome_kind(decision)
+        pol = outcome_polarity(kind)
+        if pol == "positive":
+            self._clear_gate("contradiction_observable", case_state)
+            return decision
+        payload = decision.payload or {}
+        raw_refs = payload.get("evidence_refs") or []
+        cited_keys: list[str] = []
+        for ref in raw_refs:
+            if isinstance(ref, str):
+                cited_keys.append(ref)
+            elif isinstance(ref, dict):
+                val = ref.get("ref") or ref.get("id")
+                if isinstance(val, str) and val:
+                    cited_keys.append(val)
+        provenance = payload.get("provenance") or {}
+        if isinstance(provenance, dict):
+            prim = provenance.get("primary_artifact")
+            if isinstance(prim, str) and prim:
+                cited_keys.append(prim)
+            for corr in provenance.get("corroboration") or []:
+                if isinstance(corr, str) and corr:
+                    cited_keys.append(corr)
+        if not cited_keys:
+            self._clear_gate("contradiction_observable", case_state)
+            return decision
+        contradicting: list[tuple[str, str]] = []
+        for key in cited_keys:
+            body = case_state.observables.get(key)
+            if not isinstance(body, str) or not body:
+                continue
+            lowered = body.lower()
+            for marker in _STRONG_POSITIVE_MARKERS:
+                if marker in lowered:
+                    contradicting.append((key, marker))
+                    break
+        if not contradicting:
+            self._clear_gate("contradiction_observable", case_state)
+            return decision
+        listing = "\n".join(
+            f"  - {key} -> observable body contains '{marker}'"
+            for key, marker in contradicting[:10]
+        )
+        directive_body = (
+            "*** CONTRADICTION GATE -- NEGATIVE SUBMIT CITES POSITIVE EVIDENCE ***\n"
+            f"You are closing this investigation as {kind.value} "
+            f"(polarity={pol}) while payload.evidence_refs cites "
+            f"{len(contradicting)} observable(s) whose bodies contain "
+            "strong-positive markers.\n\n"
+            "CITED OBSERVABLES WITH POSITIVE MARKERS:\n"
+            f"{listing}\n\n"
+            "REQUIRED for your next decision, choose ONE:\n"
+            "  (a) Re-submit as a positive finding (direct_finding / "
+            "crash_triage_report) that stands behind the cited "
+            "evidence.\n"
+            "  (b) Drop the contradicting refs from ``payload."
+            "evidence_refs`` and cite only observables that support "
+            "your negative conclusion.\n"
+            "  (c) Explain in reasoning why the cited observable is "
+            "not what it looks like (e.g. mitigating guard downstream), "
+            "and stamp a rejection on the corresponding hypothesis id."
+        )
+        return self._reject_or_force(
+            gate="contradiction_observable",
+            decision=decision,
+            case_state=case_state,
+            turn_number=turn_number,
+            directive=directive_body,
+            payload_advisory_key="contradiction_observable_advisory",
+            advisory_payload={
+                "outcome_kind": kind.value,
+                "polarity": pol,
+                "contradicting": [
+                    {"ref": k, "marker": m}
+                    for k, m in contradicting[:20]
+                ],
+            },
+            log_label="contradiction_observable",
+        )
+
+    async def _maybe_reject_submit_with_uncalled_tool_cite(
+        self,
+        *,
+        decision: ReasoningTurnDecision,
+        case_state: ReasoningCaseState,
+        turn_number: int,
+    ) -> ReasoningTurnDecision:
+        """Issue #247 B3 tool-telemetry cross-check.
+
+        Read the branch's ``mcp_call_log`` rows and build the set of
+        MCP actions the branch actually invoked. Then extract every
+        ``<server>:<action>`` / ``<server>.<action>`` token cited in
+        the submit's ``evidence_refs`` / ``provenance`` and reject
+        under cap when a cited pair is absent from the ran set.
+        """
+        if not getattr(self, "_tool_telemetry_crosscheck_enabled", False):
+            return decision
+        payload = decision.payload or {}
+        cited_pairs = _extract_cited_tool_pairs(payload)
+        if not cited_pairs:
+            self._clear_gate("tool_telemetry", case_state)
+            return decision
+        ran_pairs: set[tuple[str, str]] = set()
+        async with UnitOfWork() as uow:
+            rows = (await uow.session.exec(
+                _select(McpCallLogRecord)
+                .where(McpCallLogRecord.investigation_id == self.investigation_id)
+                .where(McpCallLogRecord.branch_id == self.branch_id),
+            )).all()
+        for row in rows:
+            server = (row.server_id or "").strip().lower()
+            action = (row.action or "").strip().lower()
+            if server and action:
+                ran_pairs.add((server, action))
+        missing = sorted(
+            {pair for pair in cited_pairs if pair not in ran_pairs},
+        )
+        if not missing:
+            self._clear_gate("tool_telemetry", case_state)
+            return decision
+        listing = "\n".join(
+            f"  - {server}:{action}" for server, action in missing[:20]
+        )
+        directive_body = (
+            "*** TOOL TELEMETRY GATE -- CITED TOOL NEVER RAN ***\n"
+            f"Your submit cites {len(missing)} MCP tool(s) that this "
+            "branch's mcp_call_log has no record of invoking. Either "
+            "the cite is fabricated or the tool ran on a sibling "
+            "branch and the observation was copied without re-running "
+            "here.\n\n"
+            "MISSING TOOL INVOCATIONS:\n"
+            f"{listing}\n\n"
+            "REQUIRED for your next decision, choose ONE:\n"
+            "  (a) run the missing tool this turn (``action: tool_run`` "
+            "with the correct server + action) so the log carries "
+            "physical proof, then re-submit.\n"
+            "  (b) drop the tool citation from ``payload."
+            "evidence_refs`` / ``provenance`` and cite only sources "
+            "this branch physically observed.\n\n"
+            "This is issue #247 B3: an evidence chain that names a "
+            "tool the branch never ran is not audit-safe."
+        )
+        return self._reject_or_force(
+            gate="tool_telemetry",
+            decision=decision,
+            case_state=case_state,
+            turn_number=turn_number,
+            directive=directive_body,
+            payload_advisory_key="tool_telemetry_advisory",
+            advisory_payload={
+                "missing": [
+                    {"server": s, "action": a} for s, a in missing[:20]
+                ],
+            },
+            log_label="tool_telemetry",
+        )
+
+    async def _maybe_reject_positive_submit_below_tool_work_floor(
+        self,
+        *,
+        decision: ReasoningTurnDecision,
+        case_state: ReasoningCaseState,
+        turn_number: int,
+    ) -> ReasoningTurnDecision:
+        """Issue #251 evidentiary / tool-work floor for positive submits.
+
+        A positive submit MUST rest on at least
+        ``self._tool_work_floor_probes`` successful reachability /
+        taint probe calls (read_function, callers_of, semantic_search,
+        etc.). Below the floor the gate rejects and asks the branch to
+        run one more probe.
+        """
+        floor = int(getattr(self, "_tool_work_floor_probes", 0) or 0)
+        if floor <= 0:
+            return decision
+        kind = self._terminal_outcome_kind(decision)
+        if outcome_polarity(kind) != "positive":
+            self._clear_gate("tool_work_floor", case_state)
+            return decision
+        async with UnitOfWork() as uow:
+            rows = (await uow.session.exec(
+                _select(McpCallLogRecord)
+                .where(McpCallLogRecord.investigation_id == self.investigation_id)
+                .where(McpCallLogRecord.branch_id == self.branch_id)
+                .where(McpCallLogRecord.status == "ready"),
+            )).all()
+        probe_count = 0
+        for row in rows:
+            action = (row.action or "").strip().lower()
+            if action in _REACHABILITY_PROBE_ACTIONS:
+                probe_count += 1
+        if probe_count >= floor:
+            self._clear_gate("tool_work_floor", case_state)
+            return decision
+        directive_body = (
+            "*** TOOL-WORK FLOOR -- POSITIVE SUBMIT UNDER-EVIDENCED ***\n"
+            f"outcome_kind={kind.value} polarity=positive but only "
+            f"{probe_count}/{floor} recognised reachability probes "
+            "have been logged for this branch. A positive finding is "
+            "not credible without at least one successful "
+            "reachability / taint probe backing the cited sink.\n\n"
+            "RECOGNISED PROBE ACTIONS: "
+            + ", ".join(sorted(_REACHABILITY_PROBE_ACTIONS))
+            + "\n\n"
+            "REQUIRED for your next decision: run one of the actions "
+            "above against the code path the finding names, then re-"
+            "submit citing the resulting message id in ``payload."
+            "evidence_refs``."
+        )
+        return self._reject_or_force(
+            gate="tool_work_floor",
+            decision=decision,
+            case_state=case_state,
+            turn_number=turn_number,
+            directive=directive_body,
+            payload_advisory_key="tool_work_floor_advisory",
+            advisory_payload={
+                "observed_probes": probe_count,
+                "required": floor,
+                "outcome_kind": kind.value,
+            },
+            log_label="tool_work_floor",
+        )
+
+    def _stamp_distinctness_score(
+        self,
+        *,
+        decision: ReasoningTurnDecision,
+        prior_outcomes: list[dict[str, Any]] | None = None,
+    ) -> ReasoningTurnDecision:
+        """Issue #256 / #010 / #10: stamp ``distinctness_score`` on any
+        positive-polarity submit payload.
+
+        Off by default disables the stamp entirely so the operator
+        aggregator observes the pre-#256 shape. When on, the metric is
+        deterministic (see
+        :mod:`aila.modules.vr.services.distinctness`), so the value on
+        the payload is auditable and reproducible offline.
+        """
+        if not getattr(self, "_distinctness_score_enabled", False):
+            return decision
+        if decision.action != "submit":
+            return decision
+        kind = self._terminal_outcome_kind(decision)
+        if outcome_polarity(kind) != "positive":
+            return decision
+        payload = self._outcome_payload(decision)
+        candidate_text = extract_candidate_text(payload)
+        seed_hypotheses = [
+            {"claim": h.claim}
+            for h in (getattr(self, "_seed_hypotheses_cache", None) or [])
+            if getattr(h, "claim", None)
+        ]
+        corpus = extract_corpus_texts(
+            seed_hypotheses=seed_hypotheses,
+            prior_outcomes=list(prior_outcomes or []),
+        )
+        score = compute_distinctness_score(candidate_text, corpus)
+        new_payload = dict(decision.payload or {})
+        new_payload["distinctness_score"] = round(score, 4)
+        new_payload["distinctness_corpus_size"] = len(corpus)
+        return decision.model_copy(update={"payload": new_payload})
+
+    async def _apply_wave2_submit_gates(
+        self,
+        *,
+        decision: ReasoningTurnDecision,
+        case_state: ReasoningCaseState,
+        turn_number: int,
+        prior_outcomes: list[dict[str, Any]] | None,
+    ) -> ReasoningTurnDecision:
+        """Run the wave-2 submit-time gates in a deterministic order.
+
+        Runs from cheapest to most expensive so a cheap-reject exits
+        before we touch the DB:
+
+        1. positive-submit-needs-confirmed-evidence (in-memory only).
+        2. negative-submit-contradicts-observable  (in-memory only).
+        3. tool-telemetry cross-check              (one indexed SELECT).
+        4. tool-work floor                         (one indexed SELECT).
+        5. distinctness-score stamp (pass-through, always last).
+
+        Any reject swap short-circuits the chain: the returned
+        decision is no longer ``action="submit"`` so downstream gates
+        pass through unchanged.
+        """
+        decision = self._maybe_reject_positive_submit_without_confirmed_evidence(
+            decision=decision, case_state=case_state, turn_number=turn_number,
+        )
+        if decision.action != "submit":
+            return decision
+        decision = self._maybe_reject_negative_submit_contradicting_observable(
+            decision=decision, case_state=case_state, turn_number=turn_number,
+        )
+        if decision.action != "submit":
+            return decision
+        decision = await self._maybe_reject_submit_with_uncalled_tool_cite(
+            decision=decision, case_state=case_state, turn_number=turn_number,
+        )
+        if decision.action != "submit":
+            return decision
+        decision = await self._maybe_reject_positive_submit_below_tool_work_floor(
+            decision=decision, case_state=case_state, turn_number=turn_number,
+        )
+        if decision.action != "submit":
+            return decision
+        return self._stamp_distinctness_score(
+            decision=decision, prior_outcomes=prior_outcomes,
+        )
+
+    def _maybe_reject_fanout_submit(
+        self,
+        *,
+        decision: Any,
+        inv: Any,
+        case_state: Any,
+        turn_number: int,
+    ) -> Any:
+        """VR override: chain the wave-2 gates onto the fanout hook.
+
+        The platform base's :meth:`_maybe_reject_fanout_submit` fires
+        LAST on every submit. Overriding it here lets VR run its new
+        gates (issues #247 / #249 / #251 / #254 / #256) without
+        modifying the platform base or reordering the existing chain.
+        A non-submit decision or a non-VR module skips these gates
+        entirely.
+        """
+        del inv
+        if decision.action != "submit":
+            return decision
+        # DB-reading gates + distinctness stamp already ran on the
+        # async path from ``_maybe_reject_submit_when_draft_pending``.
+        # Here we re-apply the cheap in-memory gates only.
+        return self._wave2_submit_gates_sync(
+            decision=decision,
+            case_state=case_state,
+            turn_number=turn_number,
+        )
+
+    def _wave2_submit_gates_sync(
+        self,
+        *,
+        decision: ReasoningTurnDecision,
+        case_state: ReasoningCaseState,
+        turn_number: int,
+    ) -> ReasoningTurnDecision:
+        """Synchronous re-check for the platform's fanout hook.
+
+        The DB-reading gates (tool telemetry, tool-work floor) and the
+        distinctness stamp already ran on the async path from
+        :meth:`_maybe_reject_submit_when_draft_pending`. Re-running the
+        in-memory gates here is defensive: it catches a subclass or
+        integration that bypasses the draft-pending hook. The
+        distinctness stamp is NOT repeated so the async path's value
+        (computed against the real prior-outcome corpus) is preserved.
+        """
+        decision = self._maybe_reject_positive_submit_without_confirmed_evidence(
+            decision=decision, case_state=case_state, turn_number=turn_number,
+        )
+        if decision.action != "submit":
+            return decision
+        return self._maybe_reject_negative_submit_contradicting_observable(
+            decision=decision, case_state=case_state, turn_number=turn_number,
+        )
+
+    def _clear_gate(
+        self, gate: str, case_state: ReasoningCaseState,
+    ) -> None:
+        """Drop this gate's ``_gate.<name>.*`` observables (issue #248 L2).
+
+        Called on the pass branch of every wave-2 gate so a later
+        regression on the same branch starts fresh. Keys live under
+        the reserved ``_gate.`` prefix so the observable-cap eviction
+        never touches them.
+        """
+        case_state.observables.pop(f"_gate.{gate}.reject_count", None)
+        case_state.observables.pop(f"_gate.{gate}.directive", None)
+
+    def _reject_or_force(
+        self,
+        *,
+        gate: str,
+        decision: ReasoningTurnDecision,
+        case_state: ReasoningCaseState,
+        turn_number: int,
+        directive: str,
+        payload_advisory_key: str,
+        advisory_payload: dict[str, Any],
+        log_label: str,
+    ) -> ReasoningTurnDecision:
+        """Shared reject-under-cap / force-through-over-cap machinery.
+
+        Uses ``self._unresolved_hyp_reject_cap`` as the shared ceiling
+        (matches every hypothesis gate's mental model). Counter +
+        directive live under ``_gate.<name>.*`` so agent scratchpad
+        eviction never touches them (issue #248 L2).
+        """
+        cap = int(getattr(self, "_unresolved_hyp_reject_cap", 3) or 3)
+        counter_key = f"_gate.{gate}.reject_count"
+        directive_key = f"_gate.{gate}.directive"
+        prior = int(case_state.observables.get(counter_key, 0) or 0)
+        new_count = prior + 1
+        if new_count > cap:
+            _log.warning(
+                "%s submit FORCED THROUGH after %d rejections inv=%s "
+                "branch=%s turn=%d",
+                log_label, prior, self.investigation_id,
+                self.branch_id, turn_number,
+            )
+            new_payload = dict(decision.payload or {})
+            new_payload[payload_advisory_key] = {
+                **advisory_payload,
+                "forced_through_after_rejects": prior,
+            }
+            self._clear_gate(gate, case_state)
+            return decision.model_copy(update={"payload": new_payload})
+        _log.info(
+            "%s submit REJECTED inv=%s branch=%s turn=%d rejects=%d/%d",
+            log_label, self.investigation_id, self.branch_id,
+            turn_number, new_count, cap,
+        )
+        case_state.observables[counter_key] = new_count
+        case_state.observables[directive_key] = (
+            directive
+            + f"\n\nRejection {new_count}/{cap} on this branch. After "
+            f"{cap} rejections the submit is forced through with a "
+            f"``{payload_advisory_key}`` stamped on the payload."
+        )
+        payload = decision.payload or {}
+        original_answer = (payload.get("answer") or decision.answer or "")[:1000]
+        rejected_text = (
+            f"[{log_label.upper()} GATE: submit rejected -- see "
+            f"{directive_key}]\nOriginal submit attempt:\n{original_answer}"
+        )
+        return decision.model_copy(update={
+            "action": "tool_run",
+            "command": "",
+            "answer": rejected_text,
+            "payload": {
+                **payload,
+                f"_gate.{gate}.rejected": True,
+                f"_gate.{gate}.reject_count": new_count,
+            },
+        })
+
+    async def _evaluate_kill_criteria_this_turn(
+        self,
+        *,
+        case_state: ReasoningCaseState,
+        turn_number: int,
+    ) -> None:
+        """Issue #249 W10 / #262 per-turn kill_criterion evaluator.
+
+        For every live hypothesis with a non-empty ``kill_criterion``,
+        cross the criterion tokens against the current tool-prefix
+        observable bodies. A token-overlap ratio above the configured
+        threshold writes one truth signal to the ledger. When the
+        criterion phrasing plus the observation body carry a
+        contradicting pair (guard-language on one side + missing /
+        unchecked language on the other) the signal is written as an
+        ``adjudication`` verdict ``refuted``; otherwise it lands as a
+        neutral ``discovery`` entry the aggregator can weigh.
+
+        Bounded per turn: at most
+        ``self._kill_criterion_scan_cap`` hypotheses are scanned and
+        each hypothesis writes at most one ledger entry per turn
+        (idempotency-keyed on ``kc:<branch>:<hyp>:<turn>``).
+        """
+        cap = int(getattr(self, "_kill_criterion_scan_cap", 0) or 0)
+        if cap <= 0:
+            return
+        threshold = float(
+            getattr(self, "_kill_criterion_overlap_threshold", 0.5) or 0.5,
+        )
+        live = [
+            h for h in case_state.hypotheses
+            if h.id and (getattr(h, "kill_criterion", "") or "").strip()
+        ]
+        if not live:
+            return
+        # Collect tool-prefix observable bodies once per turn.
+        obs_bodies: list[tuple[str, str, str]] = []
+        for key, val in case_state.observables.items():
+            if not isinstance(key, str):
+                continue
+            if not (
+                key.startswith("audit_mcp:")
+                or key.startswith("audit_mcp.")
+                or key.startswith("ida_headless:")
+                or key.startswith("ida_headless.")
+                or key.startswith("android_mcp:")
+                or key.startswith("android_mcp.")
+            ):
+                continue
+            if not isinstance(val, str) or not val:
+                continue
+            lowered = val.lower()
+            obs_bodies.append((key, val, lowered))
+        if not obs_bodies:
+            return
+        from aila.modules.vr.services.distinctness import tokenize as _tok
+        ledger = LedgerService()
+        for hyp in live[:cap]:
+            criterion = hyp.kill_criterion.strip()
+            crit_tokens = _tok(criterion)
+            if not crit_tokens:
+                continue
+            best_key: str | None = None
+            best_ratio = 0.0
+            best_body_low = ""
+            for key, _body, lowered in obs_bodies:
+                obs_tokens = _tok(lowered)
+                if not obs_tokens:
+                    continue
+                overlap = len(crit_tokens & obs_tokens) / float(
+                    len(crit_tokens),
+                )
+                if overlap > best_ratio:
+                    best_ratio = overlap
+                    best_key = key
+                    best_body_low = lowered
+            if best_key is None or best_ratio < threshold:
+                continue
+            crit_low = criterion.lower()
+            guard_side = any(m in crit_low for m in _KILL_GUARD_MARKERS)
+            missing_side = any(m in best_body_low for m in _KILL_MISSING_MARKERS)
+            refuted = guard_side and missing_side
+            payload = {
+                "kind": "kill_criterion_signal",
+                "hypothesis_id": hyp.id,
+                "criterion": criterion[:400],
+                "matched_observable": best_key,
+                "overlap_ratio": round(best_ratio, 3),
+                "author_branch_id": self.branch_id,
+                "turn": turn_number,
+            }
+            idem = f"kc:{self.branch_id}:{hyp.id}:{turn_number}"
+            try:
+                if refuted:
+                    await ledger.append_adjudication(
+                        self.investigation_id,
+                        self.branch_id,
+                        verdict="refuted",
+                        reason=(
+                            "kill_criterion satisfied by observation "
+                            f"{best_key} (overlap {best_ratio:.2f})"
+                        ),
+                        cited_evidence=[best_key],
+                        target_hypothesis_id=hyp.id,
+                    )
+                else:
+                    await ledger.append_general(
+                        self.investigation_id,
+                        self.branch_id,
+                        "discovery",
+                        payload,
+                        idempotency_key=idem,
+                    )
+            except (OSError, RuntimeError, ValueError) as exc:
+                _log.info(
+                    "kill_criterion signal write skipped inv=%s branch=%s "
+                    "hyp=%s err=%s",
+                    self.investigation_id, self.branch_id, hyp.id, exc,
+                )
+
+
+# ---------------------------------------------------------------------------
+# Wave-2 gate module-level constants.
+#
+# Kept out of the class body so unit tests can import the same values the
+# gates read at run time without instantiating a full researcher.
+# ---------------------------------------------------------------------------
+
+# Issue #249 W7: keyword set that marks an observation body as
+# STRONG-POSITIVE evidence a negative submit MUST NOT quietly override.
+# Kept small and deliberately concrete -- a wider set would fire on
+# neutral prose about crash reports and starve the negative path.
+_STRONG_POSITIVE_MARKERS: frozenset[str] = frozenset({
+    "reproduced",
+    "reproducer",
+    "poc succeeded",
+    "poc succeeds",
+    "confirmed exploit",
+    "confirmed vulnerability",
+    "confirmed overflow",
+    "arbitrary write",
+    "arbitrary read",
+    "rce confirmed",
+    "code execution",
+    "sigsegv",
+    "asan: ",
+    "==error==",
+    "heap-buffer-overflow",
+    "stack-buffer-overflow",
+    "use-after-free",
+})
+
+# Issue #251 evidentiary floor: MCP actions we accept as
+# reachability / taint probes. Anything else the branch runs is fine
+# but does not count toward the floor.
+_REACHABILITY_PROBE_ACTIONS: frozenset[str] = frozenset({
+    "read_function",
+    "read_lines",
+    "callers_of",
+    "callees_of",
+    "function_xrefs",
+    "get_xrefs",
+    "semantic_search",
+    "search_functions",
+    "search_constants",
+    "search_bitfields",
+    "find_related",
+    "deep_audit",
+})
+
+# Issue #249 W10 kill_criterion classifier hints. A guard-side
+# criterion talks about the presence of a check; a missing-side
+# observation body describes the absence of one. Both being present
+# in the matched pair upgrades the truth signal from a neutral
+# discovery to an ``adjudication`` verdict ``refuted``.
+_KILL_GUARD_MARKERS: tuple[str, ...] = (
+    "check", "bounds", "guard", "validate", "sanitize",
+    "length limit", "range check", "assert",
+)
+_KILL_MISSING_MARKERS: tuple[str, ...] = (
+    "no check", "unchecked", "no bounds", "no guard",
+    "missing check", "unsanitized", "not validated",
+    "without check", "no length",
+)
+
+
+def _extract_cited_tool_pairs(
+    payload: dict[str, Any],
+) -> set[tuple[str, str]]:
+    """Return the set of ``(server, action)`` pairs cited in a submit
+    payload's evidence chain (issue #247 B3).
+
+    Scans ``evidence_refs`` (bare strings + structured dicts),
+    ``provenance.primary_artifact`` / ``corroboration``, and any
+    ``tool_calls`` sidecar list the agent may attach. Recognises both
+    the ``server:action`` and ``server.action`` conventions VR uses.
+    """
+    pairs: set[tuple[str, str]] = set()
+
+    def _absorb_string(raw: str) -> None:
+        for match in _TOOL_CITE_RE.finditer(raw):
+            server = match.group(1).lower()
+            action = match.group(2).lower()
+            pairs.add((server, action))
+
+    for ref in payload.get("evidence_refs") or []:
+        if isinstance(ref, str):
+            _absorb_string(ref)
+        elif isinstance(ref, dict):
+            tool = ref.get("tool")
+            action = ref.get("action")
+            if isinstance(tool, str) and isinstance(action, str):
+                pairs.add((tool.strip().lower(), action.strip().lower()))
+            ref_val = ref.get("ref") or ref.get("id")
+            if isinstance(ref_val, str):
+                _absorb_string(ref_val)
+    provenance = payload.get("provenance") or {}
+    if isinstance(provenance, dict):
+        prim = provenance.get("primary_artifact")
+        if isinstance(prim, str):
+            _absorb_string(prim)
+        for corr in provenance.get("corroboration") or []:
+            if isinstance(corr, str):
+                _absorb_string(corr)
+    for call in payload.get("tool_calls") or []:
+        if isinstance(call, dict):
+            tool = call.get("tool")
+            action = call.get("action") or call.get("name")
+            if isinstance(tool, str) and isinstance(action, str):
+                pairs.add((tool.strip().lower(), action.strip().lower()))
+    return pairs
+
+
+_TOOL_CITE_RE = re.compile(
+    r"\b(audit_mcp|ida_headless|android_mcp|knowledge)"
+    r"[:.]([a-z_][a-z0-9_]*)\b",
+    re.IGNORECASE,
+)
 
 
 def _render_target_snapshot_section(snapshot: dict[str, Any]) -> str:

@@ -548,6 +548,77 @@ class ClaimVerifierAgentBase:
 
     # ---- Hooks with defaults (VR-shaped) that subclasses may override ----
 
+    async def _load_evidence_packet(
+        self,
+        *,
+        canonical: Any,
+        canonical_payload: dict[str, Any],
+        index_id: str,
+    ) -> dict[str, Any]:
+        """Assemble the proposing-branch evidence packet.
+
+        Default returns an empty dict so malware / forensics keep the
+        pre-existing behaviour (extractor and verdict see the claim +
+        panel narrative only). VR overrides this to read the proposing
+        branch's ``case_state_json`` observables, its cited evidence
+        refs, and the ``McpCallLogRecord`` tool log for the
+        investigation / branch (issue #01 G1,
+        `.run/vr_truth_adjudication_source.md`).
+
+        Contract shape when non-empty (batch decision):
+        ``{"case_state": dict, "citations": list[str],
+        "tool_calls": [{"tool": str, "args": dict,
+        "result_digest": str}]}``
+        """
+        del canonical, canonical_payload, index_id
+        return {}
+
+    def _render_evidence_packet_section(
+        self, packet: dict[str, Any],
+    ) -> str:
+        """Render the evidence packet as a prompt section injected into
+        BOTH the extractor and verdict prompts.
+
+        Default returns ``""`` -- a subclass that did not override
+        :meth:`_load_evidence_packet` produces the empty packet and
+        therefore no injected section, preserving the pre-existing
+        extractor / verdict input shape for modules that do not
+        participate in the VR-truth G1 evidence-packet flow.
+        """
+        del packet
+        return ""
+
+    def _is_auto_promotable_source_kind(self, kind: str) -> bool:
+        """Return True when ``kind`` is eligible for auto-promotion.
+
+        Default keeps the pre-existing narrow equality check
+        (``kind == self._promote_source_kind``) so malware / forensics
+        continue to promote only the single source kind they declared.
+        VR overrides this (issue #260,
+        `.run/vr_truth_adjudication_source.md`) to widen the gate past
+        the ``ASSESSMENT_REPORT``-only path so any dispatched-or-
+        about-to-dispatch confirmed positive kind can be endorsed by
+        the verifier while the already-promoted / confidence-floor /
+        negative-claim guards remain in force.
+        """
+        return kind == self._promote_source_kind
+
+    async def _apply_verdict_quorum_override(
+        self, verdict_parsed: ClaimVerifierVerdictResponse,
+    ) -> ClaimVerifierVerdictResponse:
+        """Optionally rewrite the LLM's verdict against a precondition
+        quorum. Default is identity (no rewrite) so malware / forensics
+        continue to bind exactly to whatever the verdict LLM returned.
+
+        Async so overriding subclasses can read module ConfigRegistry
+        threshold knobs. VR overrides this (issue #260, section 5 of
+        `.run/vr_truth_adjudication_source.md`) to relax the implicit
+        100%-preconditions bar down to a configurable threshold that
+        counts ``true`` preconditions against the total after
+        excluding ``unknown`` outcomes and zeroing on any ``false``.
+        """
+        return verdict_parsed
+
     def _check_verifiable_outcome_kind(
         self, canonical_kind: str,
     ) -> str | None:
@@ -670,9 +741,24 @@ class ClaimVerifierAgentBase:
             f"## Available audit-mcp probes (live signatures)\n\n{signatures_block}\n\n"
             if signatures_block else ""
         )
+        # VR-truth G1 (issue #01, #247): assemble the proposing-branch
+        # evidence packet (case_state observables + citations + tool
+        # log) and inject it into BOTH LLM stages so the extractor and
+        # verdict reason about the same evidence the panel already
+        # cited, not just the prose ``answer`` field.
+        evidence_packet = await self._load_evidence_packet(
+            canonical=canonical,
+            canonical_payload=canonical_payload,
+            index_id=index_id,
+        )
+        evidence_section = self._render_evidence_packet_section(evidence_packet)
+        evidence_prefix = (
+            f"{evidence_section}\n\n" if evidence_section else ""
+        )
         extractor_input = (
             self._extractor_prelude(loaded["kind"], canonical_kind, index_id)
             + f"{sig_section}"
+            + f"{evidence_prefix}"
             + f"{claim_section}"
             + f"{panel_section}\n"
         )
@@ -786,7 +872,11 @@ class ClaimVerifierAgentBase:
         )
 
         # Stage 3: verdict -- feed precondition + probe result pairs back
-        verdict_input = self._render_verdict_input(preconditions, probe_results)
+        # plus the same proposing-branch evidence packet the extractor
+        # saw (VR-truth G1, issue #01).
+        verdict_input = evidence_prefix + self._render_verdict_input(
+            preconditions, probe_results,
+        )
         # Stream B2: verdict also flows through chat_structured. The
         # explicit ``verdict`` enum plus 0.0-1.0 confidence bound means
         # a parse-hostile reply surfaces as a defect (WARNING log +
@@ -829,6 +919,13 @@ class ClaimVerifierAgentBase:
                 self.investigation_id, exc,
             )
             return {"status": "failed", "reason": "verdict_schema_invalid"}
+
+        # VR-truth issue #260 / adjudication-source section 5: relax the
+        # implicit 100%-preconditions bar. Modules that opt into a
+        # quorum threshold rewrite the LLM's verdict here; the default
+        # base hook is identity so malware / forensics stay bound to
+        # exactly what the verdict LLM returned.
+        verdict_parsed = await self._apply_verdict_quorum_override(verdict_parsed)
 
         # Stage 4: persist verifier_report on canonical outcome
         verifier_report = {
@@ -951,7 +1048,7 @@ class ClaimVerifierAgentBase:
             )).first()
             if original is None:
                 return {"status": "skipped", "reason": "outcome_disappeared"}
-            if original.outcome_kind != self._promote_source_kind:
+            if not self._is_auto_promotable_source_kind(original.outcome_kind):
                 return {
                     "status": "skipped",
                     "reason": (

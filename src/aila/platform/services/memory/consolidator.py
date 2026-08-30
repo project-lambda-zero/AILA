@@ -132,8 +132,16 @@ _TERMINAL_STATUSES: frozenset[str] = frozenset({
 
 # Ledger kinds worth feeding the distillation prompt. ``objective`` is
 # stateful bookkeeping; ``decision`` is the quorum's approval envelope,
-# not a first-class trace of what was learned.
-_EPISODIC_KINDS: tuple[str, ...] = ("discovery", "note")
+# not a first-class trace of what was learned. ``adjudication`` (issue
+# #07 -- ledger economics, RFC #253/#266) carries reject / refute
+# verdicts against a hypothesis or outcome: the single most reusable
+# fact an investigation produces, so the distiller MUST ingest it as
+# negative knowledge alongside the discovery / note traces. Adjudications
+# are not confirmation-gated -- the ``confirmed_only=True`` upstream
+# filter is discovery-only by construction (see
+# :func:`aila.platform.services.ledger._confirmed_discovery_ids`) so
+# non-discovery kinds pass through untouched.
+_EPISODIC_KINDS: tuple[str, ...] = ("discovery", "note", "adjudication")
 
 # Isolation tuple used at every reachable failure point below. Bare
 # ``except Exception`` is banned by the honesty audit, and a per-

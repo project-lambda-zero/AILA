@@ -114,6 +114,16 @@ def _rfc24_query_from_case_state(case_state: Any) -> str:
 _MAX_LEDGER_WRITES_PER_TURN = 5
 _LEDGER_BOARD_MAX_ENTRIES = 15
 _LEDGER_BOARD_PREVIEW = 160
+# Issue #02 L1 -- deepdive. The 160-char preview is fine for chatter
+# (note / request / decision envelopes) but truncates the load-bearing
+# claim kinds to a stub, so sibling branches could not tell a peer's
+# discovery / adjudication apart from their own and re-proposed
+# near-identical claims. These kinds carry the reusable judgement (what
+# was found, what was killed and why), so they get a wider window.
+_LEDGER_BOARD_FULL_KINDS: frozenset[str] = frozenset(
+    {"discovery", "adjudication"},
+)
+_LEDGER_BOARD_PREVIEW_FULL = 600
 
 
 @dataclass
@@ -494,8 +504,13 @@ class AgentTurnRunnerBase:
         for entry in recent:
             payload = entry.get("payload") or {}
             preview = json.dumps(payload, ensure_ascii=False)
-            if len(preview) > _LEDGER_BOARD_PREVIEW:
-                preview = preview[:_LEDGER_BOARD_PREVIEW] + "..."
+            cap = (
+                _LEDGER_BOARD_PREVIEW_FULL
+                if entry.get("kind") in _LEDGER_BOARD_FULL_KINDS
+                else _LEDGER_BOARD_PREVIEW
+            )
+            if len(preview) > cap:
+                preview = preview[:cap] + "..."
             author = entry.get("author_branch_id") or "?"
             status = entry.get("status")
             status_tag = f" status={status}" if status else ""

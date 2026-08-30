@@ -148,6 +148,33 @@ class VRConfigSchema(ModuleConfigBase):
             "synthesis pipeline's medium/high threshold."
         ),
     )
+    claim_verifier_precondition_true_threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Quorum threshold for the verifier verdict-quorum override "
+            "(VR-truth issue #260, adjudication-source section 5). When "
+            "the LLM returns 'inconclusive' but zero preconditions "
+            "resolved 'false' and at least this fraction of "
+            "non-'unknown' preconditions resolved 'true', the verdict "
+            "is rewritten to 'confirmed'. Default 0.5 = simple majority "
+            "of resolvable preconditions with zero refutations. Set to "
+            "1.0 to reproduce the pre-relaxation 100%-preconditions "
+            "bar; set to 0.0 to disable the override entirely."
+        ),
+    )
+    claim_verifier_broaden_promote_kinds: bool = Field(
+        default=True,
+        description=(
+            "When true (default), the verifier auto-promote path accepts "
+            "any positive-or-inconclusive outcome kind (i.e. everything "
+            "except AUDIT_MEMO) as a promotable source instead of only "
+            "ASSESSMENT_REPORT (VR-truth issue #260). When false, only "
+            "the module's declared _promote_source_kind is eligible -- "
+            "the pre-widening behaviour."
+        ),
+    )
     investigation_total_turn_cap: int = Field(
         default=200,
         ge=50,
@@ -573,6 +600,96 @@ class VRConfigSchema(ModuleConfigBase):
             "the VR PDF reporter. Empty (default) resolves to "
             "``~/.cache/audit-mcp/clones``. Env: "
             "AILA_VR_AUDIT_MCP_CLONE_DIR."
+        ),
+    )
+
+    # --- Deferred / partial VR-truth gates (wave 2) --------------------
+    # These knobs drive the second-wave submit gates added to the
+    # honest researcher (issues #247, #249, #251, #254). Each gate
+    # mirrors the reject-under-cap / force-through-over-cap pattern of
+    # the existing hypothesis gates so an operator tuning one applies
+    # the same mental model everywhere. Turn a gate OFF by setting its
+    # ``enabled`` flag to false; the reject cap uses
+    # ``unresolved_hyp_reject_cap`` as the shared ceiling.
+    require_confirmed_evidence_on_positive_submit: bool = Field(
+        default=True,
+        description=(
+            "Issue #254 / W3: when a submit's outcome kind resolves to a "
+            "positive polarity (direct_finding, crash_triage_report), "
+            "require non-empty evidence_refs on the payload AND at least "
+            "one live hypothesis carrying a ``confirmed_by`` citation. "
+            "Rejected under the shared cap with a directive telling the "
+            "branch to add checkable refs; force-through stamps a "
+            "``positive_submit_evidence_advisory`` on the payload."
+        ),
+    )
+    contradiction_gate_enabled: bool = Field(
+        default=True,
+        description=(
+            "Issue #249 W7 pre-draft contradiction gate: block a "
+            "negative or inconclusive submit whose payload cites a tool "
+            "observable in case_state that carries strong-positive "
+            "markers (crash / exploit / overflow / reproduced / "
+            "confirmed). Coordinates with the F1 confirmed-hypothesis "
+            "gate: this variant catches the cited-observable case F1 "
+            "does not cover."
+        ),
+    )
+    tool_telemetry_crosscheck_enabled: bool = Field(
+        default=True,
+        description=(
+            "Issue #247 B3 tool-telemetry cross-check: reject a submit "
+            "whose evidence_refs cite an MCP tool this branch never "
+            "actually invoked (as recorded in ``mcp_call_log``). Under "
+            "the cap the gate names the missing tool and asks the "
+            "branch to either run it or drop the cite; over the cap it "
+            "stamps a ``tool_telemetry_advisory`` on the payload."
+        ),
+    )
+    tool_work_floor_probes: int = Field(
+        default=1,
+        ge=0,
+        description=(
+            "Issue #251 evidentiary-floor probes: minimum number of "
+            "successful reachability / taint probe tool calls the "
+            "branch must have logged before a positive submit is "
+            "credible. Recognized actions live in "
+            ":data:`aila.modules.vr.agents.vuln_researcher."
+            "_REACHABILITY_PROBE_ACTIONS`. 0 disables the floor."
+        ),
+    )
+    kill_criterion_scan_cap: int = Field(
+        default=20,
+        ge=0,
+        description=(
+            "Issue #249 W10 / #262 per-turn kill_criterion evaluator: "
+            "maximum number of live hypotheses to scan per turn for a "
+            "kill_criterion signal against current observables. The "
+            "scan is a cheap token-overlap check so this cap bounds "
+            "the worst-case work per turn. 0 disables the evaluator."
+        ),
+    )
+    kill_criterion_overlap_threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Issue #249 W10: minimum token-overlap ratio between a "
+            "hypothesis kill_criterion and a tool-observation body "
+            "before the evaluator writes a truth signal to the ledger. "
+            "0.5 is deliberately conservative -- half of the criterion "
+            "tokens must be present in the observation."
+        ),
+    )
+    distinctness_score_enabled: bool = Field(
+        default=True,
+        description=(
+            "Issue #256 / #010 / #10: stamp ``distinctness_score`` "
+            "(0.0-1.0) on every positive-polarity submit payload, "
+            "measuring the finding's token distance from the seed "
+            "hypotheses and prior outcomes on this investigation. Off "
+            "removes the field entirely -- no field means the operator "
+            "aggregator falls back to its pre-#256 behaviour."
         ),
     )
 

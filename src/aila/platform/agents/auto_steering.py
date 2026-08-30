@@ -36,6 +36,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from datetime import timedelta
 from typing import Any
 
 import httpx
@@ -158,6 +159,45 @@ def _detect_read_lines_file_not_found(
     # Accept both audit-mcp's "file not found" and the bridge's wrapped
     # variants ("read_lines: file not found: <path>").
     return "file not found" in err or "no such file" in err
+
+
+def _detect_read_function_without_prior_search(
+    server_id: str, tool_name: str, args: dict, raw: dict,
+) -> bool:
+    """Issue #251 / doc #15 sec 6 (D3) -- the largest ``mcp_call_log``
+    error class is ``read_function`` on a symbol the agent guessed
+    without first calling ``search_functions`` to confirm it exists.
+    One symbol (``ngx_http_mp4_parse_atom``) alone burned 136 calls in
+    the corpus. Sync detector fires on shape; the per-branch check
+    for a prior ``search_functions`` call happens in
+    :func:`_evaluate_rules` (needs DB access) before we post.
+
+    Shape gate:
+      * server + tool == ``audit_mcp.read_function``
+      * a symbol name is present on the request (nothing to enforce
+        against otherwise)
+      * the response DID NOT succeed with a real body -- either
+        ``status=error`` OR the middleware's honest
+        ``no_body_available`` marker landed on the payload OR the
+        error text names the "not indexed" fault. A successful read
+        does not need the steering: the payoff of enforcing
+        search-first is skipping the loop of guessed-name misses.
+    """
+    if (server_id, tool_name) != ("audit_mcp", "read_function"):
+        return False
+    symbol = str(
+        args.get("function") or args.get("symbol") or args.get("name") or "",
+    ).strip()
+    if not symbol:
+        return False
+    if raw.get("status") == "error":
+        return True
+    err = str(raw.get("error") or "").lower()
+    if "not indexed" in err or "not found" in err:
+        return True
+    # Honest ``no_body_available`` marker from adapt_read_function
+    # (issue #263) -- covers the file-header indexer fault path.
+    return bool(raw.get("no_body_available"))
 
 
 def _detect_tool_kwarg_rejected(
@@ -389,6 +429,111 @@ async def _derive_file_not_found_correction(
         "matches the function you mean, the function likely lives in "
         "a sibling repo not indexed here -- terminal_submit with a "
         "no-finding outcome rather than retry the same dead path."
+    )
+
+
+async def _recent_search_functions_symbols(
+    branch_id: str, message_model: Any, limit: int = 25,
+) -> set[str]:
+    """Return the set of symbol fragments this branch has already
+    searched via ``audit_mcp.search_functions`` (issue #251, D3).
+
+    Symbol matches loosely: we keep the raw ``pattern`` and ``name``
+    args verbatim. A caller checking whether ``foo_bar`` was searched
+    should compare substring-wise (``"foo_bar" in prior``) so a broad
+    pattern (``foo_``) counts as coverage for the specific miss.
+
+    Pulls the most recent ``limit`` tool_call rows on this branch;
+    filters to ``search_functions`` payloads; extracts the ``pattern``
+    / ``name`` / ``query`` args. Errors collapse to an empty set --
+    the caller treats "unknown history" as "not searched" which is the
+    safe direction (steer toward search rather than let a guess loop).
+    """
+    if not branch_id or message_model is None:
+        return set()
+    symbols: set[str] = set()
+    try:
+        async with UnitOfWork() as uow:
+            rows = (await uow.session.exec(
+                _select(message_model)
+                .where(message_model.branch_id == branch_id)
+                .where(message_model.payload_kind == PayloadKind.TOOL_CALL.value)
+                .where(message_model.superseded_at.is_(None))
+                .order_by(message_model.created_at.desc())
+                .limit(limit)
+            )).all()
+    except SQLAlchemyError as exc:
+        _log.warning(
+            "auto_steering: recent_search_functions load failed "
+            "branch=%s err=%s", branch_id, exc,
+        )
+        return set()
+    for row in rows:
+        try:
+            payload = json.loads(row.payload_json or "{}")
+            cmd = json.loads(payload.get("command") or "{}")
+        except (ValueError, TypeError):
+            continue
+        tool = str(cmd.get("tool") or "")
+        # Canonical form is ``audit_mcp.search_functions``; the drift
+        # spellings (``audit-mcp.``, bare) are collapsed at the adapter
+        # boundary but historic rows may still carry the raw form.
+        if not tool.endswith("search_functions"):
+            continue
+        call_args = cmd.get("args") or {}
+        for key in ("pattern", "name", "query", "symbol"):
+            val = call_args.get(key)
+            if isinstance(val, str) and val.strip():
+                symbols.add(val.strip())
+    return symbols
+
+
+def _symbol_covered_by_prior_search(
+    symbol: str, prior_searches: set[str],
+) -> bool:
+    """Loose coverage check: a prior search covers ``symbol`` if any
+    prior pattern is a substring of ``symbol`` (``foo_`` covers
+    ``foo_bar``) or vice versa (``foo_bar`` covers ``foo`` when the
+    agent narrowed after a broad hit)."""
+    if not symbol or not prior_searches:
+        return False
+    needle = symbol.lower()
+    for prior in prior_searches:
+        p = prior.lower()
+        if p and (p in needle or needle in p):
+            return True
+    return False
+
+
+async def _derive_search_first_correction(
+    symbol: str, file_path: str, raw_error: str,
+) -> str:
+    """Compose the steering body for the search-first enforcement rule.
+    Synchronous derivation -- the correction is a fixed contract
+    reminder, no remote calls are needed to produce the actionable
+    text (unlike the semantic_search-driven eof/file-header rules).
+    """
+    err_line = raw_error.strip() or (
+        "audit_mcp could not resolve the requested symbol"
+    )
+    file_hint = f" in `{file_path}`" if file_path else ""
+    return (
+        f"AUTO-STEERING: read_function({symbol!r}){file_hint} failed "
+        f"because the symbol is not indexed. Bridge error:\n\n"
+        f"  {err_line}\n\n"
+        "You called read_function on a symbol you never confirmed via "
+        "search_functions first. On this codebase that pattern is the "
+        "single largest error class (doc #15 sec 4) -- guessed names "
+        "loop for hundreds of turns because retries keep returning the "
+        "same 'not indexed' fault.\n"
+        "REQUIRED next action:\n"
+        f"  1. audit_mcp.search_functions(index_id=<I>, pattern={symbol!r})\n"
+        "  2. Pick the exact returned name (or a fragment that appears "
+        "in a returned row).\n"
+        "  3. THEN call read_function with the confirmed name, or call "
+        "read_lines against the coordinate the search returned.\n"
+        "Do NOT re-issue read_function with the same guessed name -- "
+        "the answer will not change."
     )
 
 
@@ -972,6 +1117,53 @@ async def _recent_semantic_queries(
     return queries
 
 
+# Minimum wall-clock gap between two fires of the same base steering
+# key. Used ONLY by rules that opt out of ACK-based dedup because the
+# fault they detect is a recurring index defect the agent cannot ACK
+# away (issue #251 / doc #15 sec 4 / doc #28 sec 3 -- the read_function
+# indexer-fault rule was permanently suppressed after one un-acked post
+# because it fired on a class of failures the agent never confirmed
+# receipt of; the fault stayed, the steering did not re-post).
+_RECENT_POST_WINDOW: timedelta = timedelta(minutes=15)
+
+
+async def _recent_key_posted(
+    investigation_id: str, base_key: str, within: timedelta,
+    *, message_model: Any,
+) -> bool:
+    """True when an auto-steering with ``auto_steering_key`` starting
+    with ``base_key`` was posted in the last ``within`` window,
+    regardless of ACK state. Companion to :func:`_already_posted` used
+    by rules that must re-fire when their fault recurs.
+
+    Prefix match, not exact: the caller may append a rotating
+    discriminator (turn number, timestamp bucket, occurrence count)
+    to the actual posted key so each fire is DB-unique yet still
+    dedup-guarded by the shared prefix. A DB failure collapses to
+    ``False`` -- letting a steering fire once too many is strictly
+    less harmful than silently swallowing every re-fire.
+    """
+    since = utc_now() - within
+    try:
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _select(message_model.id)
+                .where(message_model.investigation_id == investigation_id)
+                .where(message_model.auto_steering_key.like(f"{base_key}%"))
+                .where(message_model.superseded_at.is_(None))
+                .where(message_model.created_at >= since)
+                .limit(1)
+            )).first()
+    except SQLAlchemyError as exc:
+        _log.warning(
+            "auto_steering: recent_key_posted lookup failed inv=%s "
+            "base_key=%s err=%s",
+            investigation_id, base_key, exc,
+        )
+        return False
+    return row is not None
+
+
 async def _already_posted(
     investigation_id: str, auto_steering_key: str,
     *, message_model: Any, branch_model: Any,
@@ -1185,27 +1377,84 @@ async def _evaluate_rules(
             message_model=message_model, branch_model=branch_model,
         )
 
-    # Rule 2: read_function returned file header (indexer fault)
+    # Rule 2: read_function returned file header (indexer fault).
+    #
+    # Issue #251 / doc #15 sec 4 -- this rule USED to gate on the
+    # ACK-based :func:`_already_posted`; when the agent never ACKed
+    # the first steering (common: the fault fires in the middle of a
+    # tool-call cascade), the steering was permanently suppressed and
+    # subsequent identical faults produced no correction. Un-suppress:
+    # gate on the wall-clock recency window instead so the steering
+    # RE-FIRES every time the fault recurs (with a 15-minute floor to
+    # avoid intra-turn spam), and salt each fire's key with the
+    # response fingerprint so the DB unique constraint stays honest.
     if _detect_read_function_returned_file_header(server_id, tool_name, args, raw_result):
         file_path = str(args.get("file_path") or "")
         fn_name = str(args.get("name") or "")
         index_id = str(args.get("index_id") or "")
-        key = f"read_function_indexer_fault:{file_path}:{fn_name}"
-        if await _already_posted(investigation_id, key,
-                                     message_model=message_model,
-                                     branch_model=branch_model):
+        base_key = f"read_function_indexer_fault:{file_path}:{fn_name}"
+        if await _recent_key_posted(
+            investigation_id, base_key, _RECENT_POST_WINDOW,
+            message_model=message_model,
+        ):
             return None
         correction = await _derive_file_header_correction(
             bridge_base_url, index_id, file_path, fn_name,
         )
         if not correction:
             return None
+        # Rotating discriminator so re-fires get DB-unique keys while
+        # the shared prefix keeps the recency dedup honest. Bucket at
+        # 60s so a burst of retries within one worker tick collapses
+        # to one row -- coarse enough for the DB partial-unique index,
+        # fine enough to reveal the pattern in the negative-example
+        # corpus.
+        bucket = int(utc_now().timestamp()) // 60
+        key = f"{base_key}:b{bucket}"
         return await _post_and_record_negative(
             investigation_id, branch_id, correction, key,
             rule_fired="read_function_indexer_fault",
             server_id=server_id, tool_name=tool_name,
             message_model=message_model, branch_model=branch_model,
         )
+
+    # Rule 6 (issue #251 / doc #15 sec 6 D3): read_function on a
+    # symbol this branch never search_functions'd first. Fires on any
+    # ``not indexed`` / ``no_body_available`` outcome; enforces the
+    # documented tool ordering so the guessed-name loop that dominates
+    # the error corpus (136 calls on one symbol alone, doc #15 sec 4)
+    # cannot continue.
+    if _detect_read_function_without_prior_search(
+        server_id, tool_name, args, raw_result,
+    ):
+        symbol = str(
+            args.get("function") or args.get("symbol")
+            or args.get("name") or "",
+        ).strip()
+        prior_searches = await _recent_search_functions_symbols(
+            branch_id, message_model,
+        )
+        if _symbol_covered_by_prior_search(symbol, prior_searches):
+            # Agent did the right thing; the miss is a real "no such
+            # symbol" outcome, not a workflow violation. Rules 2/3
+            # cover the substantive index faults on this same call.
+            pass
+        else:
+            file_path = str(args.get("file_path") or "")
+            key = f"read_function_without_search:{symbol}"
+            if not await _already_posted(
+                investigation_id, key,
+                message_model=message_model, branch_model=branch_model,
+            ):
+                correction = await _derive_search_first_correction(
+                    symbol, file_path, str(raw_result.get("error") or ""),
+                )
+                return await _post_and_record_negative(
+                    investigation_id, branch_id, correction, key,
+                    rule_fired="read_function_without_search",
+                    server_id=server_id, tool_name=tool_name,
+                    message_model=message_model, branch_model=branch_model,
+                )
 
     # Rule 3: read_lines returned file-not-found error
     if _detect_read_lines_file_not_found(server_id, tool_name, args, raw_result):

@@ -323,26 +323,45 @@ _CONFIG_SAFE_ERRORS: tuple[type[BaseException], ...] = (
 
 
 def is_prompt_layout_enabled(registry: ConfigRegistry | None) -> bool:
-    """Return True iff ``platform.prompt_layout_enabled`` resolves truthy.
+    """Return True iff ``platform.prompt_layout_enabled`` is not explicitly disabled.
 
-    Any registry read failure (missing registry, DB fault, malformed
-    value) returns False so a config-plane outage cannot silently
-    reorder prompts and break the caller's byte-stability
-    expectations.
+    Issue .run/issues/09_turn_tool_machine.md ``## Fix`` bullet 1
+    ("Enable provider prompt caching by placing immutable sections
+    first. No migration."): the default flipped from OFF to ON so
+    provider prefix caches (Anthropic ~90% read discount at a ~2-read
+    break-even, OpenAI 24h retention on recent models) can hit on the
+    long-horizon turn loop. Operators keep the kill switch by writing
+    a falsy value into ``platform.prompt_layout_enabled``; every
+    other resolution (missing key, registry outage, non-parseable
+    value) now returns True so a fresh deployment gets the cheaper
+    prefix layout without an explicit opt-in.
+
+    A registry read fault still degrades safely: it returns True (the
+    new default), which produces the byte-stable immutable prefix the
+    caller already handles under the ON path -- the OFF path was the
+    behaviour-identical legacy tail and lands only on an explicit
+    operator kill switch.
     """
     if registry is None:
-        return False
+        return True
     try:
         raw = registry.get_sync("platform", "prompt_layout_enabled")
     except _CONFIG_SAFE_ERRORS:
-        return False
+        return True
+    if raw is None:
+        return True
     if isinstance(raw, bool):
         return raw
     if isinstance(raw, (int, float)):
         return bool(raw)
     if isinstance(raw, str):
-        return raw.strip().lower() in {"1", "true", "yes", "on"}
-    return False
+        token = raw.strip().lower()
+        if token in {"0", "false", "no", "off"}:
+            return False
+        if token in {"1", "true", "yes", "on"}:
+            return True
+        return True
+    return True
 
 
 def resolve_cache_ttl_seconds(registry: ConfigRegistry | None) -> int:

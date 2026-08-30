@@ -301,7 +301,16 @@ class TestGateCorroborationE1:
         )
         ctx: dict[str, Any] = {"task_type": "scoring", "response": response}
 
-        call_fn = FakeCallFn([])
+        # #272 inversion: the downgraded, uncorroborated HIGH is now the
+        # consensus re-sample target. Even when every re-draw also
+        # self-reports high confidence, the E1 invariant holds -- without
+        # corroboration the ceiling stays MEDIUM (clamped), never HIGH.
+        resample = LLMResponse(
+            content=json.dumps({"confidence_score": 0.95, "answer": "yes"}),
+            model="test-model",
+            finish_reason="stop",
+        )
+        call_fn = FakeCallFn([resample, resample, resample])
         step = make_gate_step(default_config, call_fn, emitter=None)
         await step(ctx, [], routing)
 
@@ -309,6 +318,9 @@ class TestGateCorroborationE1:
         assert ctx.get("confidence_flagged") is True
         assert ctx.get("high_downgraded_no_corroboration") is True
         assert ctx.get("corroboration_present") is False
+        # The overconfident tail paid the consensus cost (inverted target).
+        assert ctx.get("consensus_attempted") is True
+        assert ctx.get("consensus_reason") == "high_downgraded_no_corroboration"
 
     @pytest.mark.asyncio
     async def test_high_with_corroboration_flag_auto_accepts(
@@ -385,13 +397,22 @@ class TestGateCorroborationE1:
             },
         }
 
-        call_fn = FakeCallFn([])
+        # A hallucinated citation is not corroboration, so the HIGH is
+        # downgraded and re-sampled; the clamp keeps it MEDIUM even though
+        # the re-draws repeat the high self-report.
+        resample = LLMResponse(
+            content=json.dumps({"confidence_score": 0.95, "answer": "yes"}),
+            model="test-model",
+            finish_reason="stop",
+        )
+        call_fn = FakeCallFn([resample, resample, resample])
         step = make_gate_step(default_config, call_fn, emitter=None)
         await step(ctx, [], routing)
 
         assert ctx["confidence"] == "MEDIUM"
         assert ctx.get("high_downgraded_no_corroboration") is True
         assert ctx.get("corroboration_present") is False
+        assert ctx.get("consensus_attempted") is True
 
     @pytest.mark.asyncio
     async def test_medium_without_corroboration_unchanged(

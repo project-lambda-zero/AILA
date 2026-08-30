@@ -642,6 +642,43 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
                     investigation_id, finding_id, exc, exc_info=True,
                 )
 
+            # Issue #06 -- knowledge reuse (RFC #252/#256/#268). The
+            # finding mirror above lands in the ``vr.finding.workspace``
+            # namespace, but the cross-investigation retrieval pool reads
+            # the ``vr.pattern.workspace`` namespace, where the historical
+            # engine writer stamped ``trust_tier=unreviewed`` so
+            # ``retrieve_routed`` filtered every engine-generated pattern
+            # out. A dispatched DIRECT_FINDING is verifier-confirmed and
+            # quorum-approved, so promote it into the pattern pool stamped
+            # ``confirmed=True`` -- ``trust_tier_from_namespace`` lifts the
+            # row to ``TRUST_TIER_VERIFIED`` and the next hunt on this
+            # target retrieves it instead of restarting cold. Best-effort
+            # and separately guarded so a pool-write fault never unwinds
+            # the already-committed finding.
+            try:
+                await self._knowledge.promote_confirmed_finding_to_pool(
+                    module_id="vr",
+                    workspace_id=ws_id,
+                    content=finding_text,
+                    dedup_key=f"pattern:{finding_id}",
+                    metadata={
+                        "investigation_id": investigation_id,
+                        "finding_id": finding_id,
+                        "target_id": target_row.id,
+                        "target_signature": target_signature,
+                        "vulnerable_function": vulnerable_function,
+                        "crash_type": crash_type,
+                        "outcome_id": outcome_id,
+                    },
+                    team_id=target_row.team_id,
+                )
+            except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
+                _log.warning(
+                    "direct_finding pattern-pool promotion failed "
+                    "inv=%s finding=%s: %s",
+                    investigation_id, finding_id, exc, exc_info=True,
+                )
+
         # fix §236 -- variant spawn loop is non-atomic across child
         # investigations (each _spawn_variant_child has its own UoW +
         # ARQ enqueue). A crash mid-loop used to leave N children alive

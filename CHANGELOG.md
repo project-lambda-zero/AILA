@@ -7,7 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.5.51] - 2026-08-26 -- Unified specialist registry, prompt version management, scan pipeline resilience, and VR confirmation wiring
+## [0.5.51] - 2026-08-26 -- Unified specialist registry, prompt version management, scan pipeline resilience, VR confirmation wiring, adjudication ledger, and aggregation spine
 
 ### Added
 
@@ -17,17 +17,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Added `useScanTasks()` live polling hook for vulnerability scans with dynamic interval backoff and active-scan banner in the vulnerability scan console.
 - Auto-promotion of a verifier-confirmed finding now fires for any dispatched finding above the confidence floor, not only an operator-skipped dead-end. The confidence-floor, negative-claim, and already-promoted guards continue to bound it.
 - The confidence gate now requires a corroborating signal before an auto-accept. A high self-reported confidence on its own no longer clears the bar; an uncorroborated high-confidence response drops to the flag path.
+- Reject and refute verdicts are now a first-class `adjudication` ledger kind. A branch that kills a hypothesis or refutes a claim records the verdict, reason, and cited evidence on the shared board, so sibling branches read the dead lead instead of re-exploring it and the consolidator distills it as negative knowledge.
+- An investigation-level finalize aggregation now runs at the emit chokepoint. It groups outcomes by claim signature, merges duplicate-signature branch pairs, selects the strongest surviving positive, and writes settled-claim markers so a re-enqueue fork does not re-propose a claim the run already settled.
+- A falsifier persona runs an adversarial pass against the strongest positive at finalize; a refuted verdict retracts the outcome rather than dispatching it.
+- A confirmed finding is now promoted into the verified pattern retrieval pool on dispatch, stamped as confirmed so the next hunt on the same target retrieves it instead of restarting cold.
+- The claim verifier now reads an evidence packet built from the branch case state and its recorded tool-call telemetry, and refuses a positive dispatch when a submitted citation is absent from the telemetry.
+- The confirming provenance of a hypothesis (`confirmed_by`) is surfaced in the hypothesis projection and endpoint so an operator sees which beliefs the engine holds as proven.
+- A positive submit now requires the branch to carry a confirmation provenance and evidence references; a per-turn evaluator scores the stated kill criterion against observed evidence, and a pre-draft contradiction gate blocks a submit that contradicts a settled claim.
+- Tool adapters now report an honest not-found result with the resolving coordinate (file:line) instead of returning an indexer header, normalize tool namespaces at the parse boundary, and enforce a search-before-read and a minimum tool-work floor before a dispatch is allowed.
 
 ### Changed
 
 - A quorum-approved outcome now records the confirming provenance on the originating hypothesis, so a confirmed belief reaches the branch state the engine reasons from instead of remaining on the shared ledger. A taint-confirmed discovery records the same provenance on its hypothesis at post time.
 - Confirmed-finding promotion is enabled by default, so the branch that holds a confirmed hypothesis is driven to submit the finding rather than close on a weaker polarity.
 - The claim verifier produces its extraction and verdict through schema-validated structured output. A malformed verdict now surfaces as a schema failure rather than defaulting to inconclusive without a signal.
-- Knowledge consolidation ingests confirmed discoveries only, and semantic or pattern knowledge is tiered verified only when it carries a confirmation marker, so unconfirmed model output is no longer re-served to later investigations as verified.
+- Knowledge consolidation ingests confirmed discoveries only, and semantic or pattern knowledge is tiered verified only when it carries a confirmation marker, so unconfirmed model output is no longer re-served to later investigations as verified. Consolidation also ingests adjudication verdicts so a run's negative knowledge is distilled alongside its discoveries and notes.
+- The confidence gate re-sample now targets the overconfident tail. An uncorroborated high-confidence response is the one re-drawn for a second opinion, and a repeated self-report cannot lift it back to high without an independent corroborating signal; the honest low-confidence tail is no longer re-drawn.
+- The shared ledger board renders discovery and adjudication entries with a wider window so a sibling branch sees the full claim rather than a truncated stub, which was driving near-duplicate re-proposals.
+- Prompt layout ordering is enabled by default so the immutable prefix is emitted first for prompt caching unless a workspace explicitly disables it.
 
 ### Fixed
 
 - An investigation that exhausts its turn budget without producing an outcome is no longer recorded as completed. It stays resumable and is given one reserved emit-and-verify attempt before it terminalizes, so a run is not sealed empty before it can reach the verifier.
+- The F1 promotion consumer that reads the confirmation provenance and drives the holding branch to submit was wired; the earlier confirmation-wiring commit added the write side but omitted the consumer, so a confirmed hypothesis was recorded but never acted on.
+- A refuted outcome is now retracted at adjudication time (stamped superseded and rejected), so a downstream dispatcher can no longer ship a claim the run's own adjudicator killed.
 - A terminal investigation whose workflow cursor was left at a mid-pipeline state now has that cursor driven to a terminal sentinel by the reconciler, ending the accumulation of stranded cursors. A stalled or paused cursor is left untouched.
 - The knowledge pruner now evicts refuted or superseded knowledge entries.
 - Corrected the investigation cost documentation to describe the on-write cost materialization plus live recompute; the cost value is written per outcome, not a decorative unwritten column.

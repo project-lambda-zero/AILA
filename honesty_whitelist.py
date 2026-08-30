@@ -664,6 +664,39 @@ HONESTY_WHITELIST = [
     # an assistant reply with unparseable actions is still a valid message.
     ("api/routers/sessions.py", "except_return_default",
      "silently hides failures"),
+
+    # ------------------------------------------------------------------
+    # VR-truth issue #13/#14/#249 W13 -- finalize + verifier gate spine
+    # in platform/agents/outcome_dispatcher.py. The two loaders lazily
+    # import the VR polarity helper and the VR claim verifier's
+    # verify_evidence; the ``except (ImportError, AttributeError)``
+    # branch returns None so non-VR modules (malware / forensics) that
+    # have no verifier deployed skip the gate silently and fall through
+    # to the prior dispatch behaviour. Also intentional: fail-safe
+    # allow when the verifier itself raises so a broken adversarial
+    # pass never permanently blocks a module dispatch.
+    # ------------------------------------------------------------------
+    ("platform/agents/outcome_dispatcher.py",
+     "aila.modules.vr.contracts.outcome",
+     "use module contracts"),
+    ("platform/agents/outcome_dispatcher.py",
+     "aila.modules.vr.agents.claim_verifier",
+     "use module contracts"),
+    ("platform/agents/outcome_dispatcher.py",
+     "inline '# noqa' comment on line 523",
+     "documented justification"),
+    ("platform/agents/outcome_dispatcher.py",
+     "inline '# noqa' comment on line 539",
+     "documented justification"),
+    ("platform/agents/outcome_dispatcher.py",
+     "inline '# noqa' comment on line 944",
+     "documented justification"),
+    ("platform/agents/outcome_dispatcher.py",
+     "except returns empty default",
+     "silently hides failures"),
+    ("platform/agents/outcome_dispatcher.py",
+     "_load_verify_evidence_fn",
+     "RFC-07"),
 ]
 
 

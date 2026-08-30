@@ -6870,7 +6870,13 @@ def create_vr_router() -> APIRouter:
                     "claim": h.get("claim", ""),
                     "why_plausible": h.get("why_plausible", ""),
                     "kill_criterion": h.get("kill_criterion", ""),
+                    "confirmed_by": h.get("confirmed_by", "") or "",
                 })
+                # A later branch may carry the confirmation even when the
+                # first branch that hosted the id did not: fill it in on
+                # any pass that has a non-empty provenance.
+                if h.get("confirmed_by") and not claims[hid].get("confirmed_by"):
+                    claims[hid]["confirmed_by"] = h["confirmed_by"]
             for h in state.get("rejected", []) or []:
                 hid = h.get("id")
                 if not hid:
@@ -6927,6 +6933,7 @@ def create_vr_router() -> APIRouter:
                 claim=c.get("claim", ""),
                 why_plausible=c.get("why_plausible", ""),
                 kill_criterion=c.get("kill_criterion", ""),
+                confirmed_by=c.get("confirmed_by", ""),
                 state=hstate,
                 rejection_reason=rejection_reasons.get(hid),
                 resolution_note=resolution_notes.get(hid),

@@ -215,14 +215,25 @@ class TestGateStepUsesCalibrationOverride:
     async def test_absent_key_does_not_reject(
         self, routing: LLMRouting,
     ) -> None:
-        """Without the calibration key, the same 0.85 score is HIGH."""
+        """Without the calibration key, the same 0.85 score is HIGH.
+
+        The score is corroborated (``corroboration_confirmed``) so it
+        stays in the HIGH band under Contract E1; an uncorroborated HIGH
+        would be downgraded to the flag path and re-sampled, which the
+        raising ``_FakeCallFn`` would catch. This test isolates the
+        calibration override's effect on the reject floor, not E1.
+        """
         provider = _FakeConfigProvider()  # no override
         response = LLMResponse(
             content=json.dumps({"confidence_score": 0.85}),
             model="test-model",
             finish_reason="stop",
         )
-        ctx: dict[str, Any] = {"task_type": "scoring", "response": response}
+        ctx: dict[str, Any] = {
+            "task_type": "scoring",
+            "response": response,
+            "corroboration_confirmed": True,
+        }
         step = make_gate_step(provider, _FakeCallFn(), emitter=None)
         await step(ctx, [], routing)
         assert ctx["confidence"] == "HIGH"

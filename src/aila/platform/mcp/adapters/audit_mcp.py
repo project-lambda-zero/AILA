@@ -27,6 +27,34 @@ from ._shared import (
     provenance_stamp,
 )
 from .base import AdapterContext, AdapterResult, is_read_tool
+from .known_tools import canonicalize_tool_id
+
+# File-header prefixes that mark the audit-mcp indexer fault where a
+# deep function symbol is bound to line 1 and ``read_function`` returns
+# the file's license / copyright / includes preamble instead of the
+# requested body (doc #28 sec 3, issue #263). Kept in lockstep with the
+# equivalent set in :func:`aila.platform.agents.auto_steering.
+# _detect_read_function_returned_file_header` so the honest
+# ``no_body_available`` marker and the auto-steering rule fire on the
+# same evidence.
+_READ_FUNCTION_FILE_HEADER_PREFIXES: tuple[str, ...] = (
+    "/*", "//", "#include", "Copyright", "/**", "/* Copyright",
+)
+
+
+def _looks_like_file_header(body: str, line: object) -> bool:
+    """True when a ``read_function`` body is almost certainly the file
+    preamble the indexer returned in place of the requested function.
+    Signal: reported ``line`` <= 50 (deep functions never live at the
+    top of a file) AND the first non-blank content starts with a
+    C-style comment, ``#include``, or copyright header.
+    """
+    if not isinstance(line, int) or line > 50:
+        return False
+    head = body[:200].lstrip()
+    if not head:
+        return False
+    return any(head.startswith(p) for p in _READ_FUNCTION_FILE_HEADER_PREFIXES)
 
 __all__ = [
     "adapt_fuzzing_targets",
@@ -800,12 +828,50 @@ def adapt_read_function(
     The shape is conceptually identical to IDA's decompile: a function
     body + identifying metadata. ``language`` is derived from the
     response (e.g. ``c``, ``rust``, ``go``) when present.
+
+    Issue #263 / doc #28 sec 2-3: this adapter is the confirmation-grade
+    surface the audit gate names first (system_audit.md:199-210) and its
+    observable is the text the model reads next turn. Two failure modes
+    are corrected here:
+
+      * The rendered body never carried a ``file_path:start-end``
+        coordinate header, so the agent could not cite file:line from
+        the observable and had to reconstruct it from prior turns.
+        ``read_lines`` and ``semantic_search`` both render one; this
+        adapter now matches.
+      * When the index cannot resolve the symbol (empty body, error
+        status, or the file-header indexer fault) the adapter used to
+        pass whatever bytes came back as the body. Downstream the model
+        cited that content as proof. We now emit an explicit
+        ``!! NOT FOUND !!`` / ``!! NO BODY AVAILABLE !!`` marker in
+        place of the body and stamp ``payload.no_body_available`` /
+        ``payload.symbol_mismatch`` so verifier + belief-loop consumers
+        can filter out fabricated evidence.
+
+    The specialised-adapter contract is preserved: the payload keeps
+    its existing fields (``function_name``, ``address``, ``pseudocode``,
+    ``line_count``, ``language``, ``source_provenance``, and the
+    optional ``bridge_note``); new fields (``no_body_available``,
+    ``symbol_mismatch``, ``requested_symbol``) are additive so other
+    callers ignore them.
     """
+    # Normalise the observable namespace at the adapter boundary so
+    # ``audit-mcp.read_function`` / ``audit_mcp:read_function`` /
+    # bare ``read_function`` all resolve to one canonical key set
+    # (issue #251/#248, doc #15 sec 1.2).
+    ctx.mcp_server_id, ctx.tool_name = canonicalize_tool_id(
+        ctx.mcp_server_id, ctx.tool_name,
+    )
+    requested_symbol = str(
+        ctx.args.get("function")
+        or ctx.args.get("symbol")
+        or ctx.args.get("name")
+        or "",
+    ).strip()
     fn_name = str(
         raw.get("function_name")
         or raw.get("name")
-        or ctx.args.get("function")
-        or ctx.args.get("symbol")
+        or requested_symbol
         or "<unknown>",
     )
     # audit-mcp's read_function returns the actual function body in
@@ -842,6 +908,45 @@ def adapt_read_function(
         raw_note.strip() if isinstance(raw_note, str) and raw_note.strip() else ""
     )
 
+    # Issue #263 -- honest "not found" / "no body available" surface.
+    # audit-mcp returns an error status on hard "not indexed"; the
+    # middleware fallback chain can also relabel a file-header read as
+    # ``status=ready`` (doc #28 sec 3). Detect both so downstream sees
+    # a distinct marker rather than plausible-looking junk.
+    raw_status = str(raw.get("status") or "").lower()
+    raw_error = str(raw.get("error") or "").strip()
+    body_stripped = body.strip()
+    file_header_fault = _looks_like_file_header(body, line)
+    if raw_status == "error" or (not body_stripped and raw_error):
+        not_found_reason = raw_error or (
+            f"read_function returned status={raw_status!r} with no body"
+        )
+        no_body_reason = f"not_found: {not_found_reason}"
+    elif not body_stripped:
+        no_body_reason = "no_body_available: index returned empty content"
+    elif file_header_fault:
+        no_body_reason = (
+            "no_body_available: index returned the file preamble at "
+            f"line {line} instead of the requested function body "
+            "(audit-mcp symbol-indexer fault -- see doc #28 sec 3)"
+        )
+    else:
+        no_body_reason = ""
+
+    # Symbol-mismatch cross-check. Cheap identifier compare on the
+    # returned ``function_name`` vs the caller's requested symbol so
+    # the observable warns when the index served a different (or
+    # sibling) function -- most commonly the middleware's fallback-4
+    # semantic_search substitution (doc #28 sec 3, audit.py:1006-1035).
+    symbol_mismatch = ""
+    if requested_symbol:
+        returned = str(raw.get("function_name") or raw.get("name") or "").strip()
+        if returned and returned != requested_symbol:
+            symbol_mismatch = (
+                f"symbol_mismatch: you asked for {requested_symbol!r} but "
+                f"the index returned {returned!r}"
+            )
+
     payload: dict[str, Any] = {
         "function_name": fn_name,
         "address": f"{path}:{line}" if path and line else path,
@@ -852,9 +957,55 @@ def adapt_read_function(
     }
     if bridge_note:
         payload["bridge_note"] = bridge_note
+    if requested_symbol:
+        payload["requested_symbol"] = requested_symbol
+    if no_body_reason:
+        payload["no_body_available"] = no_body_reason
+    if symbol_mismatch:
+        payload["symbol_mismatch"] = symbol_mismatch
 
-    if len(body) <= _MAX_OBS_READ_FUNCTION:
-        obs_value = body
+    # Coordinate header the confirmation gate demands (doc #28 sec 2).
+    # ``read_lines`` renders ``=== file:start-end ===``; ``semantic_search``
+    # renders the same shape per chunk. This adapter now matches so the
+    # agent can cite file:line straight from the observable text.
+    if path and line:
+        try:
+            start_line_int = int(line)
+        except (TypeError, ValueError):
+            start_line_int = 0
+        end_line_hint = raw.get("end_line")
+        try:
+            end_line_int = (
+                int(end_line_hint) if end_line_hint is not None
+                else (start_line_int + max(line_count - 1, 0))
+            )
+        except (TypeError, ValueError):
+            end_line_int = start_line_int + max(line_count - 1, 0)
+        coord_header = (
+            f"=== {path}:{start_line_int}-{end_line_int} "
+            f"[{fn_name}{' lang=' + language if language else ''}] ===\n"
+        )
+    else:
+        coord_header = f"=== <no file coordinate available> [{fn_name}] ===\n"
+
+    # If the response could not deliver a real body, replace body-first
+    # obs bytes with a loud not-found marker BEFORE truncation so the
+    # observable never carries junk as if it were source. Honest
+    # ``no_body_available`` is strictly more useful downstream than a
+    # plausible-looking file header cited as the function.
+    if no_body_reason:
+        obs_value = (
+            f"{coord_header}!! NO BODY AVAILABLE !! {no_body_reason}\n"
+            "The audit-mcp response did NOT deliver the requested "
+            "function body. Do NOT cite this call as evidence for the "
+            "function's contents. Call ``audit_mcp.search_functions`` "
+            "with a fragment of the symbol name to discover the real "
+            "location, then re-issue ``read_function`` or "
+            "``read_lines`` against the returned coordinate.\n"
+        )
+        truncation_suffix = ""
+    elif len(body) <= _MAX_OBS_READ_FUNCTION:
+        obs_value = coord_header + body
         truncation_suffix = ""
     else:
         # Find the last newline within the cap so we cut on a line
@@ -887,8 +1038,8 @@ def adapt_read_function(
             f"DO NOT draw conclusions about absence of code in the "
             f"unseen tail -- call read_lines first.\n\n"
         )
-        obs_value = banner + kept
-        truncation_suffix = "  ⚠ TRUNCATED"
+        obs_value = coord_header + banner + kept
+        truncation_suffix = "  \u26a0 TRUNCATED"
     if bridge_note:
         # Top-of-observable banner so the agent notices the fallback
         # before it starts reading the body. Mirrors the truncation
@@ -896,14 +1047,23 @@ def adapt_read_function(
         obs_value = (
             f"!! BRIDGE FALLBACK !! {bridge_note}\n\n" + obs_value
         )
-    summary_suffix = "  ⚠ FALLBACK" if bridge_note else ""
+    if symbol_mismatch:
+        # Issue #263 -- warn the model when the returned function name
+        # does not match the requested symbol so it does not silently
+        # cite a substitute function as evidence for the original.
+        obs_value = f"!! SYMBOL MISMATCH !! {symbol_mismatch}\n\n" + obs_value
+    fallback_suffix = "  \u26a0 FALLBACK" if bridge_note else ""
+    mismatch_suffix = "  \u26a0 MISMATCH" if symbol_mismatch else ""
+    missing_suffix = "  \u26a0 NO_BODY" if no_body_reason else ""
     return AdapterResult(
         payload_kind=PayloadKind.DECOMPILED_FUNCTION,
         payload=payload,
         observables_delta={obs_key_for(ctx, f"source.{fn_name}"): obs_value},
         summary=(
             f"read_function {fn_name} ({line_count} lines, "
-            f"lang={language or '?'}){truncation_suffix}{summary_suffix}"
+            f"lang={language or '?'})"
+            f"{truncation_suffix}{fallback_suffix}"
+            f"{mismatch_suffix}{missing_suffix}"
         ),
     )
 
