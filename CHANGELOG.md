@@ -7,7 +7,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.5.51] - 2026-08-26 -- Unified specialist registry, prompt version management, and scan pipeline resilience
+## [0.5.51] - 2026-08-26 -- Unified specialist registry, prompt version management, scan pipeline resilience, and VR confirmation wiring
 
 ### Added
 
@@ -15,9 +15,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Added Prompt Version Store and admin management endpoints (`GET /admin/prompts` and `GET /admin/prompts/body`) allowing dynamic inspection and body retrieval for all platform and module prompt keys.
 - Added admin console views for specialist agent management and prompt version inspection wired into platform settings navigation and configuration panels.
 - Added `useScanTasks()` live polling hook for vulnerability scans with dynamic interval backoff and active-scan banner in the vulnerability scan console.
+- Auto-promotion of a verifier-confirmed finding now fires for any dispatched finding above the confidence floor, not only an operator-skipped dead-end. The confidence-floor, negative-claim, and already-promoted guards continue to bound it.
+- The confidence gate now requires a corroborating signal before an auto-accept. A high self-reported confidence on its own no longer clears the bar; an uncorroborated high-confidence response drops to the flag path.
+
+### Changed
+
+- A quorum-approved outcome now records the confirming provenance on the originating hypothesis, so a confirmed belief reaches the branch state the engine reasons from instead of remaining on the shared ledger. A taint-confirmed discovery records the same provenance on its hypothesis at post time.
+- Confirmed-finding promotion is enabled by default, so the branch that holds a confirmed hypothesis is driven to submit the finding rather than close on a weaker polarity.
+- The claim verifier produces its extraction and verdict through schema-validated structured output. A malformed verdict now surfaces as a schema failure rather than defaulting to inconclusive without a signal.
+- Knowledge consolidation ingests confirmed discoveries only, and semantic or pattern knowledge is tiered verified only when it carries a confirmation marker, so unconfirmed model output is no longer re-served to later investigations as verified.
 
 ### Fixed
 
+- An investigation that exhausts its turn budget without producing an outcome is no longer recorded as completed. It stays resumable and is given one reserved emit-and-verify attempt before it terminalizes, so a run is not sealed empty before it can reach the verifier.
+- A terminal investigation whose workflow cursor was left at a mid-pipeline state now has that cursor driven to a terminal sentinel by the reconciler, ending the accumulation of stranded cursors. A stalled or paused cursor is left untouched.
+- The knowledge pruner now evicts refuted or superseded knowledge entries.
+- Corrected the investigation cost documentation to describe the on-write cost materialization plus live recompute; the cost value is written per outcome, not a decorative unwritten column.
 - Added `__natural_key__ = ("namespace", "cache_key")` to `CacheRecord` in the vulnerability module to ensure `PersistContract.upsert_many` generates conflict resolution statements, preventing unique constraint integrity failures during concurrent OSV advisory synchronization.
 - Added defensive validation in vulnerability runtime before parsing terminal workflow responses, raising descriptive runtime errors when response bodies are missing.
 - Updated project environment loading to prioritize repository `.env` definitions over inherited shell environment exports.

@@ -33,10 +33,18 @@ logger = logging.getLogger(__name__)
 
 
 def extract_confidence(content: str, finish_reason: str) -> float:
-    """Extract confidence score from LLM response content.
+    """Extract the model's self-reported confidence score.
 
     Primary: parse JSON, look for confidence_score field (float 0.0-1.0).
     Fallback: heuristic based on finish_reason and content length.
+
+    Contract E2 note: the returned value is self-reported and MUST NOT
+    alone drive auto-accept at the gate. The model has every incentive
+    to inflate this number. The auto-accept branch in :func:`make_gate_step`
+    now requires an independent, evidence-derived corroboration signal
+    (see :func:`_has_corroboration`); self-report is discounted -- it
+    can still be MEDIUM/LOW/REJECT-mapped and still feeds the calibrator,
+    but on its own it cannot clear the HIGH auto-accept bar.
 
     Args:
         content: The raw response content string.
@@ -68,6 +76,54 @@ def extract_confidence(content: str, finish_reason: str) -> float:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _has_corroboration(ctx: dict[str, Any]) -> bool:
+    """Return True when the gate sees an evidence-derived corroborating signal.
+
+    Contract E1 seam: HIGH self-reported confidence alone MUST NOT
+    auto-accept. This helper reports whether an independent, non-self-
+    reported signal is available at gate time. The gate step consults
+    it before honouring the ``level == "HIGH"`` auto-accept branch;
+    when no corroboration is present, HIGH is downgraded to the flag
+    path (Contract E1).
+
+    Real signals available at gate time (post-call, post-validate step
+    per :data:`aila.platform.llm.pipeline.POST_CALL_STEPS`):
+
+    * ``ctx["evidence_validation"]`` -- the ``EvidenceValidationReport``
+      dict written by :func:`aila.platform.llm.validate.make_validate_step`.
+      Corroborates only when ``overall_pass`` is True, at least one
+      citation was validated (``citations_valid >= 1``), and no citation
+      was flagged as hallucinated. Empty reports (validators registered
+      but nothing to check) and reports containing a hallucination are
+      NOT corroboration.
+    * ``ctx["corroboration_confirmed"]`` -- a boolean an upstream caller
+      writes when the response is backed by a prior confirmed hypothesis
+      or a verifier-confirmed verdict on the same claim (Contract C1/C2
+      wiring on the caller side). The gate treats ``True`` as a real
+      corroborating signal; any other value (missing, None, False) is
+      not corroboration.
+    """
+    report = ctx.get("evidence_validation")
+    if isinstance(report, dict):
+        try:
+            citations_valid = int(report.get("citations_valid") or 0)
+            citations_hallucinated = int(
+                report.get("citations_hallucinated") or 0
+            )
+        except (TypeError, ValueError):
+            citations_valid = 0
+            citations_hallucinated = 1
+        if (
+            bool(report.get("overall_pass"))
+            and citations_valid >= 1
+            and citations_hallucinated == 0
+        ):
+            return True
+    if ctx.get("corroboration_confirmed") is True:
+        return True
+    return False
 
 
 def _map_confidence_level(
@@ -410,7 +466,18 @@ def make_gate_step(
 
         # Map to level
         level = _map_confidence_level(score, high, medium, reject)
+
+        # Contract E1: HIGH self-report alone MUST NOT auto-accept. When
+        # no independent evidence-derived signal corroborates the response,
+        # downgrade HIGH to the MEDIUM flag path so a reviewer sees it
+        # instead of it slipping through as auto-accepted. See
+        # :func:`_has_corroboration` for what counts as a real signal.
+        corroborated = _has_corroboration(ctx)
+        if level == "HIGH" and not corroborated:
+            level = "MEDIUM"
+            ctx["high_downgraded_no_corroboration"] = True
         ctx["confidence"] = level
+        ctx["corroboration_present"] = corroborated
 
         # Route by level
         if level == "HIGH":
@@ -473,6 +540,10 @@ def make_gate_step(
             "consensus_strategy": ctx.get("consensus_strategy", ""),
             "consensus_winner_score": ctx.get("consensus_winner_score"),
             "consensus_winner_raw_score": ctx.get("consensus_winner_raw_score"),
+            "corroboration_present": ctx.get("corroboration_present", False),
+            "high_downgraded_no_corroboration": ctx.get(
+                "high_downgraded_no_corroboration", False
+            ),
         }
 
         existing_meta = ctx.get("pipeline_metadata")

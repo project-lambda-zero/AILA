@@ -249,8 +249,9 @@ class LedgerService:
         branch_id: str,
         *,
         approver_branch_id: str = "__quorum__",
+        return_hypotheses: bool = False,
         session: AsyncSession | None = None,
-    ) -> list[int]:
+    ) -> list[int] | list[tuple[int, str | None]]:
         """Confirm every discovery authored by ``branch_id`` (RFC-13 Phase 4).
 
         The bridge from the outcome-review quorum to the ledger: once a
@@ -262,12 +263,21 @@ class LedgerService:
         read finally see confirmed discoveries. Idempotent per discovery id
         via the ``confirm:<id>`` key, so a re-run adds no duplicate.
 
-        Returns the list of confirmed discovery ids.
+        Returns the list of confirmed discovery ids by default. When
+        ``return_hypotheses=True`` returns a list of
+        ``(discovery_id, hypothesis_id)`` tuples so a caller can bridge the
+        quorum confirmation back to the originating hypothesis on the
+        branch's case_state (recon and taint discoveries carry
+        ``hypothesis_id`` in their payload). The hypothesis id is ``None``
+        when the discovery payload lacks one. The default ``list[int]``
+        return is preserved so the platform bases inherited by malware and
+        forensics stay backward compatible.
         """
         rows = await self.read_general(
             investigation_id, kinds=["discovery"], session=session,
         )
         confirmed: list[int] = []
+        confirmed_pairs: list[tuple[int, str | None]] = []
         for row in rows:
             if str(row.get("author_branch_id")) != str(branch_id):
                 continue
@@ -281,6 +291,17 @@ class LedgerService:
                 session=session,
             )
             confirmed.append(discovery_id)
+            if return_hypotheses:
+                payload = row.get("payload") or {}
+                raw_hid = payload.get("hypothesis_id")
+                hyp_id: str | None
+                if raw_hid is None:
+                    hyp_id = None
+                else:
+                    hyp_id = str(raw_hid) or None
+                confirmed_pairs.append((discovery_id, hyp_id))
+        if return_hypotheses:
+            return confirmed_pairs
         return confirmed
 
     async def open_objective(

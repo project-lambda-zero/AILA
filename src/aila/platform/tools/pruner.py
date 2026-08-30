@@ -35,11 +35,12 @@ from datetime import timedelta
 from typing import TypedDict
 
 import sqlalchemy.exc
-from sqlalchemy import delete, func, select
+from sqlalchemy import cast, delete, func, or_, select
+from sqlalchemy.dialects.postgresql import JSONB
 
 from aila.platform.contracts import utc_now
 from aila.storage.database import async_session_scope
-from aila.storage.db_models import ArtifactRecord
+from aila.storage.db_models import ArtifactRecord, KnowledgeEntryRecord
 from aila.storage.memory import PermanentMemoryStore
 from aila.storage.registry import ConfigRegistry
 
@@ -78,6 +79,7 @@ class ToolStoragePruneReport(TypedDict):
     memory_overflow_deleted: int
     artifact_age_deleted: int
     artifact_overflow_deleted: int
+    knowledge_refuted_deleted: int
     errors: list[str]
 
 
@@ -162,6 +164,32 @@ async def _prune_artifacts_overflow(
     return deleted_total
 
 
+async def _prune_knowledge_refuted_superseded(session) -> int:
+    """Delete knowledge entries flagged refuted or superseded (RFC-12 D3).
+
+    A knowledge entry becomes dead weight in two shapes: (a) its backing
+    outcome was refuted by the sibling quorum or the claim verifier, and
+    (b) it has been superseded by a newer, promoted entry. Writers signal
+    either state by stamping ``entry_metadata`` JSON with ``refuted=true``,
+    ``superseded=true``, or ``superseded_by=<id>``. The pruner drops those
+    rows so retrieval never surfaces a claim the platform has already
+    contradicted. ``entry_metadata`` is stored as text; casting to JSONB
+    lets the WHERE clause push the predicate into Postgres instead of
+    dragging every row over the wire.
+    """
+    meta = cast(KnowledgeEntryRecord.entry_metadata, JSONB)
+    predicate = or_(
+        meta["refuted"].astext == "true",
+        meta["superseded"].astext == "true",
+        meta["superseded_by"].astext.isnot(None),
+    )
+    result = await session.execute(
+        delete(KnowledgeEntryRecord).where(predicate)
+    )
+    await session.commit()
+    return int(result.rowcount or 0)
+
+
 async def prune_tool_storage(
     *,
     config_registry: ConfigRegistry | None = None,
@@ -205,6 +233,7 @@ async def prune_tool_storage(
         "memory_overflow_deleted": 0,
         "artifact_age_deleted": 0,
         "artifact_overflow_deleted": 0,
+        "knowledge_refuted_deleted": 0,
         "errors": [],
     }
 
@@ -258,13 +287,26 @@ async def prune_tool_storage(
         )
         report["errors"].append(f"artifact_overflow:{type(exc).__name__}")
 
+    try:
+        async with async_session_scope() as session:
+            report["knowledge_refuted_deleted"] = (
+                await _prune_knowledge_refuted_superseded(session)
+            )
+    except _PRUNE_ERRORS as exc:
+        _log.warning(
+            "tool_storage_prune: knowledge-refuted pass failed (%s)",
+            type(exc).__name__, exc_info=exc,
+        )
+        report["errors"].append(f"knowledge_refuted:{type(exc).__name__}")
+
     _log.info(
         "tool_storage_prune completed memory_age=%d memory_overflow=%d "
-        "artifact_age=%d artifact_overflow=%d errors=%d",
+        "artifact_age=%d artifact_overflow=%d knowledge_refuted=%d errors=%d",
         report["memory_age_deleted"],
         report["memory_overflow_deleted"],
         report["artifact_age_deleted"],
         report["artifact_overflow_deleted"],
+        report["knowledge_refuted_deleted"],
         len(report["errors"]),
     )
     return report

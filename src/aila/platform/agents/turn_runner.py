@@ -515,6 +515,8 @@ class AgentTurnRunnerBase:
         turn_number: int,
         session: AsyncSession,
         case_state: Any,
+        *,
+        new_case_state: Any = None,
     ) -> None:
         """Append the turn's capped ledger writes inside the post-turn UoW.
 
@@ -585,7 +587,7 @@ class AgentTurnRunnerBase:
                     continue
                 conf = getattr(decision, "confidence", None) or "strong"
                 if conf in ("exact", "strong") or bool(hyp.why_plausible):
-                    await service.append_general(
+                    discovery_id = await service.append_general(
                         self.investigation_id,
                         self.branch_id,
                         "discovery",
@@ -600,6 +602,32 @@ class AgentTurnRunnerBase:
                         idempotency_key=f"{self.branch_id}:discovery:{hid}",
                         session=session,
                     )
+                    # A3 / Contract C2: stamp taint-confirmed provenance on
+                    # the authoritative in-memory hypothesis so this turn's
+                    # single case_state_json write (see fix §103 below)
+                    # carries the confirmed_by marker into the persisted
+                    # branch row. new_case_state is the post-absorb state
+                    # the caller will encode inside this same UoW, so
+                    # mutating its hypotheses list is what makes the
+                    # provenance durable. Only set when confirmed_by is
+                    # currently empty -- a prior agent-supplied cite (a
+                    # concrete file:line) is more informative than the
+                    # discovery id marker and must not be overwritten.
+                    if new_case_state is not None and discovery_id is not None:
+                        target_hyps = getattr(
+                            new_case_state, "hypotheses", None,
+                        ) or []
+                        for target in target_hyps:
+                            if getattr(target, "id", "") != hid:
+                                continue
+                            existing = (
+                                getattr(target, "confirmed_by", "") or ""
+                            ).strip()
+                            if not existing:
+                                target.confirmed_by = (
+                                    f"taint-confirmed discovery {int(discovery_id)}"
+                                )
+                            break
         writes = decision.ledger_writes[:_MAX_LEDGER_WRITES_PER_TURN]
         if not writes:
             return
@@ -759,6 +787,35 @@ class AgentTurnRunnerBase:
         del case_state, sibling_context, turn_number
         return decision
 
+    def _maybe_reject_weak_submit_with_confirmed_hypothesis(
+        self, *, decision: Any, case_state: Any, turn_number: int,
+    ) -> Any:
+        """Gate a weak-polarity submit while a confirmed hypothesis is open.
+
+        Default: allow. VR overrides this (F1) to block a no-finding /
+        assessment submit while the branch holds a hypothesis it marked
+        ``confirmed_by`` and has not retracted -- forcing the proven
+        positive to be submitted as a ``direct_finding`` instead of
+        closed as a negative. Modules without hypothesis-confirmation
+        semantics leave the default.
+        """
+        del case_state, turn_number
+        return decision
+
+    def _inject_promotion_directives(
+        self, case_state: Any, *, turn_number: int,
+    ) -> Any:
+        """Inject a proactive promote-the-confirmed-finding directive.
+
+        Default: no-op, return ``case_state`` unchanged. VR overrides
+        this (F1) to surface a directive at the top of the next turn's
+        prompt whenever a live hypothesis carries a ``confirmed_by``
+        provenance, nudging the branch to submit the direct_finding
+        before it tries to close on a weaker polarity.
+        """
+        del turn_number
+        return case_state
+
     def _review_vote_and_comment(self, decision: Any) -> tuple[str, str]:
         """Resolve the effective (vote, comment) for an outcome review.
 
@@ -844,6 +901,12 @@ class AgentTurnRunnerBase:
         my_live_ids = {h.id for h in case_state.hypotheses if h.id}
         case_state = inject_sibling_consensus(
             case_state, sibling_context, my_live_ids,
+        )
+        # F1: proactively nudge the branch to submit a confirmed
+        # hypothesis as a direct_finding. Default hook is a no-op;
+        # VR overrides it behind the promote_confirmed_findings toggle.
+        case_state = self._inject_promotion_directives(
+            case_state, turn_number=turn_number,
         )
         # RFC-13 (#68): render the shared investigation ledger into this
         # turn's prompt via a reserved observable. The render layer lifts
@@ -1147,6 +1210,21 @@ class AgentTurnRunnerBase:
                 turn_number=turn_number,
             )
 
+        # F1 promote gate: block a weak-polarity submit (audit_memo /
+        # assessment_report) while this branch holds a hypothesis it
+        # marked confirmed and has not retracted. Runs after the
+        # unresolved-hyp gate (which forces every live hyp to be
+        # resolved) so this gate only sees a decision that already
+        # resolved its hypotheses; it then enforces that a CONFIRMED
+        # one is shipped as a direct_finding, not buried in a negative
+        # close. Default hook allows; VR overrides behind the toggle.
+        if decision.action == "submit":
+            decision = self._maybe_reject_weak_submit_with_confirmed_hypothesis(
+                decision=decision,
+                case_state=case_state,
+                turn_number=turn_number,
+            )
+
         # Sibling-open-hyp gate (#4 convergence fix): block a terminal
         # no_finding / inconclusive submit while a sibling holds a live
         # hypothesis id no branch has rejected. Runs AFTER the
@@ -1382,6 +1460,7 @@ class AgentTurnRunnerBase:
 
             await self._post_ledger_writes(
                 decision, persisted_turn, uow.session, case_state,
+                new_case_state=new_case_state,
             )
             await self._post_ledger_approvals(decision, uow.session)
 

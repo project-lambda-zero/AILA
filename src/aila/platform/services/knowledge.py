@@ -94,28 +94,51 @@ class EmbeddingDimensionMismatchError(RuntimeError):
 # RFC-12 Phase 5 trust tiering. Verified-tier knowledge (findings, audit
 # memos, promoted patterns) is written behind a quorum or an operator
 # promotion; target-derived knowledge (evicted observations burned straight
-# off a tool result) is untrusted input and carries the lower tier. The tier
-# is derived from the namespace ``kind`` segment, so no column or data
-# migration is needed: the ``*.observation.*`` namespaces are target-derived,
-# everything else the modules write is verified. Retrieval journals the tier
-# per hit so an operator can audit what trust level informed a finding.
+# off a tool result) is untrusted input and carries the lower tier. The
+# ``*.observation.*`` namespaces are target-derived by kind. Model-distilled
+# kinds (``*.semantic.*``, ``*.pattern.*``) are lifted to verified ONLY when
+# the writer stamps ``confirmed=true`` in the entry metadata (VR truth-gate
+# D1): the namespace alone no longer authorizes trust, because the semantic
+# consolidator historically ingested from stalled investigations whose
+# discoveries the sibling quorum never confirmed. Every other namespace
+# module writes (findings, audit memos) remains verified by kind. Retrieval
+# journals the tier per hit so an operator can audit what trust level
+# informed a finding.
 TRUST_TIER_VERIFIED = "verified"
 TRUST_TIER_TARGET_DERIVED = "target_derived"
 
+# Namespace kind segments that carry model-distilled content. A row in one
+# of these namespaces is verified only when its metadata explicitly names
+# it as confirmed; anything else falls to ``target_derived``. Kept as a
+# module-level tuple so the check is a plain ``any(... in namespace ...)``
+# and the same list is reused by consumers rendering the tier for display.
+_MODEL_DISTILLED_KINDS: tuple[str, ...] = (".semantic.", ".pattern.")
 
-def trust_tier_from_namespace(namespace: str | None) -> str:
-    """Map a knowledge namespace to its RFC-12 trust tier.
+
+def trust_tier_from_namespace(
+    namespace: str | None,
+    metadata: dict[str, Any] | None = None,
+) -> str:
+    """Map a knowledge namespace + entry metadata to its RFC-12 trust tier.
 
     ``<module>.observation.*`` namespaces hold observations burned directly
-    from tool output (untrusted input) and return ``target_derived``; every
-    other namespace a module writes (findings, audit memos, patterns) is
-    quorum- or promotion-gated and returns ``verified``. An empty or unknown
-    namespace defaults to ``target_derived`` -- the conservative tier.
+    from tool output (untrusted input) and return ``target_derived``.
+    ``<module>.semantic.*`` and ``<module>.pattern.*`` namespaces hold
+    model-distilled content: the writer MUST stamp
+    ``metadata['confirmed'] is True`` for the row to be tiered ``verified``
+    (post-D1 honesty gate), otherwise the row falls to ``target_derived``
+    even though the namespace kind used to imply trust. Every other
+    namespace a module writes (findings, audit memos) is quorum- or
+    promotion-gated and returns ``verified``. An empty or unknown namespace
+    defaults to ``target_derived`` -- the conservative tier.
     """
     if not namespace:
         return TRUST_TIER_TARGET_DERIVED
     if ".observation." in namespace:
         return TRUST_TIER_TARGET_DERIVED
+    if any(kind in namespace for kind in _MODEL_DISTILLED_KINDS):
+        confirmed = bool((metadata or {}).get("confirmed"))
+        return TRUST_TIER_VERIFIED if confirmed else TRUST_TIER_TARGET_DERIVED
     return TRUST_TIER_VERIFIED
 
 
@@ -178,7 +201,9 @@ def _apply_trust_decay(
         namespace = hit.get("namespace") or prov.get("namespace")
         if (
             target_derived_weight != 1.0
-            and trust_tier_from_namespace(namespace) == TRUST_TIER_TARGET_DERIVED
+            and trust_tier_from_namespace(
+                namespace, hit.get("metadata"),
+            ) == TRUST_TIER_TARGET_DERIVED
         ):
             score *= target_derived_weight
         if decay_half_life_hours > 0:
@@ -260,7 +285,7 @@ async def _journal_retrieval(
                 "entry_id": hit.get("id"),
                 "namespace": ns,
                 "score": round(float(hit.get("score") or 0.0), 4),
-                "trust_tier": trust_tier_from_namespace(ns),
+                "trust_tier": trust_tier_from_namespace(ns, hit.get("metadata")),
                 "classification": hit.get("classification"),
             })
         entry = JournalEntry(

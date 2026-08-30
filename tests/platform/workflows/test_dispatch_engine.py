@@ -406,6 +406,27 @@ def test_hub_stall_is_never_completed_maps_to_stalled() -> None:
     assert InvestigationStatus.STALLED.value == "stalled"
 
 
+def test_max_turns_without_outcome_is_stalled_not_completed() -> None:
+    """Stream C1: cap-exhaustion (``max_turns``) with NO outcome must
+    NOT resolve to COMPLETED. Sealing a no-outcome run as ``completed``
+    at the turn cap buried live hunts as "completed, no finding" and
+    blocked resume. The honest terminal is STALLED -- the hunt hit the
+    budget without ever reaching a verified finding. The same reason
+    WITH an outcome still completes; the outcome is the finding, and
+    ``has_outcome=True`` restores the completion path."""
+    # No outcome -> STALLED (default has_outcome=False also stays STALLED).
+    assert resolve_final_status("max_turns") == (
+        InvestigationStatus.STALLED.value
+    )
+    assert resolve_final_status("max_turns", has_outcome=False) == (
+        InvestigationStatus.STALLED.value
+    )
+    # Outcome present -> COMPLETED preserved.
+    assert resolve_final_status("max_turns", has_outcome=True) == (
+        InvestigationStatus.COMPLETED.value
+    )
+
+
 def test_is_live_replan_request_skips_superseded() -> None:
     """``_is_live_replan_request`` counts an open replan request but ignores
     one marked ``status='superseded'`` (the re-enqueue reset flag) and any

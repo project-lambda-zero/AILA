@@ -544,6 +544,14 @@ async def _write_facts(
                     "investigation_id": investigation_id,
                     "team_id": team_id,
                     "fact_index": index,
+                    # RFC-12 D1/D2: the consolidator only distills from
+                    # ledger discoveries the sibling quorum confirmed
+                    # (``read_general(confirmed_only=True)`` upstream),
+                    # so every fact written here is quorum-backed.
+                    # ``trust_tier_from_namespace`` reads this flag to
+                    # lift the row from ``target_derived`` (the default
+                    # for model-distilled kinds) to ``verified``.
+                    "confirmed": True,
                 },
                 dedup_key=f"{DEDUP_KEY_PREFIX}:{investigation_id}:{index}",
                 team_id=team_id,
@@ -641,9 +649,17 @@ async def consolidate_recent_investigations(
                 continue
 
             try:
+                # RFC-12 D2: model distillation MUST feed only on ledger
+                # discoveries the sibling quorum confirmed -- unconfirmed
+                # discoveries from stalled or refuted branches are exactly
+                # the material that produced dishonest ``vr.semantic.*``
+                # rows. Non-discovery kinds (``note``) have no confirmation
+                # concept and pass through untouched (see
+                # ``LedgerService.read_general``).
                 entries = await ledger.read_general(
                     candidate["investigation_id"],
                     kinds=list(_EPISODIC_KINDS),
+                    confirmed_only=True,
                     limit=max_ledger_entries,
                     session=session,
                 )

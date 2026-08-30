@@ -17,10 +17,33 @@ from aila.platform.services.knowledge import (
 
 
 def test_trust_tier_from_namespace_maps_verified_vs_target_derived() -> None:
+    # Finding / audit_memo kinds are quorum-gated by writer contract and
+    # stay verified without any metadata hint.
     assert trust_tier_from_namespace("vr.finding.workspace.x") == TRUST_TIER_VERIFIED
     assert trust_tier_from_namespace("vr.audit_memo.global") == TRUST_TIER_VERIFIED
-    assert trust_tier_from_namespace("malware.pattern.workspace.x") == TRUST_TIER_VERIFIED
-    assert trust_tier_from_namespace("forensics.pattern.workspace.x") == TRUST_TIER_VERIFIED
+    # RFC-12 D1: model-distilled kinds (``*.semantic.*`` / ``*.pattern.*``)
+    # are target_derived UNTIL the writer stamps ``confirmed=true``. The
+    # namespace alone no longer authorizes trust.
+    assert (
+        trust_tier_from_namespace("malware.pattern.workspace.x")
+        == TRUST_TIER_TARGET_DERIVED
+    )
+    assert (
+        trust_tier_from_namespace(
+            "malware.pattern.workspace.x", {"confirmed": True},
+        )
+        == TRUST_TIER_VERIFIED
+    )
+    assert (
+        trust_tier_from_namespace("vr.semantic.workspace.x")
+        == TRUST_TIER_TARGET_DERIVED
+    )
+    assert (
+        trust_tier_from_namespace(
+            "vr.semantic.workspace.x", {"confirmed": True},
+        )
+        == TRUST_TIER_VERIFIED
+    )
     # observation namespaces are burned straight off tool output -> untrusted
     assert (
         trust_tier_from_namespace("vr.observation.workspace.x")
@@ -28,6 +51,14 @@ def test_trust_tier_from_namespace_maps_verified_vs_target_derived() -> None:
     )
     assert (
         trust_tier_from_namespace("malware.observation.workspace.x")
+        == TRUST_TIER_TARGET_DERIVED
+    )
+    # Even ``confirmed=true`` metadata never lifts an observation row --
+    # the target-derived kind wins over the flag.
+    assert (
+        trust_tier_from_namespace(
+            "vr.observation.workspace.x", {"confirmed": True},
+        )
         == TRUST_TIER_TARGET_DERIVED
     )
     # empty / unknown defaults to the conservative tier

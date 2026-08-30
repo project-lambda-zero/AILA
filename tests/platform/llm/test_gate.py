@@ -225,7 +225,15 @@ class TestConfidenceLevel:
 
 
 class TestGateRoutingHigh:
-    """HIGH confidence: auto-accept, response passes through unchanged."""
+    """HIGH confidence: auto-accept, response passes through unchanged.
+
+    Contract E1: HIGH self-report alone MUST NOT auto-accept. Every
+    HIGH-auto-accept assertion in this class seeds
+    ``ctx["corroboration_confirmed"] = True`` so the gate sees an
+    independent evidence-derived signal. Tests exercising the E1
+    downgrade path (HIGH self-report without corroboration) live in
+    :class:`TestGateCorroborationE1` below.
+    """
 
     @pytest.mark.asyncio
     async def test_high_auto_accept(self, routing: LLMRouting, default_config: FakeConfigProvider) -> None:
@@ -234,7 +242,11 @@ class TestGateRoutingHigh:
             model="test-model",
             finish_reason="stop",
         )
-        ctx: dict[str, Any] = {"task_type": "scoring", "response": response}
+        ctx: dict[str, Any] = {
+            "task_type": "scoring",
+            "response": response,
+            "corroboration_confirmed": True,
+        }
 
         call_fn = FakeCallFn([])
         step = make_gate_step(default_config, call_fn, emitter=None)
@@ -250,13 +262,155 @@ class TestGateRoutingHigh:
             model="test-model",
             finish_reason="stop",
         )
-        ctx: dict[str, Any] = {"task_type": "scoring", "response": response}
+        ctx: dict[str, Any] = {
+            "task_type": "scoring",
+            "response": response,
+            "corroboration_confirmed": True,
+        }
 
         call_fn = FakeCallFn([])
         step = make_gate_step(default_config, call_fn, emitter=None)
         await step(ctx, [], routing)
 
         assert ctx.get("confidence_flagged") is None
+
+
+# ---------------------------------------------------------------------------
+# Contract E1: corroboration requirement for HIGH auto-accept
+# ---------------------------------------------------------------------------
+
+
+class TestGateCorroborationE1:
+    """HIGH self-report requires an independent evidence-derived signal.
+
+    Without corroboration, HIGH is downgraded to MEDIUM (flag path) so
+    the response never slips through as auto-accepted on self-report
+    alone. With corroboration -- either a validated evidence-validation
+    report or an upstream ``corroboration_confirmed=True`` flag -- HIGH
+    is honoured.
+    """
+
+    @pytest.mark.asyncio
+    async def test_high_without_corroboration_is_downgraded(
+        self, routing: LLMRouting, default_config: FakeConfigProvider
+    ) -> None:
+        response = LLMResponse(
+            content=json.dumps({"confidence_score": 0.95, "answer": "yes"}),
+            model="test-model",
+            finish_reason="stop",
+        )
+        ctx: dict[str, Any] = {"task_type": "scoring", "response": response}
+
+        call_fn = FakeCallFn([])
+        step = make_gate_step(default_config, call_fn, emitter=None)
+        await step(ctx, [], routing)
+
+        assert ctx["confidence"] == "MEDIUM"
+        assert ctx.get("confidence_flagged") is True
+        assert ctx.get("high_downgraded_no_corroboration") is True
+        assert ctx.get("corroboration_present") is False
+
+    @pytest.mark.asyncio
+    async def test_high_with_corroboration_flag_auto_accepts(
+        self, routing: LLMRouting, default_config: FakeConfigProvider
+    ) -> None:
+        response = LLMResponse(
+            content=json.dumps({"confidence_score": 0.95, "answer": "yes"}),
+            model="test-model",
+            finish_reason="stop",
+        )
+        ctx: dict[str, Any] = {
+            "task_type": "scoring",
+            "response": response,
+            "corroboration_confirmed": True,
+        }
+
+        call_fn = FakeCallFn([])
+        step = make_gate_step(default_config, call_fn, emitter=None)
+        await step(ctx, [], routing)
+
+        assert ctx["confidence"] == "HIGH"
+        assert ctx.get("high_downgraded_no_corroboration") is not True
+        assert ctx.get("corroboration_present") is True
+
+    @pytest.mark.asyncio
+    async def test_high_with_validated_evidence_report_auto_accepts(
+        self, routing: LLMRouting, default_config: FakeConfigProvider
+    ) -> None:
+        response = LLMResponse(
+            content=json.dumps({"confidence_score": 0.95, "answer": "yes"}),
+            model="test-model",
+            finish_reason="stop",
+        )
+        ctx: dict[str, Any] = {
+            "task_type": "scoring",
+            "response": response,
+            # Shape mirrors EvidenceValidationReport dataclass -> dict.
+            "evidence_validation": {
+                "citations_found": 1,
+                "citations_valid": 1,
+                "citations_hallucinated": 0,
+                "hallucinated_ids": [],
+                "overall_pass": True,
+                "results": [],
+            },
+        }
+
+        call_fn = FakeCallFn([])
+        step = make_gate_step(default_config, call_fn, emitter=None)
+        await step(ctx, [], routing)
+
+        assert ctx["confidence"] == "HIGH"
+        assert ctx.get("corroboration_present") is True
+
+    @pytest.mark.asyncio
+    async def test_high_with_hallucinated_report_is_downgraded(
+        self, routing: LLMRouting, default_config: FakeConfigProvider
+    ) -> None:
+        response = LLMResponse(
+            content=json.dumps({"confidence_score": 0.95, "answer": "yes"}),
+            model="test-model",
+            finish_reason="stop",
+        )
+        ctx: dict[str, Any] = {
+            "task_type": "scoring",
+            "response": response,
+            "evidence_validation": {
+                "citations_found": 2,
+                "citations_valid": 1,
+                "citations_hallucinated": 1,
+                "hallucinated_ids": ["CVE-2099-9999"],
+                "overall_pass": False,
+                "results": [],
+            },
+        }
+
+        call_fn = FakeCallFn([])
+        step = make_gate_step(default_config, call_fn, emitter=None)
+        await step(ctx, [], routing)
+
+        assert ctx["confidence"] == "MEDIUM"
+        assert ctx.get("high_downgraded_no_corroboration") is True
+        assert ctx.get("corroboration_present") is False
+
+    @pytest.mark.asyncio
+    async def test_medium_without_corroboration_unchanged(
+        self, routing: LLMRouting, default_config: FakeConfigProvider
+    ) -> None:
+        """Non-HIGH levels are unaffected by the corroboration gate."""
+        response = LLMResponse(
+            content=json.dumps({"confidence_score": 0.6, "answer": "maybe"}),
+            model="test-model",
+            finish_reason="stop",
+        )
+        ctx: dict[str, Any] = {"task_type": "scoring", "response": response}
+
+        call_fn = FakeCallFn([])
+        step = make_gate_step(default_config, call_fn, emitter=None)
+        await step(ctx, [], routing)
+
+        assert ctx["confidence"] == "MEDIUM"
+        assert ctx.get("high_downgraded_no_corroboration") is not True
 
 
 # ---------------------------------------------------------------------------
@@ -416,13 +570,18 @@ class TestThresholdConfig:
 
     @pytest.mark.asyncio
     async def test_default_thresholds_when_missing(self, routing: LLMRouting, default_config: FakeConfigProvider) -> None:
-        # Score 0.85: with defaults (0.8/0.5/0.2) should be HIGH
+        # Score 0.85: with defaults (0.8/0.5/0.2) should be HIGH.
+        # Contract E1: HIGH auto-accept requires corroboration.
         response = LLMResponse(
             content=json.dumps({"confidence_score": 0.85}),
             model="test-model",
             finish_reason="stop",
         )
-        ctx: dict[str, Any] = {"task_type": "scoring", "response": response}
+        ctx: dict[str, Any] = {
+            "task_type": "scoring",
+            "response": response,
+            "corroboration_confirmed": True,
+        }
 
         call_fn = FakeCallFn([])
         step = make_gate_step(default_config, call_fn, emitter=None)
@@ -660,7 +819,12 @@ class TestAuditEvent:
             model="test-model",
             finish_reason="stop",
         )
-        ctx: dict[str, Any] = {"task_type": "scoring", "response": response}
+        # Contract E1: HIGH auto-accept requires corroboration.
+        ctx: dict[str, Any] = {
+            "task_type": "scoring",
+            "response": response,
+            "corroboration_confirmed": True,
+        }
 
         call_fn = FakeCallFn([])
         step = make_gate_step(default_config, call_fn, emitter=emitter)
@@ -789,6 +953,26 @@ class TestGatePipelineIntegration:
         # Gate step's consensus call_fn (unused for HIGH)
         consensus_call_fn = FakeCallFn([])
         gate_step = make_gate_step(config, consensus_call_fn, emitter=None)
+
+        # Contract E1: HIGH auto-accept requires a corroboration signal
+        # from an upstream step. Register a fake ``validate`` step that
+        # seeds ``ctx["evidence_validation"]`` with a passing report; the
+        # ordering in POST_CALL_STEPS guarantees it runs before gate.
+        async def fake_validate_step(
+            ctx: dict[str, Any],
+            messages: list[dict[str, Any]],
+            routing: LLMRouting,
+        ) -> None:
+            ctx["evidence_validation"] = {
+                "citations_found": 1,
+                "citations_valid": 1,
+                "citations_hallucinated": 0,
+                "hallucinated_ids": [],
+                "overall_pass": True,
+                "results": [],
+            }
+
+        runner.register("validate", fake_validate_step)
         runner.register("gate", gate_step)
 
         # Primary call_fn for pipeline.run()

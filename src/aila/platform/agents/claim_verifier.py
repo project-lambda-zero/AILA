@@ -43,15 +43,17 @@ import json
 import logging
 import re
 from collections.abc import Callable
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 from uuid import uuid4
 
 import httpx
+from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
 from aila.platform.agents.idempotent_llm import idempotent_llm_call
 from aila.platform.contracts import utc_now
+from aila.platform.llm.errors import BudgetExceededError, LLMError
 from aila.platform.mcp.factory import make_bridge
 from aila.platform.prompts import PromptNotFoundError, PromptRegistry
 from aila.platform.prompts.seeds import (
@@ -64,6 +66,8 @@ from aila.platform.uow import UnitOfWork
 
 __all__ = [
     "ClaimVerifierAgentBase",
+    "ClaimVerifierExtractorResponse",
+    "ClaimVerifierVerdictResponse",
     "is_negative_finding_claim",
     "platform_claim_verifier_seed_entries",
 ]
@@ -152,6 +156,57 @@ def platform_claim_verifier_seed_entries() -> tuple[tuple[str, str], ...]:
         ("platform/claim_verifier/extractor", CLAIM_VERIFIER_EXTRACTOR_TEXT),
         ("platform/claim_verifier/verdict", CLAIM_VERIFIER_VERDICT_TEXT),
     )
+
+
+# Structured-output schemas (VR-truth stream B2). Both LLM stages route
+# through ``llm_client.chat_structured`` with these Pydantic models so
+# the provider returns schema-valid JSON or the client's bounded
+# correction loop escalates -- a parse-hostile response no longer
+# launders silently into an ``inconclusive`` verdict. Field shapes
+# mirror the seed prompts in ``prompts/seeds.py``; extra fields are
+# tolerated (default Pydantic behaviour) so a mildly-verbose model
+# reply still validates.
+class _ExtractorProbeSpec(BaseModel):
+    """One audit-mcp probe call: tool name plus its arguments dict."""
+
+    tool: str
+    args: dict[str, Any] = Field(default_factory=dict)
+
+
+class _ExtractorPrecondition(BaseModel):
+    """One falsifiable precondition with the probe that would refute it."""
+
+    id: str
+    rank: int | None = None
+    claim: str
+    if_refuted_then: str = ""
+    probe: _ExtractorProbeSpec
+    refutation_signature: str = ""
+
+
+class ClaimVerifierExtractorResponse(BaseModel):
+    """Extractor LLM structured output -- list of preconditions."""
+
+    preconditions: list[_ExtractorPrecondition] = Field(default_factory=list)
+
+
+class _VerdictPrecondition(BaseModel):
+    """One precondition's verdict-side result summary."""
+
+    id: str
+    claim: str = ""
+    result: Literal["true", "false", "unknown"] = "unknown"
+    evidence: str = ""
+
+
+class ClaimVerifierVerdictResponse(BaseModel):
+    """Verdict LLM structured output -- final classification + rationale."""
+
+    verdict: Literal["confirmed", "refuted", "inconclusive"]
+    confidence: float = Field(ge=0.0, le=1.0)
+    preconditions: list[_VerdictPrecondition] = Field(default_factory=list)
+    counter_evidence: str = ""
+    summary: str = ""
 
 
 # A general "no <thing> found / identified" negative-conclusion pattern the
@@ -621,24 +676,49 @@ class ClaimVerifierAgentBase:
             + f"{claim_section}"
             + f"{panel_section}\n"
         )
+        # Stream B2: route the extractor through chat_structured so the
+        # provider (or the client's bounded correction loop) returns
+        # schema-valid JSON. A shape problem now raises LLMError instead
+        # of silently degrading to zero preconditions.
         try:
             extractor_response, _ = await idempotent_llm_call(
                 services.llm_client,
-                method="chat",
+                method="chat_structured",
                 task_type=self._EXTRACTOR_TASK_TYPE,
                 messages=[
                     {"role": "system", "content": _load_extractor_prompt()},
                     {"role": "user", "content": extractor_input},
                 ],
+                model_class=ClaimVerifierExtractorResponse,
                 investigation_id=self.investigation_id,
             )
-        except (RuntimeError, OSError, TimeoutError) as exc:
-            _log.warning("claim_verifier extractor failed inv=%s err=%s",
-                         self.investigation_id, exc)
-            return {"status": "failed", "reason": f"extractor_error:{exc}"}
+        except BudgetExceededError:
+            raise
+        except (
+            httpx.HTTPError, LLMError, OSError,
+            RuntimeError, TimeoutError, ValueError, TypeError,
+        ) as exc:
+            _log.warning(
+                "claim_verifier extractor failed inv=%s err=%s",
+                self.investigation_id, exc,
+                exc_info=True,
+            )
+            return {"status": "failed", "reason": f"extractor_error:{type(exc).__name__}"}
         if extractor_response.disabled:
             return {"status": "skipped", "reason": "llm_kill_switch_active"}
-        preconditions = self._parse_preconditions(extractor_response.content)
+        # chat_structured guarantees JSON matching the schema, but the
+        # LLMResponse carries the raw string -- validate explicitly.
+        try:
+            extractor_parsed = ClaimVerifierExtractorResponse.model_validate_json(
+                extractor_response.content,
+            )
+        except ValueError as exc:
+            _log.warning(
+                "claim_verifier extractor structured payload rejected inv=%s err=%s",
+                self.investigation_id, exc,
+            )
+            return {"status": "failed", "reason": "extractor_schema_invalid"}
+        preconditions = [p.model_dump() for p in extractor_parsed.preconditions]
         if not preconditions:
             return {"status": "failed", "reason": "extractor_returned_no_preconditions"}
         # Pick top-N probes by extractor-supplied rank, not by sequence
@@ -707,34 +787,56 @@ class ClaimVerifierAgentBase:
 
         # Stage 3: verdict -- feed precondition + probe result pairs back
         verdict_input = self._render_verdict_input(preconditions, probe_results)
+        # Stream B2: verdict also flows through chat_structured. The
+        # explicit ``verdict`` enum plus 0.0-1.0 confidence bound means
+        # a parse-hostile reply surfaces as a defect (WARNING log +
+        # ``verdict_schema_invalid`` failure) instead of being coerced
+        # to ``inconclusive`` -- the coercion is what let bad verdicts
+        # ride into the ledger untagged.
         try:
             verdict_response, _ = await idempotent_llm_call(
                 services.llm_client,
-                method="chat",
+                method="chat_structured",
                 task_type=self._VERDICT_TASK_TYPE,
                 messages=[
                     {"role": "system", "content": _load_verdict_prompt()},
                     {"role": "user", "content": verdict_input},
                 ],
+                model_class=ClaimVerifierVerdictResponse,
                 investigation_id=self.investigation_id,
             )
-        except (RuntimeError, OSError, TimeoutError) as exc:
-            _log.warning("claim_verifier verdict LLM failed inv=%s err=%s",
-                         self.investigation_id, exc)
-            return {"status": "failed", "reason": f"verdict_error:{exc}"}
+        except BudgetExceededError:
+            raise
+        except (
+            httpx.HTTPError, LLMError, OSError,
+            RuntimeError, TimeoutError, ValueError, TypeError,
+        ) as exc:
+            _log.warning(
+                "claim_verifier verdict LLM failed inv=%s err=%s",
+                self.investigation_id, exc,
+                exc_info=True,
+            )
+            return {"status": "failed", "reason": f"verdict_error:{type(exc).__name__}"}
         if verdict_response.disabled:
             return {"status": "skipped", "reason": "llm_kill_switch_active"}
-        verdict = self._parse_verdict(verdict_response.content)
-        if verdict is None:
-            return {"status": "failed", "reason": "verdict_unparseable"}
+        try:
+            verdict_parsed = ClaimVerifierVerdictResponse.model_validate_json(
+                verdict_response.content,
+            )
+        except ValueError as exc:
+            _log.warning(
+                "claim_verifier verdict structured payload rejected inv=%s err=%s",
+                self.investigation_id, exc,
+            )
+            return {"status": "failed", "reason": "verdict_schema_invalid"}
 
         # Stage 4: persist verifier_report on canonical outcome
         verifier_report = {
-            "verdict": verdict.get("verdict") or "inconclusive",
-            "confidence": verdict.get("confidence"),
-            "preconditions": verdict.get("preconditions") or [],
-            "counter_evidence": verdict.get("counter_evidence") or "",
-            "summary": verdict.get("summary") or "",
+            "verdict": verdict_parsed.verdict,
+            "confidence": verdict_parsed.confidence,
+            "preconditions": [p.model_dump() for p in verdict_parsed.preconditions],
+            "counter_evidence": verdict_parsed.counter_evidence,
+            "summary": verdict_parsed.summary,
             "probes_run": len(probe_results),
             "probes_succeeded": sum(1 for p in probe_results if p["ok"]),
             "verified_at": utc_now().isoformat(),
@@ -808,9 +910,7 @@ class ClaimVerifierAgentBase:
           - confidence is not numeric.
           - confidence below the module's ``claim_verifier_auto_promote_floor``.
           - original ``outcome_kind`` is not the module's promote source
-            kind, or ``dispatch_status`` is not SKIPPED (only the
-            operator-promote dead-end auto-closes; anything else is
-            left alone).
+            kind.
           - the original payload already carries ``promoted_to``
             (idempotent re-run protection).
           - :meth:`is_negative_finding_claim` matches the module's
@@ -858,11 +958,11 @@ class ClaimVerifierAgentBase:
                         f"{self._promote_wrong_kind_reason}:{original.outcome_kind}"
                     ),
                 }
-            if original.dispatch_status != self._dispatch_status_skipped:
-                return {
-                    "status": "skipped",
-                    "reason": f"dispatch_status_not_skipped:{original.dispatch_status}",
-                }
+            # Stream B1: widen auto-promote past the operator-SKIPPED
+            # dead-end. A verifier-confirmed finding above the floor is
+            # promoted regardless of the original row's dispatch_status;
+            # the retained confidence floor, negative-claim, and
+            # already-promoted guards still bound the widening.
             try:
                 orig_payload = json.loads(original.payload_json or "{}")
             except (ValueError, TypeError):
@@ -1064,20 +1164,20 @@ class ClaimVerifierAgentBase:
             }
 
     def _parse_preconditions(self, raw_content: str) -> list[dict[str, Any]]:
-        """Extract the preconditions array from the extractor LLM output.
+        """Legacy tolerant precondition parser -- kept for backward compat.
 
-        Tolerates fenced JSON, leading prose, trailing prose. Returns an
-        empty list when parsing fails so the caller emits a clean
-        ``failed`` status instead of a half-loaded report.
+        The active pipeline now consumes structured output validated
+        against :class:`ClaimVerifierExtractorResponse`, so this helper
+        is unused on the hot path. Retained for the characterization
+        test suite and as a fallback for callers on a non-structured
+        provider.
         """
         text = (raw_content or "").strip()
-        # Strip fenced markdown if present
         if text.startswith("```"):
             lines = text.splitlines()
             text = "\n".join(
                 line for line in lines if not line.startswith("```")
             ).strip()
-        # Try direct parse, then bracket-scan fallback
         try:
             obj = json.loads(text)
         except (ValueError, TypeError):
@@ -1146,7 +1246,15 @@ class ClaimVerifierAgentBase:
         return "\n".join(out)
 
     def _parse_verdict(self, raw_content: str) -> dict[str, Any] | None:
-        """Parse the verdict LLM output."""
+        """Legacy tolerant verdict parser -- kept for backward compat.
+
+        The active pipeline now consumes structured output validated
+        against :class:`ClaimVerifierVerdictResponse`, so this helper
+        is unused on the hot path. It is retained as a fallback in
+        case a subclass wires a non-structured provider and for the
+        characterization test suite that pins the tolerant parse
+        behaviour.
+        """
         text = (raw_content or "").strip()
         if text.startswith("```"):
             lines = text.splitlines()

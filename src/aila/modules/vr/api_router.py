@@ -47,7 +47,7 @@ from aila.platform.services.investigation_summaries import (
     build_message_summary,
     build_outcome_summary,
 )
-from aila.platform.services.ssrf import SSRFBlockedError
+from aila.platform.services.ssrf import SSRFBlockedError, endpoint_of
 from aila.platform.uow import UnitOfWork
 from aila.storage.db_models import WorkflowStateCursor
 
@@ -777,7 +777,11 @@ def _investigation_summary(
     Binds the shared platform builder to VR's contract class. VR does not
     set ``workspace_id`` from this path (callers that need it join it
     separately). ``live_cost_usd`` overrides the stored
-    ``cost_actual_usd`` when provided.
+    ``cost_actual_usd`` when provided (see the detail endpoint: the
+    stored column is materialized on write by ``accrue_investigation_cost``
+    and the override is a fresh recompute from ``LLMCostRecord`` for
+    detail reads, so pre-#135 rows and any accrue drift still surface
+    the true spend).
 
     ``primary_outcome_polarity`` is injected via ``model_copy`` after
     the shared platform builder returns, because the shared builder
@@ -2816,6 +2820,7 @@ def create_vr_router() -> APIRouter:
             async with build_async_http_client(
                 _build_platform_settings(_get_settings()),
                 timeout=120.0,
+                allow_endpoints=endpoint_of(base_url),
             ) as client:
                 resp = await client.post(
                     f"{base_url}/tools/refresh_index",
@@ -2965,6 +2970,7 @@ def create_vr_router() -> APIRouter:
             async with build_async_http_client(
                 _build_platform_settings(_get_settings()),
                 timeout=300.0,
+                allow_endpoints=endpoint_of(base_url),
             ) as client:
                 resp = await client.post(
                     f"{base_url}/upload",
@@ -4802,9 +4808,15 @@ def create_vr_router() -> APIRouter:
 
         # Live cost -- sum LLMCostRecord by run_id (which the reasoning
         # engine threads as the investigation id). The stored
-        # cost_actual_usd has no writers so without this override every
-        # read returned $0 regardless of actual spend, making the budget
-        # gauge decorative.
+        # cost_actual_usd IS materialized on write by
+        # aila.platform.services.investigation_cost.accrue_investigation_cost
+        # (called from platform.llm.cost.persist_cost_record in the same
+        # transaction as the LLMCostRecord insert, per #135). This live
+        # recompute is the authoritative source of truth returned to the
+        # detail endpoint: it back-fills rows created before #135 landed
+        # and detects any drift where an accrue was skipped (e.g. cost
+        # records whose run_id did not resolve to a concrete investigation
+        # table at write time). Cheap: one indexed sum per read.
         async with UnitOfWork() as uow_cost:
             live_cost = await compute_live_investigation_cost(
                 uow_cost, investigation_id,
@@ -6495,6 +6507,23 @@ def create_vr_router() -> APIRouter:
 
         rows = await LedgerService().read_general(investigation_id, limit=10_000)
 
+        # F2 latent-by-design: two shapes surfaced by this endpoint are
+        # currently zero across the production corpus and expected to
+        # stay that way until later phases wire their producers.
+        #   1. ``objective_key`` is threaded through on every row but no
+        #      state transition emits ledger rows keyed by objective
+        #      today; the column is reserved so the shared LedgerService
+        #      row shape does not have to break when objective-scoped
+        #      notes start landing. Ledger rows without an objective
+        #      correctly report ``objective_key: null``.
+        #   2. Supersede chains on ledger entries (a superseded row
+        #      pointing at its replacement) are not modeled here. Outcome
+        #      supersede is tracked on ``VRInvestigationOutcomeRecord``
+        #      via ``superseded_at`` (dispatcher path); ledger rows are
+        #      append-only and never rewritten, so a chain field would
+        #      always be null. If/when a supersede producer is wired for
+        #      ledger notes, add the pointer column then; do NOT emit a
+        #      speculative empty ``superseded_by`` on every row.
         items: list[dict[str, Any]] = []
         _text_keys = ("note", "summary", "rationale", "claim", "directive")
         for row in rows:

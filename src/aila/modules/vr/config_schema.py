@@ -233,6 +233,51 @@ class VRConfigSchema(ModuleConfigBase):
             "RFC-13 behavior)."
         ),
     )
+    promote_confirmed_findings: bool = Field(
+        default=True,
+        description=(
+            "When true (F1), a branch that has marked a live hypothesis "
+            "confirmed (``hypotheses[].confirmed_by`` set with cited "
+            "evidence) is blocked from closing the investigation on a "
+            "weaker no-finding polarity (audit_memo / assessment_report). "
+            "The submit gate forces it to submit a direct_finding for the "
+            "confirmed hypothesis first, and a proactive directive nudges "
+            "it to do so before it tries to close. When false the branch "
+            "may still close a confirmed hypothesis as a no-finding. Read "
+            "live via ConfigRegistry so PUT /config lands on the next turn "
+            "without a worker restart. Env: "
+            "AILA_VR_PROMOTE_CONFIRMED_FINDINGS."
+        ),
+    )
+    reconciler_no_finding_state: str = Field(
+        default="approved",
+        description=(
+            "Outcome state the reconciler writes when auto-closing an "
+            "investigation that produced no proposed finding. 'approved' "
+            "(default, prior behavior) marks the synthesized audit_memo as a "
+            "settled no-finding result. 'draft' writes the same memo "
+            "undeliberated so it surfaces as an operator-reviewable draft "
+            "rather than a clean approved outcome; the investigation still "
+            "terminates COMPLETED pointing at the draft memo. Any value "
+            "other than 'draft' is treated as 'approved'. Read live via "
+            "ConfigRegistry so PUT /config lands on the next reconciler tick "
+            "without a worker restart. Env: "
+            "AILA_VR_RECONCILER_NO_FINDING_STATE."
+        ),
+    )
+    reconciler_min_turns_before_close: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Minimum branch turn_count the reconciler requires before "
+            "synthesizing a no-finding outcome. When > 0, an orphaned "
+            "investigation whose every branch ran fewer than this many turns "
+            "is routed to the resumable terminal status (VR binds STALLED) "
+            "instead of receiving a hollow no-finding memo; stall recovery "
+            "re-dispatches it. Default 0 disables the floor (prior "
+            "behavior). Env: AILA_VR_RECONCILER_MIN_TURNS_BEFORE_CLOSE."
+        ),
+    )
 
     # --- Agent submit-gate caps (operator-tunable) -----------------------
     # Resolved at the USE site via ConfigRegistry (namespace=vr) so a PUT
