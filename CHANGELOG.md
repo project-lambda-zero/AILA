@@ -7,6 +7,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The investigation finalize spine now runs in production. The aggregate step previously failed on a missing required argument and the error was swallowed, so claim merge, branch promotion, the falsifier pass, and settled-claim markers never executed. Finalize now threads the outcome model, branch pool, falsifier, and ledger through the emit bindings; it also reaps stale open ledger requests and records per-persona shared-claim coverage on each pass.
+- The pre-dispatch verifier gate now runs for every positive outcome. The dispatcher resolved the verifier through a module-level entrypoint that did not exist, so the import failed and verification was skipped. A module-level `verify_evidence` entrypoint now resolves; when the outcome payload omits an audit-mcp index the verifier resolves it from the investigation target handles inside the vr module before judging.
+- Provider prompt-prefix caching now defaults on, matching the resolver's documented default. A schema default of off was materialized as an explicit value that the resolver read as an operator kill switch, so a base install never got the cheaper prefix layout.
+- The `claim_verifier_broaden_promote_kinds` flag now takes effect. When enabled it widens the auto-promote source kinds to any positive or inconclusive outcome; the flag was previously defined but never read, so the gate stayed at the narrow default regardless of configuration.
+- The confidence gate no longer auto-accepts a consensus-driven high confidence without a corroborating signal. A low self-report that resampled to high through consensus previously bypassed the corroboration ceiling; the clamp now applies to every consensus outcome, so an uncorroborated high can never auto-accept on self-report alone.
+
 ## [0.5.51] - 2026-08-26 -- Unified specialist registry, prompt version management, scan pipeline resilience, VR confirmation wiring, adjudication ledger, and aggregation spine
 
 ### Added

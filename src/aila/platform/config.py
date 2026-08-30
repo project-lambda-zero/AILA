@@ -793,13 +793,15 @@ class PlatformConfigSchema(BaseModel):
     # retrieved knowledge). Provider prompt caches (Anthropic ~90% read
     # discount, OpenAI 24 h retention) stay warm turn-over-turn so
     # 50-100 turn investigations pay roughly 10% of prefill per turn
-    # instead of full price. Default False so a base install is
-    # byte-identical to pre-#155 assembly. Flip via
+    # instead of full price. Default True so a base install gets the
+    # cheaper prefix layout without an explicit opt-in; the resolver
+    # :func:`aila.platform.llm.prompt_layout.is_prompt_layout_enabled`
+    # treats this value as the operator kill switch (write a falsy
+    # value to disable). Flip via
     # ``PUT /config/platform/prompt_layout_enabled`` or the env var
     # ``AILA_PLATFORM_PROMPT_LAYOUT_ENABLED``; a value change lands on
-    # the next turn without a worker restart. Resolved through
-    # :func:`aila.platform.llm.prompt_layout.is_prompt_layout_enabled`.
-    prompt_layout_enabled: bool = False
+    # the next turn without a worker restart.
+    prompt_layout_enabled: bool = True
 
     # ENHANCEMENT #155 -- investigation-scoped prompt-cache TTL in
     # seconds. Forwarded to the provider as a cache-control lifetime

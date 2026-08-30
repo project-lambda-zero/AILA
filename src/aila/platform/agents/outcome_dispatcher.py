@@ -106,6 +106,13 @@ _FINALIZE_AUTHOR: str = "__finalize__"
 # durable ledger fact so the invariant harness can observe it.
 _SETTLED_CLAIM_KIND: str = "settled_claim"
 
+# Issue .run/issues/15_contract_net.md -- default TTL past which the
+# reaper closes an unratified request during finalize. Six hours is
+# comfortably longer than any per-turn deliberation window so a live
+# quorum in progress is never reaped, but still bounds a permanently-
+# stalled request that peers never answered.
+_FINALIZE_REAP_TTL_SECONDS: float = 6.0 * 3600.0
+
 # States the aggregator considers when deciding what to merge / promote.
 # ``draft`` is excluded (still under sibling review) and ``rejected`` is
 # excluded (already refused). ``approved`` + ``dispatched`` are the two
@@ -230,7 +237,7 @@ class OutcomeDispatcherBase:
         verify_fn = _load_verify_evidence_fn()
         if verify_fn is None:
             return None
-        packet = self._build_evidence_packet(
+        packet = await self._build_evidence_packet(
             outcome_kind=outcome_kind,
             outcome_id=outcome_id,
             investigation_id=investigation_id,
@@ -263,7 +270,7 @@ class OutcomeDispatcherBase:
             reason=reason,
         )
 
-    def _build_evidence_packet(
+    async def _build_evidence_packet(
         self,
         *,
         outcome_kind: StrEnum,
@@ -276,7 +283,16 @@ class OutcomeDispatcherBase:
 
         Modules may override to add per-kind ``case_state`` / tool-call
         provenance. The shape is the one the sibling Verifier task
-        publishes: ``{case_state, citations, tool_calls}``.
+        publishes: ``{claim, index_id, case_state, citations, tool_calls}``.
+
+        ``claim`` is the finding text (positive-polarity outcomes carry it
+        under ``answer`` / ``claim`` / ``summary`` / ``headline_verdict``).
+        ``index_id`` is the audit-mcp index bound to the investigation's
+        target; VR resolves it from the primary target's ``mcp_handles_json``
+        via a lazy import so the platform base does not depend on the VR
+        module surface. Both are required by
+        :func:`aila.modules.vr.agents.claim_verifier.verify_evidence`
+        (returns ``{"status": "skipped"}`` when either is absent).
         """
         citations = list(payload.get("evidence_refs") or [])
         if not citations and outcome_row is not None:
@@ -286,7 +302,22 @@ class OutcomeDispatcherBase:
                     citations = list(json.loads(raw_refs))
                 except (ValueError, TypeError):
                     citations = []
+        claim_text = (
+            payload.get("answer")
+            or payload.get("claim")
+            or payload.get("summary")
+            or payload.get("headline_verdict")
+            or ""
+        )
+        # ``index_id`` is passed through from the outcome payload only.
+        # When it is absent the vr claim verifier's module-level
+        # ``verify_evidence`` resolves it from the investigation target
+        # handles -- that db_models lookup stays in the vr module so the
+        # platform base never imports ``aila.modules.vr`` internals.
+        index_id = str(payload.get("index_id") or "").strip()
         return {
+            "claim": str(claim_text),
+            "index_id": index_id,
             "case_state": {
                 "outcome_id": outcome_id,
                 "investigation_id": investigation_id,
@@ -595,6 +626,18 @@ class FinalizeAggregateResult:
     settled_claim_ids: list[int] = field(default_factory=list)
     refuted_by_falsifier: list[str] = field(default_factory=list)
     downgraded_outcome_ids: list[str] = field(default_factory=list)
+    # Issue .run/issues/15_contract_net.md -- the stale-request reaper
+    # is invoked once per finalize pass so open request entries older
+    # than the TTL are closed with a ``reaped_ttl_expired`` decision.
+    reaped_request_ids: list[int] = field(default_factory=list)
+    # Issue .run/issues/12_agent_interaction_trace.md -- per-persona
+    # shared-claim coverage snapshot. Read from
+    # :func:`aila.platform.services.shared_claims.read_shared_claims`
+    # for every persona present in the aggregatable outcome set, so
+    # the finalize log surfaces how many confirmed + adjudicated claims
+    # every persona's branch pool has visible. A missing branch_model
+    # (module did not thread it) leaves this empty.
+    shared_claim_coverage: dict[str, tuple[int, int]] = field(default_factory=dict)
 
 
 async def finalize_investigation_aggregate(
@@ -606,6 +649,8 @@ async def finalize_investigation_aggregate(
     ledger: LedgerService | None = None,
     polarity_fn: Any | None = None,
     session: Any = None,
+    branch_model: type | None = None,
+    reap_ttl_seconds: float = _FINALIZE_REAP_TTL_SECONDS,
 ) -> FinalizeAggregateResult:
     """Aggregate an investigation's outcomes at finalize (issue #19).
 
@@ -773,13 +818,70 @@ async def finalize_investigation_aggregate(
             continue
         result.settled_claim_ids.append(int(entry_id))
 
+    # 6. Reap stale contract-net requests (issue #15). A single sweep
+    # per finalize closes every request older than ``reap_ttl_seconds``
+    # that no peer decision (or oracle) ever ratified. Guarded so a
+    # reap failure never blocks the aggregate result.
+    try:
+        from aila.platform.services.contract_net import (  # noqa: PLC0415
+            reap_stale_requests,
+        )
+        reap_summary = await reap_stale_requests(
+            investigation_id,
+            ttl_seconds=reap_ttl_seconds,
+            ledger=ledger_svc,
+            session=session,
+        )
+        for resolved in reap_summary.resolved or []:
+            result.reaped_request_ids.append(int(resolved.request_id))
+    except (ImportError, RuntimeError, ValueError, TypeError,
+            SQLAlchemyError, OSError) as exc:
+        _log.warning(
+            "finalize reap_stale_requests failed inv=%s: %s",
+            investigation_id, exc,
+        )
+
+    # 7. Shared-claim coverage snapshot per persona (issue #12). For
+    # every persona represented in the aggregatable outcome set, read
+    # the confirmed + adjudicated claims visible to that persona's
+    # branch pool. Recorded on the result so the finalize log surfaces
+    # cross-branch coverage; consumed by the per-turn observable
+    # assembly in a follow-on wiring. No-op when ``branch_model`` is
+    # not threaded (module has not opted in).
+    if branch_model is not None:
+        try:
+            from aila.platform.services.shared_claims import (  # noqa: PLC0415
+                read_shared_claims,
+            )
+            personas = await _personas_for_outcomes(
+                outcomes, branch_model,
+            )
+            for persona in personas:
+                space = await read_shared_claims(
+                    investigation_id, persona,
+                    branch_model=branch_model,
+                    ledger=ledger_svc,
+                    session=session,
+                )
+                result.shared_claim_coverage[persona] = (
+                    len(space.confirmed_discoveries),
+                    len(space.adjudications),
+                )
+        except (ImportError, RuntimeError, ValueError, TypeError,
+                SQLAlchemyError, OSError, AttributeError) as exc:
+            _log.warning(
+                "finalize shared_claims read failed inv=%s: %s",
+                investigation_id, exc,
+            )
+
     _log.info(
         "finalize_aggregate inv=%s scanned=%d merged=%d promoted=%s "
-        "refuted=%d settled=%d",
+        "refuted=%d settled=%d reaped=%d shared_personas=%d",
         investigation_id, result.scanned_outcomes,
         len(result.merged_branch_pairs),
         result.promoted.outcome_id if result.promoted else None,
         len(result.refuted_by_falsifier), len(result.settled_claim_ids),
+        len(result.reaped_request_ids), len(result.shared_claim_coverage),
     )
     return result
 
@@ -856,6 +958,36 @@ def _decode_payload_json(raw: str | None) -> dict[str, Any]:
         return json.loads(raw or "{}")
     except (ValueError, TypeError):
         return {}
+
+
+async def _personas_for_outcomes(
+    outcomes: list[Any], branch_model: type,
+) -> list[str]:
+    """Resolve the distinct ``persona_voice`` set of every branch that
+    produced an aggregatable outcome. Used by the shared-claim coverage
+    read in :func:`finalize_investigation_aggregate`.
+    """
+    branch_ids = {
+        str(row.branch_id) for row in outcomes
+        if getattr(row, "branch_id", None)
+    }
+    if not branch_ids:
+        return []
+    async with UnitOfWork() as uow:
+        rows = list((await uow.session.exec(
+            select(branch_model.persona_voice).where(
+                branch_model.id.in_(list(branch_ids)),
+            )
+        )).all())
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in rows:
+        persona = str(value or "").strip()
+        if not persona or persona in seen:
+            continue
+        seen.add(persona)
+        out.append(persona)
+    return out
 
 
 def _distinct_branch_pairs(rows: list[Any]) -> list[tuple[str, str]]:

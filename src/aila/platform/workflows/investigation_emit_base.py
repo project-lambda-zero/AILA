@@ -1405,10 +1405,65 @@ def state_investigation_emit(
             _aggregate = getattr(
                 _outcome_dispatcher, "finalize_investigation_aggregate", None,
             )
-            if callable(_aggregate) and investigation_id:
-                _aggregate_result = _aggregate(investigation_id)
-                if hasattr(_aggregate_result, "__await__"):
-                    await _aggregate_result
+            if (
+                callable(_aggregate)
+                and investigation_id
+                and bindings.outcome_model is not None
+            ):
+                # Build the optional per-module inputs from bindings.
+                # Every construction is guarded so a factory raise -- or
+                # an import failure the factory did not catch -- degrades
+                # the aggregate step to skeleton-only (scan + settled
+                # claim writes + reaper + shared-claim coverage) instead
+                # of crashing the emit terminal.
+                _branch_pool: Any | None = None
+                if bindings.branch_pool_factory is not None:
+                    try:
+                        _branch_pool = bindings.branch_pool_factory(
+                            investigation_id,
+                        )
+                    except (RuntimeError, ValueError, TypeError,
+                            AttributeError, ImportError) as _exc:
+                        _log.warning(
+                            "investigation_emit AGGREGATE_FINALIZE "
+                            "branch_pool_factory failed inv=%s: %s",
+                            investigation_id, _exc,
+                        )
+                _falsifier: Any | None = None
+                if bindings.falsifier_factory is not None:
+                    try:
+                        _falsifier = bindings.falsifier_factory()
+                    except (RuntimeError, ValueError, TypeError,
+                            AttributeError, ImportError) as _exc:
+                        _log.warning(
+                            "investigation_emit AGGREGATE_FINALIZE "
+                            "falsifier_factory failed inv=%s: %s",
+                            investigation_id, _exc,
+                        )
+                _aggregate_result = await _aggregate(
+                    investigation_id,
+                    outcome_model=bindings.outcome_model,
+                    branch_pool=_branch_pool,
+                    falsifier=_falsifier,
+                    ledger=LedgerService(),
+                    branch_model=bindings.branch_model,
+                )
+                _log.info(
+                    "investigation_emit AGGREGATE_FINALIZE inv=%s "
+                    "scanned=%d merged=%d promoted=%s refuted=%d "
+                    "settled=%d reaped=%d shared_personas=%d",
+                    investigation_id,
+                    _aggregate_result.scanned_outcomes,
+                    len(_aggregate_result.merged_branch_pairs),
+                    (
+                        _aggregate_result.promoted.outcome_id
+                        if _aggregate_result.promoted else None
+                    ),
+                    len(_aggregate_result.refuted_by_falsifier),
+                    len(_aggregate_result.settled_claim_ids),
+                    len(_aggregate_result.reaped_request_ids),
+                    len(_aggregate_result.shared_claim_coverage),
+                )
         except (
             ImportError, AttributeError, SQLAlchemyError,
             OSError, RuntimeError, ValueError, TypeError,

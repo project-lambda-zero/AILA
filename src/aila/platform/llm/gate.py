@@ -566,6 +566,18 @@ def make_gate_step(
             new_level = _map_confidence_level(
                 winner_score, high, medium, reject,
             )
+            # Contract E1 (centralized clamp): a consensus-driven HIGH is
+            # still self-report -- multiple agreeing re-draws are not an
+            # independent, evidence-derived signal (see
+            # :func:`_has_corroboration`). Without corroboration the
+            # ceiling stays MEDIUM regardless of which branch entered
+            # consensus (a bare LOW self-report OR a downgraded,
+            # uncorroborated HIGH), so the overconfident tail can never
+            # auto-accept on self-report alone -- the false-positive path
+            # #272 closes, now enforced for the LOW branch too.
+            if new_level == "HIGH" and not _has_corroboration(ctx):
+                new_level = "MEDIUM"
+                ctx["consensus_high_capped_no_corroboration"] = True
             ctx["confidence"] = new_level
             ctx["consensus_winner_score"] = winner_score
             ctx["consensus_winner_raw_score"] = winner_raw
@@ -583,23 +595,14 @@ def make_gate_step(
             # wrong. Route it through the same retry machinery the LOW
             # branch uses.
             if should_consensus_from_high_downgrade:
+                # E1 invariant is enforced centrally inside
+                # ``_consensus_pass``: a re-sampled uncorroborated HIGH
+                # may push DOWN but can never re-promote to auto-accept
+                # HIGH on self-report alone. The same clamp now guards
+                # the LOW branch below.
                 await _consensus_pass(
                     reason="high_downgraded_no_corroboration",
                 )
-                # E1 invariant preserved through the inversion: the
-                # re-sample of an overconfident, uncorroborated response
-                # may push the level DOWN (a majority of inconsistent
-                # re-draws), but a repeated high-score self-report must
-                # NOT re-promote it to HIGH. Without an independent
-                # corroborating signal the ceiling stays MEDIUM, so the
-                # overconfident tail can never auto-accept on self-report
-                # alone -- the exact false-positive path #272 closes.
-                if (
-                    ctx.get("confidence") == "HIGH"
-                    and not _has_corroboration(ctx)
-                ):
-                    ctx["confidence"] = "MEDIUM"
-                    ctx["high_downgrade_consensus_capped"] = True
         elif level == "LOW":
             # Consensus retry -- honest low-confidence self-report.
             # Kept because a bare LOW with no better option still needs

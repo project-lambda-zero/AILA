@@ -495,6 +495,87 @@ class TestGateRoutingLow:
         assert ctx.get("consensus_attempted") is True
         assert len(call_fn._calls) == 2  # 2 retries
 
+    @pytest.mark.asyncio
+    async def test_low_consensus_to_high_without_corroboration_is_capped(
+        self, routing: LLMRouting
+    ) -> None:
+        # A bare LOW self-report (0.3) that resamples to HIGH across
+        # consensus is still self-report -- with no evidence-derived
+        # corroboration the E1 ceiling clamps it to MEDIUM so it cannot
+        # auto-accept. The winner still replaces ctx["response"].
+        response = LLMResponse(
+            content=json.dumps({"confidence_score": 0.3}),
+            model="test-model",
+            finish_reason="stop",
+        )
+        winner = LLMResponse(
+            content=json.dumps({"confidence_score": 0.95, "answer": "winner"}),
+            model="test-model",
+            finish_reason="stop",
+        )
+        other = LLMResponse(
+            content=json.dumps({"confidence_score": 0.9}),
+            model="test-model",
+            finish_reason="stop",
+        )
+        config = FakeConfigProvider({
+            "llm_pipeline_gate_reject_threshold_scoring": 0.1,
+            "llm_pipeline_gate_medium_threshold_scoring": 0.6,
+            "llm_pipeline_gate_high_threshold_scoring": 0.9,
+            "llm_pipeline_gate_consensus_retries_scoring": 2,
+        })
+        call_fn = FakeCallFn([winner, other])
+
+        ctx: dict[str, Any] = {"task_type": "scoring", "response": response}
+        step = make_gate_step(config, call_fn, emitter=None)
+        await step(ctx, [], routing)
+
+        assert ctx["response"] is winner
+        assert ctx["confidence"] == "MEDIUM"
+        assert ctx.get("consensus_high_capped_no_corroboration") is True
+
+    @pytest.mark.asyncio
+    async def test_low_consensus_to_high_with_corroboration_auto_accepts(
+        self, routing: LLMRouting
+    ) -> None:
+        # Same resample to HIGH, but an upstream evidence-derived
+        # corroboration flag is present -- the E1 ceiling lifts and the
+        # consensus HIGH is honoured (auto-accept).
+        response = LLMResponse(
+            content=json.dumps({"confidence_score": 0.3}),
+            model="test-model",
+            finish_reason="stop",
+        )
+        winner = LLMResponse(
+            content=json.dumps({"confidence_score": 0.95, "answer": "winner"}),
+            model="test-model",
+            finish_reason="stop",
+        )
+        other = LLMResponse(
+            content=json.dumps({"confidence_score": 0.9}),
+            model="test-model",
+            finish_reason="stop",
+        )
+        config = FakeConfigProvider({
+            "llm_pipeline_gate_reject_threshold_scoring": 0.1,
+            "llm_pipeline_gate_medium_threshold_scoring": 0.6,
+            "llm_pipeline_gate_high_threshold_scoring": 0.9,
+            "llm_pipeline_gate_consensus_retries_scoring": 2,
+        })
+        call_fn = FakeCallFn([winner, other])
+
+        ctx: dict[str, Any] = {
+            "task_type": "scoring",
+            "response": response,
+            "corroboration_confirmed": True,
+        }
+        step = make_gate_step(config, call_fn, emitter=None)
+        await step(ctx, [], routing)
+
+        assert ctx["response"] is winner
+        assert ctx["confidence"] == "HIGH"
+        assert ctx.get("consensus_high_capped_no_corroboration") is not True
+
 
 # ---------------------------------------------------------------------------
 # CONF-02: Gate routing tests -- REJECT

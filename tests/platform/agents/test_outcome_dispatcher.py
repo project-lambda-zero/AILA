@@ -161,11 +161,24 @@ async def test_vr_dispatch_routes_direct_finding_to_correct_handler() -> None:
             f"sibling handler {other} must not run for DIRECT_FINDING",
         )))
 
+    # The pre-dispatch verifier gate (issue #13/#14/#249 W13) fires for
+    # every positive-polarity outcome kind, DIRECT_FINDING included.
+    # It resolves the sibling ``verify_evidence`` from the VR claim
+    # verifier module via a lazy import; that module now ships a real
+    # module-level ``verify_evidence`` (integration slice B), so the
+    # gate runs a real DB-touching adversarial check in this routing
+    # test unless it is stubbed. Patching the loader to return None
+    # keeps the routing assertion pure (does the winning claim reach
+    # the matching per-kind handler?) without weakening the gate --
+    # its behaviour is covered by the dedicated verifier tests.
     with patch(
         "aila.platform.agents.outcome_dispatcher.claim_outcome_for_dispatch",
         new=AsyncMock(return_value=_winning_claim(
             VROutcomeKind.DIRECT_FINDING.value,
         )),
+    ), patch(
+        "aila.platform.agents.outcome_dispatcher._load_verify_evidence_fn",
+        return_value=None,
     ):
         result = await dispatcher.dispatch("oc-1")
 

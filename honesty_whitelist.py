@@ -683,13 +683,19 @@ HONESTY_WHITELIST = [
      "aila.modules.vr.agents.claim_verifier",
      "use module contracts"),
     ("platform/agents/outcome_dispatcher.py",
-     "inline '# noqa' comment on line 523",
+     "inline '# noqa' comment on line 554",
      "documented justification"),
     ("platform/agents/outcome_dispatcher.py",
-     "inline '# noqa' comment on line 539",
+     "inline '# noqa' comment on line 570",
      "documented justification"),
     ("platform/agents/outcome_dispatcher.py",
-     "inline '# noqa' comment on line 944",
+     "inline '# noqa' comment on line 826",
+     "documented justification"),
+    ("platform/agents/outcome_dispatcher.py",
+     "inline '# noqa' comment on line 853",
+     "documented justification"),
+    ("platform/agents/outcome_dispatcher.py",
+     "inline '# noqa' comment on line 1076",
      "documented justification"),
     ("platform/agents/outcome_dispatcher.py",
      "except returns empty default",
@@ -697,6 +703,42 @@ HONESTY_WHITELIST = [
     ("platform/agents/outcome_dispatcher.py",
      "_load_verify_evidence_fn",
      "RFC-07"),
+
+    # ------------------------------------------------------------------
+    # VR-truth issue #13/#14/#249 W13 -- the finalize FalsifierAgent
+    # builder in vr/workflow/states/investigation_emit.py lazily imports
+    # the platform falsifier, idempotent LLM call, LLM client, config
+    # registry, and secret store inside the builder so the emit state
+    # module stays free of a platform.agents / platform.llm import cycle
+    # at load time.
+    # ------------------------------------------------------------------
+    ("vr/workflow/states/investigation_emit.py",
+     "inline '# noqa' comment on line 161",
+     "documented justification"),
+    ("vr/workflow/states/investigation_emit.py",
+     "inline '# noqa' comment on line 162",
+     "documented justification"),
+    ("vr/workflow/states/investigation_emit.py",
+     "inline '# noqa' comment on line 165",
+     "documented justification"),
+    ("vr/workflow/states/investigation_emit.py",
+     "inline '# noqa' comment on line 166",
+     "documented justification"),
+    ("vr/workflow/states/investigation_emit.py",
+     "inline '# noqa' comment on line 167",
+     "documented justification"),
+
+    # ------------------------------------------------------------------
+    # VR-truth issue #13/#14/#249 W13 -- the module-level
+    # verify_evidence resolver in vr/agents/claim_verifier.py resolves
+    # the audit-mcp index from the investigation target handles on a
+    # best-effort basis; a lookup failure returns "" so the verifier
+    # gate skips rather than crashing the dispatch. Same fail-safe the
+    # platform loader block already carries.
+    # ------------------------------------------------------------------
+    ("vr/agents/claim_verifier.py",
+     "except returns empty default",
+     "silently hides failures"),
 ]
 
 

@@ -30,6 +30,7 @@ from collections.abc import Callable
 from typing import Any
 
 import httpx
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
 from aila.modules.vr.agents.outcome_dispatcher import OutcomeDispatcher
@@ -73,7 +74,11 @@ from aila.platform.mcp.factory import make_bridge
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.uow import UnitOfWork
 
-__all__ = ["ClaimVerifierAgent", "is_negative_finding_claim"]
+__all__ = [
+    "ClaimVerifierAgent",
+    "is_negative_finding_claim",
+    "verify_evidence",
+]
 
 _log = logging.getLogger(__name__)
 _cfg = ModuleConfigReader("vr")
@@ -434,30 +439,33 @@ class ClaimVerifierAgent(ClaimVerifierAgentBase):
 
     # ----- VR-truth issue #260: widen auto-promote source-kind gate -----
 
-    def _is_auto_promotable_source_kind(self, kind: str) -> bool:
+    async def _is_auto_promotable_source_kind(self, kind: str) -> bool:
         """Broaden the auto-promote source-kind gate for VR.
 
         When ``vr.claim_verifier_broaden_promote_kinds`` is true
         (default), any positive-or-inconclusive outcome kind is
-        eligible -- i.e. everything except ``audit_memo`` (the settled
-        no-finding negative). The confidence-floor, already-promoted,
-        and negative-claim guards remain in force on the outer
-        ``_maybe_auto_promote`` body. This lifts the verifier past the
-        ASSESSMENT_REPORT-only gate that starved the confirming path
-        (adjudication-source doc, section 3-5).
+        eligible -- i.e. everything except the ``negative`` polarity
+        (the settled no-finding claim). The confidence-floor,
+        already-promoted, and negative-claim guards remain in force on
+        the outer ``_maybe_auto_promote`` body. This lifts the
+        verifier past the ASSESSMENT_REPORT-only gate that starved the
+        confirming path (adjudication-source doc, section 3-5).
+
+        When the knob is false, the pre-widening base behaviour holds:
+        only the module's declared ``_promote_source_kind`` is
+        eligible.
         """
-        # Sync-only read -- the ConfigRegistry get() coroutine cannot be
-        # awaited from a sync method. Fall back to the widened default
-        # when the config read cannot be scheduled here; the toggle is
-        # advisory (any positive-or-inconclusive kind IS a legitimate
-        # promotion source once verifier-confirmed). Callers that want
-        # the pre-widening behaviour set the config knob to false --
-        # the platform default hook still honours it via base equality
-        # when this override reports False.
-        polarity = outcome_polarity(kind)
-        if polarity == "negative":
-            return False
-        return True
+        try:
+            broaden = await _cfg.get_bool(
+                "claim_verifier_broaden_promote_kinds",
+            )
+        except (ValueError, TypeError, OSError, RuntimeError):
+            # A ConfigRegistry read failure MUST NOT widen the gate
+            # silently. Fall back to the base narrow equality check.
+            return await super()._is_auto_promotable_source_kind(kind)
+        if not broaden:
+            return await super()._is_auto_promotable_source_kind(kind)
+        return outcome_polarity(kind) != "negative"
 
     # ----- VR-truth issue #260, section 5: precondition quorum override -----
 
@@ -779,3 +787,84 @@ class ClaimVerifierAgent(ClaimVerifierAgentBase):
                 evidence_packet.get("proposing_branch_id") or ""
             ),
         }
+
+
+async def _resolve_investigation_index_id(investigation_id: str) -> str:
+    """Resolve investigation -> primary target -> audit-mcp index id.
+
+    Loads the investigation row, loads its target, and parses
+    ``mcp_handles_json`` for ``audit_mcp_index_id`` (source repos) or
+    ``audit_mcp_decompiled_index_id`` (Android APK unified index) --
+    the same handle lookup the probe stage runs against. Returns ""
+    when the investigation, target, or handle is absent so the caller
+    can treat an empty index as "skip the gate". This lookup lives in
+    the vr module because it reads vr db_models; the platform base
+    never imports them.
+    """
+    if not investigation_id:
+        return ""
+    try:
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _select(VRInvestigationRecord).where(
+                    VRInvestigationRecord.id == investigation_id,
+                )
+            )).first()
+            if inv is None or not getattr(inv, "target_id", None):
+                return ""
+            target = (await uow.session.exec(
+                _select(VRTargetRecord).where(
+                    VRTargetRecord.id == inv.target_id,
+                )
+            )).first()
+        if target is None or not getattr(target, "mcp_handles_json", None):
+            return ""
+        handles = json.loads(target.mcp_handles_json or "{}")
+        return str(
+            handles.get("audit_mcp_index_id")
+            or handles.get("audit_mcp_decompiled_index_id")
+            or ""
+        )
+    except (SQLAlchemyError, OSError, RuntimeError, ValueError,
+            TypeError, AttributeError):
+        return ""
+
+
+async def verify_evidence(packet: dict) -> dict:
+    """Module-level entrypoint for the pre-dispatch verifier gate.
+
+    Instantiates :class:`ClaimVerifierAgent` from the packet and
+    delegates to its instance-level ``verify_evidence``. Kept as a
+    plain module attribute so
+    :func:`aila.platform.agents.outcome_dispatcher._load_verify_evidence_fn`
+    can import it verbatim -- an instance method resolves to a
+    descriptor at module scope and would silently ImportError inside
+    the dispatchers lazy loader, permanently disabling the
+    pre-dispatch verifier gate for every positive outcome.
+
+    The packet contract is the one the dispatchers
+    ``_build_evidence_packet`` writes: ``investigation_id`` lives under
+    ``case_state`` (with a top-level fallback). ``claim`` and
+    ``index_id`` are required by the instance method. The dispatcher
+    packet carries ``index_id`` only when the outcome payload already
+    had one, so when it is absent this wrapper resolves it from the
+    investigation's target handles -- keeping the vr db_models lookup
+    in the vr module -- before delegating, so the gate runs instead of
+    skipping on an empty index.
+    """
+    case_state = packet.get("case_state") if isinstance(
+        packet.get("case_state"), dict,
+    ) else {}
+    investigation_id = str(
+        packet.get("investigation_id")
+        or case_state.get("investigation_id")
+        or "",
+    ).strip()
+    if not investigation_id:
+        return {"status": "skipped", "reason": "no_investigation_id"}
+    if not str(packet.get("index_id") or "").strip():
+        resolved = await _resolve_investigation_index_id(investigation_id)
+        if resolved:
+            packet = {**packet, "index_id": resolved}
+    agent = ClaimVerifierAgent(investigation_id=investigation_id)
+    return await agent.verify_evidence(packet)

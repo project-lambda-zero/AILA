@@ -588,7 +588,7 @@ class ClaimVerifierAgentBase:
         del packet
         return ""
 
-    def _is_auto_promotable_source_kind(self, kind: str) -> bool:
+    async def _is_auto_promotable_source_kind(self, kind: str) -> bool:
         """Return True when ``kind`` is eligible for auto-promotion.
 
         Default keeps the pre-existing narrow equality check
@@ -600,6 +600,12 @@ class ClaimVerifierAgentBase:
         about-to-dispatch confirmed positive kind can be endorsed by
         the verifier while the already-promoted / confidence-floor /
         negative-claim guards remain in force.
+
+        Async so overriding subclasses can consult module
+        ``ConfigRegistry`` knobs (vr's
+        ``claim_verifier_broaden_promote_kinds``) without paying a
+        sync-bridge tax; the sole caller is inside the async
+        ``_maybe_auto_promote`` body.
         """
         return kind == self._promote_source_kind
 
@@ -1048,7 +1054,7 @@ class ClaimVerifierAgentBase:
             )).first()
             if original is None:
                 return {"status": "skipped", "reason": "outcome_disappeared"}
-            if not self._is_auto_promotable_source_kind(original.outcome_kind):
+            if not await self._is_auto_promotable_source_kind(original.outcome_kind):
                 return {
                     "status": "skipped",
                     "reason": (
