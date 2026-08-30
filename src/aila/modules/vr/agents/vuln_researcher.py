@@ -78,6 +78,7 @@ from aila.platform.config_base import ModuleConfigReader
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.enums import PersonaVoice
 from aila.platform.contracts.reasoning import (
+    Hypothesis,
     ReasoningCaseState,
     ReasoningContract,
     ReasoningPromptContext,
@@ -248,6 +249,9 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         self._draft_pending_reject_cap = await _cfg.get_int("draft_pending_reject_cap")
         self._sibling_open_hyp_reject_cap = await _cfg.get_int(
             "sibling_open_hyp_reject_cap",
+        )
+        self._promote_confirmed_findings = await _cfg.get_bool(
+            "promote_confirmed_findings",
         )
 
     async def _build_recall_fetcher(
@@ -1264,6 +1268,232 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                 **payload,
                 "_unresolved_hyp_gate_rejected": True,
                 "_unresolved_hyp_gate_reject_count": new_reject_count,
+            },
+        })
+
+    def _confirmed_open_hypotheses(
+        self,
+        *,
+        case_state: ReasoningCaseState,
+        decision: ReasoningTurnDecision | None,
+    ) -> list[Hypothesis]:
+        """Return live hypotheses carrying a ``confirmed_by`` provenance
+        that the current view has not retracted.
+
+        Merges the accumulated ``case_state.hypotheses`` (prior-turn
+        confirmations) with ``decision.hypotheses`` (this turn's view --
+        an upsert by id, mirroring absorb, so a re-emit without
+        ``confirmed_by`` retracts a prior confirmation) and drops any id
+        the decision rejects this turn. ``decision`` is None on the
+        proactive-injection path (no decision yet), where only the
+        accumulated state is scanned.
+        """
+        confirmed: dict[str, Hypothesis] = {}
+        for h in case_state.hypotheses:
+            if h.id and getattr(h, "confirmed_by", ""):
+                confirmed[h.id] = h
+        if decision is not None:
+            for h in decision.hypotheses:
+                if not h.id:
+                    continue
+                if getattr(h, "confirmed_by", ""):
+                    confirmed[h.id] = h
+                else:
+                    # Current view no longer confirms this id -- retract.
+                    confirmed.pop(h.id, None)
+            for r in decision.rejected:
+                if r.id:
+                    confirmed.pop(r.id, None)
+        return list(confirmed.values())
+
+    def _inject_promotion_directives(
+        self, case_state: ReasoningCaseState, *, turn_number: int,
+    ) -> ReasoningCaseState:
+        """F1: surface a promote-the-confirmed-finding directive.
+
+        When the toggle is on and any live hypothesis carries a
+        ``confirmed_by`` provenance, write a directive that lands at
+        PROMPT POSITION 2 nudging the branch to submit a direct_finding
+        for that hypothesis before it tries to close on a weaker
+        polarity. Cleared on the same call when no confirmed hypothesis
+        remains, so a resolved directive never lingers.
+        """
+        del turn_number
+        if not getattr(self, "_promote_confirmed_findings", False):
+            return case_state
+        confirmed = self._confirmed_open_hypotheses(
+            case_state=case_state, decision=None,
+        )
+        if not confirmed:
+            case_state.observables.pop("_directive.promote_confirmed", None)
+            return case_state
+        lines: list[str] = []
+        for h in confirmed[:10]:
+            claim = (h.claim or "")[:140]
+            cite = (getattr(h, "confirmed_by", "") or "")[:140]
+            lines.append(f"  - {h.id}: {claim}\n      confirmed_by: {cite}")
+        if len(confirmed) > 10:
+            lines.append(f"  ... and {len(confirmed) - 10} more")
+        case_state.observables["_directive.promote_confirmed"] = (
+            "*** CONFIRMED HYPOTHESIS -- SUBMIT THE FINDING ***\n"
+            f"You have marked {len(confirmed)} hypothesis(es) confirmed "
+            "with cited evidence. A confirmed hypothesis is a proven "
+            "positive; it MUST be submitted as a `direct_finding`, not "
+            "left open and not closed as a no-finding.\n"
+            "\n"
+            "CONFIRMED HYPOTHESES:\n"
+            + "\n".join(lines)
+            + "\n\n"
+            "Next decision: emit `action: submit` with a direct_finding "
+            "whose `answer` + `provenance` cite the hypothesis id and its "
+            "confirming evidence, and set `confidence` to strong/exact. Do "
+            "not close this investigation on a weaker polarity while the "
+            "finding is confirmed. If you were wrong, either reject the "
+            "hypothesis with counter-evidence or re-emit it without "
+            "`confirmed_by` to retract the confirmation."
+        )
+        return case_state
+
+    def _maybe_reject_weak_submit_with_confirmed_hypothesis(
+        self,
+        *,
+        decision: ReasoningTurnDecision,
+        case_state: ReasoningCaseState,
+        turn_number: int,
+    ) -> ReasoningTurnDecision:
+        """F1: intercept a weak-polarity submit that buries a confirmed
+        hypothesis.
+
+        A branch that marked a hypothesis ``confirmed_by`` (a proven
+        positive) and then submits a negative close (audit_memo) or an
+        inconclusive assessment (assessment_report) is contradicting
+        its own evidence. The positive would never reach review -- the
+        ~99% gap this fix closes. This gate forces the branch to submit
+        that finding as a ``direct_finding`` first.
+
+        Same shape as ``_maybe_reject_submit_with_unresolved_hypotheses``:
+          - Pass: clear directive + counter, return original decision.
+          - Reject (under cap): convert to non-terminal placeholder,
+            inject directive into case_state.observables.
+          - Force-through (over cap): stamp payload advisory, allow.
+        """
+        if not getattr(self, "_promote_confirmed_findings", False):
+            return decision
+
+        kind = self._terminal_outcome_kind(decision)
+        weak = kind in {OutcomeKind.AUDIT_MEMO, OutcomeKind.ASSESSMENT_REPORT}
+        confirmed = self._confirmed_open_hypotheses(
+            case_state=case_state, decision=decision,
+        )
+        if not weak or not confirmed:
+            case_state.observables.pop(
+                "_promote_confirmed_submit_rejected_count", None,
+            )
+            case_state.observables.pop(
+                "_directive.promote_confirmed_submit_rejected", None,
+            )
+            return decision
+
+        prior_rejects = int(
+            case_state.observables.get(
+                "_promote_confirmed_submit_rejected_count", 0,
+            ) or 0,
+        )
+        new_reject_count = prior_rejects + 1
+        confirmed_lines: list[str] = []
+        for h in confirmed[:10]:
+            claim = (h.claim or "")[:140]
+            cite = (getattr(h, "confirmed_by", "") or "")[:140]
+            confirmed_lines.append(
+                f"  - {h.id}: {claim}\n      confirmed_by: {cite}",
+            )
+        if len(confirmed) > 10:
+            confirmed_lines.append(f"  ... and {len(confirmed) - 10} more")
+        confirmed_ids = [h.id for h in confirmed]
+
+        if new_reject_count > self._unresolved_hyp_reject_cap:
+            _log.warning(
+                "promote_confirmed submit FORCED THROUGH after %d "
+                "rejections inv=%s branch=%s turn=%d -- %d confirmed "
+                "hypotheses closed on kind=%s: %s",
+                prior_rejects, self.investigation_id, self.branch_id,
+                turn_number, len(confirmed), kind.value,
+                ",".join(confirmed_ids[:20]),
+            )
+            payload = decision.payload or {}
+            new_payload = dict(payload)
+            new_payload["confirmed_hypotheses_not_promoted_advisory"] = {
+                "count": len(confirmed),
+                "ids": confirmed_ids[:50],
+                "closed_as_kind": kind.value,
+                "forced_through_after_rejects": prior_rejects,
+            }
+            case_state.observables.pop(
+                "_directive.promote_confirmed_submit_rejected", None,
+            )
+            case_state.observables.pop(
+                "_promote_confirmed_submit_rejected_count", None,
+            )
+            return decision.model_copy(update={"payload": new_payload})
+
+        _log.info(
+            "promote_confirmed submit REJECTED inv=%s branch=%s turn=%d "
+            "rejects=%d/%d -- %d confirmed hypotheses on kind=%s",
+            self.investigation_id, self.branch_id, turn_number,
+            new_reject_count, self._unresolved_hyp_reject_cap,
+            len(confirmed), kind.value,
+        )
+        case_state.observables[
+            "_promote_confirmed_submit_rejected_count"
+        ] = new_reject_count
+        case_state.observables[
+            "_directive.promote_confirmed_submit_rejected"
+        ] = (
+            "*** GRACEFUL STOP BLOCKED -- CONFIRMED FINDING NOT SUBMITTED ***\n"
+            f"Rejection {new_reject_count}/{self._unresolved_hyp_reject_cap} "
+            "on this branch.\n"
+            "\n"
+            f"You are closing this investigation as {kind.value} while "
+            f"{len(confirmed)} hypothesis(es) are marked CONFIRMED. A "
+            "confirmed hypothesis is a proven positive. Closing it as a "
+            "no-finding / assessment throws away the finding before any "
+            "reviewer sees it.\n"
+            "\n"
+            "CONFIRMED HYPOTHESES:\n"
+            + "\n".join(confirmed_lines)
+            + "\n\n"
+            "REQUIRED for your next decision, choose ONE:\n"
+            "  (a) Re-emit `action: submit` as a direct_finding: put the\n"
+            "      vulnerability in `answer`, cite each confirmed id and its\n"
+            "      `confirmed_by` evidence in `answer` + `provenance`, set\n"
+            "      `confidence` to strong or exact. This is the path when\n"
+            "      the finding is real.\n"
+            "  (b) If you were wrong, add each id to `decision.rejected[]`\n"
+            "      with a `reason` citing the counter-evidence, OR re-emit\n"
+            "      the hypothesis in `decision.hypotheses[]` WITHOUT\n"
+            "      `confirmed_by` to retract the confirmation. Then your\n"
+            "      no-finding close is consistent and passes this gate.\n"
+            "\n"
+            f"After {self._unresolved_hyp_reject_cap} rejections the submit "
+            "is forced through with a "
+            "confirmed_hypotheses_not_promoted_advisory stamped on the "
+            "payload for the operator to audit."
+        )
+        payload = decision.payload or {}
+        rejected_command_text = (
+            "[PROMOTE GATE: weak submit rejected -- see "
+            "_directive.promote_confirmed_submit_rejected]\n"
+            "Original submit attempt:\n"
+            + (payload.get("answer") or "(no answer)")[:1000]
+        )
+        return decision.model_copy(update={
+            "action": "tool_run",
+            "command": "",
+            "answer": rejected_command_text,
+            "payload": {
+                **payload,
+                "_promote_confirmed_gate_rejected": True,
+                "_promote_confirmed_gate_reject_count": new_reject_count,
             },
         })
 
