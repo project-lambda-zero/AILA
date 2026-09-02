@@ -64,12 +64,12 @@ async def test_api_key_list_scoped_to_team() -> None:
     a = await _create("team-a")
     b = await _create("team-b")
 
-    team_a = await list_api_keys(active_only=False, admin=_auth("team-a"))
+    team_a = await list_api_keys(request=_req(), active_only=False, admin=_auth("team-a"))
     ids_a = {k.key_id for k in team_a.keys}
     assert a in ids_a
     assert b not in ids_a, "team-a admin must not see team-b's key"
 
-    god = await list_api_keys(active_only=False, admin=_auth(None))
+    god = await list_api_keys(request=_req(), active_only=False, admin=_auth(None))
     ids_god = {k.key_id for k in god.keys}
     assert {a, b} <= ids_god, "god-tier admin sees every team's keys"
 
@@ -84,3 +84,53 @@ async def test_api_key_revoke_blocked_cross_team() -> None:
 
     resp = await revoke_api_key(request=_req(), key_id=b, admin=_auth("team-b"))
     assert resp.revoked is True
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_api_key_godtier_binds_target_team() -> None:
+    resp = await create_api_key(
+        request=_req(),
+        body=ApiKeyCreateRequest(role="operator", label="g", team_id="team-x"),
+        admin=_auth(None),
+    )
+    async with async_session_scope() as session:
+        rec = await session.get(ApiKeyRecord, resp.key_id)
+    assert rec is not None
+    assert rec.team_id == "team-x"
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_api_key_godtier_no_team_stays_teamless() -> None:
+    resp = await create_api_key(
+        request=_req(),
+        body=ApiKeyCreateRequest(role="operator", label="g"),
+        admin=_auth(None),
+    )
+    async with async_session_scope() as session:
+        rec = await session.get(ApiKeyRecord, resp.key_id)
+    assert rec is not None
+    assert rec.team_id is None
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_api_key_teamscoped_refuses_foreign_team() -> None:
+    with pytest.raises(HTTPException) as exc:
+        await create_api_key(
+            request=_req(),
+            body=ApiKeyCreateRequest(role="operator", label="x", team_id="team-b"),
+            admin=_auth("team-a"),
+        )
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_api_key_teamscoped_own_team_ok() -> None:
+    resp = await create_api_key(
+        request=_req(),
+        body=ApiKeyCreateRequest(role="operator", label="x", team_id="team-a"),
+        admin=_auth("team-a"),
+    )
+    async with async_session_scope() as session:
+        rec = await session.get(ApiKeyRecord, resp.key_id)
+    assert rec is not None
+    assert rec.team_id == "team-a"

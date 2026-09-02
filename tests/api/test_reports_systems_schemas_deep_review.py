@@ -410,7 +410,7 @@ class TestSystemResponseFieldMapping:
 
     EXPECTED_FIELDS = {
         "id", "name", "host", "username", "port",
-        "distro", "description", "created_at", "updated_at",
+        "distro", "description", "role", "created_at", "updated_at",
     }
 
     def test_all_fields_present(self) -> None:

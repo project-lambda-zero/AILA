@@ -92,6 +92,51 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except (OSError, TimeoutError, RuntimeError, ValueError, LookupError) as exc:
         _log.warning("Module prompt seeding skipped: %s", exc)
 
+    # Req 40 -- reconcile every module-declared MCP descriptor into the
+    # ``mcp_server_instances`` catalog on boot so the admin surface always
+    # lists at least one row per declared server. Idempotent: absent rows
+    # land as ``approval_state=pending, enabled=true`` (operator approves
+    # via the admin router); present rows have only ``transport`` +
+    # ``endpoint`` refreshed -- ``approval_state`` / ``enabled`` /
+    # ``capability_tags`` stay operator-owned. Best-effort: a reconcile
+    # fault degrades to whatever rows the operator explicitly wrote and
+    # must never abort startup.
+    try:
+        import sqlalchemy.exc as _sa_exc_recon
+
+        from aila.platform.mcp.capability_registry import (
+            default_capability_registry as _default_capability_registry,
+        )
+        from aila.platform.mcp.instance_catalog import (
+            McpInstanceCatalog as _McpInstanceCatalog,
+        )
+
+        _catalog = _McpInstanceCatalog()
+        _reconciled = 0
+        for _decl in _default_capability_registry().declarations():
+            try:
+                await _catalog.ensure_instance(
+                    module_scope=_decl.module_scope,
+                    name=_decl.descriptor.name,
+                    transport=_decl.descriptor.transport,
+                    endpoint=_decl.descriptor.default_url,
+                    capability_tags=list(_decl.descriptor.capability_tags),
+                )
+                _reconciled += 1
+            except (
+                OSError, RuntimeError, ValueError, _sa_exc_recon.SQLAlchemyError,
+            ) as _exc:
+                _log.warning(
+                    "MCP catalog reconcile for %s/%s failed: %s",
+                    _decl.module_scope, _decl.descriptor.name, _exc,
+                )
+        if _reconciled:
+            _log.info(
+                "MCP catalog reconciled %d declared descriptor(s)", _reconciled,
+            )
+    except (OSError, RuntimeError, ImportError) as _exc:
+        _log.warning("MCP catalog reconcile skipped: %s", _exc)
+
     if not _os.getenv("AILA_JWT_SECRET_KEY"):
         _log.warning(
             "AILA_JWT_SECRET_KEY is not set. JWT secret was auto-generated. "
@@ -676,6 +721,13 @@ def create_app() -> FastAPI:
     from aila.api.routers.mcp_instances import router as mcp_instances_router
     application.include_router(mcp_instances_router)
 
+    # Req 10 / 40: platform-owned MCP server health + call-log audit trail.
+    # Collapses the pre-req-10 per-module operator MCP surfaces into one
+    # platform surface backed by the module-declared descriptor set and the
+    # consolidated ``mcp_call_log`` table.
+    from aila.api.routers.platform_mcp import router as platform_mcp_router
+    application.include_router(platform_mcp_router)
+
     # RFC-08: Admin eval-harness router (god-tier admin -- score candidate + gate promotion)
     from aila.api.routers.admin_eval import router as admin_eval_router
     application.include_router(admin_eval_router)
@@ -705,6 +757,11 @@ def create_app() -> FastAPI:
     # Platform routers: audit, config, systems, tools (Phase 53 plans 02-04)
     from aila.api.routers.audit import router as audit_router
     application.include_router(audit_router)
+
+    # Req 29: platform docs surface -- operator-facing read-only view over the
+    # allow-listed repo docs/ set that backs the console Docs page.
+    from aila.api.routers.docs import router as docs_router
+    application.include_router(docs_router)
 
     from aila.api.routers.config import router as config_router
     application.include_router(config_router)
@@ -765,8 +822,12 @@ def create_app() -> FastAPI:
     from aila.api.routers.findings_workflow import router as findings_workflow_router
     application.include_router(findings_workflow_router)
 
-    from aila.api.routers.saved_filters import router as saved_filters_router
-    application.include_router(saved_filters_router)
+    # Req 31: platform agent registry -- publishes per-module persona
+    # router bindings so the persona-model routing config UI can
+    # bound its per-persona <select> to the finite model_role values
+    # each module's PersonaRouter actually emits.
+    from aila.api.routers.agents import router as agents_router
+    application.include_router(agents_router)
 
     from aila.api.routers.widgets import router as widgets_router
     application.include_router(widgets_router)
@@ -789,10 +850,6 @@ def create_app() -> FastAPI:
     # Platform-owned network graph endpoint -- D-01: topology is not module-specific.
     from aila.api.routers.topology import router as topology_router
     application.include_router(topology_router)
-
-    # Plan 147-01: executive reporting router (EXEC-01, EXEC-03)
-    from aila.api.routers.executive import router as executive_router
-    application.include_router(executive_router)
 
     # Plan 175-03: LLM cost intelligence router (LLM-COST-01, LLM-COST-03 to LLM-COST-05)
     from aila.api.routers.cost import router as cost_router

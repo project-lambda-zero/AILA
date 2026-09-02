@@ -44,6 +44,7 @@ async def record_call(
     record_model: type,
     log_prefix: str,
     instance_id: str | None = None,
+    module_scope: str | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Async context manager that writes one MCP call-log row per call.
 
@@ -84,6 +85,7 @@ async def record_call(
             latency_ms=latency_ms,
             record_model=record_model,
             log_prefix=log_prefix,
+            module_scope=module_scope,
             **ctx,
         )
 
@@ -102,6 +104,7 @@ async def _write_record(
     record_model: type,
     log_prefix: str,
     instance_id: str | None = None,
+    module_scope: str | None = None,
 ) -> None:
     """Persist one call-log row.
 
@@ -110,23 +113,31 @@ async def _write_record(
     ContextVar.
     """
     _inv, _branch, _turn = current_join_keys()
+    kwargs: dict[str, Any] = {
+        "server_id": server_id,
+        "base_url": base_url,
+        "action": action,
+        "latency_ms": latency_ms,
+        "http_status": http_status,
+        "status": status,
+        "error_excerpt": error_excerpt,
+        "target_id": target_id,
+        "team_id": team_id,
+        "instance_id": instance_id,
+        "investigation_id": _inv,
+        "branch_id": _branch,
+        "turn_number": _turn,
+    }
+    # Only concretes that declare ``module_scope`` (the consolidated platform
+    # table) accept the argument; the ``_template`` scaffold record inherits
+    # only the base columns and would 500 with ``unexpected keyword``.
+    if module_scope is not None and "module_scope" in getattr(
+        record_model, "model_fields", {},
+    ):
+        kwargs["module_scope"] = module_scope
     try:
         async with UnitOfWork() as uow:
-            row = record_model(
-                server_id=server_id,
-                base_url=base_url,
-                action=action,
-                latency_ms=latency_ms,
-                http_status=http_status,
-                status=status,
-                error_excerpt=error_excerpt,
-                target_id=target_id,
-                team_id=team_id,
-                instance_id=instance_id,
-                investigation_id=_inv,
-                branch_id=_branch,
-                turn_number=_turn,
-            )
+            row = record_model(**kwargs)
             uow.session.add(row)
             await uow.session.commit()
             return

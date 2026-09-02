@@ -58,28 +58,28 @@ from aila.platform.workflows.types import HandlerFn
 
 __all__ = ["VR_HUB_PHASES", "VR_INVESTIGATE_HUB"]
 
+# Scoped phase turn caps -- tightly bounded so single phases do not
+# monopolize the investigation budget and downstream specialized phases activate.
+_RECON_MAX_TURNS = 15
+_AUDIT_PHASE_MAX_TURNS = 20
+_BINARY_PHASE_MAX_TURNS = 25
+_HARDENING_PHASE_MAX_TURNS = 15
+_POC_DEV_MAX_TURNS = 20
+
 _POC_DEV_DIRECTIVE = (
     "POC DEVELOPMENT PHASE. Objective: turn a confirmed exploitable "
     "finding into a working proof of concept -- reach the vulnerable "
     "state, control the primitive, and demonstrate impact. Pursue only a "
-    "finding the panel has confirmed by quorum. Submit the PoC with the "
-    "trigger and the observed effect."
+    "finding the panel has confirmed by quorum or verified taint path. "
+    "Submit the PoC script in payload.poc_code with the trigger and observed effect."
 )
 
-# Hub-specific recon directive. The V2 kind-router recon directive tells
-# the agent to "submit a scoping outcome" -- correct there because the
-# router auto-transitions recon -> source_audit. In the discovery-driven
-# hub a terminal submit ENDS the branch, so that directive made the panel
-# short-circuit to a draft at recon instead of progressing. Here recon
-# advances by POSTING DISCOVERIES: the hub converts recon hypotheses into
-# shared ledger discoveries that activate the deep audit phases, so the
-# agent must surface hypotheses and must NOT submit a terminal finding yet.
 _HUB_RECON_DIRECTIVE = (
     "RECON PHASE. Objective: characterize the target scope and entry "
     "points and surface the most promising audit targets. For each "
     "promising surface, raise a concrete hypothesis naming the entry point "
     "and the sink you suspect -- the hub turns your recon hypotheses into "
-    "shared discoveries that route the panel to the deep audit phase. "
+    "shared discoveries that route the panel to the deep audit phases. "
     "Name the entry surface that fits this target class. For a web server "
     "or network daemon, that is the request and config parsers, the "
     "protocol state machine, and header, URI, and module-dispatch handling. "
@@ -94,6 +94,13 @@ _HUB_RECON_DIRECTIVE = (
     "have surfaced discoveries."
 )
 
+_SOURCE_AUDIT_DIRECTIVE = (
+    "SOURCE AUDIT PHASE. Objective: systematically audit the source for "
+    "exploitable vulnerability classes -- trace untrusted input to "
+    "dangerous sinks, read the candidate function bodies, and confirm each "
+    "finding with evidence. Submit confirmed findings."
+)
+
 _TAINT_ANALYSIS_DIRECTIVE = (
     "TAINT ANALYSIS PHASE. Objective: trace each untrusted-input entry "
     "point to the dangerous sinks it can reach. Follow the data flow across "
@@ -102,6 +109,108 @@ _TAINT_ANALYSIS_DIRECTIVE = (
     "without an effective sanitizer. Record the exact source -- sink path. "
     "Submit confirmed reachable taint paths with evidence."
 )
+
+_INJECTION_AUDIT_DIRECTIVE = (
+    "INJECTION AUDIT PHASE. Objective: systematically audit for injection "
+    "vulnerabilities -- SQL injection (raw query concatenation in DAOs / repositories), "
+    "Command Injection (ProcessBuilder, Runtime.exec, os.system, subprocess), "
+    "Template Injection / SSTI (Freemarker, Thymeleaf, Jinja2, Velocity), "
+    "Dynamic Expression Evaluation (OGNL, SpEL, JXPath, JEXL, MVEL), and XPath / LDAP injection. "
+    "Trace untrusted string interpolation and property expansion directly to parser evaluation. "
+    "Submit confirmed injection primitives with the reachable trigger payload."
+)
+
+_DESERIALIZATION_AUDIT_DIRECTIVE = (
+    "DESERIALIZATION AUDIT PHASE. Objective: audit object deserialization and "
+    "unsafe parser configurations. Hunt for Java ObjectInputStream.readObject, "
+    "XMLDecoder, Jackson / Fastjson polymorphic typing (@JsonTypeInfo, enableDefaultTyping), "
+    "SnakeYAML / PyYAML unsafe loaders, Python pickle.loads / yaml.load, .NET BinaryFormatter / "
+    "TypeNameHandling, PHP unserialize, and unsafe JNDI lookups (InitialContext.lookup, LDAP/RMI). "
+    "Identify reachable gadget chains and remote code execution paths. Submit confirmed deserialization findings."
+)
+
+_AUTH_BYPASS_AUDIT_DIRECTIVE = (
+    "AUTH BYPASS AUDIT PHASE. Objective: audit authentication, authorization matrices, "
+    "and access control boundaries. Analyze JWT signature verification (none algorithm, weak secret, "
+    "RS256/HS256 key confusion, jku/jwk header injection), OAuth2 state / redirect manipulation, "
+    "Insecure Direct Object References (IDOR), RBAC/ABAC enforcement gaps, SecurityFilterChain order, "
+    "and URL dispatcher path traversal (..;, /..;/, %2e%2e). Submit confirmed authentication bypasses."
+)
+
+_MEMORY_SAFETY_AUDIT_DIRECTIVE = (
+    "MEMORY SAFETY AUDIT PHASE. Objective: audit native code for memory corruption "
+    "primitives -- Use-After-Free (UAF), double-free, Out-of-Bounds (OOB) read / write, "
+    "heap buffer overflows, stack overflows, type confusion, and integer signedness / wrap flaws "
+    "(int32_t to size_t conversion). Trace allocator lifetimes (malloc, free, realloc, custom arenas) "
+    "and pointer arithmetic. Submit confirmed memory safety vulnerabilities with crash analysis."
+)
+
+_KERNEL_DRIVER_AUDIT_DIRECTIVE = (
+    "KERNEL & DRIVER AUDIT PHASE. Objective: audit ring-0 interfaces, kernel drivers, "
+    "and system extensions. Analyze IOCTL dispatch tables (DeviceIoControl), METHOD_NEITHER / "
+    "METHOD_BUFFERED user pointer validation, ProbeForRead / ProbeForWrite omissions, double-fetch "
+    "race conditions from user memory, arbitrary physical memory mapping, and privileged callback registration. "
+    "Submit confirmed kernel privilege escalation primitives."
+)
+
+_CONCURRENCY_AUDIT_DIRECTIVE = (
+    "CONCURRENCY AUDIT PHASE. Objective: audit concurrency, multithreading, and "
+    "asynchronous state management. Identify Time-of-Check to Time-of-Use (TOCTOU) file and resource races, "
+    "non-atomic database check-and-update patterns, unsafe double-checked locking, mutable shared state without "
+    "synchronization primitives, and reentrancy bugs in async event loops and coroutines. "
+    "Submit confirmed race condition vulnerabilities with interleaving traces."
+)
+
+_PROTOCOL_STATE_AUDIT_DIRECTIVE = (
+    "PROTOCOL STATE AUDIT PHASE. Objective: audit network protocols, framing parsers, "
+    "and state machines. Hunt for HTTP request smuggling (CL.TE, TE.CL, TE.TE, HTTP/2 desync), "
+    "WebSocket framing / masking vulnerabilities, custom binary protocol packet desyncs, and "
+    "protocol state machine confusion where privileged commands execute in unauthenticated states. "
+    "Submit confirmed protocol desync vulnerabilities."
+)
+
+_SIDE_CHANNEL_AUDIT_DIRECTIVE = (
+    "SIDE CHANNEL AUDIT PHASE. Objective: audit timing side-channels, cryptographic comparison "
+    "oracles, and information leakage. Analyze non-constant-time comparisons (memcmp, string equals on HMACs/tokens), "
+    "padding oracle vulnerabilities in CBC ciphers, cache-timing leakages, and differential error responses "
+    "that leak internal key material or database state. Submit confirmed side-channel leakage primitives."
+)
+
+_COMPILER_HARDENING_AUDIT_DIRECTIVE = (
+    "COMPILER HARDENING AUDIT PHASE. Objective: audit binary protections and exploit mitigations: "
+    "ASLR/PIE, stack canaries (-fstack-protector-all), Full/Partial RELRO, SafeSEH / Control Flow Guard (CFG), "
+    "Clang CFI, ARM PAC/BTI, Fortify Source, and RPATH / RUNPATH security. Identify missing binary protections "
+    "that enable exploitation. Submit confirmed hardening gaps with binary metadata."
+)
+
+_PATCH_DIFF_AUDIT_DIRECTIVE = (
+    "PATCH DIFF AUDIT PHASE. Objective: reverse-engineer security commits, CVE patches, and "
+    "bugfix diffs. Analyze previous fixes for incomplete remediation, filter bypasses on patched functions, "
+    "regressions introduced during refactoring, and adjacent functions carrying identical unpatched bugs. "
+    "Submit confirmed 1-day / variant vulnerabilities with patch diff evidence."
+)
+
+_SANDBOX_ESCAPE_AUDIT_DIRECTIVE = (
+    "SANDBOX ESCAPE AUDIT PHASE. Objective: audit isolation boundaries, seccomp filters, "
+    "and containerization escapes. Analyze seccomp BPF filters, Linux namespace usage (CLONE_NEWUSER, CLONE_NEWNS), "
+    "unshare / chroot jailbreaks, mount namespace escapes, and host-guest communication channels in virtualized "
+    "environments. Submit confirmed sandbox escape primitives."
+)
+
+_FILTER_BYPASS_SYNTHESIS_DIRECTIVE = (
+    "FILTER BYPASS SYNTHESIS PHASE. Objective: synthesize WAF and filter evasions when a candidate "
+    "exploit payload encounters signature rejection. Mutate payload structure using alternative encodings "
+    "(Unicode normalization, double URL encoding, comment injection, whitespace substitution, parameter pollution, "
+    "case variation, null-byte truncation) while preserving execution semantics. Submit refined bypass payloads."
+)
+
+_EXPLOIT_PRIMITIVE_COMPOSITION_DIRECTIVE = (
+    "EXPLOIT PRIMITIVE COMPOSITION PHASE. Objective: compose individual findings into an end-to-end "
+    "exploit chain. Chain memory leak / address discovery primitives with write-what-where primitives, "
+    "or combine unauthenticated SSRF with internal admin API access to achieve reliable Remote Code Execution. "
+    "Submit the integrated end-to-end exploit chain with execution instructions."
+)
+
 _DEPENDENCY_AUDIT_DIRECTIVE = (
     "DEPENDENCY AUDIT PHASE. Objective: audit the target's declared and "
     "transitive dependencies for known-vulnerable versions and supply-chain "
@@ -110,6 +219,7 @@ _DEPENDENCY_AUDIT_DIRECTIVE = (
     "dependency code is actually reached from the target. Submit confirmed "
     "vulnerable dependencies with the affected version and the reachable use."
 )
+
 _CRYPTO_AUDIT_DIRECTIVE = (
     "CRYPTO AUDIT PHASE. Objective: audit cryptographic usage for misuse -- "
     "weak or broken primitives (MD5, SHA1, DES, RC4, ECB mode), static or "
@@ -119,6 +229,7 @@ _CRYPTO_AUDIT_DIRECTIVE = (
     "nonce. Submit confirmed crypto weaknesses with the responsible code and "
     "the concrete impact."
 )
+
 _FUZZ_TARGETING_DIRECTIVE = (
     "FUZZ TARGETING PHASE. Objective: identify the highest-value fuzz targets "
     "-- parsers, decoders, deserializers, and any function that consumes "
@@ -128,28 +239,20 @@ _FUZZ_TARGETING_DIRECTIVE = (
     "the ranked fuzz targets with the rationale for each."
 )
 
-# Recon only scopes the target, so it is capped tighter than the deep
-# phases (which fall back to the module turn-cap reader).
-_RECON_MAX_TURNS = 20
-
-_SOURCE_AUDIT_DIRECTIVE = (
-    "SOURCE AUDIT PHASE. Objective: systematically audit the source for "
-    "exploitable vulnerability classes -- trace untrusted input to "
-    "dangerous sinks, read the candidate function bodies, and confirm each "
-    "finding with evidence. Submit confirmed findings."
-)
 _VARIANT_HUNT_DIRECTIVE = (
     "VARIANT HUNT PHASE. Objective: find variants of the seed bug pattern "
     "across the codebase and its binaries -- match the vulnerable shape, "
     "not just the exact strings. Confirm each variant with evidence before "
     "submitting it."
 )
+
 _BINARY_AUDIT_DIRECTIVE = (
     "BINARY AUDIT PHASE. Objective: analyze the binary for the vulnerable "
     "condition -- follow the decompilation, check the guards, and confirm "
     "reachability. Submit confirmed findings with the responsible "
     "addresses."
 )
+
 _MOBILE_AUDIT_DIRECTIVE = (
     "MOBILE AUDIT PHASE. Objective: audit the mobile application against "
     "the MASVS controls -- storage, crypto, network, platform interaction "
@@ -286,6 +389,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         directive=_SOURCE_AUDIT_DIRECTIVE,
         condition=_make_target_kind_condition(_SOURCE_KINDS),
         capability="source-audit",
+        max_turns=_AUDIT_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("audit_mcp",),
     ),
@@ -294,6 +398,52 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         directive=_TAINT_ANALYSIS_DIRECTIVE,
         condition=_make_target_kind_condition(_SOURCE_KINDS),
         capability="source-audit",
+        max_turns=_AUDIT_PHASE_MAX_TURNS,
+        trust="advisory",
+        allowed_servers=("audit_mcp",),
+    ),
+    PhaseSpec(
+        name="injection_audit",
+        directive=_INJECTION_AUDIT_DIRECTIVE,
+        condition=_make_target_kind_condition(_SOURCE_KINDS),
+        capability="source-audit",
+        max_turns=_AUDIT_PHASE_MAX_TURNS,
+        trust="advisory",
+        allowed_servers=("audit_mcp",),
+    ),
+    PhaseSpec(
+        name="deserialization_audit",
+        directive=_DESERIALIZATION_AUDIT_DIRECTIVE,
+        condition=_make_target_kind_condition(_SOURCE_KINDS),
+        capability="source-audit",
+        max_turns=_AUDIT_PHASE_MAX_TURNS,
+        trust="advisory",
+        allowed_servers=("audit_mcp",),
+    ),
+    PhaseSpec(
+        name="auth_bypass_audit",
+        directive=_AUTH_BYPASS_AUDIT_DIRECTIVE,
+        condition=_make_target_kind_condition(_SOURCE_KINDS),
+        capability="source-audit",
+        max_turns=_AUDIT_PHASE_MAX_TURNS,
+        trust="advisory",
+        allowed_servers=("audit_mcp",),
+    ),
+    PhaseSpec(
+        name="concurrency_audit",
+        directive=_CONCURRENCY_AUDIT_DIRECTIVE,
+        condition=_make_target_kind_condition(_SOURCE_KINDS),
+        capability="source-audit",
+        max_turns=_AUDIT_PHASE_MAX_TURNS,
+        trust="advisory",
+        allowed_servers=("audit_mcp",),
+    ),
+    PhaseSpec(
+        name="protocol_state_audit",
+        directive=_PROTOCOL_STATE_AUDIT_DIRECTIVE,
+        condition=_make_target_kind_condition(_SOURCE_KINDS),
+        capability="source-audit",
+        max_turns=_AUDIT_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("audit_mcp",),
     ),
@@ -302,14 +452,61 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         directive=_DEPENDENCY_AUDIT_DIRECTIVE,
         condition=_make_target_kind_condition(_SOURCE_KINDS),
         capability="source-audit",
+        max_turns=_AUDIT_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("audit_mcp",),
+    ),
+    PhaseSpec(
+        name="memory_safety_audit",
+        directive=_MEMORY_SAFETY_AUDIT_DIRECTIVE,
+        condition=_make_target_kind_condition(_VARIANT_KINDS),
+        capability="binary-audit",
+        max_turns=_BINARY_PHASE_MAX_TURNS,
+        trust="advisory",
+        allowed_servers=("audit_mcp", "ida_headless"),
+    ),
+    PhaseSpec(
+        name="kernel_driver_audit",
+        directive=_KERNEL_DRIVER_AUDIT_DIRECTIVE,
+        condition=_make_target_kind_condition(_BINARY_KINDS),
+        capability="binary-audit",
+        max_turns=_BINARY_PHASE_MAX_TURNS,
+        trust="advisory",
+        allowed_servers=("ida_headless",),
+    ),
+    PhaseSpec(
+        name="compiler_hardening_audit",
+        directive=_COMPILER_HARDENING_AUDIT_DIRECTIVE,
+        condition=_make_target_kind_condition(_VARIANT_KINDS),
+        capability="binary-audit",
+        max_turns=_HARDENING_PHASE_MAX_TURNS,
+        trust="advisory",
+        allowed_servers=("audit_mcp", "ida_headless"),
+    ),
+    PhaseSpec(
+        name="sandbox_escape_audit",
+        directive=_SANDBOX_ESCAPE_AUDIT_DIRECTIVE,
+        condition=_make_target_kind_condition(_VARIANT_KINDS),
+        capability="binary-audit",
+        max_turns=_AUDIT_PHASE_MAX_TURNS,
+        trust="advisory",
+        allowed_servers=("audit_mcp", "ida_headless"),
     ),
     PhaseSpec(
         name="crypto_audit",
         directive=_CRYPTO_AUDIT_DIRECTIVE,
         condition=_make_target_kind_condition(_VARIANT_KINDS),
         capability="crypto",
+        max_turns=_HARDENING_PHASE_MAX_TURNS,
+        trust="advisory",
+        allowed_servers=("audit_mcp", "ida_headless"),
+    ),
+    PhaseSpec(
+        name="side_channel_audit",
+        directive=_SIDE_CHANNEL_AUDIT_DIRECTIVE,
+        condition=_make_target_kind_condition(_VARIANT_KINDS),
+        capability="crypto",
+        max_turns=_HARDENING_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("audit_mcp", "ida_headless"),
     ),
@@ -318,6 +515,16 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         directive=_VARIANT_HUNT_DIRECTIVE,
         condition=_make_target_kind_condition(_VARIANT_KINDS),
         capability="variant-hunt",
+        max_turns=_AUDIT_PHASE_MAX_TURNS,
+        trust="advisory",
+        allowed_servers=("audit_mcp", "ida_headless"),
+    ),
+    PhaseSpec(
+        name="patch_diff_audit",
+        directive=_PATCH_DIFF_AUDIT_DIRECTIVE,
+        condition=_make_target_kind_condition(_VARIANT_KINDS),
+        capability="variant-hunt",
+        max_turns=_AUDIT_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("audit_mcp", "ida_headless"),
     ),
@@ -326,6 +533,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         directive=_BINARY_AUDIT_DIRECTIVE,
         condition=_make_target_kind_condition(_BINARY_KINDS),
         capability="binary-audit",
+        max_turns=_BINARY_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("ida_headless",),
     ),
@@ -334,6 +542,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         directive=_MOBILE_AUDIT_DIRECTIVE,
         condition=_make_target_kind_condition(_MOBILE_KINDS),
         capability="mobile-audit",
+        max_turns=_AUDIT_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("android_mcp", "audit_mcp"),
     ),
@@ -342,7 +551,32 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         directive=_FUZZ_TARGETING_DIRECTIVE,
         condition=_make_target_kind_condition(_VARIANT_KINDS),
         capability="fuzz",
+        max_turns=_HARDENING_PHASE_MAX_TURNS,
         trust="advisory",
+        allowed_servers=("audit_mcp", "ida_headless"),
+    ),
+    PhaseSpec(
+        name="filter_bypass_synthesis",
+        directive=_FILTER_BYPASS_SYNTHESIS_DIRECTIVE,
+        condition=make_discovery_condition(
+            "discovery",
+            payload_exclude={"source": "recon_hypothesis"},
+        ),
+        capability="exploit-dev",
+        max_turns=_HARDENING_PHASE_MAX_TURNS,
+        trust="advisory",
+        allowed_servers=("audit_mcp", "ida_headless"),
+    ),
+    PhaseSpec(
+        name="exploit_primitive_composition",
+        directive=_EXPLOIT_PRIMITIVE_COMPOSITION_DIRECTIVE,
+        condition=make_discovery_condition(
+            "discovery",
+            payload_exclude={"source": "recon_hypothesis"},
+        ),
+        capability="exploit-dev",
+        max_turns=_AUDIT_PHASE_MAX_TURNS,
+        trust="confirmed",
         allowed_servers=("audit_mcp", "ida_headless"),
     ),
     PhaseSpec(
@@ -353,6 +587,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
             payload_exclude={"source": "recon_hypothesis"},
         ),
         capability="exploit-dev",
+        max_turns=_POC_DEV_MAX_TURNS,
         trust="confirmed",
         allowed_servers=("audit_mcp", "ida_headless"),
     ),

@@ -48,6 +48,7 @@ from aila.modules.vr.db_models import (
 )
 from aila.platform.contracts import utc_now
 from aila.platform.uow import UnitOfWork
+from aila.storage.db_models import FindingWorkflowRecord
 
 from .registry import get_track
 
@@ -202,6 +203,15 @@ class DisclosureService:
                     uow.session.add(stub)
                     await uow.session.flush()
                     resolved_finding_id = stub.id
+                    uow.session.add(FindingWorkflowRecord(
+                        finding_id=stub.id,
+                        module_id="vr",
+                        current_state="new",
+                        previous_state=None,
+                        transitioned_by="system",
+                        notes="",
+                        team_id=team_id,
+                    ))
                     # Mirror the new finding back into the
                     # investigation's linked list so subsequent calls
                     # find it via the same one-linked-finding shortcut.

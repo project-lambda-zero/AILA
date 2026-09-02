@@ -333,10 +333,26 @@ def test_nsjail_argv_contains_network_off_rlimit_timelimit_and_argv() -> None:
     # time_limit is present with the wall-clock timeout (rounded up).
     assert "--time_limit" in argv
     assert argv[argv.index("--time_limit") + 1] == "45"
-    # The workspace root is bind-mounted at spec.workdir R/W.
+    # Fresh in-memory bounded tmpfs for /tmp isolates from host /tmp.
+    assert "--tmpfsmount" in argv
+    assert argv[argv.index("--tmpfsmount") + 1] == "/tmp:size=256M"
+    # Specific workspace directory is bind-mounted to spec.workdir R/W.
     assert "--bindmount" in argv
-    assert argv[argv.index("--bindmount") + 1] == "/tmp/aila-sbx/x:/work"
-    # cwd is applied.
+    assert "/tmp/aila-sbx/x:/work" in argv
+    # Host device tree and /home are omitted.
+    assert "/dev" not in argv
+    assert "--hostname" in argv
+    assert argv[argv.index("--hostname") + 1] == "sandbox"
+    # Process, file-size, and core ceilings are enforced.
+    assert "--rlimit_nproc" in argv
+    assert argv[argv.index("--rlimit_nproc") + 1] == "512"
+    assert "--rlimit_fsize" in argv
+    assert "--rlimit_core" in argv
+    # System runtime trees are mounted read-only; host /home is not mounted.
+    assert "--bindmount_ro" in argv
+    assert "/usr" in argv
+    assert "--chroot" not in argv
+    # cwd is applied to workspace.
     assert "--cwd" in argv
     assert argv[argv.index("--cwd") + 1] == "/work"
     # The spec's argv appears after the terminating '--'.
@@ -352,12 +368,21 @@ def test_nsjail_argv_flips_network_flag_when_allowed() -> None:
     assert "--disable_clone_newnet" in argv
 
 
+def test_nsjail_argv_wraps_bare_command_in_shell() -> None:
+    spec = SandboxSpec(argv=["uname", "-a"])
+    argv = build_nsjail_argv(spec, nsjail_bin="nsjail", workspace_remote_root="/tmp/x")
+    dash_idx = argv.index("--")
+    assert argv[dash_idx + 1 :] == ["/bin/sh", "-c", "uname -a"]
+
+
 def test_nsjail_argv_exports_env_vars() -> None:
     spec = SandboxSpec(argv=["/bin/env"], env={"FOO": "bar", "BAZ": "qux"})
     argv = build_nsjail_argv(spec, nsjail_bin="nsjail", workspace_remote_root="/tmp/x")
-    # env is emitted in sorted order for determinism.
+    # env is emitted in sorted order for determinism and ensures PATH is populated.
     env_pairs = [argv[i + 1] for i, tok in enumerate(argv) if tok == "--env"]
-    assert env_pairs == ["BAZ=qux", "FOO=bar"]
+    assert "BAZ=qux" in env_pairs
+    assert "FOO=bar" in env_pairs
+    assert any(p.startswith("PATH=") for p in env_pairs)
 
 
 # ---------------------------------------------------------------------------
@@ -393,7 +418,7 @@ def test_nsjail_backend_dispatches_wrapped_command_over_ssh() -> None:
     assert result.oom is False
     # The captured commands include an nsjail invocation composed by
     # build_nsjail_argv -- assert the shape is right.
-    nsjail_commands = [c for c, _ in ssh.commands if "/usr/bin/nsjail" in c]
+    nsjail_commands = [c for c, _ in ssh.commands if "/usr/bin/nsjail" in c and "--mode" in c]
     assert nsjail_commands, "no nsjail command dispatched over ssh"
     nsjail_cmd = nsjail_commands[0]
     assert "--time_limit" in nsjail_cmd

@@ -25,6 +25,7 @@ import logging
 import math  # fix §232 -- log-scale normalization in _rank_binary
 from typing import Any, Protocol
 
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
 from aila.modules.vr.contracts.target import TargetKind
@@ -33,6 +34,9 @@ from aila.modules.vr.enrichment.contracts import (
     FunctionRanking,
     RankedFunction,
     RankingSource,
+)
+from aila.modules.vr.services.fuzz_proposal_producer import (
+    produce_fuzz_proposals,
 )
 from aila.modules.vr.services.stage_tracker import (
     StageAlreadyDoneError,
@@ -196,10 +200,12 @@ class FunctionRankingDispatcher:
                 }:
                     ranking = await self._rank_binary(target_id, handles)
                 else:
-                    raise FunctionRankerError(
-                        f"target_id={target_id} kind={target_row.kind!r} "
-                        "is not rankable (only SOURCE_REPO + binary kinds supported)",
+                    _log.info(
+                        "function_ranker: target_id=%s kind=%s is not rankable "
+                        "(only SOURCE_REPO and binary kinds supported) -- skipping",
+                        target_id, target_row.kind,
                     )
+                    return None
 
                 # Persist into capability_profile.function_ranking -- same
                 # commit as the stage's DONE transition (no crash window
@@ -207,6 +213,34 @@ class FunctionRankingDispatcher:
                 existing = json.loads(target_row.capability_profile_json or "{}")
                 existing["function_ranking"] = ranking.model_dump(mode="json")
                 tracker.record_output(capability_profile_json=json.dumps(existing))
+
+                # req 9 / AC1 -- synthesize deterministic fuzz proposals
+                # from the fresh ranking so the operator sees actionable
+                # proposals populate WITHOUT an investigation outcome.
+                # Producer failure MUST NOT fail the ranking commit; log
+                # the specific exception and continue.
+                try:
+                    # Reflect the just-persisted ranking into the in-memory
+                    # target row so the producer's capability lookup sees
+                    # it (the DB write happens at stage-tracker exit).
+                    target_row.capability_profile_json = json.dumps(existing)
+                    async with UnitOfWork() as _producer_uow:
+                        written = await produce_fuzz_proposals(
+                            _producer_uow.session, target_row, ranking,
+                        )
+                        await _producer_uow.session.commit()
+                    _log.info(
+                        "fuzz_proposal_producer: wrote %d proposals for target_id=%s",
+                        written, target_id,
+                    )
+                except (
+                    SQLAlchemyError, OSError, RuntimeError,
+                    ValueError, TypeError, KeyError,
+                ) as prod_exc:
+                    _log.warning(
+                        "fuzz_proposal_producer failed for target_id=%s: %s",
+                        target_id, prod_exc,
+                    )
 
                 _log.info(
                     "function_ranker COMPLETE target_id=%s source=%s top_k=%d total_candidates=%d",

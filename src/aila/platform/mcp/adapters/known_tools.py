@@ -26,8 +26,88 @@ __all__ = [
     "IDA_HEADLESS_TOOLS",
     "KNOWN_TOOLS",
     "LANGUAGE_UNRELIABLE_TOOLS",
+    "canonical_tool_id",
+    "canonicalize_tool_id",
     "tools_for_language",
 ]
+
+
+# Server-id aliases seen in the wild (issue #251/#248, doc #15 sec 1.2).
+# The agent stream emits the same audit_mcp tool under three spellings:
+# ``audit_mcp.semantic_search`` (canonical), ``audit-mcp.semantic_search``
+# (hyphen legacy), and the bare ``semantic_search`` alone. Downstream the
+# adapter registry, obs-key generator, and dedup keys all consume the
+# split ``(server_id, tool_name)`` tuple, so a spelling drift produces
+# duplicate observable keys, dedup misses, and one wasted turn per
+# mis-namespaced call. We collapse every spelling to the canonical
+# ``(server_id, tool_name)`` at the adapter boundary via
+# :func:`canonicalize_tool_id`; the caller sees the normalised tuple
+# before adapter dispatch, observable-key generation, and any dedup
+# lookup.
+_SERVER_ID_ALIASES: dict[str, str] = {
+    "audit-mcp": "audit_mcp",
+    "auditmcp": "audit_mcp",
+    "ida-headless": "ida_headless",
+    "ida_headless_mcp": "ida_headless",
+    "idaheadless": "ida_headless",
+    "android-mcp": "android_mcp",
+    "androidmcp": "android_mcp",
+}
+
+
+def canonicalize_tool_id(
+    server_id: str | None, tool_name: str | None,
+) -> tuple[str, str]:
+    """Collapse spelling variants of one MCP tool to a canonical tuple.
+
+    Handles the three drifts measured across the tool-call corpus
+    (doc #15 sec 1.2, issue #251):
+
+      * Server-id hyphen vs underscore (``audit-mcp`` -> ``audit_mcp``)
+        and legacy suffixes (``ida_headless_mcp`` -> ``ida_headless``).
+      * A leading ``<server>:`` or ``<server>.`` prefix duplicated onto
+        ``tool_name`` (``audit_mcp:semantic_search`` -> the split tuple
+        ``("audit_mcp", "semantic_search")``).
+      * A bare ``tool_name`` with an empty or wrong ``server_id`` when
+        the tool name uniquely identifies its server via ``KNOWN_TOOLS``
+        (``("", "semantic_search")`` -> ``("audit_mcp",
+        "semantic_search")``).
+
+    Returns a ``(canonical_server, canonical_tool)`` tuple. Empty
+    strings when nothing resolves; the caller decides whether to treat
+    that as "unknown tool" (adapter registry returns ``None``, executor
+    surfaces a loud error) or to pass through untouched.
+    """
+    srv = (server_id or "").strip().lower()
+    tool = (tool_name or "").strip()
+    # Absorb any ``<server>:tool`` or ``<server>.tool`` prefix duplicated
+    # onto the tool name. We honour whichever separator produces a known
+    # server-id; a bare tool with an unrelated dot in its name (rare, but
+    # e.g. ``knowledge.retrieve`` in the wild) is left alone.
+    for sep in (":", "."):
+        if sep in tool:
+            head, _, tail = tool.partition(sep)
+            head_norm = head.strip().lower()
+            candidate = _SERVER_ID_ALIASES.get(head_norm, head_norm)
+            if candidate in KNOWN_TOOLS:
+                srv = candidate
+                tool = tail.strip()
+                break
+    srv = _SERVER_ID_ALIASES.get(srv, srv)
+    # Bare tool + empty/unknown server: try to resolve from the static
+    # catalog. Ambiguous names (same tool published by two servers) fall
+    # through unchanged so the caller can decide.
+    if tool and (not srv or srv not in KNOWN_TOOLS):
+        owners = [s for s, catalog in KNOWN_TOOLS.items() if tool in catalog]
+        if len(owners) == 1:
+            srv = owners[0]
+    return srv, tool
+
+
+# Legacy alias -- some callers imported the earlier spelling before the
+# helper's final name landed. Both names refer to the same function; the
+# alias avoids a churn commit across sibling adapters.
+canonical_tool_id = canonicalize_tool_id
 
 
 IDA_HEADLESS_TOOLS: frozenset[str] = frozenset({
@@ -333,7 +413,40 @@ _ALWAYS_SUPPRESS: dict[str, frozenset[str]] = {
     # because ``_effective_tools`` unions the runtime bridge catalog
     # into the callable set -- the bridge's live ``/tools`` response
     # still advertises ``classify_strings``.
-    "ida_headless": frozenset({"classify_strings"}),
+    # The tools listed below still return the reverser's
+    # ``unsupported_tool_response`` envelope on every call because the
+    # backing primitive does not exist with the kuna / Miasm backend:
+    # a live Hex-Rays CTree / typed microcode IR (query_ctree,
+    # hexrays_warnings, def_use, value_ranges), angr symbolic
+    # reachability (interprocedural_taint, constrained_reachability),
+    # a cross-reference vtable database (recover_class_hierarchy),
+    # protocol state-machine recovery, and the assembler mutation
+    # path (patch_assemble). Leaving them in the agent-offered catalog
+    # burns turns on calls that come back empty and misleads the
+    # reasoning loop into treating "unsupported" as "nothing found".
+    #
+    # The reverser now implements a real Miasm / SMT / pseudocode
+    # surface: xrefs_to, xrefs_from, assess_exploitability,
+    # prove_overflow, prove_bounds_sufficient, trace_dataflow,
+    # pseudocode_slice_view, and the Wave-3 set -- recover_cfg,
+    # detect_obfuscation (miasm CFG recovery + CFF detection),
+    # get_microcode (miasm IR), detect_stack_strings, generate_yara_rule,
+    # stack_frame (instruction-stream analysis), search_pattern and
+    # detect_dynamic_resolution (binary-wide pseudocode scans), and
+    # prove_equivalence / prove_predicate_opaque (binbit SMT). Those are
+    # removed from this list and are live for the agent.
+    "ida_headless": frozenset({
+        "classify_strings",
+        "query_ctree",
+        "hexrays_warnings",
+        "def_use",
+        "value_ranges",
+        "interprocedural_taint",
+        "constrained_reachability",
+        "detect_protocol_state_machine",
+        "patch_assemble",
+        "recover_class_hierarchy",
+    }),
 }
 
 # Bridge-side virtual tools added on top of the live MCP catalog.

@@ -12,6 +12,7 @@ from ...storage.database import async_session_scope
 from ...storage.db_models import WorkflowRunRecord
 from ...storage.memory import PermanentMemoryStore, append_run_event
 from ...storage.report_store import ReportArtifactStore
+from ..agents.dante import DanteAgent, DanteReply
 from ..config import (
     ApplicationSettings,
     PlatformSettings,
@@ -150,6 +151,36 @@ class AILAPlatform:
         if self._runtime is None:
             raise RuntimeError("AILAPlatform not initialized. Call await _ensure_initialized() first.")
         return self._runtime
+
+    async def console_reply(
+        self,
+        *,
+        query: str,
+        history: list[dict[str, str]] | None = None,
+        team_id: str | None = None,
+        bound_module_id: str | None = None,
+        bound_investigation_id: str | None = None,
+    ) -> DanteReply:
+        """Route a console chat turn through the platform ``dante`` agent (req 25).
+
+        Unlike :meth:`handle`, this path never runs the ModuleRouter and
+        never creates a :class:`WorkflowRunRecord`. dante is a
+        conversational assistant that proposes actions the frontend
+        executes on operator confirm. Returns the validated
+        :class:`DanteReply` (reply text + zero or more DanteAction dicts).
+        """
+        await self._ensure_initialized()
+        agent = DanteAgent(
+            client=self.runtime.runtime_model,
+            config_registry=self.runtime.config_registry,
+        )
+        return await agent.respond(
+            query=query,
+            history=list(history or []),
+            team_id=team_id,
+            bound_module_id=bound_module_id,
+            bound_investigation_id=bound_investigation_id,
+        )
 
     async def handle(
         self,

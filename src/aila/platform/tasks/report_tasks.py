@@ -2,8 +2,9 @@
 
 Phase 147 EXEC-02: scheduled report execution via arq task queue.
 
-Loads a ScheduledReportRecord, generates the appropriate report PDF,
-and delivers it via email if SMTP is configured in ConfigRegistry.
+Loads a ScheduledReportRecord, dispatches to the report kind's generator
+(see REPORT_KINDS), and delivers the produced artifact via email if SMTP
+is configured in ConfigRegistry.
 
 SMTP config keys (namespace="platform"):
   smtp_host     -- SMTP server hostname (required for email; if absent, skips delivery)
@@ -24,10 +25,15 @@ Security:
 from __future__ import annotations
 
 import asyncio
+import csv
+import io
 import json
 import logging
 import smtplib
 import ssl
+from collections import Counter
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
@@ -35,16 +41,143 @@ from email.mime.text import MIMEText
 
 from sqlmodel import select
 
-from aila.platform.runtime import get_worker_platform
 from aila.platform.tasks.context import TaskContext
 from aila.platform.tasks.template import platform_task
 from aila.storage.database import async_session_scope
-from aila.storage.db_models import ScheduledReportRecord
+from aila.storage.db_models import ManagedSystemRecord, ScheduledReportRecord
 from aila.storage.registry import ConfigRegistry
 
-__all__ = ["generate_scheduled_report_job"]
+__all__ = [
+    "REPORT_KINDS",
+    "ReportKind",
+    "ReportKindOption",
+    "generate_scheduled_report_job",
+]
 
 _log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ReportKindOption:
+    """One declared config option for a report kind's config_json."""
+
+    key: str
+    type: str  # "string" | "boolean" | "select"
+    label: str
+    default: str | bool | None = None
+    required: bool = False
+    options: list[str] | None = None
+
+
+@dataclass(frozen=True)
+class ReportKind:
+    """A report kind the scheduled-report dispatch understands."""
+
+    report_type: str
+    name: str
+    description: str
+    generator: Callable[[str, str | None], Awaitable[tuple[str, bytes]]]
+    config_schema: tuple[ReportKindOption, ...] = ()
+
+
+def _parse_config(config_json: str) -> dict:
+    """Parse a report record's config_json into a dict ({} on garbage).
+
+    config_json is admin-set via the API, so a parse failure is a bad write
+    upstream; the run falls back to defaults but the failure is logged.
+    """
+    try:
+        config = json.loads(config_json)
+    except (json.JSONDecodeError, ValueError):
+        _log.warning("_parse_config: config_json is not valid JSON; using defaults")
+        return {}
+    if not isinstance(config, dict):
+        _log.warning("_parse_config: config_json is not a JSON object; using defaults")
+        return {}
+    return config
+
+
+async def _load_fleet_health_rows(team_id: str | None) -> list[ManagedSystemRecord]:
+    """Load managed systems, scoped to the owning report's team.
+
+    A god-tier report row (team_id None) covers the whole fleet; a
+    team-scoped row only sees that team's systems, mirroring the CRUD reads.
+    """
+    stmt = select(ManagedSystemRecord).order_by(ManagedSystemRecord.name)
+    if team_id is not None:
+        stmt = stmt.where(ManagedSystemRecord.team_id == team_id)
+    async with async_session_scope() as session:
+        return list((await session.exec(stmt)).all())
+
+
+def _build_fleet_health_payload(
+    group_by: str,
+    rows: Sequence[ManagedSystemRecord],
+) -> tuple[str, bytes]:
+    """Build the fleet-health email body + CSV attachment (stdlib only).
+
+    Pure function -- the caller loads rows from the DB. Returns
+    (plain-text summary body, UTF-8 CSV bytes) for the SMTP path.
+    """
+    group_by = group_by if group_by in ("role", "distro") else "role"
+    counts: Counter[str] = Counter()
+    for row in rows:
+        if group_by == "role":
+            bucket = row.role or "unassigned"
+        else:
+            bucket = row.distro or "unknown"
+        counts[bucket] += 1
+
+    lines = [
+        f"AILA fleet health -- {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}",
+        f"Managed systems: {len(rows)}",
+        "",
+        f"Count by {group_by}:",
+    ]
+    lines += [f"  {bucket}: {count}" for bucket, count in sorted(counts.items())]
+
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["name", "host", "username", "port", "role", "distro"])
+    for row in rows:
+        writer.writerow(
+            [row.name, row.host, row.username, row.port, row.role or "", row.distro or ""]
+        )
+    return "\n".join(lines), buffer.getvalue().encode("utf-8")
+
+
+async def _generate_fleet_health_payload(
+    config_json: str,
+    team_id: str | None,
+) -> tuple[str, bytes]:
+    """Generate the fleet-health payload: (email body, CSV attachment)."""
+    config = _parse_config(config_json)
+    rows = await _load_fleet_health_rows(team_id)
+    return _build_fleet_health_payload(str(config.get("group_by", "role")), rows)
+
+
+REPORT_KINDS: tuple[ReportKind, ...] = (
+    ReportKind(
+        report_type="fleet_health",
+        name="Fleet Health",
+        description=(
+            "Managed-system fleet summary: registered SSH hosts counted by "
+            "role or distro, delivered with a CSV inventory attachment."
+        ),
+        generator=_generate_fleet_health_payload,
+        config_schema=(
+            ReportKindOption(
+                key="group_by",
+                type="select",
+                label="Group hosts by",
+                default="role",
+                options=["role", "distro"],
+            ),
+        ),
+    ),
+)
+
+_KIND_BY_TYPE: dict[str, ReportKind] = {k.report_type: k for k in REPORT_KINDS}
 
 
 @platform_task(
@@ -94,6 +227,7 @@ async def generate_scheduled_report_job(
         report_type = record.report_type
         recipient_emails_raw = record.recipient_emails_json or "[]"
         report_name = record.name
+        config_json = record.config_json or "{}"
         report_team_id = record.team_id
 
     # Parse recipient emails (set by admin via API -- trusted source)
@@ -104,21 +238,12 @@ async def generate_scheduled_report_job(
     except (json.JSONDecodeError, ValueError):
         recipient_emails = []
 
-    # Generate the report PDF bytes
+    # Generate the report payload (PDF, CSV, and/or plain-text body)
     pdf_bytes: bytes | None = None
-    if report_type == "risk_summary":
-        try:
-            pdf_bytes = await _generate_risk_summary_pdf(report_team_id)
-        except Exception as exc:
-            _log.error(
-                "generate_scheduled_report_job: PDF generation failed for report_id=%r: %s",
-                report_id,
-                exc,
-                exc_info=True,
-            )
-            await _update_last_run_at(report_id)
-            return {"status": "failed", "reason": "pdf_generation_error", "report_id": report_id}
-    elif report_type == "compliance":
+    csv_bytes: bytes | None = None
+    body_text: str | None = None
+
+    if report_type == "compliance":
         _log.info(
             "generate_scheduled_report_job: compliance reports are system-scoped; "
             "use the evidence-package endpoint for per-system exports. Skipping email."
@@ -129,7 +254,9 @@ async def generate_scheduled_report_job(
             "reason": "compliance_reports_are_system_scoped",
             "report_id": report_id,
         }
-    else:
+
+    kind = _KIND_BY_TYPE.get(report_type)
+    if kind is None:
         _log.warning(
             "generate_scheduled_report_job: unknown report_type=%r for report_id=%r",
             report_type,
@@ -138,11 +265,13 @@ async def generate_scheduled_report_job(
         await _update_last_run_at(report_id)
         return {"status": "skipped", "reason": "unknown_report_type", "report_id": report_id}
 
+    body_text, csv_bytes = await kind.generator(config_json, report_team_id)
+
     # Load SMTP config from ConfigRegistry (T-147-01: never from request body)
     registry = ConfigRegistry()
     smtp_host = await registry.get("platform", "smtp_host")
 
-    if not smtp_host or pdf_bytes is None:
+    if not smtp_host or (pdf_bytes is None and csv_bytes is None and body_text is None):
         _log.info(
             "generate_scheduled_report_job: smtp_host not configured -- skipping email delivery "
             "for report_id=%r. Configure platform.smtp_host to enable delivery.",
@@ -190,6 +319,8 @@ async def generate_scheduled_report_job(
                 report_name=report_name,
                 date_str=date_str,
                 pdf_bytes=pdf_bytes,
+                csv_bytes=csv_bytes,
+                body_text=body_text,
                 ca_bundle_path=(
                     str(smtp_ca_bundle_path) if smtp_ca_bundle_path else None
                 ),
@@ -216,23 +347,6 @@ async def generate_scheduled_report_job(
         "recipients": sent_count,
         "report_id": report_id,
     }
-
-
-async def _generate_risk_summary_pdf(team_id: str | None) -> bytes:
-    """Generate the risk summary PDF, scoped to the report's owning team.
-
-    Reuses the same logic as the executive API endpoint to avoid duplication.
-    Runs PDF conversion in a thread pool to avoid blocking the event loop.
-    team_id scopes findings to the report owner so a team's scheduled report
-    never includes another team's findings; None is a god-tier report (#36).
-    """
-    platform = await get_worker_platform()
-    module = platform.runtime.module_registry.first_with("build_risk_pdf_bytes")
-    if module is None:
-        raise RuntimeError("No registered module provides risk summary PDFs.")
-    async with async_session_scope() as session:
-        findings = await module.latest_findings(session, team_id=team_id)
-    return await asyncio.to_thread(module.build_risk_pdf_bytes, findings)
 
 
 async def _update_last_run_at(report_id: str) -> None:
@@ -269,11 +383,13 @@ def _send_report_email(
     recipient: str,
     report_name: str,
     date_str: str,
-    pdf_bytes: bytes,
+    pdf_bytes: bytes | None = None,
+    csv_bytes: bytes | None = None,
+    body_text: str | None = None,
     ca_bundle_path: str | None = None,
     use_implicit_tls: bool = False,
 ) -> None:
-    """Send a report email with the PDF attached.
+    """Send a report email with the generated payload attached.
 
     Runs synchronously -- always called via asyncio.to_thread().
     Uses stdlib smtplib; no external dependencies required.
@@ -288,7 +404,10 @@ def _send_report_email(
         recipient: Recipient email address (admin-set, trusted).
         report_name: Human-readable report name for the email subject.
         date_str: Date string for the filename (YYYY-MM-DD).
-        pdf_bytes: PDF file bytes to attach.
+        pdf_bytes: Optional PDF file bytes to attach.
+        csv_bytes: Optional UTF-8 CSV file bytes to attach.
+        body_text: Optional plain-text body; the default placeholder text is
+            used when None.
         ca_bundle_path: Optional path to an admin-managed CA bundle for server
             certificate verification. None uses the system trust store. An
             invalid path fails loudly rather than downgrading to no verification.
@@ -301,21 +420,34 @@ def _send_report_email(
     msg["To"] = recipient
     msg["Subject"] = f"AILA Security Report: {report_name} -- {date_str}"
 
-    body = MIMEText(
-        f"Please find attached the scheduled security report: {report_name}.\n\n"
-        f"Generated: {date_str}\n"
-        f"Source: AILA -- AI Lab Assistant\n",
-        "plain",
-    )
+    if body_text:
+        body = MIMEText(body_text, "plain")
+    else:
+        body = MIMEText(
+            f"Please find attached the scheduled security report: {report_name}.\n\n"
+            f"Generated: {date_str}\n"
+            f"Source: AILA -- AI Lab Assistant\n",
+            "plain",
+        )
     msg.attach(body)
 
-    attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
-    attachment.add_header(
-        "Content-Disposition",
-        "attachment",
-        filename=f"aila-report-{date_str}.pdf",
-    )
-    msg.attach(attachment)
+    if pdf_bytes is not None:
+        attachment = MIMEApplication(pdf_bytes, _subtype="pdf")
+        attachment.add_header(
+            "Content-Disposition",
+            "attachment",
+            filename=f"aila-report-{date_str}.pdf",
+        )
+        msg.attach(attachment)
+
+    if csv_bytes is not None:
+        csv_attachment = MIMEApplication(csv_bytes, _subtype="csv")
+        csv_attachment.add_header(
+            "Content-Disposition",
+            "attachment",
+            filename=f"aila-report-{date_str}.csv",
+        )
+        msg.attach(csv_attachment)
 
     context = ssl.create_default_context(cafile=ca_bundle_path or None)
     if use_implicit_tls:

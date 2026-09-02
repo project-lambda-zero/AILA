@@ -21,7 +21,6 @@ import logging
 import re
 from collections import Counter
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from aila.modules.forensics.services.pcap_enrich import (
@@ -43,28 +42,21 @@ from aila.platform.llm.correlation import (
     current_prompt_version,
 )
 from aila.platform.prompts import PromptRegistry
+from aila.platform.prompts.version_store import PromptVersionStore
 from aila.platform.services.factory import ServiceFactory
 
 from ._helpers import err_sink, safe_emit, sq
 
 __all__ = ["collect_network_artifacts"]
 
-_PROMPT_DIR = Path(__file__).parent / "prompts"
 _PROMPT_REGISTRY = PromptRegistry(
-    _PROMPT_DIR,
     module="forensics",
-    fallback_base="system_network_commentary.md",
+    version_store=PromptVersionStore(),
 )
 
 
 def _load_commentary_system_prompt() -> str:
-    """Return the pcap-commentary system prompt from the registry.
-
-    RFC-09 criterion 1: body lives in
-    ``prompts/system_network_commentary.md`` resolved via
-    :class:`PromptRegistry` so cost / seal rows carry the resolved
-    ``prompt_content_hash`` for the pcap commentary LLM call.
-    """
+    """Return the pcap-commentary system prompt from the registry."""
     return _PROMPT_REGISTRY.load("network_commentary")
 
 _log = logging.getLogger(__name__)

@@ -87,6 +87,7 @@ from aila.platform.services.branch_cleanup import close_orphan_branches_on_termi
 from aila.platform.services.knowledge import KnowledgeService
 from aila.platform.tasks.arq_purge import purge_arq_jobs_for_investigation
 from aila.platform.uow import UnitOfWork
+from aila.storage.db_models import FindingWorkflowRecord
 
 __all__ = [
     "OutcomeDispatchResult",
@@ -201,6 +202,41 @@ def _int_or_none(value: Any) -> int | None:
 _NOT_YET_DISPATCHABLE: dict[OutcomeKind, str] = {
     OutcomeKind.ASSESSMENT_REPORT: "assessment_reports_are_terminal_no_downstream",
 }
+
+
+async def _ensure_initial_workflow_record(
+    session: Any,
+    *,
+    finding_id: str,
+    team_id: str | None,
+    transitioned_by: str,
+) -> None:
+    """Idempotently seed the initial ``FindingWorkflowRecord`` for a VR finding.
+
+    Called from every VR finding-creation path (currently
+    :meth:`OutcomeDispatcher._dispatch_direct_finding`; also invoked
+    from the api_router promote/re-dispatch path via the same handler).
+    Checks for any existing row keyed by ``finding_id`` first so a
+    re-dispatch or retry never duplicates the row and never clobbers a
+    finding already advanced by the transition endpoint.
+    """
+    existing = (await session.exec(
+        _select(FindingWorkflowRecord)
+        .where(FindingWorkflowRecord.finding_id == finding_id)
+        .limit(1),
+    )).first()
+    if existing is not None:
+        return
+    session.add(FindingWorkflowRecord(
+        finding_id=finding_id,
+        module_id="vr",
+        current_state="new",
+        previous_state=None,
+        transitioned_by=transitioned_by or "system",
+        notes="",
+        team_id=team_id,
+    ))
+    await session.flush()
 
 
 class OutcomeDispatcher(OutcomeDispatcherBase):
@@ -500,6 +536,11 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
         root_cause = payload.get("answer") or payload.get("reasoning") or ""
         crash_signature = payload.get("crash_signature")
         poc_code = payload.get("poc_code")
+        raw_cvss = payload.get("cvss_score")
+        cvss_score = float(raw_cvss) if isinstance(raw_cvss, (int, float)) else None
+        cvss_vector = payload.get("cvss_vector")
+        cwe_id = payload.get("cwe_id")
+        assigned_cve_id = payload.get("assigned_cve_id") or payload.get("cve_id")
 
         # fix §186 + §235 -- single UoW atomically inserts the finding
         # and links it to the investigation. Old code committed after
@@ -524,6 +565,10 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
                     str(payload.get("poc_language", "python"))[:32]
                     if poc_code else None
                 ),
+                cvss_score=cvss_score,
+                cvss_vector=(cvss_vector[:128] if isinstance(cvss_vector, str) else None),
+                cwe_id=(cwe_id[:16] if isinstance(cwe_id, str) else None),
+                assigned_cve_id=(assigned_cve_id[:32] if isinstance(assigned_cve_id, str) else None),
                 evidence_refs_json=EvidenceRefList.model_validate(
                     payload.get("evidence_refs") or [],
                 ).model_dump_json(),
@@ -531,6 +576,18 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
             uow.session.add(finding)
             await uow.session.flush()
             finding_id = finding.id
+
+            # D-37/D-29 -- stamp the initial finding workflow row so the
+            # findings explorer + transition endpoint see a real starting
+            # state instead of falling back to the "new" default. Guarded
+            # for idempotency in case re-dispatch or a retry ever reaches
+            # the same finding_id.
+            await _ensure_initial_workflow_record(
+                uow.session,
+                finding_id=finding_id,
+                team_id=finding.team_id,
+                transitioned_by="system",
+            )
 
             inv_row = (await uow.session.exec(
                 _select(VRInvestigationRecord).where(
@@ -582,6 +639,43 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
             except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
                 _log.warning(
                     "direct_finding KB mirror failed inv=%s finding=%s: %s",
+                    investigation_id, finding_id, exc, exc_info=True,
+                )
+
+            # Issue #06 -- knowledge reuse (RFC #252/#256/#268). The
+            # finding mirror above lands in the ``vr.finding.workspace``
+            # namespace, but the cross-investigation retrieval pool reads
+            # the ``vr.pattern.workspace`` namespace, where the historical
+            # engine writer stamped ``trust_tier=unreviewed`` so
+            # ``retrieve_routed`` filtered every engine-generated pattern
+            # out. A dispatched DIRECT_FINDING is verifier-confirmed and
+            # quorum-approved, so promote it into the pattern pool stamped
+            # ``confirmed=True`` -- ``trust_tier_from_namespace`` lifts the
+            # row to ``TRUST_TIER_VERIFIED`` and the next hunt on this
+            # target retrieves it instead of restarting cold. Best-effort
+            # and separately guarded so a pool-write fault never unwinds
+            # the already-committed finding.
+            try:
+                await self._knowledge.promote_confirmed_finding_to_pool(
+                    module_id="vr",
+                    workspace_id=ws_id,
+                    content=finding_text,
+                    dedup_key=f"pattern:{finding_id}",
+                    metadata={
+                        "investigation_id": investigation_id,
+                        "finding_id": finding_id,
+                        "target_id": target_row.id,
+                        "target_signature": target_signature,
+                        "vulnerable_function": vulnerable_function,
+                        "crash_type": crash_type,
+                        "outcome_id": outcome_id,
+                    },
+                    team_id=target_row.team_id,
+                )
+            except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
+                _log.warning(
+                    "direct_finding pattern-pool promotion failed "
+                    "inv=%s finding=%s: %s",
                     investigation_id, finding_id, exc, exc_info=True,
                 )
 

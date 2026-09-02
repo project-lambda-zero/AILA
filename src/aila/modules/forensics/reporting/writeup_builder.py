@@ -14,7 +14,6 @@ import json
 import logging
 from collections import defaultdict
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from aila.platform.llm.correlation import (
@@ -23,25 +22,21 @@ from aila.platform.llm.correlation import (
     current_prompt_version,
 )
 from aila.platform.prompts import PromptRegistry
+from aila.platform.prompts.version_store import PromptVersionStore
 from aila.platform.services.factory import ServiceFactory
 
 __all__ = ["build_writeup"]
 
 _log = logging.getLogger(__name__)
 
-_PROMPT_DIR = Path(__file__).parent / "prompts"
 _PROMPT_REGISTRY = PromptRegistry(
-    _PROMPT_DIR, fallback_base="system_writeup.md",
+    module="prompts",
+    version_store=PromptVersionStore(),
 )
 
 
 def _load_writeup_prompt() -> str:
-    """Return the forensic writeup system prompt from the registry.
-
-    RFC-09 criterion 1: prompt lives in a versionable ``.md`` file next
-    to this reporting module, not inline. Reads ``system_writeup.md``
-    under the forensics reporting prompts directory.
-    """
+    """Return the forensic writeup system prompt from the registry."""
     return _PROMPT_REGISTRY.load("writeup")
 
 # Cap the user-message bundle so we do not blow the context window on

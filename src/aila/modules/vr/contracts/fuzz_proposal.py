@@ -41,8 +41,8 @@ class VRFuzzCampaignProposalSummary(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
-    investigation_id: str
-    outcome_id: str
+    investigation_id: str | None = None
+    outcome_id: str | None = None
     target_id: str
     workspace_id: str
 

@@ -25,9 +25,10 @@ from aila.platform.prompts.version_models import (
     PromptAliasRecord,
     PromptVersionRecord,
 )
-from aila.storage.database import async_session_scope
+from aila.storage.database import async_session_scope, session_scope
 
 if TYPE_CHECKING:
+    from sqlmodel import Session
     from sqlmodel.ext.asyncio.session import AsyncSession
 
 __all__ = ["PromptVersionNotFoundError", "PromptVersionStore"]
@@ -163,6 +164,47 @@ class PromptVersionStore:
                 select(PromptAliasRecord).where(PromptAliasRecord.key == key)
             )).all())
 
+    async def list_all_prompts(self, prefix: str | None = None) -> list[dict[str, Any]]:
+        """List distinct prompt keys with their active aliases and latest versions."""
+        async with async_session_scope() as session:
+            stmt = select(PromptVersionRecord).order_by(
+                PromptVersionRecord.key,
+                PromptVersionRecord.created_at.desc(),
+            )
+            if prefix:
+                stmt = stmt.where(PromptVersionRecord.key.startswith(prefix))
+            versions = list((await session.exec(stmt)).all())
+
+            aliases = list((await session.exec(select(PromptAliasRecord))).all())
+            alias_map: dict[tuple[str, str], list[str]] = {}
+            prod_map: dict[str, str] = {}
+            for a in aliases:
+                alias_map.setdefault((a.key, a.version), []).append(a.alias)
+                if a.alias == "production":
+                    prod_map[a.key] = a.version
+
+            seen_keys: set[str] = set()
+            summaries: list[dict[str, Any]] = []
+            for v in versions:
+                if v.key in seen_keys:
+                    continue
+                seen_keys.add(v.key)
+                active_aliases = alias_map.get((v.key, v.version), [])
+                summaries.append({
+                    "key": v.key,
+                    "version": v.version,
+                    "production_version": prod_map.get(v.key),
+                    "aliases": active_aliases,
+                    "author": v.author or "",
+                    "notes": v.notes or "",
+                    "content_hash": v.content_hash,
+                    "body": v.body or "",
+                    "body_snippet": (v.body[:200] + "…") if len(v.body) > 200 else v.body,
+                    "body_length": len(v.body) if v.body else 0,
+                    "created_at": v.created_at,
+                })
+            return sorted(summaries, key=lambda s: s["key"])
+
     async def resolve(
         self,
         key: str,
@@ -234,6 +276,83 @@ class PromptVersionStore:
             return None
         return (
             await session.exec(
+                select(PromptVersionRecord).where(
+                    PromptVersionRecord.key == key,
+                    PromptVersionRecord.version == pointer.version,
+                )
+            )
+        ).first()
+
+    def resolve_sync(
+        self,
+        key: str,
+        *,
+        alias: str | None = None,
+        version: str | None = None,
+        model_family: str | None = None,
+    ) -> PromptVersionRecord | None:
+        """Synchronous twin of :meth:`resolve` using a sync session.
+
+        Opens its own ``session_scope`` (sync engine) rather than the
+        async one, so single-shot sync callers (``PromptRegistry.load``)
+        can query the store without an event loop. Resolution semantics
+        are identical: a per-family key (``"{key}/{model_family}"``)
+        wins when it has a matching row, otherwise the bare ``key`` is
+        tried; ``model_family=None`` queries the bare key directly.
+
+        Returns None when nothing matches (the caller raises or falls
+        back to ``load_from_file``).
+        """
+        family = (model_family or "").strip().lower()
+        keys_to_try: list[str] = []
+        if family:
+            keys_to_try.append(f"{key}/{family}")
+        keys_to_try.append(key)
+
+        with session_scope() as session:
+            for candidate_key in keys_to_try:
+                row = self._resolve_one_sync(
+                    session,
+                    candidate_key,
+                    alias=alias,
+                    version=version,
+                )
+                if row is not None:
+                    return row
+            return None
+
+    def _resolve_one_sync(
+        self,
+        session: Session,
+        key: str,
+        *,
+        alias: str | None,
+        version: str | None,
+    ) -> PromptVersionRecord | None:
+        """Sync twin of :meth:`_resolve_one` for a single key."""
+        if version is not None:
+            return (
+                session.exec(
+                    select(PromptVersionRecord).where(
+                        PromptVersionRecord.key == key,
+                        PromptVersionRecord.version == version,
+                    )
+                )
+            ).first()
+        if alias is None:
+            return None
+        pointer = (
+            session.exec(
+                select(PromptAliasRecord).where(
+                    PromptAliasRecord.key == key,
+                    PromptAliasRecord.alias == alias,
+                )
+            )
+        ).first()
+        if pointer is None:
+            return None
+        return (
+            session.exec(
                 select(PromptVersionRecord).where(
                     PromptVersionRecord.key == key,
                     PromptVersionRecord.version == pointer.version,

@@ -24,6 +24,7 @@ propose_pattern / propose_playbook; vr leaves them unset).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from datetime import UTC
@@ -64,6 +65,30 @@ __all__ = ["resolve_final_status", "state_investigation_emit"]
 # a hard ceiling stops the runaway independent of turn_count.
 _MAX_AUTO_CONTINUE_CYCLES: int = 30
 
+# Issue .run/issues/09_turn_tool_machine.md ``## Fix`` bullet 2 and
+# .run/vr_truth_turn_economy.md sections 3-5: observation-stagnation
+# early stop. When a branch's case-state signature (hypotheses +
+# non-directive observables) fails to change across this many
+# auto-continue cycles, the loop refuses further re-enqueues and
+# reserves one final emit/verify sweep instead of burning turns on a
+# recon that produces no new symbols. Bound is intentionally loose so
+# a genuinely slow-progressing branch is not cut early; a stuck one
+# stops before it consumes the cumulative turn cap at recon.
+_MAX_STAGNANT_AUTO_CONTINUE_CYCLES: int = 4
+
+# Issue .run/issues/24_turn_economy.md /
+# .run/vr_truth_turn_economy.md sections 3-6: bound recon-dominated
+# re-enqueues. A phase that hits max_turns without a discovery /
+# submission / observation delta is spending the cumulative budget
+# on the phase least likely to produce a distinctive-true outcome.
+# When a branch has re-enqueued this many times WITHOUT a case-state
+# delta, its final auto-continue is tagged reserve_verify=True so
+# the reserved compute (already engineered via ``_MAX_AUTO_CONTINUE``
+# and the emit/verify reserve seam) routes toward one verify sweep
+# instead of another recon turn. Never larger than
+# _MAX_STAGNANT_AUTO_CONTINUE_CYCLES so the stop bound above wins.
+_RECON_REENQUEUE_SOFT_CAP: int = 3
+
 # Operator-requested index-readiness gate. Bounds how many times a run may
 # re-enqueue while waiting for its bound code index (graph/trailmark +
 # semble) to finish building, so a permanently-broken index cannot
@@ -98,7 +123,7 @@ _NON_CONTINUE_EXIT_REASONS: frozenset[str] = frozenset({
 })
 
 
-def resolve_final_status(exit_reason: str) -> str | None:
+def resolve_final_status(exit_reason: str, has_outcome: bool = False) -> str | None:
     """Pick the final InvestigationStatus given the loop's exit reason.
 
     Returns None when the status should NOT be touched -- the investigation
@@ -108,6 +133,14 @@ def resolve_final_status(exit_reason: str) -> str | None:
     silently without killing the whole investigation -- other branches
     continue, and auto_continue re-enqueues this branch.
 
+    ``has_outcome`` distinguishes the two flavors of ``max_turns``: a
+    cap-exhaustion exit that also carries a real outcome row still
+    completes (the finding is in), while a cap-exhaustion exit with NO
+    outcome is not a completion -- the hunt hit the turn cap without
+    ever reaching a verified finding, which is a stall (STALLED), not a
+    success. Sealing the no-outcome variant as COMPLETED buried live
+    runs as "completed, no finding" and blocked resume.
+
     Pure function -- no closure over bindings/hooks -- so tests can call
     it directly to assert the exit_reason -> status contract without
     building an emit-state handler.
@@ -115,7 +148,9 @@ def resolve_final_status(exit_reason: str) -> str | None:
     if exit_reason == "terminal_submit":
         return InvestigationStatus.COMPLETED.value
     if exit_reason == "max_turns":
-        return InvestigationStatus.COMPLETED.value
+        if has_outcome:
+            return InvestigationStatus.COMPLETED.value
+        return InvestigationStatus.STALLED.value
     if exit_reason in ("hub_stalled", "hub_stalled_timeout"):
         # A dispatch-hub stall is NEVER a completion. Operator invariant:
         # a stalled investigation is never interpreted as completed -- it
@@ -180,13 +215,81 @@ def state_investigation_emit(
 
 
 
+    def _case_state_signature(case_state_json: str | None) -> str:
+        """Return a stable hash of the productive slice of case_state.
+
+        Issue .run/issues/09_turn_tool_machine.md ``## Fix`` bullet 2:
+        the stagnation detector keys on the observation / hypothesis
+        surface, not on the whole case_state dict. Internal scratchpad
+        keys the agent likes to churn each turn (``_directive.*``,
+        ``_acked_operator_messages``, ``_stagnation_*``, ``_reserve_*``,
+        ``mandatory_*``) are stripped so they never mask a real
+        no-delta run. Hypotheses collapse to ``(id, status,
+        confirmed_by, kill_criterion)`` so a cosmetic prose edit does
+        not count as progress.
+        """
+        try:
+            state = json.loads(case_state_json or "{}")
+        except (ValueError, TypeError):
+            _log.debug(
+                "stagnation signature: undecodable case_state_json -- "
+                "empty signature forces a non-stagnant reading",
+            )
+            return ""
+        if not isinstance(state, dict):
+            return ""
+        obs_raw = state.get("observables") if isinstance(state, dict) else None
+        obs_filtered: dict[str, Any] = {}
+        if isinstance(obs_raw, dict):
+            for key, val in obs_raw.items():
+                if not isinstance(key, str):
+                    continue
+                if key.startswith(("_directive.", "_stagnation_", "_reserve_")):
+                    continue
+                if key in {"_acked_operator_messages", "mandatory_next"}:
+                    continue
+                obs_filtered[key] = val
+        hypos_summary: list[tuple[str, str, str, str]] = []
+        for h in state.get("hypotheses", []) or []:
+            if not isinstance(h, dict):
+                continue
+            hypos_summary.append((
+                str(h.get("id") or ""),
+                str(h.get("status") or ""),
+                str(h.get("confirmed_by") or ""),
+                str(h.get("kill_criterion") or ""),
+            ))
+        hypos_summary.sort()
+        rejected = sorted(
+            str(r.get("id") or "") for r in (state.get("rejected") or [])
+            if isinstance(r, dict)
+        )
+        resolved = sorted(
+            str(r.get("id") or "") for r in (state.get("resolved") or [])
+            if isinstance(r, dict)
+        )
+        payload = json.dumps(
+            {
+                "obs": obs_filtered,
+                "hypos": hypos_summary,
+                "rejected": rejected,
+                "resolved": resolved,
+            },
+            sort_keys=True,
+            default=str,
+        )
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
     async def _should_auto_continue(
         investigation_id: str,
         exit_reason: str,
         outcome_id: Any,
         branch_id: str | None = None,
         auto_continue_count: int = 0,
-    ) -> tuple[bool, int]:
+        reserve_used: bool = False,
+        stagnation_count: int = 0,
+        prev_signature: str = "",
+    ) -> tuple[bool, int, bool, str, int]:
         """Decide whether to auto-re-enqueue + return the branch turn count.
 
         True when the loop hit max_turns without a terminal outcome and the
@@ -225,10 +328,10 @@ def state_investigation_emit(
                 "exit_reason=%s (hub/breaker terminal)",
                 investigation_id, branch_id, exit_reason,
             )
-            return False, 0
+            return False, 0, False, prev_signature, stagnation_count
         is_any_researcher_error = exit_reason.startswith("researcher_error")
         if (exit_reason != "max_turns" and not is_any_researcher_error) or outcome_id is not None:
-            return False, 0
+            return False, 0, False, prev_signature, stagnation_count
         async with UnitOfWork() as uow:
             inv = (await uow.session.exec(
                 _select(bindings.inv_model).where(
@@ -245,7 +348,7 @@ def state_investigation_emit(
                     "error break)",
                     investigation_id, branch_id, exit_reason, inv_status,
                 )
-                return False, 0
+                return False, 0, False, prev_signature, stagnation_count
         if auto_continue_count >= _MAX_AUTO_CONTINUE_CYCLES:
             _log.warning(
                 "investigation_emit AUTO_CONTINUE_CAP_EXCEEDED inv=%s "
@@ -255,7 +358,7 @@ def state_investigation_emit(
                 investigation_id, branch_id, auto_continue_count,
                 _MAX_AUTO_CONTINUE_CYCLES, exit_reason,
             )
-            return False, 0
+            return False, 0, False, prev_signature, stagnation_count
         async with UnitOfWork() as uow:
             if branch_id:
                 branch = (await uow.session.exec(
@@ -270,10 +373,101 @@ def state_investigation_emit(
                     ).order_by(bindings.branch_model.created_at.asc()),
                 )).first()
         turn_count = int(branch.turn_count) if branch is not None else 0
+        current_signature = _case_state_signature(
+            getattr(branch, "case_state_json", None) if branch is not None else None
+        )
+
+        # Observation-stagnation counter (issue 09 fix bullet 2 /
+        # .run/vr_truth_turn_economy.md sections 3-6). A case-state
+        # signature that is byte-identical to the previous auto-continue's
+        # signature means the branch produced no new hypothesis, no
+        # rejection, and no new observation between cycles -- a stuck
+        # recon spending the cumulative budget on a phase that will not
+        # cross into audit / emit. Ratchet the counter and, past the
+        # bound, refuse further re-enqueues; when the branch has NO
+        # outcome and has not yet spent its one reserve, route the
+        # remaining compute to a reserve emit/verify sweep instead of
+        # another recon turn (issue 24 / rebalance-compute-toward-verifier
+        # from .run/issues/07_ledger_economics.md ``## Fix``).
+        if prev_signature and current_signature == prev_signature:
+            new_stagnation = stagnation_count + 1
+        else:
+            new_stagnation = 0
+        recon_soft_cap = min(
+            _RECON_REENQUEUE_SOFT_CAP, _MAX_STAGNANT_AUTO_CONTINUE_CYCLES,
+        )
         overall_cap = await bindings.get_int("overall_turn_cap")
+
+        if new_stagnation >= _MAX_STAGNANT_AUTO_CONTINUE_CYCLES:
+            if (
+                exit_reason == "max_turns"
+                and outcome_id is None
+                and not reserve_used
+            ):
+                _log.info(
+                    "investigation_emit AUTO_CONTINUE STAGNATION_RESERVE_VERIFY "
+                    "inv=%s branch=%s stagnant=%d cap=%d -- observation "
+                    "signature unchanged; routing the final auto-continue "
+                    "to an emit/verify sweep instead of another recon turn",
+                    investigation_id, branch_id, new_stagnation,
+                    _MAX_STAGNANT_AUTO_CONTINUE_CYCLES,
+                )
+                return True, turn_count, True, current_signature, new_stagnation
+            _log.warning(
+                "investigation_emit AUTO_CONTINUE STAGNATION_STOP inv=%s "
+                "branch=%s stagnant=%d cap=%d exit_reason=%s -- refusing "
+                "further re-enqueues; observation-stagnation early stop",
+                investigation_id, branch_id, new_stagnation,
+                _MAX_STAGNANT_AUTO_CONTINUE_CYCLES, exit_reason,
+            )
+            return False, turn_count, False, current_signature, new_stagnation
+
+        # Recon-dominated soft cap: once the branch has re-enqueued this
+        # many times with an unchanged signature, bias the next auto-
+        # continue toward the reserve verify seam so the verifier /
+        # emit chokepoint gets a shot at the live hypothesis instead of
+        # burning another recon activation. Kept independent of the
+        # hard stagnation cap above so the branch still stops cleanly
+        # if the reserve run itself yields no signature change.
+        if (
+            new_stagnation >= recon_soft_cap
+            and exit_reason == "max_turns"
+            and outcome_id is None
+            and not reserve_used
+        ):
+            _log.info(
+                "investigation_emit AUTO_CONTINUE RECON_SOFT_CAP_RESERVE_VERIFY "
+                "inv=%s branch=%s stagnant=%d soft_cap=%d -- routing this "
+                "auto-continue toward emit/verify (compute rebalance)",
+                investigation_id, branch_id, new_stagnation, recon_soft_cap,
+            )
+            return True, turn_count, True, current_signature, new_stagnation
+
         if turn_count >= overall_cap:
-            return False, turn_count
-        return True, turn_count
+            # Stream C reserve emit/verify. A max_turns exit at cap with
+            # NO outcome would otherwise close blind -- the branch never
+            # reaches one more emit+verify sweep even though the cap
+            # counter merely stopped further reasoning turns. Allow ONE
+            # bounded extra re-enqueue tagged as a reserve attempt so the
+            # verifier / hub gets a final chance to produce or ratify an
+            # outcome; on that reserve run ``reserve_used`` is True and
+            # this branch does not fire again. auto_continue_count is
+            # still bumped by the caller and remains bounded by
+            # _MAX_AUTO_CONTINUE_CYCLES, so no infinite loop can form.
+            if (
+                exit_reason == "max_turns"
+                and outcome_id is None
+                and not reserve_used
+            ):
+                _log.info(
+                    "investigation_emit AUTO_CONTINUE RESERVE_VERIFY inv=%s "
+                    "branch=%s turn_count=%d cap=%d -- reserving one final "
+                    "emit/verify attempt before terminalizing",
+                    investigation_id, branch_id, turn_count, overall_cap,
+                )
+                return True, turn_count, True, current_signature, new_stagnation
+            return False, turn_count, False, current_signature, new_stagnation
+        return True, turn_count, False, current_signature, new_stagnation
 
 
     async def _enqueue_next_investigation_run(
@@ -283,6 +477,10 @@ def state_investigation_emit(
         dispatch_visited: list[str] | None = None,
         auto_continue_count: int = 0,
         index_wait_count: int = 0,
+        defer_seconds: float = 0.0,
+        reserve_verify: bool = False,
+        stagnation_count: int = 0,
+        prev_signature: str = "",
     ) -> None:
         """Submit the investigate task so the agent continues reasoning on
         the SAME branch it was running.
@@ -317,6 +515,22 @@ def state_investigation_emit(
             # Bounds the index-readiness wait across re-enqueues so a
             # permanently-broken index cannot re-enqueue forever.
             kwargs["_index_wait_count"] = int(index_wait_count)
+        if reserve_verify:
+            # Stream C reserve emit/verify marker. Set to 1 on the ONE
+            # bounded re-enqueue that follows a max_turns-at-cap exit
+            # with no outcome. Forwarded back into the emit-state input
+            # so ``_should_auto_continue`` sees ``reserve_used=True``
+            # and refuses a second reserve attempt.
+            kwargs["_reserve_verify_attempt"] = 1
+        if stagnation_count:
+            # Issue .run/issues/09_turn_tool_machine.md ``## Fix``
+            # bullet 2: forward the observation-stagnation counter
+            # across the re-enqueue boundary so the early-stop bound
+            # survives task hops (auto_continue is bounded on the same
+            # kwargs pattern; stagnation piggybacks on it).
+            kwargs["_stagnation_count"] = int(stagnation_count)
+        if prev_signature:
+            kwargs["_stagnation_prev_signature"] = str(prev_signature)
         task_queue = bindings.task_queue_factory()
         await task_queue.submit(
             track=bindings.track,
@@ -325,13 +539,8 @@ def state_investigation_emit(
             user_id="system",
             group_id=f"{bindings.track}_auto_continue",
             team_id=team_id,
-            # AUTO_CONTINUE submits from INSIDE a running task body. Without
-            # this flag, dedup_session matches the caller's own
-            # TaskRecord (status='running'), returns its id without
-            # enqueueing a new task, the worker exits, the queue stays
-            # empty, and the branch idles forever. Diagnosed 2026-06-12
-            # on inv <inv-uuid-a> maddie branch <inv-uuid-b>.
             bypass_dedup=True,
+            defer_seconds=defer_seconds,
         )
 
 
@@ -354,6 +563,17 @@ def state_investigation_emit(
         # re-walk every phase and the researcher_error loop is bounded.
         dispatch_visited_in = input.get("_dispatch_visited") or []
         auto_continue_count = int(input.get("_auto_continue_count") or 0)
+        # Stream C reserve emit/verify marker. True on the ONE bounded
+        # re-enqueue that follows a max_turns-at-cap exit with no
+        # outcome; ``_should_auto_continue`` refuses to reserve again
+        # when this is True, so the reserve attempt terminates cleanly.
+        reserve_used = bool(int(input.get("_reserve_verify_attempt") or 0))
+        # Issue .run/issues/09_turn_tool_machine.md ``## Fix`` bullet 2:
+        # observation-stagnation counter + signature carry across the
+        # auto-continue re-enqueue boundary so the early-stop bound and
+        # the recon-soft-cap reserve routing survive task hops.
+        stagnation_count_in = int(input.get("_stagnation_count") or 0)
+        prev_signature_in = str(input.get("_stagnation_prev_signature") or "")
 
         # Index-readiness deferral (operator-requested gate). The loop ran
         # ZERO turns because the bound code index (graph/trailmark + semble)
@@ -374,6 +594,9 @@ def state_investigation_emit(
                     )).first()
                     team_id = _inv.team_id if _inv is not None else None
                 try:
+                    # 15s backoff (capped at 60s) stops tight 1-second spin
+                    # while the code index finishes building.
+                    wait_delay = min(60.0, max(15.0, 15.0 * (index_wait_count // 4 + 1)))
                     await _enqueue_next_investigation_run(
                         investigation_id, team_id, branch_id=branch_id,
                         dispatch_visited=(
@@ -382,6 +605,7 @@ def state_investigation_emit(
                         ),
                         auto_continue_count=auto_continue_count,
                         index_wait_count=index_wait_count + 1,
+                        defer_seconds=wait_delay,
                     )
                 except (
                     OSError, TimeoutError, RuntimeError, ConnectionError,
@@ -429,9 +653,18 @@ def state_investigation_emit(
         # enqueue another investigate task so the agent keeps
         # reasoning across task boundaries. Skip the finalization path --
         # status stays RUNNING, no dispatch/extraction, no stopped_at.
-        auto_continue, turn_count = await _should_auto_continue(
+        (
+            auto_continue,
+            turn_count,
+            is_reserve,
+            new_signature,
+            new_stagnation,
+        ) = await _should_auto_continue(
             investigation_id, exit_reason, outcome_id, branch_id=branch_id,
             auto_continue_count=auto_continue_count,
+            reserve_used=reserve_used,
+            stagnation_count=stagnation_count_in,
+            prev_signature=prev_signature_in,
         )
         if auto_continue:
             async with UnitOfWork() as uow:
@@ -446,6 +679,9 @@ def state_investigation_emit(
                     investigation_id, team_id, branch_id=branch_id,
                     dispatch_visited=list(dispatch_visited_in) if dispatch_visited_in else None,
                     auto_continue_count=auto_continue_count + 1,
+                    reserve_verify=is_reserve,
+                    stagnation_count=new_stagnation,
+                    prev_signature=new_signature,
                 )
             except (OSError, TimeoutError, RuntimeError, ConnectionError) as exc:
                 # Auto-continue submit failed (Redis down, queue full,
@@ -490,7 +726,9 @@ def state_investigation_emit(
                 },
             )
 
-        final_status = resolve_final_status(exit_reason)
+        final_status = resolve_final_status(
+            exit_reason, has_outcome=outcome_id is not None,
+        )
 
         # Outage hold. A hub-terminal exit (hub_complete / hub_budget_exhausted
         # / etc.) that would flip the investigation to COMPLETED with NO
@@ -599,6 +837,7 @@ def state_investigation_emit(
                                 bindings.branch_model.status.in_(_live_statuses),  # type: ignore[attr-defined]
                             )
                         ))
+                        .where(bindings.message_model.superseded_at.is_(None))
                     )
                     total_messages = int(msg_count_row.first() or 0)
                     # Clock the wall-clock cap from when work ACTUALLY began
@@ -934,16 +1173,68 @@ def state_investigation_emit(
                 # replan requests never ratify.
                 try:
                     if outcome_row is not None and investigation_id:
-                        confirmed_ids = await LedgerService().confirm_branch_discoveries(
+                        # Stream A2 belief-write. ``return_hypotheses=True``
+                        # yields (discovery_id, hypothesis_id | None) per
+                        # confirmed discovery -- the hypothesis id already
+                        # rides on discovery payloads written by recon /
+                        # taint, so no extra ledger read is needed. Every
+                        # matching live hypothesis in the proposing
+                        # branch's case_state gets ``confirmed_by`` set
+                        # so the F1 belief promoter sees a proven
+                        # positive in the SAME cycle the quorum lands,
+                        # instead of waiting for a later turn to notice.
+                        confirmed_pairs = await LedgerService().confirm_branch_discoveries(
                             str(investigation_id), outcome_row.branch_id,
+                            return_hypotheses=True,
                         )
-                        if confirmed_ids:
+                        confirmed_hypo_ids = {
+                            str(hid) for (_did, hid) in confirmed_pairs if hid
+                        }
+                        if confirmed_hypo_ids:
+                            async with UnitOfWork() as belief_uow:
+                                branch_row = (await belief_uow.session.exec(
+                                    _select(bindings.branch_model).where(
+                                        bindings.branch_model.id == outcome_row.branch_id,
+                                    ),
+                                )).first()
+                                if branch_row is not None:
+                                    try:
+                                        case_state = json.loads(
+                                            branch_row.case_state_json or "{}",
+                                        )
+                                    except (ValueError, TypeError):
+                                        case_state = {}
+                                    dirty = False
+                                    for _h in case_state.get("hypotheses", []) or []:
+                                        if not isinstance(_h, dict):
+                                            continue
+                                        if (
+                                            str(_h.get("id") or "") in confirmed_hypo_ids
+                                            and not _h.get("confirmed_by")
+                                        ):
+                                            _h["confirmed_by"] = (
+                                                f"quorum-confirmed via outcome {outcome_id}"
+                                            )
+                                            dirty = True
+                                    if dirty:
+                                        branch_row.case_state_json = json.dumps(case_state)
+                                        branch_row.updated_at = utc_now()
+                                        belief_uow.session.add(branch_row)
+                                        await belief_uow.commit()
+                                        _log.info(
+                                            "investigation_emit BELIEF_CONFIRM "
+                                            "outcome_id=%s branch=%s hypotheses=%s",
+                                            outcome_id, outcome_row.branch_id,
+                                            sorted(confirmed_hypo_ids),
+                                        )
+                        if confirmed_pairs:
                             _log.info(
                                 "investigation_emit CONFIRM outcome_id=%s "
                                 "branch=%s discoveries=%s",
-                                outcome_id, outcome_row.branch_id, confirmed_ids,
+                                outcome_id, outcome_row.branch_id,
+                                [_did for (_did, _hid) in confirmed_pairs],
                             )
-                except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+                except (OSError, TimeoutError, RuntimeError, ValueError, SQLAlchemyError) as exc:
                     _log.warning(
                         "investigation_emit CONFIRM failed outcome_id=%s err=%s",
                         outcome_id, exc,
@@ -1095,6 +1386,93 @@ def state_investigation_emit(
                 investigation_id, exc,
                 exc_info=True,
             )
+        # AGGREGATION seam (issue .run/issues/19_aggregation_spine.md /
+        # .run/issues/07_ledger_economics.md ``## Fix``): call the
+        # investigation-level aggregate finalizer exposed by the outcome
+        # dispatcher so the panel / cross-branch aggregate row settles in
+        # the same UoW turn the emit chokepoint runs. Deferred import
+        # so a build that has not yet landed the aggregator symbol keeps
+        # importing this module (the emit path is a hot import target
+        # for worker bootstrap). Every failure mode -- missing symbol,
+        # import cycle, DB fault, aggregator raises -- is swallowed so
+        # a partial aggregation regression can NEVER crash the loop or
+        # block the terminal write above; the finalize failure surfaces
+        # in the worker log the same way the ``bindings.finalize`` call
+        # above does.
+        try:
+            from aila.platform.agents import outcome_dispatcher as _outcome_dispatcher
+
+            _aggregate = getattr(
+                _outcome_dispatcher, "finalize_investigation_aggregate", None,
+            )
+            if (
+                callable(_aggregate)
+                and investigation_id
+                and bindings.outcome_model is not None
+            ):
+                # Build the optional per-module inputs from bindings.
+                # Every construction is guarded so a factory raise -- or
+                # an import failure the factory did not catch -- degrades
+                # the aggregate step to skeleton-only (scan + settled
+                # claim writes + reaper + shared-claim coverage) instead
+                # of crashing the emit terminal.
+                _branch_pool: Any | None = None
+                if bindings.branch_pool_factory is not None:
+                    try:
+                        _branch_pool = bindings.branch_pool_factory(
+                            investigation_id,
+                        )
+                    except (RuntimeError, ValueError, TypeError,
+                            AttributeError, ImportError) as _exc:
+                        _log.warning(
+                            "investigation_emit AGGREGATE_FINALIZE "
+                            "branch_pool_factory failed inv=%s: %s",
+                            investigation_id, _exc,
+                        )
+                _falsifier: Any | None = None
+                if bindings.falsifier_factory is not None:
+                    try:
+                        _falsifier = bindings.falsifier_factory()
+                    except (RuntimeError, ValueError, TypeError,
+                            AttributeError, ImportError) as _exc:
+                        _log.warning(
+                            "investigation_emit AGGREGATE_FINALIZE "
+                            "falsifier_factory failed inv=%s: %s",
+                            investigation_id, _exc,
+                        )
+                _aggregate_result = await _aggregate(
+                    investigation_id,
+                    outcome_model=bindings.outcome_model,
+                    branch_pool=_branch_pool,
+                    falsifier=_falsifier,
+                    ledger=LedgerService(),
+                    branch_model=bindings.branch_model,
+                )
+                _log.info(
+                    "investigation_emit AGGREGATE_FINALIZE inv=%s "
+                    "scanned=%d merged=%d promoted=%s refuted=%d "
+                    "settled=%d reaped=%d shared_personas=%d",
+                    investigation_id,
+                    _aggregate_result.scanned_outcomes,
+                    len(_aggregate_result.merged_branch_pairs),
+                    (
+                        _aggregate_result.promoted.outcome_id
+                        if _aggregate_result.promoted else None
+                    ),
+                    len(_aggregate_result.refuted_by_falsifier),
+                    len(_aggregate_result.settled_claim_ids),
+                    len(_aggregate_result.reaped_request_ids),
+                    len(_aggregate_result.shared_claim_coverage),
+                )
+        except (
+            ImportError, AttributeError, SQLAlchemyError,
+            OSError, RuntimeError, ValueError, TypeError,
+        ) as exc:
+            _log.warning(
+                "investigation_emit AGGREGATE_FINALIZE failed inv=%s err=%s",
+                investigation_id, exc, exc_info=True,
+            )
+
         _log.info(
             "investigation_emit DONE investigation_id=%s exit_reason=%s final_status=%s outcome_id=%s",
             investigation_id, exit_reason, final_status, outcome_id,

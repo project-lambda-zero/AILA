@@ -26,6 +26,7 @@ from typing import Any
 
 from sqlmodel import select as _select
 
+from aila.modules.vr.contracts.evidence_ref import EvidenceRefList
 from aila.modules.vr.contracts.finding import CrashType
 from aila.modules.vr.db_models import VRFindingRecord, VRInvestigationMessageRecord
 from aila.platform.contracts.enums import SenderKind
@@ -39,6 +40,7 @@ from aila.platform.llm.correlation import (
 from aila.platform.prompts import PromptRegistry
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import StateResult
+from aila.storage.db_models import FindingWorkflowRecord
 
 __all__ = ["state_advisory"]
 
@@ -177,6 +179,7 @@ async def _persist_finding(
     crash_type: str, research: dict[str, Any], cvss: dict[str, Any],
     cwe: dict[str, Any] | None,
     team_id: str | None = None,
+    cve_id: str | None = None,
 ) -> str | None:
     poc = poc or {}
     signature_block = poc.get("crash_signature") or {}
@@ -194,12 +197,26 @@ async def _persist_finding(
         cvss_vector=cvss.get("vector_string"),
         cvss_score=cvss.get("base_score"),
         cwe_id=(cwe or {}).get("cwe_id"),
+        assigned_cve_id=cve_id or None,
         advisory_json=json.dumps(advisory),
         obligations_json=_serialize_research_obligations(research),
+        evidence_refs_json=EvidenceRefList.model_validate(
+            research.get("evidence_refs") or [],
+        ).model_dump_json(),
     )
     try:
         async with UnitOfWork() as uow:
             uow.session.add(record)
+            await uow.session.flush()
+            uow.session.add(FindingWorkflowRecord(
+                finding_id=record.id,
+                module_id="vr",
+                current_state="new",
+                previous_state=None,
+                transitioned_by="system",
+                notes="",
+                team_id=team_id,
+            ))
             await uow.commit()
             return record.id
     except (OSError, RuntimeError, AILAError) as exc:
@@ -243,7 +260,7 @@ async def _emit_poc_message(poc: dict[str, Any]) -> None:
                         VRInvestigationMessageRecord.branch_id == branch,
                         VRInvestigationMessageRecord.payload_kind
                         == PayloadKind.POC_SCRIPT.value,
-                    ).limit(1)
+                    ).where(VRInvestigationMessageRecord.superseded_at.is_(None)).limit(1)
                 )
             ).first()
             if existing:
@@ -323,6 +340,7 @@ async def state_advisory(input: dict[str, Any], services: Any) -> StateResult:
     finding_id = await _persist_finding(
         project_id, advisory, poc, crash_type, research, cvss_block, cwe_block,
         team_id=str(input.get("team_id") or "") or None,
+        cve_id=input.get("cve_id"),
     )
     if finding_id:
         advisory["finding_id"] = finding_id

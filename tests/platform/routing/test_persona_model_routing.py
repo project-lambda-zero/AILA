@@ -239,6 +239,111 @@ class TestDefaultSingleton:
         assert first is second
 
 
+class TestModuleScopedResolution:
+    """Req 31: nested ``{module_id: {persona: role}}`` map.
+
+    * Module-scoped entry wins when the caller passes the matching
+      ``module_id``.
+    * Absent module_id (or a module_id with no bucket) falls through
+      to the ``__global__`` bucket.
+    * Neither set -> ``resolve_effective_task_type`` returns the
+      unchanged base task_type.
+    * A legacy FLAT ``source_map`` (the pre-req-31 shape) still
+      resolves -- the coercer promotes it under ``__global__``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_module_scoped_override_wins(self) -> None:
+        router = PersonaModelRouter(source_map={
+            "vr": {"halvar": "vulnerability_research.researcher.alpha"},
+            "malware": {"halvar": "malware_analysis.halvar.alt"},
+        })
+        assert await router.resolve_model_role(
+            PersonaVoice.HALVAR, module_id="vr",
+        ) == "vulnerability_research.researcher.alpha"
+        assert await router.resolve_model_role(
+            PersonaVoice.HALVAR, module_id="malware",
+        ) == "malware_analysis.halvar.alt"
+
+    @pytest.mark.asyncio
+    async def test_module_id_absent_falls_through_to_global(self) -> None:
+        router = PersonaModelRouter(source_map={
+            "__global__": {"halvar": "vulnerability_research.researcher.alpha"},
+            "vr": {"noor": "vulnerability_research.researcher.beta"},
+        })
+        # module_id="vr" has NO halvar entry -> falls through to __global__.
+        assert await router.resolve_model_role(
+            PersonaVoice.HALVAR, module_id="vr",
+        ) == "vulnerability_research.researcher.alpha"
+        # No module_id at all -> also picks up __global__.
+        assert await router.resolve_model_role(
+            PersonaVoice.HALVAR,
+        ) == "vulnerability_research.researcher.alpha"
+
+    @pytest.mark.asyncio
+    async def test_neither_set_returns_base_task_type(self) -> None:
+        router = PersonaModelRouter(source_map={
+            "vr": {"noor": "vulnerability_research.researcher.beta"},
+        })
+        # halvar has no vr entry and no __global__ bucket -> None ->
+        # resolve_effective_task_type keeps the base task_type.
+        assert await router.resolve_model_role(
+            PersonaVoice.HALVAR, module_id="vr",
+        ) is None
+        resolved = await resolve_effective_task_type(
+            "vulnerability_research.researcher",
+            PersonaVoice.HALVAR,
+            module_id="vr",
+            router=router,
+        )
+        assert resolved == "vulnerability_research.researcher"
+
+    @pytest.mark.asyncio
+    async def test_legacy_flat_source_map_promoted_under_global(self) -> None:
+        # A flat {persona: role} map (the pre-req-31 shape) is still
+        # accepted; entries land in the __global__ bucket so every
+        # module_id resolves through the fallback path.
+        router = PersonaModelRouter(source_map={
+            "halvar": "vulnerability_research.researcher.alpha",
+        })
+        # No module_id -> __global__ hit.
+        assert await router.resolve_model_role(
+            PersonaVoice.HALVAR,
+        ) == "vulnerability_research.researcher.alpha"
+        # module_id set but no bucket -> fallback to __global__.
+        assert await router.resolve_model_role(
+            PersonaVoice.HALVAR, module_id="vr",
+        ) == "vulnerability_research.researcher.alpha"
+        resolved = await resolve_effective_task_type(
+            "vulnerability_research.researcher",
+            PersonaVoice.HALVAR,
+            module_id="malware",
+            router=router,
+        )
+        assert resolved == "vulnerability_research.researcher.alpha"
+
+
+class TestLegacyFlatRegistryPayload:
+    """A registry that STILL holds a legacy flat JSON object resolves."""
+
+    @pytest.mark.asyncio
+    async def test_registry_legacy_flat_promoted(self) -> None:
+        class _StubRegistry:
+            async def get(self, namespace: str, key: str) -> str:
+                return (
+                    '{"halvar": "vulnerability_research.researcher.alpha"}'
+                )
+        router = PersonaModelRouter(registry=_StubRegistry())  # type: ignore[arg-type]
+        # No module_id passed -> resolves via __global__ bucket.
+        assert await router.resolve_model_role(PersonaVoice.HALVAR) == (
+            "vulnerability_research.researcher.alpha"
+        )
+        # module_id passed but no matching bucket -> same fallback wins.
+        assert await router.resolve_model_role(
+            PersonaVoice.HALVAR, module_id="vr",
+        ) == "vulnerability_research.researcher.alpha"
+
+
 class TestLiveSpawnPathWiring:
     """The seam must call resolve_effective_task_type on the live path.
 

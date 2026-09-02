@@ -78,7 +78,10 @@ from sqlalchemy.exc import SQLAlchemyError
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.enums import InvestigationStatus
 from aila.platform.workflows.types import (
+    RESERVED_CANCELLED,
+    RESERVED_FAILED,
     RESERVED_PAUSED,
+    RESERVED_SUCCEEDED,
     RESERVED_TERMINAL_STATES,
 )
 from aila.storage.database import async_session_scope
@@ -276,6 +279,31 @@ _OPERATOR_TERMINAL_INVESTIGATION_STATUSES: frozenset[str] = frozenset({
     InvestigationStatus.ABANDONED.value,
     InvestigationStatus.STALLED.value,
 })
+
+# Map operator-terminal investigation statuses to the workflow cursor
+# terminal sentinel that best reflects the intent. When an investigation
+# is operator-terminal (COMPLETED/FAILED/ABANDONED) but its
+# ``workflow_state_cursor`` is still parked at a live mid-pipeline state,
+# the row is stranded: the sweep excluded it and the direct reconcile
+# refused it, so the cursor sat there forever. The terminal-cursor
+# reconciliation drives the cursor to the sentinel picked here in the
+# same pass. STALLED is intentionally absent -- that class is owned by
+# the stall-recovery sweep which holds the compare-and-set claim on the
+# row, and the reconciler must never race it.
+_INVESTIGATION_STATUS_TO_CURSOR_TERMINAL: dict[str, str] = {
+    InvestigationStatus.COMPLETED.value: RESERVED_SUCCEEDED,
+    InvestigationStatus.FAILED.value: RESERVED_FAILED,
+    InvestigationStatus.ABANDONED.value: RESERVED_CANCELLED,
+}
+
+# Cursor states the terminal-cursor reconciliation MUST NOT rewrite: the
+# engine terminals (already terminal, no-op) plus the operator PAUSED
+# sentinel (operator intent, respected). Every other cursor state is a
+# live mid-pipeline position that belongs on the sentinel when the
+# investigation is operator-terminal.
+_UNTOUCHABLE_CURSOR_STATES: frozenset[str] = frozenset(
+    RESERVED_TERMINAL_STATES | {RESERVED_PAUSED}
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -877,6 +905,26 @@ class StateReconciler:
                 healed=False,
                 refusal_reason="paused",
             )
+        # Operator-terminal reconciliation. When the investigation is
+        # COMPLETED / FAILED / ABANDONED but its cursor is still parked
+        # at a live mid-pipeline state, the row is stranded (the sweep
+        # excluded it, the direct reconcile refused it). Drive every
+        # stranded cursor to the sentinel that matches the investigation
+        # status, journal a recovery event, and return healed=True. Any
+        # module extra-terminal or the STALLED class continues to refuse
+        # -- STALLED is owned by the stall-recovery sweep's CAS claim
+        # and we must never race it; module extras are the module's own
+        # opaque terminal set and we do not know the cursor semantics.
+        cursor_terminal_target = _INVESTIGATION_STATUS_TO_CURSOR_TERMINAL.get(
+            inv_status,
+        )
+        if cursor_terminal_target is not None:
+            return await self._reconcile_terminal_investigation_cursors(
+                investigation_id=investigation_id,
+                inv_status=inv_status,
+                target_state=cursor_terminal_target,
+                resilience=resilience,
+            )
         refusal = _OPERATOR_TERMINAL_INVESTIGATION_STATUSES | set(
             binding.extra_terminal_statuses
         )
@@ -1093,6 +1141,88 @@ class StateReconciler:
             healed=healed,
             task_reports=tuple(task_reports),
             investigation_action=investigation_action,
+        )
+
+    async def _reconcile_terminal_investigation_cursors(
+        self,
+        *,
+        investigation_id: str,
+        inv_status: str,
+        target_state: str,
+        resilience: Any,
+    ) -> InvestigationReconcileReport:
+        """Drive every stranded workflow cursor of an operator-terminal
+        investigation to ``target_state`` (RFC-07 terminal-cursor
+        reconciliation, VR-truth Stream C3).
+
+        Selects the investigation's cursor rows whose ``current_state``
+        is a live mid-pipeline position (not in :data:`_UNTOUCHABLE_CURSOR_STATES`,
+        so engine terminals and the operator ``__paused__`` sentinel are
+        left alone) and UPDATEs them in a single idempotent statement.
+        Emits one aggregated recovery event so operators see the pass in
+        the ledger. A concurrent DELETE / independent terminal write
+        races to a rowcount-0 no-op; the caller path stays idempotent.
+        """
+        try:
+            async with async_session_scope() as session:
+                update_result = await session.execute(
+                    _update(WorkflowStateCursor)
+                    .where(
+                        WorkflowStateCursor.investigation_id
+                        == investigation_id
+                    )
+                    .where(
+                        WorkflowStateCursor.current_state.not_in(  # type: ignore[union-attr]
+                            list(_UNTOUCHABLE_CURSOR_STATES)
+                        )
+                    )
+                    .values(
+                        current_state=target_state,
+                        updated_at=utc_now(),
+                    )
+                    .execution_options(synchronize_session=False)
+                )
+                await session.commit()
+        except SQLAlchemyError as exc:
+            _log.warning(
+                "state_reconciler.reconcile_investigation inv=%s: "
+                "terminal-cursor UPDATE failed: %s",
+                investigation_id, exc,
+            )
+            return InvestigationReconcileReport(
+                investigation_id=investigation_id,
+                healed=False,
+                refusal_reason="read_failed",
+            )
+        terminalized = int(update_result.rowcount or 0)
+        if terminalized == 0:
+            # No stranded cursor for this operator-terminal investigation
+            # -- nothing to heal. Return the historical refusal so the
+            # sweep log line does not lie about work performed.
+            return InvestigationReconcileReport(
+                investigation_id=investigation_id,
+                healed=False,
+                refusal_reason="terminal",
+            )
+        await resilience.emit_recovery_event(
+            investigation_id=investigation_id,
+            action="reconcile_terminal_cursor",
+            detail={
+                "inv_status": inv_status,
+                "target_state": target_state,
+                "cursors_terminalized": terminalized,
+            },
+            source="state_reconciler",
+        )
+        _log.info(
+            "state_reconciler.reconcile_investigation inv=%s: operator-"
+            "terminal status=%s drove %d stranded cursor(s) to %s",
+            investigation_id, inv_status, terminalized, target_state,
+        )
+        return InvestigationReconcileReport(
+            investigation_id=investigation_id,
+            healed=True,
+            investigation_action="terminalized_cursor",
         )
 
     # ------------------------------------------------------------------
@@ -1340,33 +1470,72 @@ async def sweep_investigations_reconcile(
         | {InvestigationStatus.PAUSED.value}
         | set(binding.extra_terminal_statuses)
     )
+    # Operator-terminal statuses whose stranded cursors we DO reconcile
+    # this tick. Bounded by an EXISTS on a live mid-pipeline cursor
+    # (:data:`_UNTOUCHABLE_CURSOR_STATES` is the negation), so a normal
+    # cleanly-closed operator-terminal investigation is never re-examined
+    # -- only rows whose workflow cursor was left parked at a live state
+    # get picked up. STALLED stays excluded (stall-recovery pipeline owns
+    # its CAS claim). PAUSED stays excluded (operator intent).
+    terminal_cleanup_statuses = list(_INVESTIGATION_STATUS_TO_CURSOR_TERMINAL)
+    untouchable_cursor_states = list(_UNTOUCHABLE_CURSOR_STATES)
     timestamp_column = binding.timestamp_column
     if binding.sweepable_statuses is not None:
         # Vocabulary-diverging module (forensics): claim ONLY the live
         # statuses so non-live rows are never selected and their claim
-        # timestamp never drifts.
+        # timestamp never drifts. UNION with operator-terminal rows that
+        # still carry a stranded workflow cursor so those get healed too.
         select_stmt = _sql_text(
             f"""
-            SELECT inv.id::text AS id, inv.{timestamp_column} AS seen_ts
-            FROM {binding.investigations_table} inv
-            WHERE inv.status = ANY(:sweepable)
-            ORDER BY inv.{timestamp_column} ASC
+            SELECT id, seen_ts FROM (
+                SELECT inv.id::text AS id, inv.{timestamp_column} AS seen_ts
+                FROM {binding.investigations_table} inv
+                WHERE inv.status = ANY(:sweepable)
+                UNION
+                SELECT inv.id::text AS id, inv.{timestamp_column} AS seen_ts
+                FROM {binding.investigations_table} inv
+                WHERE inv.status = ANY(:terminal_cleanup)
+                  AND EXISTS (
+                    SELECT 1 FROM workflow_state_cursor c
+                    WHERE c.investigation_id = inv.id::text
+                      AND c.current_state <> ALL(:untouchable)
+                  )
+            ) AS candidates
+            ORDER BY seen_ts ASC
             LIMIT :limit
             """
         ).bindparams(
             sweepable=list(binding.sweepable_statuses),
+            terminal_cleanup=terminal_cleanup_statuses,
+            untouchable=untouchable_cursor_states,
             limit=limit,
         )
     else:
         select_stmt = _sql_text(
             f"""
-            SELECT inv.id::text AS id, inv.{timestamp_column} AS seen_ts
-            FROM {binding.investigations_table} inv
-            WHERE inv.status <> ALL(:excluded)
-            ORDER BY inv.{timestamp_column} ASC
+            SELECT id, seen_ts FROM (
+                SELECT inv.id::text AS id, inv.{timestamp_column} AS seen_ts
+                FROM {binding.investigations_table} inv
+                WHERE inv.status <> ALL(:excluded)
+                UNION
+                SELECT inv.id::text AS id, inv.{timestamp_column} AS seen_ts
+                FROM {binding.investigations_table} inv
+                WHERE inv.status = ANY(:terminal_cleanup)
+                  AND EXISTS (
+                    SELECT 1 FROM workflow_state_cursor c
+                    WHERE c.investigation_id = inv.id::text
+                      AND c.current_state <> ALL(:untouchable)
+                  )
+            ) AS candidates
+            ORDER BY seen_ts ASC
             LIMIT :limit
             """
-        ).bindparams(excluded=excluded, limit=limit)
+        ).bindparams(
+            excluded=excluded,
+            terminal_cleanup=terminal_cleanup_statuses,
+            untouchable=untouchable_cursor_states,
+            limit=limit,
+        )
 
     try:
         async with async_session_scope() as session:

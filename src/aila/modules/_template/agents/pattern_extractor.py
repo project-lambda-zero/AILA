@@ -10,7 +10,6 @@ and prompt template path.
 """
 from __future__ import annotations
 
-from pathlib import Path
 from typing import ClassVar
 
 from aila.modules._template.contracts.outcome import TemplateOutcomeKind
@@ -32,6 +31,7 @@ from aila.platform.agents.pattern_extractor import (
     PatternExtractorBase,
     PatternExtractorError,
 )
+from aila.platform.prompts.seeds import TEMPLATE_PATTERN_EXTRACTION_TEXT
 
 __all__ = [
     "PatternExtractionResult",
@@ -71,6 +71,4 @@ class PatternExtractor(PatternExtractorBase):
     _branch_model: ClassVar[type[TemplateInvestigationBranchRecord]] = (
         TemplateInvestigationBranchRecord
     )
-    _prompt_path: ClassVar[Path] = (
-        Path(__file__).parent / "prompts" / "pattern_extraction.md"
-    )
+    _prompt_template: ClassVar[str] = TEMPLATE_PATTERN_EXTRACTION_TEXT

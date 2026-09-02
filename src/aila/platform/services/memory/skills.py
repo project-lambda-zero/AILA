@@ -368,6 +368,7 @@ async def _scan_candidates(
             .where(inv_model.status.in_(list(_TERMINAL_STATUSES)))
             .where(inv_model.updated_at <= cutoff)
             .where(outcome_model.state == "dispatched")
+            .where(outcome_model.superseded_at.is_(None))
             .where(outcome_model.confidence.in_(list(_POSITIVE_CONFIDENCES)))
             .where(outcome_model.outcome_kind.notin_(list(_NEGATIVE_OUTCOME_KINDS)))
             .order_by(outcome_model.created_at.asc())

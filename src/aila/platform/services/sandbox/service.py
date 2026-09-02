@@ -20,12 +20,17 @@ Policy the service enforces before dispatch:
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any
 
 import paramiko
+from sqlmodel import select
 
+from ....storage.database import async_session_scope
+from ....storage.db_models import ManagedSystemRecord
 from ....storage.registry import ConfigRegistry
 from ...config import PlatformSettings
 from ...contracts.platform import SSHIntegrationInput
@@ -40,7 +45,7 @@ from .contracts import (
     SandboxUnavailableError,
 )
 
-__all__ = ["SandboxConfig", "SandboxService"]
+__all__ = ["SandboxBootstrapResult", "SandboxConfig", "SandboxProbe", "SandboxService"]
 
 _log = logging.getLogger(__name__)
 
@@ -77,6 +82,30 @@ class SandboxConfig:
     jailer_bin: str
     rootfs_path: str
     kernel_path: str
+    system_name: str = ""
+    system_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxProbe:
+    """Result of a bounded live SSH round-trip to the sandbox host."""
+
+    ok: bool
+    detail: str
+    duration_ms: int
+    tool_installed: bool = True
+    tool_missing: bool = False
+    installed_path: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SandboxBootstrapResult:
+    """Outcome of an automated sandbox tooling bootstrap on the remote host."""
+
+    ok: bool
+    detail: str
+    output: str
+    duration_ms: int
 
 
 class SandboxService:
@@ -140,7 +169,12 @@ class SandboxService:
             )
 
         normalized = self._apply_policy(spec, cfg)
-        host_payload = self._build_host_payload(cfg)
+        managed_sys = await self._resolve_managed_system(
+            system_name=cfg.system_name,
+            system_id=cfg.system_id,
+            host=cfg.ssh_host,
+        )
+        host_payload = self._build_host_payload(cfg, managed_sys)
 
         _log.info(
             "sandbox.dispatch backend=%s argv0=%s timeout_s=%.1f network=%s",
@@ -200,13 +234,74 @@ class SandboxService:
             "mem_mb": max(1, int(effective_mem)),
         })
 
-    def _build_host_payload(self, cfg: SandboxConfig) -> SSHIntegrationInput:
+    async def _resolve_managed_system(
+        self,
+        *,
+        system_name: str = "",
+        system_id: int | None = None,
+        host: str = "",
+    ) -> ManagedSystemRecord | None:
+        """Resolve a ManagedSystemRecord from the platform systems registry.
+
+        Resolution precedence:
+        1. Explicit system_id from config
+        2. Explicit system_name from config
+        3. Registered system with role == "sandbox"
+        4. Registered system matching the configured host IP/hostname
+        """
+        try:
+            async with async_session_scope() as session:
+                if system_id is not None:
+                    row = await session.get(ManagedSystemRecord, system_id)
+                    if row is not None:
+                        return row
+                if system_name:
+                    stmt = select(ManagedSystemRecord).where(ManagedSystemRecord.name == system_name)
+                    row = (await session.exec(stmt)).first()
+                    if row is not None:
+                        return row
+                # Fallback: check for system explicitly tagged with role == "sandbox"
+                stmt = select(ManagedSystemRecord).where(ManagedSystemRecord.role == "sandbox")
+                row = (await session.exec(stmt)).first()
+                if row is not None:
+                    return row
+                # Fallback: check for registered system matching the host
+                if host:
+                    stmt = select(ManagedSystemRecord).where(ManagedSystemRecord.host == host)
+                    row = (await session.exec(stmt)).first()
+                    if row is not None:
+                        return row
+        except (OSError, RuntimeError, TimeoutError, ValueError, AttributeError) as exc:
+            _log.debug("failed to resolve managed system for sandbox: %s", exc)
+        return None
+
+    def _build_host_payload(
+        self,
+        cfg: SandboxConfig,
+        managed_sys: Any | None = None,
+    ) -> SSHIntegrationInput:
         """Compose the SSH integration payload for the sandbox host.
 
-        The sandbox host is a platform-owned surface (no team scoping),
-        so the caller does not choose the host per-request -- the
-        platform config is the single source of truth.
+        When a registered system from the platform Systems Registry
+        (:class:`ManagedSystemRecord`) is resolved, its stored credentials,
+        private key secret, and known host keys are passed directly so
+        operators configure SSH authentication once in the fleet registry.
         """
+        if managed_sys is not None:
+            return SSHIntegrationInput(
+                name=managed_sys.name or "sandbox-host",
+                host=managed_sys.host,
+                username=managed_sys.username or cfg.ssh_user or "root",
+                port=managed_sys.port or cfg.ssh_port or 22,
+                distro=managed_sys.distro or "linux",
+                description=managed_sys.description or "Platform managed sandbox host.",
+                private_key_path=managed_sys.private_key_path,
+                private_key_secret_id=managed_sys.private_key_secret_id,
+                private_key_passphrase_secret_id=managed_sys.private_key_passphrase_secret_id,
+                password_secret_id=managed_sys.password_secret_id,
+                known_hosts_path=managed_sys.known_hosts_path,
+                host_key_fingerprint=managed_sys.host_key_fingerprint,
+            )
         return SSHIntegrationInput(
             name="sandbox-host",
             host=cfg.ssh_host,
@@ -240,6 +335,251 @@ class SandboxService:
             "truncated": truncated,
         })
 
+    async def probe(self, *, connect_timeout: float = 5.0, command_timeout: float = 8.0) -> SandboxProbe:
+        """Bounded live SSH round-trip checking connectivity and tooling presence.
+
+        Returns ok=False with an actionable detail (never raises) when the
+        backend is 'none', the host is empty, the SSH round-trip fails, or
+        the target sandbox binary is not installed on the remote machine.
+        """
+        cfg = await self._load_config()
+        if cfg.backend == "none" or not cfg.backend.strip():
+            return SandboxProbe(
+                ok=False,
+                detail=(
+                    "sandbox_backend is 'none'; set it to 'nsjail' or "
+                    "'firecracker' and select a registered system or set sandbox_ssh_host."
+                ),
+                duration_ms=0,
+                tool_installed=False,
+                tool_missing=False,
+            )
+        if not cfg.ssh_host.strip():
+            return SandboxProbe(
+                ok=False,
+                detail="No sandbox host configured or registered; select a registered system or set sandbox_ssh_host.",
+                duration_ms=0,
+                tool_installed=False,
+                tool_missing=False,
+            )
+        managed_sys = await self._resolve_managed_system(
+            system_name=cfg.system_name,
+            system_id=cfg.system_id,
+            host=cfg.ssh_host,
+        )
+        payload = self._build_host_payload(cfg, managed_sys)
+        start = time.monotonic()
+        try:
+            # 1. Test basic reachability
+            _, _, exit_code = await asyncio.wait_for(
+                self._ssh.run_command_full(
+                    payload,
+                    "true",
+                    timeout_seconds=command_timeout,
+                    connect_timeout=connect_timeout,
+                ),
+                timeout=connect_timeout + command_timeout + 5.0,
+            )
+        except (AuthenticationError, UpstreamError, AILATimeoutError, ValidationError, paramiko.SSHException, OSError, TimeoutError) as exc:
+            return SandboxProbe(
+                ok=False,
+                detail=f"SSH probe failed: {exc}",
+                duration_ms=int((time.monotonic() - start) * 1000),
+                tool_installed=False,
+                tool_missing=False,
+            )
+
+        if exit_code != 0:
+            return SandboxProbe(
+                ok=False,
+                detail=f"remote probe command exited {exit_code}",
+                duration_ms=int((time.monotonic() - start) * 1000),
+                tool_installed=False,
+                tool_missing=False,
+            )
+
+        # 2. Test if the configured sandboxing tool is installed on the host
+        target_bin = cfg.nsjail_bin if cfg.backend == "nsjail" else cfg.firecracker_bin
+        target_bin = target_bin.strip() or ("nsjail" if cfg.backend == "nsjail" else "firecracker")
+        check_cmd = (
+            f"command -v {target_bin} || which {target_bin} || "
+            f"ls -1 /usr/local/bin/{target_bin} /usr/bin/{target_bin} ~/.local/bin/{target_bin} 2>/dev/null | head -n 1"
+        )
+        try:
+            tool_stdout, _, tool_exit = await asyncio.wait_for(
+                self._ssh.run_command_full(
+                    payload,
+                    check_cmd,
+                    timeout_seconds=command_timeout,
+                    connect_timeout=connect_timeout,
+                ),
+                timeout=connect_timeout + command_timeout + 5.0,
+            )
+        except (AuthenticationError, UpstreamError, AILATimeoutError, ValidationError, paramiko.SSHException, OSError, TimeoutError):
+            tool_exit = 1
+            tool_stdout = ""
+
+        duration_ms = int((time.monotonic() - start) * 1000)
+        sys_desc = f" [{managed_sys.name}]" if managed_sys and managed_sys.name else ""
+        resolved_path = tool_stdout.strip().splitlines()[0] if tool_stdout.strip() else None
+
+        if tool_exit == 0 and resolved_path:
+            return SandboxProbe(
+                ok=True,
+                detail=f"ssh ok ({payload.username}@{payload.host}:{payload.port}){sys_desc} \u00b7 {cfg.backend} ready ({resolved_path})",
+                duration_ms=duration_ms,
+                tool_installed=True,
+                tool_missing=False,
+                installed_path=resolved_path,
+            )
+
+        return SandboxProbe(
+            ok=False,
+            detail=f"ssh ok ({payload.username}@{payload.host}:{payload.port}){sys_desc} \u2014 but {cfg.backend} binary is not installed on this host",
+            duration_ms=duration_ms,
+            tool_installed=False,
+            tool_missing=True,
+            installed_path=None,
+        )
+
+    async def bootstrap_tooling(
+        self,
+        tool: str = "nsjail",
+        *,
+        timeout_s: float = 240.0,
+    ) -> SandboxBootstrapResult:
+        """Automated installation of sandbox binaries on the remote Linux host with privilege detection."""
+        cfg = await self._load_config()
+        if not cfg.ssh_host.strip():
+            return SandboxBootstrapResult(
+                ok=False,
+                detail="No sandbox host configured or registered.",
+                output="",
+                duration_ms=0,
+            )
+        managed_sys = await self._resolve_managed_system(
+            system_name=cfg.system_name,
+            system_id=cfg.system_id,
+            host=cfg.ssh_host,
+        )
+        payload = self._build_host_payload(cfg, managed_sys)
+        start = time.monotonic()
+
+        # Privilege detection preamble
+        priv_preamble = (
+            "set -e\n"
+            "if [ \"$(id -u)\" -eq 0 ]; then\n"
+            "  SUDO=\"\"\n"
+            "  BIN_DIR=\"/usr/local/bin\"\n"
+            "elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then\n"
+            "  SUDO=\"sudo -n\"\n"
+            "  BIN_DIR=\"/usr/local/bin\"\n"
+            "else\n"
+            "  SUDO=\"\"\n"
+            "  BIN_DIR=\"$HOME/.local/bin\"\n"
+            "  mkdir -p \"$BIN_DIR\"\n"
+            "  export PATH=\"$BIN_DIR:$PATH\"\n"
+            "fi\n"
+        )
+
+        if tool == "firecracker":
+            install_script = priv_preamble + (
+                "ARCH=\"$(uname -m)\"\n"
+                "FC_VER=\"v1.7.0\"\n"
+                "WORK_DIR=$(mktemp -d 2>/dev/null || echo \"/tmp/firecracker-install\")\n"
+                "mkdir -p \"$WORK_DIR\" && cd \"$WORK_DIR\"\n"
+                "curl -fsSL \"https://github.com/firecracker-microvm/firecracker/releases/download/${FC_VER}/firecracker-${FC_VER}-${ARCH}.tgz\" -o fc.tgz\n"
+                "tar -xzf fc.tgz\n"
+                "if [ -n \"$SUDO\" ]; then\n"
+                "  $SUDO mkdir -p \"$BIN_DIR\"\n"
+                "  $SUDO cp \"release-${FC_VER}-${ARCH}/firecracker-${FC_VER}-${ARCH}\" \"$BIN_DIR/firecracker\"\n"
+                "  $SUDO cp \"release-${FC_VER}-${ARCH}/jailer-${FC_VER}-${ARCH}\" \"$BIN_DIR/jailer\"\n"
+                "  $SUDO chmod +x \"$BIN_DIR/firecracker\" \"$BIN_DIR/jailer\"\n"
+                "else\n"
+                "  mkdir -p \"$BIN_DIR\"\n"
+                "  cp \"release-${FC_VER}-${ARCH}/firecracker-${FC_VER}-${ARCH}\" \"$BIN_DIR/firecracker\"\n"
+                "  cp \"release-${FC_VER}-${ARCH}/jailer-${FC_VER}-${ARCH}\" \"$BIN_DIR/jailer\"\n"
+                "  chmod +x \"$BIN_DIR/firecracker\" \"$BIN_DIR/jailer\"\n"
+                "fi\n"
+                "command -v \"$BIN_DIR/firecracker\" || command -v firecracker || command -v /usr/local/bin/firecracker\n"
+            )
+        else:
+            # Default to nsjail (compiled from source across all popular Linux distros)
+            install_script = priv_preamble + (
+                "if [ -f /etc/debian_version ] || grep -qi 'debian\\|ubuntu\\|kali\\|pop' /etc/os-release 2>/dev/null; then\n"
+                "  export DEBIAN_FRONTEND=noninteractive\n"
+                "  if [ -n \"$SUDO\" ]; then\n"
+                "    $SUDO apt-get update -qq && $SUDO apt-get install -y -qq git build-essential autoconf bison flex libprotobuf-dev libnl-route-3-dev protobuf-compiler pkg-config libseccomp-dev make g++\n"
+                "  fi\n"
+                "elif [ -f /etc/arch-release ] || grep -qi 'arch\\|manjaro' /etc/os-release 2>/dev/null; then\n"
+                "  if [ -n \"$SUDO\" ]; then\n"
+                "    $SUDO pacman -Sy --noconfirm git base-devel protobuf libnl seccomp pkgconf 2>/dev/null || true\n"
+                "  fi\n"
+                "elif [ -f /etc/fedora-release ] || [ -f /etc/redhat-release ] || grep -qi 'fedora\\|rhel\\|centos\\|rocky\\|alma' /etc/os-release 2>/dev/null; then\n"
+                "  if [ -n \"$SUDO\" ]; then\n"
+                "    PKG_MGR=\"dnf\"\n"
+                "    command -v dnf >/dev/null 2>&1 || PKG_MGR=\"yum\"\n"
+                "    $SUDO $PKG_MGR install -y git gcc-c++ autoconf bison flex protobuf-devel libnl3-devel pkgconfig libseccomp-devel make\n"
+                "  fi\n"
+                "elif [ -f /etc/SuSE-release ] || grep -qi 'suse' /etc/os-release 2>/dev/null; then\n"
+                "  if [ -n \"$SUDO\" ]; then\n"
+                "    $SUDO zypper --non-interactive install git gcc-c++ autoconf bison flex libprotobuf-devel libnl3-devel pkg-config libseccomp-devel make 2>/dev/null || true\n"
+                "  fi\n"
+                "elif [ -f /etc/alpine-release ] || grep -qi 'alpine' /etc/os-release 2>/dev/null; then\n"
+                "  if [ -n \"$SUDO\" ]; then\n"
+                "    $SUDO apk add --no-cache git build-base autoconf bison flex protobuf-dev libnl3-dev pkgconf libseccomp-dev make g++ 2>/dev/null || true\n"
+                "  fi\n"
+                "fi\n"
+                "WORK_DIR=$(mktemp -d 2>/dev/null || echo \"/tmp/nsjail-build\")\n"
+                "rm -rf \"$WORK_DIR/nsjail\" && git clone --depth 1 https://github.com/google/nsjail.git \"$WORK_DIR/nsjail\"\n"
+                "cd \"$WORK_DIR/nsjail\" && make -j$(nproc 2>/dev/null || echo 2)\n"
+                "if [ -n \"$SUDO\" ]; then\n"
+                "  $SUDO mkdir -p \"$BIN_DIR\"\n"
+                "  $SUDO cp nsjail \"$BIN_DIR/\"\n"
+                "  $SUDO chmod +x \"$BIN_DIR/nsjail\"\n"
+                "else\n"
+                "  mkdir -p \"$BIN_DIR\"\n"
+                "  cp nsjail \"$BIN_DIR/\"\n"
+                "  chmod +x \"$BIN_DIR/nsjail\"\n"
+                "fi\n"
+                "command -v \"$BIN_DIR/nsjail\" || command -v nsjail || command -v /usr/local/bin/nsjail || command -v ~/.local/bin/nsjail\n"
+            )
+
+        try:
+            stdout, stderr, exit_code = await asyncio.wait_for(
+                self._ssh.run_command_full(
+                    payload,
+                    f"bash -s << 'EOF_AILA_INSTALL'\n{install_script}\nEOF_AILA_INSTALL",
+                    timeout_seconds=timeout_s,
+                    connect_timeout=15.0,
+                ),
+                timeout=timeout_s + 5.0,
+            )
+        except (AuthenticationError, UpstreamError, AILATimeoutError, ValidationError, paramiko.SSHException, OSError, TimeoutError) as exc:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            return SandboxBootstrapResult(
+                ok=False,
+                detail=f"Bootstrap failed: {exc}",
+                output=str(exc),
+                duration_ms=duration_ms,
+            )
+
+        duration_ms = int((time.monotonic() - start) * 1000)
+        combined_output = f"{stdout}\n{stderr}".strip()
+        if exit_code == 0:
+            return SandboxBootstrapResult(
+                ok=True,
+                detail=f"Successfully installed {tool} on {payload.host}:{payload.port}",
+                output=combined_output,
+                duration_ms=duration_ms,
+            )
+        return SandboxBootstrapResult(
+            ok=False,
+            detail=f"Installation exited with code {exit_code}",
+            output=combined_output,
+            duration_ms=duration_ms,
+        )
+
     async def describe(self) -> SandboxConfig:
         """Public live snapshot of the sandbox config for admin/status surfaces.
 
@@ -259,6 +599,12 @@ class SandboxService:
         backend = str(await _get("sandbox_backend", "none")).strip() or "none"
         ssh_host = str(await _get("sandbox_ssh_host", "")).strip()
         ssh_user = str(await _get("sandbox_ssh_user", "")).strip()
+        system_name = str(await _get("sandbox_system_name", "")).strip()
+        try:
+            system_id_raw = await _get("sandbox_system_id", None)
+            system_id = int(system_id_raw) if system_id_raw is not None else None
+        except (TypeError, ValueError):
+            system_id = None
         try:
             ssh_port = int(await _get("sandbox_ssh_port", 22))
         except (TypeError, ValueError):
@@ -294,6 +640,20 @@ class SandboxService:
         rootfs_path = str(await _get("sandbox_rootfs_path", "")).strip()
         kernel_path = str(await _get("sandbox_kernel_path", "")).strip()
 
+        # If ssh_host is unset or system_name/id is specified, resolve from Systems Registry
+        if not ssh_host or system_name or system_id is not None:
+            managed_sys = await self._resolve_managed_system(
+                system_name=system_name,
+                system_id=system_id,
+                host=ssh_host,
+            )
+            if managed_sys is not None:
+                ssh_host = managed_sys.host or ssh_host
+                ssh_user = managed_sys.username or ssh_user or "root"
+                ssh_port = managed_sys.port or ssh_port or 22
+                system_name = managed_sys.name or system_name
+                system_id = managed_sys.id or system_id
+
         return SandboxConfig(
             backend=backend,
             ssh_host=ssh_host,
@@ -310,4 +670,6 @@ class SandboxService:
             jailer_bin=jailer_bin,
             rootfs_path=rootfs_path,
             kernel_path=kernel_path,
+            system_name=system_name,
+            system_id=system_id,
         )

@@ -32,6 +32,15 @@ class HypothesisProjection(BaseModel):
     rejection_reason: str | None = None
     resolution_note: str | None = None
 
+    # Confirmation provenance (RFC-13 belief-write). Set when a branch
+    # marked this hypothesis confirmed with cited evidence: a quorum-
+    # approved outcome ("quorum-confirmed via outcome <id>") or a
+    # taint-confirmed discovery ("taint-confirmed discovery <id>"), or an
+    # agent-supplied file:line cite. Empty when no branch has confirmed
+    # it. Surfaced so an operator sees which hypotheses the engine holds
+    # as proven positives rather than reading it out of private state.
+    confirmed_by: str = ""
+
     # Branch attribution: which branches currently host this hypothesis
     # (live) and which host it as rejected or resolved. Operator clicks into
     # a branch to see the engine state in context.

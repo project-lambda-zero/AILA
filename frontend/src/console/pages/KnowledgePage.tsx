@@ -32,6 +32,7 @@ import type {
 import { useWorkspaces } from "../../api/intake";
 import type { ModulePageProps } from "../contract";
 import { css } from "../css";
+import { ConsoleWindow } from "../window";
 import StructuredValue from "./StructuredValue";
 
 /* ------------------------------ constants -------------------------------- */
@@ -187,21 +188,6 @@ function fmtInt(n: number): string {
 function ellipsize(text: string, max = 140): string {
   const single = text.replace(/\s+/g, " ").trim();
   return single.length <= max ? single : `${single.slice(0, max - 1)}\u2026`;
-}
-
-function ctlBtn(label: string, title: string, onClick: () => void): JSX.Element {
-  return (
-    <button
-      type="button"
-      title={title}
-      onClick={onClick}
-      style={css(
-        "width:30px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;border:0;border-left:1px solid var(--border-soft);background:transparent;color:var(--text-muted);cursor:pointer;font-family:inherit;font-size:12px;",
-      )}
-    >
-      {label}
-    </button>
-  );
 }
 
 /* ----------------------------- SEARCH panel ------------------------------ */
@@ -865,20 +851,61 @@ function IngestModal({ onClose }: { onClose: () => void }): JSX.Element {
 /* --------------------------------- page ---------------------------------- */
 
 export default function KnowledgePage(props: ModulePageProps): JSX.Element {
-  const { onBack, onMinimize, isFullscreen, onToggleFullscreen } = props;
+  const {
+    onBack,
+    onMinimize,
+    isFullscreen,
+    onToggleFullscreen,
+    windowId,
+    title,
+    isFocused,
+    onFocus,
+  } = props;
   const [ingestOpen, setIngestOpen] = useState(false);
 
+  const statusStrip = (
+    <>
+      <span
+        style={{
+          display: "flex",
+          alignItems: "center",
+          padding: "0 11px",
+          background: "var(--status-ok)",
+          color: "var(--text-on-accent)",
+          fontWeight: 700,
+          letterSpacing: "0.14em",
+        }}
+      >
+        admin &middot; knowledge
+      </span>
+      <span
+        style={{
+          display: "flex",
+          alignItems: "center",
+          padding: "0 11px",
+          textTransform: "none",
+          letterSpacing: "0.03em",
+          color: "var(--text-muted)",
+        }}
+      >
+        KnowledgeEntryRecord &middot; KnowledgeEntryEdge &middot; retrieve_routed
+      </span>
+      <span style={{ flex: 1 }} />
+    </>
+  );
+
   return (
-    <div
-      style={{
-        position: "absolute",
-        inset: 0,
-        display: "flex",
-        flexDirection: "column",
-        background: "transparent",
-        fontFamily: "var(--font-mono)",
-        color: "var(--text-primary)",
-      }}
+    <ConsoleWindow
+      id={windowId}
+      kind="page"
+      title={title}
+      isFullscreen={isFullscreen}
+      isFocused={isFocused}
+      onFocus={onFocus}
+      onClose={onBack}
+      onMinimize={onMinimize}
+      onToggleFullscreen={onToggleFullscreen}
+      footerExtras={statusStrip}
     >
       {ingestOpen ? <IngestModal onClose={() => setIngestOpen(false)} /> : null}
       <header
@@ -905,7 +932,7 @@ export default function KnowledgePage(props: ModulePageProps): JSX.Element {
             boxShadow: "0 0 7px var(--accent)",
           }}
         />
-        <span style={{ color: "var(--text-primary)", fontWeight: 700, letterSpacing: "0.16em" }}>
+        <span style={{ fontFamily: "var(--font-display)", color: "var(--text-primary)", fontWeight: 400, letterSpacing: "0.16em" }}>
           admin &middot; knowledge
         </span>
         <span style={{ color: "var(--text-faint)", textTransform: "none", letterSpacing: "0.04em" }}>
@@ -934,52 +961,6 @@ export default function KnowledgePage(props: ModulePageProps): JSX.Element {
         <EntriesPanel />
       </main>
 
-      <footer
-        style={{
-          flex: "0 0 24px",
-          height: 24,
-          display: "flex",
-          alignItems: "stretch",
-          background: "var(--surface-chrome)",
-          borderTop: "2px solid var(--border)",
-          fontSize: 9.5,
-          letterSpacing: "0.1em",
-          textTransform: "uppercase",
-          color: "var(--text-faint)",
-        }}
-      >
-        <span
-          style={{
-            display: "flex",
-            alignItems: "center",
-            padding: "0 11px",
-            background: "var(--status-ok)",
-            color: "var(--text-on-accent)",
-            fontWeight: 700,
-            letterSpacing: "0.14em",
-          }}
-        >
-          admin &middot; knowledge
-        </span>
-        <span
-          style={{
-            display: "flex",
-            alignItems: "center",
-            padding: "0 11px",
-            textTransform: "none",
-            letterSpacing: "0.03em",
-            color: "var(--text-muted)",
-          }}
-        >
-          KnowledgeEntryRecord &middot; KnowledgeEntryEdge &middot; retrieve_routed
-        </span>
-        <span style={{ flex: 1 }} />
-        {onToggleFullscreen
-          ? ctlBtn(isFullscreen ? "\u2921" : "\u2922", isFullscreen ? "exit fullscreen" : "fullscreen", onToggleFullscreen)
-          : null}
-        {ctlBtn("\u2014", "minimize", onMinimize)}
-        {ctlBtn("\u2715", "close", onBack)}
-      </footer>
-    </div>
+    </ConsoleWindow>
   );
 }

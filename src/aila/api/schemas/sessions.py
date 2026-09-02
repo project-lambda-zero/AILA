@@ -4,11 +4,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from aila.api.schemas.common import APIModel, PaginatedResponse
 
 __all__ = [
+    "DanteActionModel",
     "SessionCreateRequest",
     "SessionMessageRequest",
     "SessionResponse",
@@ -40,10 +41,39 @@ class SessionResponse(APIModel):
     created_at: datetime
 
 
+class DanteActionModel(BaseModel):
+    """One proposed DanteAction on a dante assistant turn (req 25).
+
+    Frozen per-kind contract: ``kind`` + ``label`` + ``summary`` are
+    always present; each kind carries its own subset of the remaining
+    optional params (``module_id`` / ``target_id`` for ``open_wizard``,
+    ``query`` / ``system_ids`` for ``enqueue_scan``, ``key`` for
+    ``create_tag`` / ``delete_tag``, ``investigation_id`` / ``steering_text``
+    for ``steer_investigation``). Extras are ignored rather than
+    rejected so downstream additions to the contract cannot break the
+    response serializer.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    kind: str
+    label: str
+    summary: str = ""
+    module_id: str | None = None
+    target_id: str | None = None
+    investigation_id: str | None = None
+    steering_text: str | None = None
+    query: str | None = None
+    system_ids: list[str] | None = None
+    key: str | None = None
+
+
 class SessionMessageResponse(APIModel):
     """Response after adding a message to a session (TASK-03).
 
     run_id is populated when the assistant response triggered a background scan (TASK-06).
+    actions carries proposed DanteAction rows on dante assistant turns (req 25); empty
+    on user turns and on assistant turns that did not propose an action.
     """
 
     message_id: str
@@ -51,6 +81,7 @@ class SessionMessageResponse(APIModel):
     content: str
     run_id: str | None = None
     created_at: datetime
+    actions: list[DanteActionModel] = Field(default_factory=list)
 
 
 SessionMessagesResponse = PaginatedResponse[SessionMessageResponse]

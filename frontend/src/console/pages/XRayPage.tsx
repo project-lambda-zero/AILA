@@ -31,6 +31,7 @@ import type { Branch, DispatchState, Hypothesis, LedgerRow, McpCall, Message } f
 import type { ModulePageProps } from "../contract";
 import { css } from "../css";
 import { shortCaseId } from "../ids";
+import { ConsoleWindow } from "../window";
 
 // Monaco is heavy; load it only when a code block is actually rendered.
 const CodeBlock = lazy(() => import("./CodeBlock"));
@@ -201,23 +202,53 @@ const PV_ZOOM: CSSProperties = { gridColumn: "1 / -1", gridRow: "1 / -1", zIndex
 // wide turns panel). Each is a 30px vertical title strip that expands on hover.
 const OVERVIEW_DRAWERS: readonly string[] = ["brief", "records", "engine", "activity"];
 
-// Dispatch-hub phase nodes + fixed positions for the GRAPHS view (viewBox 1000x520).
-const HUB = { x: 320, y: 250 } as const;
-const PHASES: readonly { id: string; x: number; y: number }[] = [
-  { id: "setup", x: 90, y: 70 },
-  { id: "investigation_ledger", x: 70, y: 180 },
-  { id: "oracle", x: 90, y: 300 },
-  { id: "emit", x: 90, y: 420 },
-  { id: "recon", x: 470, y: 60 },
-  { id: "source_audit", x: 600, y: 95 },
-  { id: "taint_analysis", x: 720, y: 130 },
-  { id: "dependency_audit", x: 810, y: 185 },
-  { id: "crypto_audit", x: 860, y: 250 },
-  { id: "variant_hunt", x: 860, y: 320 },
-  { id: "binary_audit", x: 810, y: 385 },
-  { id: "mobile_audit", x: 720, y: 435 },
-  { id: "fuzz_targeting", x: 600, y: 465 },
-  { id: "poc_development", x: 470, y: 470 },
+interface PhaseNode {
+  id: string;
+  label: string;
+  stage: "struct" | "recon" | "source" | "binary" | "exploit";
+  x: number;
+  y: number;
+}
+
+// Dispatch-hub phase nodes + topological fixed positions for the GRAPHS view (viewBox 1160x450).
+const HUB = { x: 260, y: 220 } as const;
+const PHASES: readonly PhaseNode[] = [
+  // 1. Structural Orchestration (Left)
+  { id: "setup", label: "setup \u00b7 ingest", stage: "struct", x: 30, y: 45 },
+  { id: "investigation_ledger", label: "ledger \u00b7 audit", stage: "struct", x: 30, y: 145 },
+  { id: "oracle", label: "oracle \u00b7 strategy", stage: "struct", x: 30, y: 245 },
+  { id: "emit", label: "emit \u00b7 verdict", stage: "struct", x: 30, y: 345 },
+
+  // 2. Reconnaissance & Discovery (Col 1)
+  { id: "recon", label: "recon \u00b7 discovery", stage: "recon", x: 400, y: 45 },
+  { id: "variant_hunt", label: "variant_hunt", stage: "recon", x: 400, y: 145 },
+  { id: "patch_diff_audit", label: "patch_diff_audit", stage: "recon", x: 400, y: 245 },
+  { id: "fuzz_targeting", label: "fuzz_targeting", stage: "recon", x: 400, y: 345 },
+
+  // 3. Source & Semantic Audits (Col 2)
+  { id: "source_audit", label: "source_audit", stage: "source", x: 590, y: 45 },
+  { id: "taint_analysis", label: "taint_analysis", stage: "source", x: 590, y: 91 },
+  { id: "injection_audit", label: "injection_audit", stage: "source", x: 590, y: 137 },
+  { id: "deserialization_audit", label: "deserialization", stage: "source", x: 590, y: 183 },
+  { id: "auth_bypass_audit", label: "auth_bypass", stage: "source", x: 590, y: 229 },
+  { id: "concurrency_audit", label: "concurrency_audit", stage: "source", x: 590, y: 275 },
+  { id: "protocol_state_audit", label: "protocol_state", stage: "source", x: 590, y: 321 },
+  { id: "dependency_audit", label: "dependency_audit", stage: "source", x: 590, y: 367 },
+
+  // 4. Binary, Memory & Low-Level Audits (Col 3)
+  { id: "binary_audit", label: "binary_audit", stage: "binary", x: 780, y: 45 },
+  { id: "memory_safety_audit", label: "memory_safety", stage: "binary", x: 780, y: 91 },
+  { id: "kernel_driver_audit", label: "kernel_driver", stage: "binary", x: 780, y: 137 },
+  { id: "compiler_hardening_audit", label: "hardening_audit", stage: "binary", x: 780, y: 183 },
+  { id: "sandbox_escape_audit", label: "sandbox_escape", stage: "binary", x: 780, y: 229 },
+  { id: "crypto_audit", label: "crypto_audit", stage: "binary", x: 780, y: 275 },
+  { id: "side_channel_audit", label: "side_channel", stage: "binary", x: 780, y: 321 },
+  { id: "mobile_audit", label: "mobile_audit", stage: "binary", x: 780, y: 367 },
+
+  // 5. Exploit Synthesis & Verification (Col 4)
+  { id: "filter_bypass_synthesis", label: "filter_bypass", stage: "exploit", x: 970, y: 100 },
+  { id: "exploit_primitive_composition", label: "exploit_compose", stage: "exploit", x: 970, y: 205 },
+  { id: "poc_development", label: "poc_development", stage: "exploit", x: 970, y: 310 },
 ];
 
 /* ------------------------------ small parts ------------------------------ */
@@ -655,7 +686,7 @@ function hypTone(state: string): string {
 /* ---------------------------------- root ---------------------------------- */
 
 export default function XRayPage(props: ModulePageProps): JSX.Element {
-  const { section, investigationId, onBack, onMinimize, onNavigate, isFullscreen, onToggleFullscreen } = props;
+  const { section, investigationId, windowId, title, isFocused, onFocus, onBack, onMinimize, onNavigate, isFullscreen, onToggleFullscreen } = props;
   // section may carry a registry-slug prefix ("xray" from openNamedPage, or a
   // sub-intent like "xray:records"); validate the last segment against the
   // view vocabulary and fall back to the default overview.
@@ -711,11 +742,15 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
   const navRef = useRef(onNavigate);
   const controlRef = useRef(control);
   const statusRef = useRef("");
+  const zoomRef = useRef(zoom);
+  const helpRef = useRef(help);
   focusRef.current = focus;
   viewRef.current = view;
   navRef.current = onNavigate;
   controlRef.current = control;
   statusRef.current = (inv.data?.status ?? "").toLowerCase();
+  zoomRef.current = zoom;
+  helpRef.current = help;
 
   // Reset pane focus to the first pane whenever the layout changes.
   useEffect(() => {
@@ -749,8 +784,15 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
       }
       if (e.altKey || e.ctrlKey || e.metaKey) return;
       if (e.key === "Escape") {
-        setZoom(null);
-        setHelp(false);
+        // Only consume Esc when a local overlay owns it; otherwise let it reach
+        // the window primitive (which closes the window). Capture phase +
+        // stopImmediatePropagation guarantees this handler wins when it fires.
+        if (zoomRef.current || helpRef.current) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          setZoom(null);
+          setHelp(false);
+        }
         return;
       }
       if (e.key === "/") {
@@ -802,8 +844,8 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
         return;
       }
     };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
   }, []);
 
   const branchList: Branch[] = branches.data ?? [];
@@ -1132,6 +1174,21 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
                 >
                   re-enqueue
                 </button>
+                {control.isPending ? (
+                  <span style={css(`font-size:8px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);border:1px solid var(--border-soft);padding:1px 6px;border-radius:2px;`)}>
+                    working{"\u2026"}
+                  </span>
+                ) : null}
+                {control.isError ? (
+                  <span style={css(`font-size:8px;letter-spacing:0.08em;text-transform:uppercase;color:${H.acc};border:1px solid ${H.acc}66;padding:1px 6px;border-radius:2px;`)}>
+                    {control.error instanceof Error ? control.error.message : "action failed"}
+                  </span>
+                ) : null}
+                {control.isSuccess ? (
+                  <span style={css(`font-size:8px;letter-spacing:0.08em;text-transform:uppercase;color:${H.mint};border:1px solid ${H.mint}66;padding:1px 6px;border-radius:2px;`)}>
+                    action applied
+                  </span>
+                ) : null}
               </div>
             }
             right={
@@ -1351,28 +1408,78 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
     body = (
       <div style={css("flex:1;min-height:0;display:flex;flex-direction:column;padding:12px;gap:10px;")}>
         <Panel {...pv("phasegraph")} title="dispatch hub · vr.investigate.hub" tag="3" signature="phase graph">
-          <div style={css("display:flex;flex-direction:column;height:100%;")}>
-            <svg viewBox="0 0 1000 520" preserveAspectRatio="xMidYMid meet" style={{ width: "100%", flex: 1, minHeight: 0, background: "#0d0d0d" }}>
+          <div style={css("display:flex;flex-direction:column;height:100%;min-height:0;overflow:hidden;")}>
+            <svg viewBox="0 0 1160 420" preserveAspectRatio="xMidYMid meet" style={{ width: "100%", height: "100%", flex: 1, minHeight: 0, background: "#0a0a0a" }}>
+              {/* Category Column Headers */}
+              <text x={100} y={20} fill="#555" fontSize={8.5} fontFamily="var(--font-mono, monospace)" letterSpacing="0.1em" textAnchor="middle">ORCHESTRATION</text>
+              <text x={470} y={20} fill="#555" fontSize={8.5} fontFamily="var(--font-mono, monospace)" letterSpacing="0.1em" textAnchor="middle">RECON &amp; DISCOVERY</text>
+              <text x={660} y={20} fill="#555" fontSize={8.5} fontFamily="var(--font-mono, monospace)" letterSpacing="0.1em" textAnchor="middle">SOURCE &amp; SEMANTIC</text>
+              <text x={850} y={20} fill="#555" fontSize={8.5} fontFamily="var(--font-mono, monospace)" letterSpacing="0.1em" textAnchor="middle">BINARY &amp; MEMORY</text>
+              <text x={1040} y={20} fill="#555" fontSize={8.5} fontFamily="var(--font-mono, monospace)" letterSpacing="0.1em" textAnchor="middle">SYNTHESIS &amp; POC</text>
+
+              {/* Column Separator Guides */}
+              <line x1={180} y1={25} x2={180} y2={405} stroke="#181818" strokeDasharray="2 4" />
+              <line x1={360} y1={25} x2={360} y2={405} stroke="#181818" strokeDasharray="2 4" />
+              <line x1={560} y1={25} x2={560} y2={405} stroke="#181818" strokeDasharray="2 4" />
+              <line x1={750} y1={25} x2={750} y2={405} stroke="#181818" strokeDasharray="2 4" />
+              <line x1={940} y1={25} x2={940} y2={405} stroke="#181818" strokeDasharray="2 4" />
+
+              {/* Hub to Node Edges */}
               {PHASES.map((p) => {
                 const st = nodeState(p.id);
-                const col = st === "active" ? H.mint : st === "done" ? H.cream : "#2a2a2a";
+                const col = st === "active" ? H.mint : st === "done" ? H.cream : "#252525";
+                const targetX = p.x < HUB.x ? p.x + 140 : p.x;
+                const targetY = p.y + 11;
                 return (
-                  <line key={`l-${p.id}`} x1={HUB.x} y1={HUB.y} x2={p.x + 55} y2={p.y + 12} stroke={col} strokeWidth={st === "active" ? 1.8 : 1} strokeDasharray={st === "eligible" ? "3 3" : "0"} opacity={st === "eligible" ? 0.55 : 1} />
+                  <line
+                    key={`l-${p.id}`}
+                    x1={HUB.x}
+                    y1={HUB.y}
+                    x2={targetX}
+                    y2={targetY}
+                    stroke={col}
+                    strokeWidth={st === "active" ? 2 : 1}
+                    strokeDasharray={st === "eligible" ? "3 3" : "0"}
+                    opacity={st === "eligible" ? 0.4 : 0.85}
+                  />
                 );
               })}
+
+              {/* Central Dispatch Hub */}
               <g>
-                <rect x={HUB.x - 40} y={HUB.y - 16} width={80} height={32} rx={4} fill="#181818" stroke={H.acc} strokeWidth={1.5} />
-                <text x={HUB.x} y={HUB.y + 4} fill={H.acc} fontSize={11} fontFamily="monospace" textAnchor="middle">dispatch hub</text>
+                <rect x={HUB.x - 65} y={HUB.y - 17} width={130} height={34} rx={4} fill="#141414" stroke={H.acc} strokeWidth={1.8} />
+                <text x={HUB.x} y={HUB.y + 4} fill={H.acc} fontSize={10} fontFamily="var(--font-mono, monospace)" fontWeight="700" textAnchor="middle">vr.investigate.hub</text>
               </g>
+
+              {/* Phase Nodes */}
               {PHASES.map((p) => {
                 const st = nodeState(p.id);
-                const col = st === "active" ? H.mint : st === "done" ? H.cream : "#3a3a3a";
-                const fill = st === "active" ? "#132018" : st === "done" ? "#17170f" : "transparent";
+                const col = st === "active" ? H.mint : st === "done" ? H.cream : "#333";
+                const fill = st === "active" ? "#102218" : st === "done" ? "#181812" : "#0f0f0f";
                 const txt = st === "eligible" ? "var(--text-faint)" : col;
                 return (
                   <g key={p.id}>
-                    <rect x={p.x} y={p.y} width={110} height={24} rx={3} fill={fill} stroke={col} strokeWidth={st === "active" ? 1.5 : 1} strokeDasharray={st === "eligible" ? "3 3" : "0"} />
-                    <text x={p.x + 55} y={p.y + 15} fill={txt} fontSize={9} fontFamily="monospace" textAnchor="middle">{p.id}</text>
+                    <rect
+                      x={p.x}
+                      y={p.y}
+                      width={140}
+                      height={22}
+                      rx={3}
+                      fill={fill}
+                      stroke={col}
+                      strokeWidth={st === "active" ? 1.8 : 1}
+                      strokeDasharray={st === "eligible" ? "3 3" : "0"}
+                    />
+                    <text
+                      x={p.x + 70}
+                      y={p.y + 14}
+                      fill={txt}
+                      fontSize={8.5}
+                      fontFamily="var(--font-mono, monospace)"
+                      textAnchor="middle"
+                    >
+                      {p.label}
+                    </text>
                   </g>
                 );
               })}
@@ -1676,8 +1783,35 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
 
   /* -------------------------------- render ------------------------------- */
 
+  const statusStrip = (
+    <>
+      <span style={{ display: "flex", alignItems: "center", padding: "0 12px", background: "var(--status-ok)", color: "var(--text-on-accent)", fontWeight: 700, letterSpacing: "0.14em" }}>{inv.data?.status ?? "running"}</span>
+      {VIEWS.map(([id, label], i) => {
+        const on = id === view;
+        return (
+          <button key={id} type="button" onClick={() => onNavigate(id)} style={css(`display:flex;align-items:center;padding:0 11px;background:${on ? "color-mix(in srgb,var(--accent) 16%,transparent)" : "transparent"};color:${on ? "var(--accent)" : "var(--text-faint)"};border:0;border-right:1px solid var(--border-soft);font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;`)}>{i + 1} {label}</button>
+        );
+      })}
+      <span style={{ display: "flex", alignItems: "center", padding: "0 10px", color: "var(--accent)", letterSpacing: "0.1em" }}>focus {focus}{zoom ? " \u00b7 zoom" : ""}{pinned.length ? ` \u00b7 pin ${pinned.join("+")}` : ""}</span>
+      <span style={{ flex: 1 }} />
+      <span style={{ display: "flex", alignItems: "center", padding: "0 11px", textTransform: "none", letterSpacing: "0.04em" }}>1-5 layout &#183; hjkl focus &#183; f zoom &#183; / find &#183; p pause &#183; ? keys</span>
+      <span style={{ display: "flex", alignItems: "center", padding: "0 11px", borderLeft: "1px solid var(--border-soft)", textTransform: "none" }}>{branchList.length} live loops</span>
+    </>
+  );
+
   return (
-    <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", background: "transparent", fontFamily: "var(--font-mono)", color: "var(--text-primary)" }}>
+    <ConsoleWindow
+      id={windowId}
+      kind="page"
+      title={title}
+      isFullscreen={isFullscreen}
+      isFocused={isFocused}
+      onFocus={onFocus}
+      onClose={onBack}
+      onMinimize={onMinimize}
+      onToggleFullscreen={onToggleFullscreen}
+      footerExtras={statusStrip}
+    >
 
       {/* body */}
       <main style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -1694,26 +1828,6 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
           <button type="button" onClick={doSteer} disabled={!invId || steer.trim().length === 0 || post.isPending} style={css(`flex:0 0 auto;padding:0 14px;height:28px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-on-accent);background:var(--accent);border:1px solid var(--accent);border-radius:2px;cursor:pointer;${!invId || steer.trim().length === 0 || post.isPending ? "opacity:0.45;cursor:not-allowed;" : ""}`)}>send</button>
         </div>
       </main>
-
-      {/* status bar */}
-      <footer style={{ flex: "0 0 28px", height: 28, display: "flex", alignItems: "stretch", background: "var(--surface-chrome)", borderTop: "2px solid var(--border)", fontSize: 10.5, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-faint)" }}>
-        <span style={{ display: "flex", alignItems: "center", padding: "0 12px", background: "var(--status-ok)", color: "var(--text-on-accent)", fontWeight: 700, letterSpacing: "0.14em" }}>{inv.data?.status ?? "running"}</span>
-        {VIEWS.map(([id, label], i) => {
-          const on = id === view;
-          return (
-            <button key={id} type="button" onClick={() => onNavigate(id)} style={css(`display:flex;align-items:center;padding:0 11px;background:${on ? "color-mix(in srgb,var(--accent) 16%,transparent)" : "transparent"};color:${on ? "var(--accent)" : "var(--text-faint)"};border:0;border-right:1px solid var(--border-soft);font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;`)}>{i + 1} {label}</button>
-          );
-        })}
-        <span style={{ display: "flex", alignItems: "center", padding: "0 10px", color: "var(--accent)", letterSpacing: "0.1em" }}>focus {focus}{zoom ? " \u00b7 zoom" : ""}{pinned.length ? ` \u00b7 pin ${pinned.join("+")}` : ""}</span>
-        <span style={{ flex: 1 }} />
-        <span style={{ display: "flex", alignItems: "center", padding: "0 11px", textTransform: "none", letterSpacing: "0.04em" }}>1-5 layout &#183; hjkl focus &#183; f zoom &#183; / find &#183; p pause &#183; ? keys</span>
-        <span style={{ display: "flex", alignItems: "center", padding: "0 11px", borderLeft: "1px solid var(--border-soft)", textTransform: "none" }}>{branchList.length} live loops</span>
-        {onToggleFullscreen ? (
-          <button type="button" onClick={onToggleFullscreen} title={isFullscreen ? "exit fullscreen" : "fullscreen"} style={css("width:30px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;border:0;border-left:1px solid var(--border-soft);background:transparent;color:var(--text-muted);cursor:pointer;font-family:inherit;font-size:12px;")}>{isFullscreen ? "\u2921" : "\u2922"}</button>
-        ) : null}
-        <button type="button" onClick={onMinimize} title="minimize" style={css("width:30px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;border:0;border-left:1px solid var(--border-soft);background:transparent;color:var(--text-muted);cursor:pointer;font-family:inherit;font-size:12px;")}>{"\u2014"}</button>
-        <button type="button" onClick={onBack} title="close" style={css("width:30px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;border:0;border-left:1px solid var(--border-soft);background:transparent;color:var(--text-muted);cursor:pointer;font-family:inherit;font-size:11px;")}>{"\u2715"}</button>
-      </footer>
 
       {/* command palette (/ or Ctrl-K; Esc / click-away closes) */}
       {palette ? (
@@ -1793,6 +1907,6 @@ export default function XRayPage(props: ModulePageProps): JSX.Element {
           </div>
         </div>
       ) : null}
-    </div>
+    </ConsoleWindow>
   );
 }

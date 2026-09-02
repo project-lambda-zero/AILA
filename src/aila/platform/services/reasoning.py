@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 from collections.abc import Callable
 from typing import Any
 
@@ -96,31 +95,6 @@ _DEFAULT_RECALL_PINNED_MAX: int = 8
 # reason this constant exists is that removing the render_case_model
 # display caps cannot regress into an unbounded prompt.
 _DEFAULT_CONTEXT_BUDGET_TOKENS: int = 180_000
-
-# Subset of :data:`_TOOL_PREFIXES` that flags "tool body" observations
-# (external MCP tool results the agent asked for). Directive / recall /
-# ledger keys are engine bookkeeping, not evidence -- they must NOT be
-# matched by the kill_criterion evaluator or a directive body could
-# trivially trip a match on its own advisory text ("kill_criterion"
-# tokenizes into the criterion tokens themselves).
-_TOOL_BODY_PREFIXES: tuple[str, ...] = (
-    "audit_mcp:", "audit_mcp.",
-    "ida_headless:", "ida_headless.",
-    "android_mcp:", "android_mcp.",
-)
-
-# Minimum meaningful token length for the kill_criterion heuristic.
-# Anything shorter is a stopword-class fragment ("is", "a", "the",
-# "gc", "id") and would false-positive across almost any observation.
-# Length 4 keeps "null", "leak", "heap", "user", "auth" etc. while
-# dropping 3-letter incidentals. Fixed constant per RFC recommendation;
-# not config-registered because a live operator override would change
-# nudge semantics unpredictably.
-_KILL_CRITERION_MIN_TOKEN_LEN: int = 4
-
-# Non-alphanumeric splitter for kill_criterion tokenization. Compiled
-# once at module load; every absorb() call reuses it.
-_KC_TOKEN_SPLIT = re.compile(r"[^a-z0-9]+")
 
 # Marker body injected under a recalled key when the durable message
 # history cannot supply the body (no fetcher wired, or the fetcher
@@ -714,123 +688,20 @@ class CyberReasoningEngine:
         # Clear any directive a prior build wrote so it never persists.
         observables.pop("_directive.stale_hypotheses", None)
 
-        # Kill-criterion directive (RFC #201): for each live hypothesis
-        # carrying a non-empty ``kill_criterion``, tokenize the criterion
-        # (lowercase, split on non-alphanumerics, keep tokens of length
-        # >= _KILL_CRITERION_MIN_TOKEN_LEN) and check whether ANY such
-        # token appears as a whole word in the accumulated tool-body
-        # observation VALUES. A whole-token hit injects
-        # ``_directive.kill_criterion_met`` naming the id, the matched
-        # token, and the observation key so the agent is nudged to
-        # retire the hypothesis. Nudge-only (never auto-rejects):
-        # a keyword coincidence would otherwise silently drop a genuine
-        # lingering lead. Cleared on the same call when nothing matches
-        # so a resolved directive never persists.
-        #
-        # Matched surface is the OBSERVATION BODY TEXT ONLY -- the
-        # observation KEY is deliberately NOT tokenized. Keys are
-        # routing labels whose fixed tool-verb segments
-        # (``read_function``, ``read_lines``, ``semantic_search``,
-        # ``search_functions``, ``taint_paths_to``, ...) tokenize into
-        # generic words ("read", "function", "lines", "search",
-        # "source", "query", ...) that pass the 4-char minimum and match
-        # almost any criterion mentioning them. Observed live: the
-        # directive fired on EVERY turn for hours because the
-        # accumulated tool keys (never evicted) tripped criteria like
-        # "read happens before auth check" on the key token "read" --
-        # the agent burned a reasoning paragraph each turn rebutting
-        # the false positive. The body text already carries the real
-        # signal (file paths, symbol names, code chunks); the key adds
-        # nothing but the tool-verb noise. Restricted to
-        # _TOOL_BODY_PREFIXES so the evaluator does not trip on its own
-        # advisory text or on the stale-hypothesis directive body (both
-        # would tokenize into the criterion tokens themselves and
-        # create a self-referential match).
-        kc_matches: list[tuple[str, str, str, str]] = []
-        if merged_live:
-            tool_snippets: list[tuple[str, set[str]]] = []
-            for obs_key, obs_val in observables.items():
-                if not any(obs_key.startswith(p) for p in _TOOL_BODY_PREFIXES):
-                    continue
-                if isinstance(obs_val, str):
-                    body_text = obs_val
-                elif isinstance(obs_val, (int, float, bool)):
-                    body_text = str(obs_val)
-                elif isinstance(obs_val, (dict, list)):
-                    # Dict/list observables (rare on tool bodies but
-                    # possible) get a lossy string cast for token
-                    # matching. Errors here degrade to skipping the
-                    # snippet -- a match miss is safer than a crash.
-                    try:
-                        body_text = json.dumps(obs_val, default=str)
-                    except (TypeError, ValueError):
-                        continue
-                else:
-                    continue
-                # Key excluded from the match surface (see above); the
-                # directive still reports it so the agent knows which
-                # observation matched.
-                toks = {
-                    t for t in _KC_TOKEN_SPLIT.split(body_text.lower())
-                    if len(t) >= _KILL_CRITERION_MIN_TOKEN_LEN
-                }
-                if toks:
-                    tool_snippets.append((obs_key, toks))
-            if tool_snippets:
-                for h in merged_live:
-                    criterion = (h.kill_criterion or "").strip()
-                    if not criterion:
-                        continue
-                    crit_tokens = {
-                        t for t in _KC_TOKEN_SPLIT.split(criterion.lower())
-                        if len(t) >= _KILL_CRITERION_MIN_TOKEN_LEN
-                    }
-                    if not crit_tokens:
-                        continue
-                    for obs_key, snippet_tokens in tool_snippets:
-                        overlap = crit_tokens & snippet_tokens
-                        if not overlap:
-                            continue
-                        # Deterministic pick so a re-run reports the
-                        # same token; sorted() is cheap on the small
-                        # overlap set.
-                        matched = sorted(overlap)[0]
-                        kc_matches.append(
-                            (h.id or "?", criterion, matched, obs_key),
-                        )
-                        break
-        if kc_matches:
-            lines = [
-                "*** LIVE HYPOTHESES WITH TRIGGERED KILL CRITERION ***",
-                (
-                    f"{len(kc_matches)} live hypothesis(es) have "
-                    "kill_criterion keywords matching current tool "
-                    "observations:"
-                ),
-                "",
-            ]
-            for hid, criterion, matched, obs_key in kc_matches:
-                lines.append(
-                    f"  - {hid}: matched token '{matched}' in observation "
-                    f"'{obs_key}'; kill_criterion: {criterion[:200]}"
-                )
-            lines.extend([
-                "",
-                "The kill_criterion is the evidence you said would refute",
-                "the hypothesis. Observations matching that criterion have",
-                "now landed. This turn, for EACH id above pick one:",
-                "  (a) confirm the criterion is truly met and add the id",
-                "      to `decision.rejected[]` with the matching",
-                "      observation key as the concrete reason.",
-                "  (b) if the match is a keyword coincidence (the token",
-                "      hit but the observation does not actually satisfy",
-                "      the criterion), post a one-sentence rebuttal in",
-                "      `reasoning` naming why so the panel is not misled",
-                "      into premature closure.",
-            ])
-            observables["_directive.kill_criterion_met"] = "\n".join(lines)
-        else:
-            observables.pop("_directive.kill_criterion_met", None)
+        # Kill-criterion satisfaction is an agent judgment, not a string
+        # match. A hypothesis is retired only when a reasoning agent adds
+        # its id to ``decision.rejected[]`` (this branch's researcher or
+        # critic persona), or when 2+ sibling branches reject an id this
+        # branch still holds live -- surfaced by inject_sibling_consensus
+        # as the ``_directive.sibling_consensus_rejection`` observable.
+        # The former token-overlap heuristic injected
+        # ``_directive.kill_criterion_met`` when any >=4-char criterion
+        # token appeared in a tool-body observation; it fired on keyword
+        # coincidences ("body" from @Body, "java" from a .java path,
+        # "header" from @HeaderMap) and cost a rebuttal turn each time.
+        # Removed -- only an agent turns the flag on. Clear any value a
+        # pre-removal case_state persisted so a stale banner never lingers.
+        observables.pop("_directive.kill_criterion_met", None)
 
         return ReasoningCaseState(
             contract=contract,

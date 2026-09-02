@@ -58,6 +58,7 @@ __all__ = [
     "PauseInvestigationError",
     "ReenqueueInvestigationError",
     "ResumeInvestigationError",
+    "cancel_investigation_tasks",
     "mark_investigation_completed",
     "pause_investigation",
     "purge_investigation_cursors",
@@ -102,6 +103,51 @@ async def purge_investigation_cursors(
             "   OR run_id IN (SELECT id FROM taskrecord "
             "                 WHERE kwargs_json LIKE :inv_pat)"
         ).bindparams(inv=investigation_id, inv_pat=inv_pat)
+    result = await session.exec(stmt)
+    return result.rowcount or 0
+
+
+async def cancel_investigation_tasks(
+    session: Any,
+    investigation_id: str,
+    *,
+    marker: str = "operator_reset\n",
+    now: datetime | None = None,
+) -> int:
+    """Cancel every active TaskRecord for an investigation.
+
+    ``taskrecord`` is platform-owned; modules call this rather than
+    issuing raw SQL against it (honesty rule ``raw_sql_platform_tables``).
+    Flips every row in an active dispatch state (``queued`` / ``running``
+    / ``waiting``) whose ``kwargs_json`` carries the investigation_id to
+    ``CANCELLED``, stamping ``completed_at`` and appending ``marker`` to
+    ``error`` for audit. Match is on ``kwargs_json`` -- NOT on
+    ``taskrecord.id``, which is a fresh ARQ uuid4 that never equals an
+    investigation or branch id -- mirroring the pause / resume /
+    re-enqueue cancel keying. A cancelled row makes the worker exit clean
+    on its next alive check. Runs inside the caller's transaction (pass
+    the active session) so the cancel commits atomically with the
+    surrounding reset. Returns the number of rows cancelled.
+    """
+    stamp = now or utc_now()
+    stmt = _sql_text(
+        "UPDATE taskrecord "
+        "SET status = :cancelled, "
+        "    completed_at = :ts, "
+        "    error = COALESCE(error, '') || :marker "
+        "WHERE status = ANY(:active_statuses) "
+        "  AND kwargs_json LIKE :inv_pat"
+    ).bindparams(
+        cancelled=TaskStatus.CANCELLED.value,
+        active_statuses=[
+            TaskStatus.QUEUED.value,
+            TaskStatus.RUNNING.value,
+            TaskStatus.WAITING.value,
+        ],
+        ts=stamp,
+        marker=marker,
+        inv_pat=f'%"{investigation_id}"%',
+    )
     result = await session.exec(stmt)
     return result.rowcount or 0
 

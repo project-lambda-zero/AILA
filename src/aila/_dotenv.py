@@ -31,5 +31,5 @@ def load_project_env() -> Path | None:
     if not env_path.is_file():
         return None
 
-    load_dotenv(env_path, override=False)
+    load_dotenv(env_path, override=True)
     return env_path

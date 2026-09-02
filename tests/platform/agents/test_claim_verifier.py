@@ -900,9 +900,16 @@ class TestRunHappyPath:
         # patched UoW: the fake session recorded one add.
         assert _FakeUoW._shared_session is not None
         adds = _FakeUoW._shared_session.added
-        assert len(adds) == 1
-        payload = json.loads(adds[0].payload_json)
-        assert "verifier_report" in payload
+        # Locate the add that carries the verifier_report payload. The vr
+        # override _after_verifier_report_persisted may also add the
+        # investigation row loaded via a second session.exec, so we filter
+        # rather than requiring an exact-count match.
+        verifier_adds = {
+            id(a): a for a in adds
+            if "verifier_report" in json.loads(getattr(a, "payload_json", "{}") or "{}")
+        }
+        assert len(verifier_adds) == 1
+        payload = json.loads(next(iter(verifier_adds.values())).payload_json)
         assert payload["verifier_report"]["verdict"] == "inconclusive"
         assert payload["verifier_report"]["signatures_fetch_failed"] is False
 
@@ -938,9 +945,10 @@ class TestRunHappyPath:
         assert len(canned.calls) == 2
         extractor_call, verdict_call = canned.calls
         assert extractor_call["task_type"] == cfg.extractor_task_type
-        assert extractor_call["method"] == "chat"
+        assert extractor_call["method"] == "chat_structured"
         assert extractor_call["investigation_id"] == "inv-task-check"
         assert verdict_call["task_type"] == cfg.verdict_task_type
+        assert verdict_call["method"] == "chat_structured"
 
     @pytest.mark.asyncio
     async def test_run_substitutes_index_id_in_probe_args(
@@ -1153,7 +1161,7 @@ class TestRunErrorPaths:
             verdict_response=_FakeLLMResponse("this is not json"),
         )
         result = await agent.run()
-        assert result == {"status": "failed", "reason": "verdict_unparseable"}
+        assert result == {"status": "failed", "reason": "verdict_schema_invalid"}
 
     @pytest.mark.asyncio
     async def test_already_verified_skips_before_llm(

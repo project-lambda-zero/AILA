@@ -35,12 +35,32 @@ from aila.platform.contracts import utc_now
 from aila.platform.uow import UnitOfWork
 
 __all__ = [
+    "ADJUDICATION_KIND",
     "InvestigationLedgerRecord",
     "LedgerPermissionError",
     "LedgerService",
     "make_discovery_condition",
     "make_evidence_condition",
 ]
+
+# The single ledger kind used for reject / refute adjudications so
+# sibling branches read a first-class negative-knowledge entry off the
+# shared blackboard (issue #07 -- ledger economics, RFC #253/#266).
+# ``LedgerService.append_adjudication`` writes rows tagged with this
+# kind, and ``read_general(kinds=[ADJUDICATION_KIND])`` returns them
+# without touching the discovery-confirmation gate (an adjudication is
+# not a discovery; the ``confirmed_only`` filter is discovery-only by
+# construction, see ``read_general`` below).
+ADJUDICATION_KIND: str = "adjudication"
+
+# Adjudication verdict literals. A ``rejected`` adjudication kills a
+# hypothesis on the branch that produced it (branch-local refutation
+# that other siblings should honor); a ``refuted`` adjudication kills a
+# claim across branches (proof-by-evidence that the whole investigation
+# should stop pursuing the target). Both are recorded under the same
+# ledger kind so a sibling read (``read_general(kinds=[ADJUDICATION_KIND])``)
+# returns the whole set in one call.
+_ADJUDICATION_VERDICTS: frozenset[str] = frozenset({"rejected", "refuted"})
 
 _UQ_IDEM = "uq_investigation_ledger_idem"
 # The system actor used by ownership transfers (branch merge / abandon).
@@ -180,6 +200,12 @@ class LedgerService:
 
         With an ``idempotency_key`` set, a repeat append (an ARQ retry) is a
         no-op that returns the existing id. Without one, every call inserts.
+
+        The kind is stored as given. Note-kind coercion (recon ``note``
+        to ``discovery`` so the discovery-gated audit phases activate)
+        is owned by ``turn_runner._post_ledger_writes``, which keys the
+        decision on the recon phase directive; the ledger layer does not
+        second-guess the kind it is handed.
         """
         values = {
             "investigation_id": investigation_id,
@@ -249,8 +275,9 @@ class LedgerService:
         branch_id: str,
         *,
         approver_branch_id: str = "__quorum__",
+        return_hypotheses: bool = False,
         session: AsyncSession | None = None,
-    ) -> list[int]:
+    ) -> list[int] | list[tuple[int, str | None]]:
         """Confirm every discovery authored by ``branch_id`` (RFC-13 Phase 4).
 
         The bridge from the outcome-review quorum to the ledger: once a
@@ -262,12 +289,21 @@ class LedgerService:
         read finally see confirmed discoveries. Idempotent per discovery id
         via the ``confirm:<id>`` key, so a re-run adds no duplicate.
 
-        Returns the list of confirmed discovery ids.
+        Returns the list of confirmed discovery ids by default. When
+        ``return_hypotheses=True`` returns a list of
+        ``(discovery_id, hypothesis_id)`` tuples so a caller can bridge the
+        quorum confirmation back to the originating hypothesis on the
+        branch's case_state (recon and taint discoveries carry
+        ``hypothesis_id`` in their payload). The hypothesis id is ``None``
+        when the discovery payload lacks one. The default ``list[int]``
+        return is preserved so the platform bases inherited by malware and
+        forensics stay backward compatible.
         """
         rows = await self.read_general(
             investigation_id, kinds=["discovery"], session=session,
         )
         confirmed: list[int] = []
+        confirmed_pairs: list[tuple[int, str | None]] = []
         for row in rows:
             if str(row.get("author_branch_id")) != str(branch_id):
                 continue
@@ -281,7 +317,86 @@ class LedgerService:
                 session=session,
             )
             confirmed.append(discovery_id)
+            if return_hypotheses:
+                payload = row.get("payload") or {}
+                raw_hid = payload.get("hypothesis_id")
+                hyp_id: str | None
+                if raw_hid is None:
+                    hyp_id = None
+                else:
+                    hyp_id = str(raw_hid) or None
+                confirmed_pairs.append((discovery_id, hyp_id))
+        if return_hypotheses:
+            return confirmed_pairs
         return confirmed
+
+    async def append_adjudication(
+        self,
+        investigation_id: str,
+        branch_id: str,
+        *,
+        verdict: str,
+        reason: str,
+        cited_evidence: list[str],
+        target_hypothesis_id: str | None = None,
+        target_outcome_id: str | None = None,
+        session: AsyncSession | None = None,
+    ) -> int:
+        """Record a reject / refute adjudication on the shared ledger.
+
+        Issue #07 -- ledger economics (RFC #253/#266). The single most
+        reusable fact an investigation produces -- why a lead is dead --
+        used to stay branch-private in ``case_state.rejected`` and
+        never reach the ledger, so sibling branches re-explored killed
+        paths and the consolidator had no negative-knowledge signal to
+        distill. This helper writes that judgement as a first-class
+        entry the whole workspace can read.
+
+        Payload shape (exact, aligned to the batch Contract):
+
+        ``{
+            "verdict": "rejected" | "refuted",
+            "target_hypothesis_id": str | None,
+            "target_outcome_id": str | None,
+            "reason": str,
+            "cited_evidence": list[str],
+            "author_branch_id": str,
+        }``
+
+        Idempotency-keyed on the target (``adjudication:<hyp|out>:<id>``)
+        so a retry never double-appends and a sibling voting again on
+        the same target upserts the same row.
+        """
+        if verdict not in _ADJUDICATION_VERDICTS:
+            raise ValueError(
+                f"adjudication verdict must be one of "
+                f"{sorted(_ADJUDICATION_VERDICTS)!r}; got {verdict!r}"
+            )
+        if target_hypothesis_id is None and target_outcome_id is None:
+            raise ValueError(
+                "adjudication requires target_hypothesis_id or "
+                "target_outcome_id (at least one)"
+            )
+        if target_hypothesis_id is not None:
+            idem = f"adjudication:hyp:{target_hypothesis_id}:{branch_id}"
+        else:
+            idem = f"adjudication:out:{target_outcome_id}:{branch_id}"
+        payload: dict[str, Any] = {
+            "verdict": verdict,
+            "target_hypothesis_id": target_hypothesis_id,
+            "target_outcome_id": target_outcome_id,
+            "reason": reason,
+            "cited_evidence": list(cited_evidence),
+            "author_branch_id": branch_id,
+        }
+        return await self.append_general(
+            investigation_id,
+            branch_id,
+            ADJUDICATION_KIND,
+            payload,
+            idempotency_key=idem,
+            session=session,
+        )
 
     async def open_objective(
         self,

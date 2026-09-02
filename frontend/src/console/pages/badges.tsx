@@ -10,20 +10,21 @@ import { css } from "../css";
  * fabricated-severity fix); these maps only label what the row actually says.
  */
 
-type Tone = "ok" | "warn" | "err" | "muted" | "info";
+type Tone = "ok" | "live" | "warn" | "err" | "muted" | "info";
 
 const TONE_COLOR: Record<Tone, string> = {
-  ok: "var(--status-ok)",
+  ok: "var(--status-ok)", // mint -- terminal success (completed / done / succeeded)
+  live: "var(--accent)", // hot pink -- actively running; the live state, must stand apart from settled `ok`
   warn: "var(--status-warn, #e6b84c)",
   err: "var(--status-err, #d64545)",
   muted: "var(--text-faint)",
-  info: "var(--accent)",
+  info: "var(--status-info)", // lavender -- pre-run / neutral (created / queued / waiting)
 };
 
 const STATUS_TONE: Record<string, Tone> = {
-  // running / active states
-  running: "ok",
-  active: "ok",
+  // live states -- distinct from settled `ok` so a running row never reads as done
+  running: "live",
+  active: "live",
   created: "info",
   queued: "info",
   waiting: "info",
@@ -80,6 +81,48 @@ export function StatusBadge({ value, tone }: { value: unknown; tone?: Tone }): R
 
 export function SeverityBadge({ value }: { value: unknown }): ReactNode {
   return <StatusBadge value={value} tone={toneFor(SEVERITY_TONE, value)} />;
+}
+
+/** Tone map for the platform finding-workflow lifecycle. Base states
+ * (unprefixed) match the FindingWorkflowRecord defaults; module-prefixed
+ * states (vr.* / malware.* / forensics.*) are picked so a triage badge reads
+ * intuitively next to a base badge. Any unlisted state falls through to
+ * "muted" so a newly-registered module doesn't crash the badge. */
+const WORKFLOW_TONE: Record<string, Tone> = {
+  // base -- shared across every module
+  "new": "info",
+  investigating: "live",
+  mitigated: "warn",
+  verified: "ok",
+  closed: "muted",
+  // vr module extensions
+  "vr.false_positive": "muted",
+  "vr.accepted_risk": "warn",
+  // malware module extensions
+  "malware.benign_confirmed": "ok",
+  "malware.quarantined": "warn",
+  // forensics module extensions
+  "forensics.contained": "warn",
+  "forensics.eradicated": "info",
+  "forensics.recovered": "ok",
+};
+
+/** Render a finding's workflow state. Falls through to a muted badge for any
+ * unrecognized value (module registered after this bundle shipped) so the
+ * state text always renders instead of vanishing. */
+export function WorkflowStateBadge({ value }: { value: unknown }): ReactNode {
+  return <StatusBadge value={value} tone={toneFor(WORKFLOW_TONE, value)} />;
+}
+
+/** Left-edge ribbon color for a row, keyed on its status string. Returns a CSS
+ * color for a KNOWN status (same tone map as the badge, so the rail and the
+ * badge always agree) and null for empty/unrecognized values so rows without a
+ * real status get no ribbon rather than a misleading muted bar. */
+export function statusRailColor(value: unknown): string | null {
+  const key = String(value ?? "").trim().toLowerCase();
+  if (!key) return null;
+  const tone = STATUS_TONE[key];
+  return tone ? TONE_COLOR[tone] : null;
 }
 
 /** Semantic cell renderers for PageColumn. Register a column `kind` to get the

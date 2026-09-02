@@ -58,13 +58,25 @@ __all__ = [
     "NAMESPACE_AGENT_PREFIX",
     "NAMESPACE_PLATFORM_PREFIX",
     "NAMESPACE_USER_PREFIX",
+    "PATTERN_NAMESPACE_KIND",
     "TRUST_TIER_TARGET_DERIVED",
     "TRUST_TIER_VERIFIED",
     "make_agent_namespace",
+    "make_pattern_namespace",
     "make_platform_namespace",
     "make_user_namespace",
     "trust_tier_from_namespace",
 ]
+
+# The namespace-kind segment used for the reusable retrieval pool a
+# confirmed engine-finding is promoted into (issue #06 -- knowledge
+# reuse, RFC #252/#256/#268). Mirrors ``SEMANTIC_NAMESPACE_KIND`` from
+# the consolidator: the writer and every retrieval scope helper name
+# this same string so they cannot drift on the bucket name. Existing
+# per-module scope helpers (``vr_knowledge_namespaces``,
+# ``malware_knowledge_namespaces``) already include ``pattern`` in
+# their retrieval lists.
+PATTERN_NAMESPACE_KIND: str = "pattern"
 
 
 class EmbeddingDimensionMismatchError(RuntimeError):
@@ -94,28 +106,51 @@ class EmbeddingDimensionMismatchError(RuntimeError):
 # RFC-12 Phase 5 trust tiering. Verified-tier knowledge (findings, audit
 # memos, promoted patterns) is written behind a quorum or an operator
 # promotion; target-derived knowledge (evicted observations burned straight
-# off a tool result) is untrusted input and carries the lower tier. The tier
-# is derived from the namespace ``kind`` segment, so no column or data
-# migration is needed: the ``*.observation.*`` namespaces are target-derived,
-# everything else the modules write is verified. Retrieval journals the tier
-# per hit so an operator can audit what trust level informed a finding.
+# off a tool result) is untrusted input and carries the lower tier. The
+# ``*.observation.*`` namespaces are target-derived by kind. Model-distilled
+# kinds (``*.semantic.*``, ``*.pattern.*``) are lifted to verified ONLY when
+# the writer stamps ``confirmed=true`` in the entry metadata (VR truth-gate
+# D1): the namespace alone no longer authorizes trust, because the semantic
+# consolidator historically ingested from stalled investigations whose
+# discoveries the sibling quorum never confirmed. Every other namespace
+# module writes (findings, audit memos) remains verified by kind. Retrieval
+# journals the tier per hit so an operator can audit what trust level
+# informed a finding.
 TRUST_TIER_VERIFIED = "verified"
 TRUST_TIER_TARGET_DERIVED = "target_derived"
 
+# Namespace kind segments that carry model-distilled content. A row in one
+# of these namespaces is verified only when its metadata explicitly names
+# it as confirmed; anything else falls to ``target_derived``. Kept as a
+# module-level tuple so the check is a plain ``any(... in namespace ...)``
+# and the same list is reused by consumers rendering the tier for display.
+_MODEL_DISTILLED_KINDS: tuple[str, ...] = (".semantic.", ".pattern.")
 
-def trust_tier_from_namespace(namespace: str | None) -> str:
-    """Map a knowledge namespace to its RFC-12 trust tier.
+
+def trust_tier_from_namespace(
+    namespace: str | None,
+    metadata: dict[str, Any] | None = None,
+) -> str:
+    """Map a knowledge namespace + entry metadata to its RFC-12 trust tier.
 
     ``<module>.observation.*`` namespaces hold observations burned directly
-    from tool output (untrusted input) and return ``target_derived``; every
-    other namespace a module writes (findings, audit memos, patterns) is
-    quorum- or promotion-gated and returns ``verified``. An empty or unknown
-    namespace defaults to ``target_derived`` -- the conservative tier.
+    from tool output (untrusted input) and return ``target_derived``.
+    ``<module>.semantic.*`` and ``<module>.pattern.*`` namespaces hold
+    model-distilled content: the writer MUST stamp
+    ``metadata['confirmed'] is True`` for the row to be tiered ``verified``
+    (post-D1 honesty gate), otherwise the row falls to ``target_derived``
+    even though the namespace kind used to imply trust. Every other
+    namespace a module writes (findings, audit memos) is quorum- or
+    promotion-gated and returns ``verified``. An empty or unknown namespace
+    defaults to ``target_derived`` -- the conservative tier.
     """
     if not namespace:
         return TRUST_TIER_TARGET_DERIVED
     if ".observation." in namespace:
         return TRUST_TIER_TARGET_DERIVED
+    if any(kind in namespace for kind in _MODEL_DISTILLED_KINDS):
+        confirmed = bool((metadata or {}).get("confirmed"))
+        return TRUST_TIER_VERIFIED if confirmed else TRUST_TIER_TARGET_DERIVED
     return TRUST_TIER_VERIFIED
 
 
@@ -178,7 +213,9 @@ def _apply_trust_decay(
         namespace = hit.get("namespace") or prov.get("namespace")
         if (
             target_derived_weight != 1.0
-            and trust_tier_from_namespace(namespace) == TRUST_TIER_TARGET_DERIVED
+            and trust_tier_from_namespace(
+                namespace, hit.get("metadata"),
+            ) == TRUST_TIER_TARGET_DERIVED
         ):
             score *= target_derived_weight
         if decay_half_life_hours > 0:
@@ -260,7 +297,7 @@ async def _journal_retrieval(
                 "entry_id": hit.get("id"),
                 "namespace": ns,
                 "score": round(float(hit.get("score") or 0.0), 4),
-                "trust_tier": trust_tier_from_namespace(ns),
+                "trust_tier": trust_tier_from_namespace(ns, hit.get("metadata")),
                 "classification": hit.get("classification"),
             })
         entry = JournalEntry(
@@ -428,6 +465,19 @@ def make_user_namespace(team_id: str, category: str) -> str:
 def make_platform_namespace(category: str) -> str:
     """Build platform namespace: platform:{category}."""
     return f"{NAMESPACE_PLATFORM_PREFIX}{category}"
+
+
+def make_pattern_namespace(module_id: str, workspace_id: str) -> str:
+    """Build the workspace-scoped pattern-retrieval namespace for a module.
+
+    Issue #06 -- knowledge reuse (RFC #252/#256/#268). The engine's
+    confirmed findings are promoted into this namespace so the next
+    hunt on the same target retrieves them off the shared pool instead
+    of restarting cold. Mirrors the ``vr.pattern.workspace.<id>`` and
+    ``malware.pattern.workspace.<id>`` conventions the per-module
+    scope helpers already list in their retrieval sets.
+    """
+    return f"{module_id}.{PATTERN_NAMESPACE_KIND}.workspace.{workspace_id}"
 
 
 # Module-level CAG cache instance so every KnowledgeService in the process
@@ -687,6 +737,57 @@ class KnowledgeService:
                 db_dim=db_dim,
             )
         return vec
+
+    async def promote_confirmed_finding_to_pool(
+        self,
+        *,
+        module_id: str,
+        workspace_id: str,
+        content: str,
+        dedup_key: str,
+        metadata: dict[str, Any] | None = None,
+        team_id: str | None = None,
+        session: AsyncSession | None = None,
+    ) -> dict[str, Any]:
+        """Promote an engine-confirmed finding into the retrieval pool.
+
+        Issue #06 -- knowledge reuse (RFC #252/#256/#268). The engine
+        already generates patterns from its own investigations, but the
+        historical writer stamped ``scope=local, status=draft,
+        trust_tier=unreviewed`` -- exactly the tuple ``retrieve_routed``
+        filters out -- so engine-generated retrievals stayed at zero and
+        every next hunt on the same target restarted cold. This helper
+        is the automatic promotion path: on a verifier-confirmed,
+        quorum-approved finding, the caller (the dispatcher or the
+        outcome-finalization state) invokes this to write the finding
+        into ``<module_id>.pattern.workspace.<workspace_id>``, stamping
+        ``metadata['confirmed'] = True`` so
+        :func:`trust_tier_from_namespace` lifts the row to
+        ``TRUST_TIER_VERIFIED`` (per the model-distilled-kinds gate).
+
+        The write goes through :meth:`store` unchanged so provenance,
+        classification, dedup, and the retrieval journal all apply
+        identically to any other pattern write. ``dedup_key`` MUST be
+        stable per finding (typically the outcome id) so a re-run of
+        the promotion path upserts in place instead of allocating new
+        rows.
+
+        Returns the raw :meth:`store` result dict so the caller can
+        chain a graph-link write off the returned ``entry_id``.
+        """
+        namespace = make_pattern_namespace(module_id, workspace_id)
+        merged: dict[str, Any] = dict(metadata or {})
+        merged["confirmed"] = True
+        merged.setdefault("source", "confirmed_finding_promotion")
+        merged.setdefault("module_id", module_id)
+        return await self.store(
+            namespace=namespace,
+            content=content,
+            metadata=merged,
+            dedup_key=dedup_key,
+            session=session,
+            team_id=team_id,
+        )
 
     async def store(
         self,

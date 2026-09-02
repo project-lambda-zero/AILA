@@ -1,8 +1,10 @@
 """Audit event and seal router for AILA REST API.
 
 Provides GET /audit/events and GET /audit/events/{run_id} for querying
-the immutable audit trail. Filtering uses JQL-like structured params:
-AND across fields, comma-OR within a field, date ranges via since/until.
+the immutable audit trail. Filtering uses structured params: AND across
+fields, OR within a field (repeated params or a comma-joined value), a
+target substring via search, and a created_at range via
+created_at_since/created_at_until.
 
 Phase 120: GET /audit/seals and GET /audit/seals/export for querying
 cryptographic seal records. Both require admin auth (require_role("admin")).
@@ -36,10 +38,23 @@ router = APIRouter(
 )
 
 
-def _parse_comma_list(value: str | None) -> list[str] | None:
-    if not value:
+def _flatten(values: list[str] | None) -> list[str] | None:
+    """Collapse repeated and comma-OR query params into one filter list.
+
+    The console filter primitive posts a multi-select as repeated
+    ``name=v`` params; a comma-joined ``name=a,b`` value is also accepted.
+    Both forms flatten to the same de-duplicated, order-preserving,
+    stripped list (AND across fields, OR within a field).
+    """
+    if not values:
         return None
-    return [v.strip() for v in value.split(",") if v.strip()]
+    out: list[str] = []
+    for raw in values:
+        for part in raw.split(","):
+            token = part.strip()
+            if token and token not in out:
+                out.append(token)
+    return out or None
 
 
 def _audit_event_to_response(record: AuditEventRecord) -> AuditEventResponse:
@@ -63,28 +78,32 @@ def _audit_event_to_response(record: AuditEventRecord) -> AuditEventResponse:
 @router.get("/events", response_model=AuditListResponse, summary="List audit events")
 async def list_audit_events(
     run_id: str | None = Query(default=None, description="Filter to one run"),
-    stage: str | None = Query(default=None, description="Stage filter (comma-OR)"),
-    action: str | None = Query(default=None, description="Action filter (comma-OR)"),
-    status: str | None = Query(default=None, description="Status filter (comma-OR)"),
-    user_id: str | None = Query(default=None, description="User ID filter (comma-OR)"),
-    since: datetime | None = Query(default=None, description="Earliest created_at (ISO 8601)"),
-    until: datetime | None = Query(default=None, description="Latest created_at (ISO 8601)"),
+    stage: list[str] | None = Query(default=None, description="Stage filter (repeated or comma-OR)"),
+    action: list[str] | None = Query(default=None, description="Action filter (repeated or comma-OR)"),
+    status: list[str] | None = Query(default=None, description="Status filter (repeated or comma-OR)"),
+    user_id: list[str] | None = Query(default=None, description="User ID filter (repeated or comma-OR)"),
+    search: str | None = Query(default=None, description="Substring match on target (case-insensitive)"),
+    created_at_since: datetime | None = Query(default=None, description="Earliest created_at (ISO 8601)"),
+    created_at_until: datetime | None = Query(default=None, description="Latest created_at (ISO 8601)"),
     page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
     page_size: int = Query(default=50, ge=1, le=250, description="Items per page (max 250)"),
     auth: AuthContext = Depends(require_user_or_api_key),
 ) -> AuditListResponse:
     """Query audit events with structured filtering.
 
-    Supports AND-across-fields, comma-OR-within-fields filtering.
-    Date ranges via since/until (ISO 8601 datetime strings).
+    Supports AND-across-fields, OR-within-a-field filtering (repeated
+    params or a comma-joined value), a case-insensitive target substring
+    via search, and a created_at range via created_at_since /
+    created_at_until (ISO 8601 datetime strings).
 
     Team-scoped (#36): a team-scoped caller sees only its team's audit
     events; a god-tier admin (team_id=None, TEAM-06) sees all.
     """
-    stage_values = _parse_comma_list(stage)
-    action_values = _parse_comma_list(action)
-    status_values = _parse_comma_list(status)
-    user_id_values = _parse_comma_list(user_id)
+    stage_values = _flatten(stage)
+    action_values = _flatten(action)
+    status_values = _flatten(status)
+    user_id_values = _flatten(user_id)
+    search_term = search.strip() if search and search.strip() else None
 
     async def _query() -> list[AuditEventRecord]:
         async with async_session_scope() as session:
@@ -101,10 +120,12 @@ async def list_audit_events(
                 stmt = stmt.where(AuditEventRecord.status.in_(status_values))  # type: ignore[attr-defined]  # SQLModel column expression
             if user_id_values:
                 stmt = stmt.where(AuditEventRecord.user_id.in_(user_id_values))  # type: ignore[attr-defined]  # SQLModel column expression
-            if since:
-                stmt = stmt.where(AuditEventRecord.created_at >= since)
-            if until:
-                stmt = stmt.where(AuditEventRecord.created_at <= until)
+            if search_term:
+                stmt = stmt.where(AuditEventRecord.target.ilike(f"%{search_term}%"))  # type: ignore[attr-defined]  # SQLModel column expression
+            if created_at_since:
+                stmt = stmt.where(AuditEventRecord.created_at >= created_at_since)
+            if created_at_until:
+                stmt = stmt.where(AuditEventRecord.created_at <= created_at_until)
             stmt = stmt.order_by(AuditEventRecord.created_at.desc())  # type: ignore[attr-defined]  # SQLModel column expression
             return list((await session.exec(stmt)).all())
 

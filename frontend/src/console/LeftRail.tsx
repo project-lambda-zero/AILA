@@ -61,21 +61,33 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
           : vrInvestigations;
 
   const [pinned, setPinned] = useState<string[]>([]);
+  // Per-category collapse state for the admin block. Empty on mount so every
+  // category renders header-only on first open (a compact map of what exists);
+  // reset whenever the whole admin block is toggled so reopening returns to the
+  // all-collapsed default.
+  const [adminCatOpen, setAdminCatOpen] = useState<Record<string, boolean>>({});
 
   const rows: RailRow[] = useMemo(() => {
     const raw = source.data ?? [];
-    // Pinned / favorite first, then by activity (branches weigh heavily, then
-    // messages) so the data-rich investigations surface at the top -- clicking
-    // one opens a full X-Ray rather than an empty case. For forensics, the
-    // hook synthesises branch_count/message_count from evidence + investigation
-    // + lead counts so the busiest projects sort to the top.
+    // The rail is a live worklist, not a full catalogue: show only what needs
+    // eyes on it -- currently-running investigations plus anything explicitly
+    // pinned/favorited. Completed/paused/failed rows are reachable from the
+    // investigations page, so they stay out of the rail. Pinned first, then by
+    // activity (branches weigh heavily, then messages) so the data-rich cases
+    // sit at the top. For forensics the hook synthesises branch/message counts
+    // from evidence + investigation + lead counts.
     const score = (v: RailRow): number =>
       (v.branch_count ?? 0) * 1000 + (v.message_count ?? 0);
+    const isPinned = (v: RailRow): boolean => pinned.includes(v.id) || Boolean(v.is_favorite);
+    const isRunning = (v: RailRow): boolean => {
+      const s = (v.status ?? "").toLowerCase();
+      return s === "running" || s === "active";
+    };
     return raw
-      .slice()
+      .filter((v) => isRunning(v) || isPinned(v))
       .sort((a, b) => {
-        const ap = pinned.includes(a.id) || a.is_favorite ? 1 : 0;
-        const bp = pinned.includes(b.id) || b.is_favorite ? 1 : 0;
+        const ap = isPinned(a) ? 1 : 0;
+        const bp = isPinned(b) ? 1 : 0;
         if (ap !== bp) return bp - ap;
         return score(b) - score(a);
       })
@@ -90,14 +102,12 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
       ? "no advisories -- use the pages above"
       : moduleId === "forensics"
         ? "no cases yet"
-        : moduleId === "malware"
-          ? "no reports yet"
-          : "no investigations yet";
+        : "no investigations yet";
 
   return (
     <aside
       style={css(
-        `height:100%;display:flex;flex-direction:column;overflow:hidden;background:color-mix(in srgb,var(--surface-card) 72%,transparent);border-right:1px solid var(--border-soft);`,
+        `height:100%;display:flex;flex-direction:column;overflow:hidden;background:color-mix(in srgb,#131314 90%,transparent);border-right:1px solid var(--border-soft);`,
       )}
     >
       {/* 1. module header */}
@@ -108,7 +118,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
       >
         <span
           style={css(
-            `font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
+            `font-family:var(--font-display);font-weight:400;font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
           )}
         >
           module
@@ -145,7 +155,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
             type="button"
             onClick={onTogglePages}
             style={css(
-              `display:flex;align-items:center;gap:7px;width:100%;padding:10px 11px 6px;background:transparent;border:0;cursor:pointer;font-family:var(--font-mono);font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
+              `display:flex;align-items:center;gap:7px;width:100%;padding:10px 11px 6px;background:transparent;border:0;cursor:pointer;font-family:var(--font-display);font-weight:400;font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
             )}
           >
             <span style={css(`color:var(--accent);font-size:8px;`)}>{pagesOpen ? "\u25bc" : "\u25b6"}</span>
@@ -156,35 +166,50 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
               `max-height:150px;overflow:auto;flex-direction:column;padding:0 7px 6px;gap:2px;display:${pagesOpen ? "flex" : "none"};`,
             )}
           >
-            {activeModule.pages.map((p) => {
+            {activeModule.pages.map((p, i) => {
               // Every page now resolves to a real window (a DataPage or a
               // bespoke screen), so all page rows are clickable.
               const enabled = true;
+              // A workflow group renders a small label before its first page.
+              // Flat (group-less) page lists show no separators, so ungrouped
+              // modules render exactly as before.
+              const prevGroup = i > 0 ? activeModule.pages[i - 1]?.group : undefined;
+              const showGroup = p.group != null && p.group !== prevGroup;
               const style = css(
                 `display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:2px;font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.03em;color:${enabled ? "var(--text-muted)" : "var(--text-faint)"};text-align:left;text-decoration:none;border:1px solid transparent;background:var(--surface-card);cursor:${enabled ? "pointer" : "default"};opacity:${enabled ? "1" : "0.55"};`,
               );
               return (
-                <button
-                  key={p.id}
-                  type="button"
-                  disabled={!enabled}
-                  onClick={
-                    enabled
-                      ? () => {
-                          const section = p.href ? p.href.split("#")[1] ?? p.id : p.id;
-                          onOpenPage(activeModule.id, section, p.label);
-                        }
-                      : undefined
-                  }
-                  style={style}
-                >
-                  <span
-                    style={css(
-                      `width:5px;height:5px;flex:0 0 auto;background:${enabled ? "var(--accent)" : "var(--text-faint)"};`,
-                    )}
-                  />
-                  {p.label}
-                </button>
+                <Fragment key={p.id}>
+                  {showGroup ? (
+                    <div
+                      style={css(
+                        `padding:${i === 0 ? "0" : "7px"} 8px 3px;font-family:var(--font-mono);font-weight:400;font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-muted);`,
+                      )}
+                    >
+                      {p.group}
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    disabled={!enabled}
+                    onClick={
+                      enabled
+                        ? () => {
+                            const section = p.href ? p.href.split("#")[1] ?? p.id : p.id;
+                            onOpenPage(activeModule.id, section, p.label);
+                          }
+                        : undefined
+                    }
+                    style={style}
+                  >
+                    <span
+                      style={css(
+                        `width:5px;height:5px;flex:0 0 auto;background:${enabled ? "var(--accent)" : "var(--text-faint)"};`,
+                      )}
+                    />
+                    {p.label}
+                  </button>
+                </Fragment>
               );
             })}
           </div>
@@ -199,14 +224,14 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
       >
         <span
           style={css(
-            `font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
+            `font-family:var(--font-display);font-weight:400;font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
           )}
         >
           {activeModule.noun}
         </span>
         <span style={css(`flex:1;`)} />
         <span
-          onClick={onOpenIntake}
+          onClick={() => onOpenIntake()}
           style={css(
             `border:1px solid var(--border);padding:0 5px;font-size:12px;color:var(--accent);cursor:pointer;`,
           )}
@@ -273,7 +298,14 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
             return (
               <div
                 key={inv.id}
-                onClick={() => onBind({ id: inv.id, title: inv.title })}
+                onClick={() => {
+                  if (isActive) {
+                    onBind(null);
+                  } else {
+                    onBind({ id: inv.id, title: inv.title });
+                  }
+                }}
+                title={isActive ? "Click to unbind investigation" : "Click to bind & open investigation"}
                 style={rowStyle}
               >
                 <div style={css(`display:flex;align-items:center;gap:7px;`)}>
@@ -285,6 +317,9 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
                   >
                     {shortCaseId(activeModule.id, inv.id)}
                   </span>
+                  {isActive ? (
+                    <span style={css("font-size:8px;padding:0 3px;background:var(--accent);color:var(--text-on-accent);border-radius:2px;letter-spacing:0.06em;text-transform:uppercase;")}>bound</span>
+                  ) : null}
                   <span style={css(`flex:1;`)} />
                   <span
                     onClick={(e: MouseEvent<HTMLSpanElement>) => {
@@ -318,9 +353,13 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
       <div style={css(`flex:0 0 auto;max-height:230px;display:flex;flex-direction:column;min-height:0;`)}>
         <button
           type="button"
-          onClick={onToggleAdmin}
+          aria-expanded={adminOpen}
+          onClick={() => {
+            setAdminCatOpen({});
+            onToggleAdmin();
+          }}
           style={css(
-            `display:flex;align-items:center;gap:7px;width:100%;padding:9px 11px;background:var(--surface-chrome);border:0;border-top:1px solid var(--border-soft);cursor:pointer;font-family:var(--font-mono);font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
+            `display:flex;align-items:center;gap:7px;width:100%;padding:9px 11px;background:var(--surface-chrome);border:0;border-top:1px solid var(--border-soft);cursor:pointer;font-family:var(--font-display);font-weight:400;font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
           )}
         >
           <span style={css(`color:var(--accent);font-size:8px;`)}>{adminOpen ? "\u25bc" : "\u25b6"}</span>
@@ -331,32 +370,47 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
             `max-height:190px;overflow:auto;flex-direction:column;padding:0 7px 7px;gap:2px;display:${adminOpen ? "flex" : "none"};`,
           )}
         >
-          {ADMIN_CATS.map((g) => (
-            <Fragment key={g.cat}>
-              <div
-                style={css(
-                  `padding:7px 9px 3px;font-size:8px;letter-spacing:0.18em;text-transform:uppercase;color:var(--accent);`,
-                )}
-              >
-                {g.cat}
-              </div>
-              {g.items.map((label) => (
+          {ADMIN_CATS.map((g) => {
+            const catExpanded = Boolean(adminCatOpen[g.cat]);
+            return (
+              <Fragment key={g.cat}>
                 <button
-                  key={`${g.cat}:${label}`}
                   type="button"
-                  onClick={() => onOpenPage("admin", label.replace(/\s+/g, "-"), label)}
+                  aria-expanded={catExpanded}
+                  onClick={() =>
+                    setAdminCatOpen((prev) => ({ ...prev, [g.cat]: !prev[g.cat] }))
+                  }
                   style={css(
-                    `display:flex;align-items:center;gap:8px;padding:5px 8px;border:0;border-radius:2px;background:var(--surface-card);font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.03em;color:var(--text-muted);cursor:pointer;text-align:left;`,
+                    `display:flex;align-items:center;gap:6px;width:100%;padding:7px 9px 3px;background:transparent;border:0;cursor:pointer;font-family:var(--font-display);font-weight:400;font-size:8px;letter-spacing:0.18em;text-transform:uppercase;color:var(--accent);text-align:left;`,
                   )}
                 >
-                  <span
-                    style={css(`width:5px;height:5px;flex:0 0 auto;background:var(--text-faint);`)}
-                  />
-                  {label}
+                  <span style={css(`font-size:8px;`)}>{catExpanded ? "\u25bc" : "\u25b6"}</span>
+                  {g.cat}
                 </button>
-              ))}
-            </Fragment>
-          ))}
+                <div
+                  style={css(
+                    `flex-direction:column;gap:2px;padding-bottom:3px;display:${catExpanded ? "flex" : "none"};`,
+                  )}
+                >
+                  {g.items.map((label) => (
+                    <button
+                      key={`${g.cat}:${label}`}
+                      type="button"
+                      onClick={() => onOpenPage("admin", label.replace(/\s+/g, "-"), label)}
+                      style={css(
+                        `display:flex;align-items:center;gap:8px;padding:5px 8px;border:0;border-radius:2px;background:var(--surface-card);font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.03em;color:var(--text-muted);cursor:pointer;text-align:left;`,
+                      )}
+                    >
+                      <span
+                        style={css(`width:5px;height:5px;flex:0 0 auto;background:var(--text-faint);`)}
+                      />
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </Fragment>
+            );
+          })}
         </div>
       </div>
 
@@ -365,7 +419,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
         type="button"
         onClick={onOpenSettings}
         style={css(
-          `display:flex;align-items:center;gap:7px;width:100%;flex:0 0 auto;padding:9px 11px;border:0;border-top:1px solid var(--border-soft);background:var(--surface-chrome);color:var(--text-muted);font-family:var(--font-mono);font-size:9px;letter-spacing:0.16em;text-transform:uppercase;cursor:pointer;`,
+          `display:flex;align-items:center;gap:7px;width:100%;flex:0 0 auto;padding:9px 11px;border:0;border-top:1px solid var(--border-soft);background:var(--surface-chrome);color:var(--text-muted);font-family:var(--font-display);font-weight:400;font-size:9px;letter-spacing:0.16em;text-transform:uppercase;cursor:pointer;`,
         )}
       >
         <span style={css(`color:var(--accent);`)}>{"\u2699"}</span>

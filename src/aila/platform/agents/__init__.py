@@ -18,6 +18,12 @@ from aila.platform.agents.claim_verifier import (
     ClaimVerifierAgentBase,
     is_negative_finding_claim,
 )
+from aila.platform.agents.falsifier import (
+    FALSIFIER_PERSONA,
+    FalsifierAgent,
+    FalsifierVerdict,
+    RefutationPacket,
+)
 from aila.platform.agents.idempotent_llm import idempotent_llm_call
 from aila.platform.agents.intent_classifier import classify_intent
 from aila.platform.agents.observation import (
@@ -29,9 +35,13 @@ from aila.platform.agents.observation import (
     record_observation,
 )
 from aila.platform.agents.outcome_dispatcher import (
+    FinalizeAggregateResult,
     OutcomeDispatcherBase,
     OutcomeDispatcherError,
     OutcomeDispatchResult,
+    PromotedFinding,
+    finalize_investigation_aggregate,
+    handle_adjudication_refuted,
 )
 from aila.platform.agents.pattern_extractor import (
     PatternExtractionResult,
@@ -58,11 +68,19 @@ __all__ = [
     "BranchOpResult",
     "BranchPool",
     "ClaimVerifierAgentBase",
+    "FALSIFIER_PERSONA",
+    "FalsifierAgent",
+    "FalsifierVerdict",
+    "FinalizeAggregateResult",
     "ObservationKind",
     "ObservationPolarity",
     "OutcomeDispatchResult",
     "OutcomeDispatcherBase",
     "OutcomeDispatcherError",
+    "PromotedFinding",
+    "RefutationPacket",
+    "finalize_investigation_aggregate",
+    "handle_adjudication_refuted",
     "PatternExtractionResult",
     "PatternExtractorBase",
     "PatternExtractorError",

@@ -26,7 +26,7 @@ from uuid import uuid4
 from pydantic import BaseModel, ConfigDict
 from pydantic import Field as PField
 from sqlalchemy import DateTime, Text
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, select
 
 from ._common import utc_now
 from ._naming import TableDerivedConstraintsMixin, TabledFk
@@ -36,6 +36,7 @@ __all__ = [
     "OutcomeCreateBase",
     "OutcomeRecordBase",
     "OutcomeSummaryBase",
+    "active_outcomes",
 ]
 
 
@@ -84,6 +85,29 @@ class OutcomeRecordBase(TableDerivedConstraintsMixin, SQLModel):
     claimed_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
 
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+
+    # Soft-supersede marker (req 26 fix item 5). Investigation reset archives
+    # outcomes by stamping this instead of hard-deleting the row, so a prior
+    # run's ratified outcomes survive for display and audit while
+    # agent-context reads reconstruct a clean slate by filtering
+    # ``superseded_at IS NULL`` (see ``active_outcomes``). Nullable +
+    # indexed; existing rows read as active.
+    superseded_at: datetime | None = Field(
+        default=None, sa_type=DateTime(timezone=True), index=True,
+    )
+
+
+def active_outcomes(model: type[OutcomeRecordBase], *columns: Any) -> Any:
+    """SELECT restricted to non-superseded outcomes (req 26 clean-slate read).
+
+    Agent-context reads reconstruct the current run's slate and MUST ignore
+    rows a reset archived. Pass ``model`` for a full-row select, or explicit
+    ``columns`` for a projection. Aggregate reads whose target is
+    ``func.count()`` (no model target) apply ``model.superseded_at.is_(None)``
+    directly instead of calling this helper.
+    """
+    target: tuple[Any, ...] = columns if columns else (model,)
+    return select(*target).where(model.superseded_at.is_(None))
 
 
 class OutcomeSummaryBase(BaseModel):

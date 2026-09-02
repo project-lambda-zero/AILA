@@ -11,12 +11,12 @@ export interface LeftRailProps {
   moduleId: string;
   onSelectModule: (id: string) => void;
   bound: BoundInvestigation | null;
-  onBind: (inv: BoundInvestigation) => void;
+  onBind: (inv: BoundInvestigation | null) => void;
   pagesOpen: boolean;
   onTogglePages: () => void;
   adminOpen: boolean;
   onToggleAdmin: () => void;
-  onOpenIntake: () => void;
+  onOpenIntake: (opts?: { moduleId?: string; targetId?: string }) => void;
   onOpenSettings: () => void;
   onOpenPage: (moduleId: string, pageId: string, label: string) => void;
 }
@@ -29,6 +29,18 @@ export interface LeftRailProps {
 export interface ModulePageProps {
   section: string | null;
   investigationId?: string | null;
+  /** Host-assigned window id; a page spreads it into its `<ConsoleWindow id>`
+   * so the shell can track z-order, focus, and the minimize dock. */
+  windowId: string;
+  /** Window title the shell computed for this page; passed to `<ConsoleWindow
+   * title>` (used by the dock chip + aria labelling). */
+  title: string;
+  /** True when this is the focused (z-top) window; gates the primitive's
+   * keyboard shortcuts so only one window responds. */
+  isFocused?: boolean;
+  /** Raise this window in z-order + pass it keyboard focus (wired to
+   * `<ConsoleWindow onFocus>`). */
+  onFocus?: () => void;
   /** Close the window (back to the console). */
   onBack: () => void;
   /** Collapse the window to the dock, revealing the console behind it. */
@@ -50,7 +62,11 @@ export interface ChatConsoleProps {
   investigationId: string | null;
   investigationTitle: string | null;
   onToggleMode: () => void;
-  onOpenIntake: () => void;
+  onOpenIntake: (opts?: { moduleId?: string; targetId?: string }) => void;
+  /** Open a wizard by its registry id (see console/wizards). Chat's picker
+   * uses `wizardsForModule` to enumerate; dante's `open_wizard` action
+   * resolves through `primaryWizardIdForModule` before calling this. */
+  onOpenWizard: (wizardId: string, opts?: { targetId?: string }) => void;
   onOpenXray?: () => void;
   /** True while a minimized page dock occupies the bottom of the center column.
    * The composer reserves space for it so it stays clickable. */
@@ -59,12 +75,15 @@ export interface ChatConsoleProps {
 
 export interface IntakeWizardProps {
   moduleId: string;
-  onClose: () => void;
   onBind: (inv: BoundInvestigation) => void;
   /** Optional -- when set the wizard renders a "+ upload new target" button
    * in its target picker; clicking it hands off to the shell (which should
    * close the wizard and open the UploadForm window for this module). */
   onRequestUpload?: () => void;
+  /** Optional -- when a targetId is supplied and matches a loaded target
+   *  for the wizard's module, the picker preselects that target. Best-effort;
+   *  a miss silently falls back to the normal empty picker. */
+  prefill?: { targetId?: string };
 }
 
 export interface SettingsOverlayProps {

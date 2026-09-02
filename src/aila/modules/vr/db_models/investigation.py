@@ -21,6 +21,7 @@ from __future__ import annotations
 from typing import ClassVar
 
 from sqlalchemy import Index, text
+from sqlmodel import Field
 
 from aila.platform.contracts.investigation_base import InvestigationRecordBase
 
@@ -32,6 +33,15 @@ class VRInvestigationRecord(InvestigationRecordBase, table=True):
 
     __tablename__ = "vr_investigations"
     __target_tablename__: ClassVar[str] = "vr_targets"
+
+    # Denormalized filter columns kept in sync from the primary outcome
+    # by the write hooks in ``agents/vuln_researcher._upsert_canonical_outcome``
+    # and ``agents/claim_verifier.ClaimVerifierAgent._after_verifier_report_persisted``.
+    # Both are pure functions of ``primary_outcome.outcome_kind`` +
+    # ``primary_outcome.payload_json`` (see ``services/outcome_polarity``).
+    # Indexed so the investigations-list endpoint filters cheaply.
+    primary_outcome_polarity: str | None = Field(default=None, index=True, max_length=16)
+    verifier_verdict: str | None = Field(default=None, index=True, max_length=32)
 
     # Migration 058 built a PARTIAL index on is_favorite (WHERE
     # is_favorite = true) rather than a full-table index. Declare it

@@ -121,3 +121,9 @@ class VRFinding(BaseModel):
     cvss_vector: str | None = None
     cwe_id: str | None = None
     evidence_count: int = 0
+
+    # Finding workflow lifecycle (D-37/D-29). Populated from the latest
+    # ``FindingWorkflowRecord`` row for this finding scoped to
+    # ``module_id="vr"``; defaults to ``"new"`` when the finding has no
+    # workflow row yet (legacy pre-lifecycle rows).
+    workflow_state: str = "new"

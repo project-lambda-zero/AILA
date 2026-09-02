@@ -11,12 +11,10 @@ from __future__ import annotations
 
 import pytest
 
-from aila.platform.services.infra_death import (
-    RETRYABLE_INFRA_CLASSES,
-    InfraDeathClassifier,
-)
 from aila.platform.services.resilience import (
+    RETRYABLE_INFRA_CLASSES,
     FailureVerdict,
+    InfraDeathClassifier,
     RecoveryPolicy,
     ResilienceLayer,
     get_default_resilience_layer,

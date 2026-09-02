@@ -1,16 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuth } from "./api/auth";
 import { useInvestigations } from "./api/hooks";
 import type { BoundInvestigation, ModulePageProps } from "./console/contract";
+import type { WindowKind, WindowState } from "./console/window";
 import { shortCaseId } from "./console/ids";
 import IntakeWizard from "./console/IntakeWizard";
 import LeftRail from "./console/LeftRail";
 import Login from "./console/Login";
 import { MODULES } from "./console/nav";
+import NotificationsCenter from "./console/NotificationsCenter";
 import { resolvePage } from "./console/pages/registry";
 import SettingsOverlay from "./console/SettingsOverlay";
 import ChatConsole from "./console/ChatConsole";
+import WidgetHost from "./console/widgets/WidgetHost";
+import { ConsoleWindow } from "./console/window";
+import { resolveWizard } from "./console/wizards";
 import { FaultyTerminal } from "./desktop/FaultyTerminal";
 
 // Faithful port of the `AILA Console` design page. Two modes: basic (console
@@ -19,15 +24,6 @@ import { FaultyTerminal } from "./desktop/FaultyTerminal";
 // module pages / x-ray open as an overlay in the center column. All data is live.
 
 const pad = (n: number): string => (n < 10 ? "0" : "") + n;
-
-// A module page raised inside the console's center column as an overlay window.
-interface OpenPage {
-  /** Registry key: "xray", "vulnerability:findings", "vr:targets", "admin:users", ... */
-  kind: string;
-  title: string;
-  investigationId: string | null;
-  section: string;
-}
 
 export default function App() {
   const status = useAuth((s) => s.status);
@@ -46,34 +42,14 @@ function Console() {
   const [pagesOpen, setPagesOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [intakeOpen, setIntakeOpen] = useState(false);
-  const [openPage, setOpenPage] = useState<OpenPage | null>(null);
-  const [pageMin, setPageMin] = useState(false);
-  const [pageFull, setPageFull] = useState(false);
+  // Multi-window host: an ordered back-to-front stack plus the focused id.
+  // `page`/`overlay` surfaces form the center-column drill stack (only the top
+  // non-minimized one renders); `floater` surfaces (added by later reqs) render
+  // concurrently. Closing a window falls back to the previously focused one.
+  const [windows, setWindows] = useState<WindowState[]>([]);
+  const [focusedId, setFocusedId] = useState<string | null>(null);
+  const winSeq = useRef(0);
   const [clock, setClock] = useState("");
-
-  // Open on the case that best fills the design: the most branches, which give
-  // a rich x-ray (multiple persona lanes, ledger, hypotheses, hundreds of MCP
-  // calls). Tie-break by the fewest turns so the console still opens at a
-  // readable length. The thread opens at the top (greeting first), so a longer
-  // case still reads cleanly from its start. Fall back to the richest by
-  // messages when nothing is branched.
-  const { data: invList } = useInvestigations();
-  useEffect(() => {
-    if (bound || !invList || invList.length === 0) return;
-    let pick = invList[0];
-    let best: { branches: number; msgs: number } | null = null;
-    for (const inv of invList) {
-      const branches = inv.branch_count ?? 0;
-      const msgs = inv.message_count ?? 0;
-      if (msgs < 4) continue;
-      if (!best || branches > best.branches || (branches === best.branches && msgs < best.msgs)) {
-        best = { branches, msgs };
-        pick = inv;
-      }
-    }
-    setBound({ id: pick.id, title: pick.title });
-  }, [invList, bound]);
 
   useEffect(() => {
     const tick = () => {
@@ -85,15 +61,26 @@ function Console() {
     return () => clearInterval(id);
   }, []);
 
+  const pageWindows = windows.filter((w) => w.kind === "page" || w.kind === "overlay");
+  const activePage = [...pageWindows].reverse().find((w) => !w.minimized) ?? null;
+  const minimizedWindows = windows.filter((w) => w.minimized);
+
   const adv = mode === "advanced";
   const modDef = MODULES.find((m) => m.id === moduleId) ?? MODULES[0];
-  const boundLabel = bound ? shortCaseId(moduleId, bound.id) : modDef.id;
-  const engineLabel = adv ? `${boundLabel} \u00b7 ${moduleId}` : "idle \u00b7 ready";
+  const engineLabel = useMemo(() => {
+    if (activePage) {
+      return activePage.title;
+    }
+    if (adv) {
+      return bound ? `${shortCaseId(moduleId, bound.id)} \u00b7 ${moduleId}` : `${modDef.id} \u00b7 ready`;
+    }
+    return "idle \u00b7 ready";
+  }, [activePage, adv, bound, moduleId, modDef.id]);
 
   const nav: { label: string; on: boolean; onClick: () => void }[] = [
     { label: "console", on: !adv, onClick: () => setMode("basic") },
     { label: "workspace", on: adv, onClick: () => setMode("advanced") },
-    { label: "docs", on: false, onClick: () => {} },
+    { label: "docs", on: windows.some((w) => w.id === focusedId && w.registryKey === "platform:docs" && !w.minimized), onClick: () => openNamedPage("platform", "docs", "docs") },
   ];
 
   // Open any registered page (left-rail page / admin item) as a window. An
@@ -101,31 +88,130 @@ function Console() {
   // project detail), reusing the ModulePageProps.investigationId channel.
   //
   // A `section` may carry an in-page sub-intent past a colon (e.g.
-  // "systems:new", "scan:<run_id>"). The registry key is derived from the
+  // "scan:<run_id>", "reports:<run_id>"). The registry key is derived from the
   // base slug (part before the colon) so the same registered renderer serves
   // both the base view and its sub-intents; the full section string is
   // handed through to the page so it can react to the intent.
+  // Raise a page window, pushing whatever page is currently open onto the
+  // history trail first (only when the target is a genuinely different page,
+  // so an in-place section change never self-stacks). "back" walks this trail.
+  const focused = windows.find((w) => w.id === focusedId) ?? null;
+
+  // Raise a window to the top of the z-stack and give it keyboard focus.
+  const focusWindow = (id: string) => {
+    setWindows((cur) => {
+      const w = cur.find((x) => x.id === id);
+      return w ? [...cur.filter((x) => x.id !== id), w] : cur;
+    });
+    setFocusedId(id);
+  };
+
+  // Ctrl+Backquote cycles keyboard focus across open (non-minimized) windows in
+  // z-order, wrapping from the front window back to the back one. Bare Ctrl only:
+  // Shift/Alt/Meta variants fall through so the chord does not shadow other
+  // shortcuts. ConsoleWindow's own shortcut handler early-returns on ctrlKey, so
+  // this host-level cycle is the single owner of the chord (see the primitive's
+  // header comment). With fewer than two open windows there is nothing to cycle,
+  // so the event is left untouched.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.ctrlKey || e.shiftKey || e.altKey || e.metaKey || e.code !== "Backquote") return;
+      const open = windows.filter((w) => !w.minimized);
+      if (open.length < 2) return;
+      e.preventDefault();
+      const idx = open.findIndex((w) => w.id === focusedId);
+      focusWindow(open[(idx + 1) % open.length].id);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [windows, focusedId]);
+
+  // Open a registered surface as a window. Re-opening the focused page surface
+  // (same registry key + entity) updates it in place instead of stacking a
+  // duplicate; anything else pushes a new window and focuses it.
+  const openWindow = (spec: { kind: WindowKind; module: string; registryKey: string; title: string; section: string | null; investigationId: string | null }) => {
+    if (
+      focused &&
+      (focused.kind === "page" || focused.kind === "overlay") &&
+      !focused.minimized &&
+      focused.registryKey === spec.registryKey &&
+      (focused.investigationId ?? null) === spec.investigationId
+    ) {
+      setWindows(windows.map((w) => (w.id === focused.id ? { ...w, title: spec.title, section: spec.section } : w)));
+      return;
+    }
+    const id = `w${(winSeq.current += 1)}`;
+    setWindows([...windows, { id, minimized: false, fullscreen: false, ...spec }]);
+    setFocusedId(id);
+  };
+
   const openNamedPage = (moduleKey: string, section: string, label: string, investigationId: string | null = null) => {
     const colon = section.indexOf(":");
     const baseSection = colon >= 0 ? section.slice(0, colon) : section;
     const key = `${moduleKey}:${baseSection}`;
     if (!resolvePage(key)) return;
-    setOpenPage({ kind: key, title: `${moduleKey} \u00b7 ${label}`, investigationId, section });
-    setPageMin(false);
-    setPageFull(false);
+
+    // Clean label: strip any duplicated `${moduleKey} · ` prefix from label
+    const prefix = `${moduleKey} \u00b7 `;
+    let cleanLabel = label;
+    while (cleanLabel.startsWith(prefix)) {
+      cleanLabel = cleanLabel.slice(prefix.length);
+    }
+
+    let title: string;
+    if (investigationId && (cleanLabel === "x-ray" || cleanLabel.endsWith("\u00b7 x-ray"))) {
+      title = `${moduleKey} \u00b7 ${shortCaseId(moduleKey, investigationId)} \u00b7 x-ray`;
+    } else {
+      title = `${moduleKey} \u00b7 ${cleanLabel}`;
+    }
+
+    openWindow({ kind: "page", module: moduleKey, registryKey: key, title, section, investigationId });
   };
 
-  // LeftRail's "+" is module-aware: for vulnerability it opens the Systems
-  // registry with an auto-open create form, matching the SystemForm invoked
-  // from the Systems tab's "+ register system" button (there is no duplicate
-  // IntakeWizard variant for that module). Every other module keeps the
-  // existing generic IntakeWizard.
-  const requestIntake = () => {
-    if (moduleId === "vulnerability") {
-      openNamedPage("vulnerability", "systems:new", "register system");
-    } else {
-      setIntakeOpen(true);
+  // Intake wizards live in the same windows[] stack as every other page, as
+  // `overlay` windows keyed on "wizard:intake". Reusing WindowState means the
+  // intake participates in the dock, z-order, and fullscreen chrome instead
+  // of floating as a bespoke overlay outside the host.
+  const openIntakeWindow = (module: string, targetId: string | null): void => {
+    openWindow({
+      kind: "overlay",
+      module,
+      registryKey: "wizard:intake",
+      title: `${module} \u00b7 new investigation`,
+      section: null,
+      investigationId: targetId,
+    });
+  };
+
+  // Registry-driven wizard opener. Intake wizards hit `openIntakeWindow`; page
+  // wizards route through `openNamedPage`. Chat's picker + dante's open_wizard
+  // action both funnel through here so the console never offers a wizard the
+  // registry doesn't back with a real surface.
+  const openWizard = (wizardId: string, opts?: { targetId?: string }): void => {
+    const w = resolveWizard(wizardId);
+    if (!w) return;
+    if (w.open.kind === "intake") {
+      openIntakeWindow(w.module, opts?.targetId ?? null);
+      return;
     }
+    openNamedPage(w.open.moduleKey, w.open.section, w.label, null);
+  };
+
+  // LeftRail's "+" is module-aware: for vulnerability it raises the
+  // platform-owned admin systems registry (there is no duplicate
+  // IntakeWizard variant for that module). Every other module opens its
+  // IntakeWizard as an overlay window.
+  const requestIntake = (opts?: { moduleId?: string; targetId?: string }): void => {
+    const effectiveModule = opts?.moduleId ?? moduleId;
+    const targetId = opts?.targetId ?? null;
+    if (effectiveModule === "vulnerability") {
+      // Systems registry is platform-owned (system-registry-platform.md
+      // req 11): the vulnerability module's "+" jumps to the admin systems
+      // page, where "+ register system" inside opens the create form.
+      openNamedPage("admin", "systems", "admin \u00b7 systems");
+      return;
+    }
+    openIntakeWindow(effectiveModule, targetId);
   };
 
   // Opening a rail row binds it and raises the module's detail window. For
@@ -134,52 +220,91 @@ function Console() {
   const openInvestigation = (inv: BoundInvestigation) => {
     setBound(inv);
     if (moduleId === "vr") {
-      setOpenPage({
-        kind: "xray",
-        title: `vr \u00b7 ${shortCaseId("vr", inv.id)} \u00b7 x-ray`,
-        investigationId: inv.id,
-        section: "overview",
-      });
-      setPageMin(false);
-      setPageFull(false);
+      openWindow({ kind: "page", module: "vr", registryKey: "xray", title: `vr \u00b7 ${shortCaseId("vr", inv.id)} \u00b7 x-ray`, section: "overview", investigationId: inv.id });
     } else if (moduleId === "malware") {
-      setOpenPage({
-        kind: "malware:xray",
-        title: `malware \u00b7 ${shortCaseId("malware", inv.id)} \u00b7 x-ray`,
-        investigationId: inv.id,
-        section: "overview",
-      });
-      setPageMin(false);
-      setPageFull(false);
+      openWindow({ kind: "page", module: "malware", registryKey: "malware:xray", title: `malware \u00b7 ${shortCaseId("malware", inv.id)} \u00b7 x-ray`, section: "overview", investigationId: inv.id });
     } else if (moduleId === "forensics") {
       openNamedPage("forensics", "project", inv.title, inv.id);
     }
   };
 
-  const closePage = () => {
-    setOpenPage(null);
-    setPageMin(false);
-    setPageFull(false);
+  const closeWindow = (id: string) => {
+    const remaining = windows.filter((w) => w.id !== id);
+    setWindows(remaining);
+    if (focusedId === id) {
+      const next = [...remaining].reverse().find((w) => !w.minimized) ?? null;
+      setFocusedId(next ? next.id : null);
+    }
   };
 
-  // The opened page renders inside the center-column overlay (or full viewport
-  // when fullscreen). Resolved from the page registry by its kind key.
-  const renderPage = (p: OpenPage) => {
-    const entry = resolvePage(p.kind);
+  const setMinimized = (id: string, minimized: boolean) => {
+    setWindows(windows.map((w) => (w.id === id ? { ...w, minimized } : w)));
+    if (minimized) {
+      if (focusedId === id) {
+        const next = [...windows].reverse().find((w) => w.id !== id && !w.minimized) ?? null;
+        setFocusedId(next ? next.id : null);
+      }
+    } else {
+      setFocusedId(id);
+    }
+  };
+
+  const toggleFullscreen = (id: string) => setWindows(windows.map((w) => (w.id === id ? { ...w, fullscreen: !w.fullscreen } : w)));
+  const updateSection = (id: string, section: string) => setWindows(windows.map((w) => (w.id === id ? { ...w, section } : w)));
+
+  // A drill window (or full viewport when fullscreen). Intake-wizard windows
+  // are hosted inline (wrapped in <ConsoleWindow> so they share the dock /
+  // z-order / fullscreen chrome); every other key resolves through the page
+  // registry, where the page returns its own <ConsoleWindow>.
+  const renderPage = (w: WindowState) => {
+    if (w.registryKey === "wizard:intake") {
+      return (
+        <ConsoleWindow
+          id={w.id}
+          title={w.title}
+          kind="overlay"
+          isFocused={focusedId === w.id}
+          isFullscreen={w.fullscreen}
+          isMinimized={w.minimized}
+          onFocus={() => focusWindow(w.id)}
+          onClose={() => closeWindow(w.id)}
+          onMinimize={() => setMinimized(w.id, true)}
+          onToggleFullscreen={() => toggleFullscreen(w.id)}
+        >
+          <IntakeWizard
+            moduleId={w.module}
+            prefill={{ targetId: w.investigationId ?? undefined }}
+            onBind={(inv) => {
+              closeWindow(w.id);
+              openInvestigation(inv);
+            }}
+            onRequestUpload={() => {
+              closeWindow(w.id);
+              openNamedPage(w.module, "new-target", "upload target");
+            }}
+          />
+        </ConsoleWindow>
+      );
+    }
+    const entry = resolvePage(w.registryKey);
     const shared: ModulePageProps = {
-      section: p.section,
-      investigationId: p.investigationId,
-      onBack: closePage,
-      onMinimize: () => setPageMin(true),
-      onNavigate: (section: string) => setOpenPage({ ...p, section }),
-      isFullscreen: pageFull,
-      onToggleFullscreen: () => setPageFull((v) => !v),
+      section: w.section,
+      investigationId: w.investigationId,
+      windowId: w.id,
+      title: w.title,
+      isFocused: focusedId === w.id,
+      onFocus: () => focusWindow(w.id),
+      onBack: () => closeWindow(w.id),
+      onMinimize: () => setMinimized(w.id, true),
+      onNavigate: (section: string) => updateSection(w.id, section),
+      isFullscreen: w.fullscreen,
+      onToggleFullscreen: () => toggleFullscreen(w.id),
       onOpenPage: (m: string, s: string, l: string, invId?: string | null) => openNamedPage(m, s, l, invId ?? null),
     };
     if (!entry) {
       return (
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-faint)", fontFamily: "var(--font-mono)", fontSize: 12 }}>
-          page not available: {p.kind}
+          page not available: {w.registryKey}
         </div>
       );
     }
@@ -243,8 +368,8 @@ function Console() {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "0 12px", borderRight: "1px solid var(--border-soft)" }}>
-          <span style={{ width: 9, height: 9, background: "var(--accent)", boxShadow: "0 0 8px var(--accent)" }} />
-          <span style={{ fontWeight: 700, letterSpacing: "0.2em" }}>AILA</span>
+          <img src="/aila-monogram.svg" alt="" style={{ height: 16, width: "auto", display: "block" }} />
+          <span style={{ fontFamily: "var(--font-display)", letterSpacing: "0.2em" }}>AILA</span>
         </div>
         <nav style={{ display: "flex", alignItems: "stretch" }}>
           {nav.map((n) => (
@@ -270,8 +395,35 @@ function Console() {
             </button>
           ))}
         </nav>
+        {activePage ? (
+          <button
+            type="button"
+            onClick={() => closeWindow(activePage.id)}
+            title="close this window"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "0 14px",
+              background: "transparent",
+              color: "var(--accent)",
+              border: 0,
+              borderRight: "1px solid var(--border-soft)",
+              fontFamily: "var(--font-mono)",
+              fontSize: 10.5,
+              letterSpacing: "0.12em",
+              textTransform: "uppercase",
+              cursor: "pointer",
+              fontWeight: 700,
+            }}
+          >
+            {"\u2039 back"}
+          </button>
+        ) : null}
         <div style={{ flex: 1 }} />
+        <NotificationsCenter />
         <div
+          title={engineLabel}
           style={{
             display: "flex",
             alignItems: "center",
@@ -281,7 +433,7 @@ function Console() {
             color: "var(--text-muted)",
             textTransform: "none",
             letterSpacing: "0.05em",
-            maxWidth: 320,
+            maxWidth: 380,
             overflow: "hidden",
           }}
         >
@@ -289,8 +441,10 @@ function Console() {
             style={{
               width: 8,
               height: 8,
-              background: adv ? "var(--status-ok)" : "var(--text-muted)",
-              boxShadow: adv ? "0 0 7px var(--status-ok)" : "none",
+              borderRadius: 1,
+              flex: "0 0 auto",
+              background: activePage || adv ? "var(--status-ok)" : "var(--text-muted)",
+              boxShadow: activePage || adv ? "0 0 7px var(--status-ok)" : "none",
             }}
           />
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{engineLabel}</span>
@@ -310,16 +464,25 @@ function Console() {
             display: "flex",
             flexDirection: "column",
             borderRight: adv ? "1px solid var(--border-soft)" : "1px solid transparent",
-            background: "color-mix(in srgb, var(--surface-card) 72%, transparent)",
+            background: "color-mix(in srgb,#131314 90%,transparent)",
             transition: "flex-basis 260ms cubic-bezier(0.22,1,0.36,1),width 260ms cubic-bezier(0.22,1,0.36,1)",
           }}
         >
           {adv ? (
             <LeftRail
               moduleId={moduleId}
-              onSelectModule={setModuleId}
+              onSelectModule={(m) => {
+                setModuleId(m);
+                setBound(null);
+              }}
               bound={bound}
-              onBind={openInvestigation}
+              onBind={(inv) => {
+                if (inv) {
+                  openInvestigation(inv);
+                } else {
+                  setBound(null);
+                }
+              }}
               pagesOpen={pagesOpen}
               onTogglePages={() => setPagesOpen((v) => !v)}
               adminOpen={adminOpen}
@@ -339,21 +502,7 @@ function Console() {
               onOpenPage={(mod, page, title) => openNamedPage(mod, page, title ?? page)}
             />
           ) : null}
-          {intakeOpen ? (
-            <IntakeWizard
-              moduleId={moduleId}
-              onClose={() => setIntakeOpen(false)}
-              onBind={(inv) => {
-                setIntakeOpen(false);
-                openInvestigation(inv);
-              }}
-              onRequestUpload={() => {
-                setIntakeOpen(false);
-                openNamedPage(moduleId, "new-target", "upload target");
-              }}
-            />
-          ) : null}
-          {!(openPage && !pageMin) ? (
+          {!activePage ? (
             <ChatConsole
               mode={mode}
               moduleId={moduleId}
@@ -361,8 +510,18 @@ function Console() {
               investigationTitle={bound?.title ?? null}
               onToggleMode={() => setMode(adv ? "basic" : "advanced")}
               onOpenIntake={requestIntake}
+              onOpenWizard={openWizard}
               onOpenXray={bound ? () => openInvestigation(bound) : undefined}
-              dockOpen={openPage !== null && pageMin}
+              dockOpen={minimizedWindows.length > 0}
+            />
+          ) : null}
+          {!activePage ? (
+            <WidgetHost
+              moduleId={moduleId}
+              boundId={bound?.id ?? null}
+              adv={adv}
+              onOpenPage={openNamedPage}
+              onUnbind={() => setBound(null)}
             />
           ) : null}
 
@@ -371,14 +530,8 @@ function Console() {
               stay visible around it (the mock's embedded look). The page's own
               root is position:absolute;inset:0 with a transparent background, so
               the animated terminal shows through its panels. No top nav. */}
-          {openPage && !pageMin ? (
-            pageFull ? (
-              <div style={{ position: "fixed", inset: 0, zIndex: 45, background: "var(--surface-page)" }}>{renderPage(openPage)}</div>
-            ) : (
-              renderPage(openPage)
-            )
-          ) : null}
-          {openPage && pageMin ? (
+          {activePage ? renderPage(activePage) : null}
+          {minimizedWindows.length > 0 ? (
             <div
               style={{
                 position: "fixed",
@@ -388,64 +541,72 @@ function Console() {
                 zIndex: 31,
                 display: "flex",
                 alignItems: "center",
-                gap: 9,
+                gap: 8,
                 padding: "9px 14px",
                 background: "var(--surface-chrome)",
                 borderTop: "1px solid var(--border)",
                 boxShadow: "0 -8px 30px rgba(0,0,0,0.5)",
+                overflowX: "auto",
               }}
             >
-              <span style={{ width: 7, height: 7, background: "var(--accent)", boxShadow: "0 0 7px var(--accent)", flex: "0 0 auto" }} />
-              <span
-                style={{
-                  fontSize: 10,
-                  letterSpacing: "0.1em",
-                  textTransform: "uppercase",
-                  color: "var(--text-primary)",
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                }}
-              >
-                {openPage.title}
-              </span>
-              <span style={{ fontSize: 9, color: "var(--text-faint)", letterSpacing: "0.06em", flex: "0 0 auto" }}>
+              <span style={{ fontSize: 9, color: "var(--text-faint)", letterSpacing: "0.1em", textTransform: "uppercase", flex: "0 0 auto" }}>
                 minimized
               </span>
-              <span style={{ flex: 1 }} />
-              <button
-                type="button"
-                onClick={() => setPageMin(false)}
-                style={{
-                  background: "transparent",
-                  border: "1px solid var(--border-soft)",
-                  color: "var(--text-muted)",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 9,
-                  letterSpacing: "0.08em",
-                  textTransform: "uppercase",
-                  padding: "2px 8px",
-                  borderRadius: 2,
-                  cursor: "pointer",
-                }}
-              >
-                restore
-              </button>
-              <button
-                type="button"
-                onClick={closePage}
-                style={{
-                  background: "transparent",
-                  border: 0,
-                  color: "var(--text-muted)",
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 12,
-                  cursor: "pointer",
-                  padding: "0 4px",
-                }}
-              >
-                {"\u2715"}
-              </button>
+              {minimizedWindows.map((w) => (
+                <div
+                  key={w.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 7,
+                    padding: "3px 6px 3px 9px",
+                    background: "var(--surface-card)",
+                    border: "1px solid var(--border-soft)",
+                    borderRadius: 2,
+                    flex: "0 0 auto",
+                  }}
+                >
+                  <span style={{ width: 7, height: 7, background: "var(--accent)", boxShadow: "0 0 7px var(--accent)", flex: "0 0 auto" }} />
+                  <button
+                    type="button"
+                    onClick={() => setMinimized(w.id, false)}
+                    title="restore"
+                    style={{
+                      background: "transparent",
+                      border: 0,
+                      color: "var(--text-primary)",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 10,
+                      letterSpacing: "0.08em",
+                      textTransform: "uppercase",
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      maxWidth: 240,
+                    }}
+                  >
+                    {w.title}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => closeWindow(w.id)}
+                    title="close"
+                    style={{
+                      background: "transparent",
+                      border: 0,
+                      color: "var(--text-muted)",
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 11,
+                      cursor: "pointer",
+                      padding: "0 3px",
+                      flex: "0 0 auto",
+                    }}
+                  >
+                    {"\u2715"}
+                  </button>
+                </div>
+              ))}
             </div>
           ) : null}
         </section>

@@ -184,6 +184,26 @@ class VRModule(ModuleProtocol):
         """No filterable reports yet."""
         return []
 
+    def workflow_definitions(self) -> dict[str, dict]:
+        """VR module-owned finding lifecycle extension.
+
+        Adds the two VR-prefixed terminal domain states (``vr.false_positive``
+        and ``vr.accepted_risk``) reachable from the base ``investigating``
+        state, plus the re-open edges back to ``investigating``. Base
+        states remain platform-owned; only the module-prefixed vocabulary
+        is declared here per MODULE_STANDARD.
+        """
+        return {
+            "finding": {
+                "states": ["vr.false_positive", "vr.accepted_risk"],
+                "transitions": {
+                    "investigating": ["vr.false_positive", "vr.accepted_risk"],
+                    "vr.false_positive": ["investigating"],
+                    "vr.accepted_risk": ["investigating"],
+                },
+            },
+        }
+
     async def register_tools(
         self,
         tool_registry: ToolRegistry,
@@ -235,6 +255,16 @@ class VRModule(ModuleProtocol):
         """No filterable reports -- return rows unchanged."""
         del filters
         return list(rows)
+
+    def persona_router(self):
+        """Return the VR :class:`PersonaRouter` subclass (req 31).
+
+        Deferred import mirrors :meth:`route_specs` so the platform
+        can list this module's persona bindings without pulling the
+        VR agent stack at module-collection time.
+        """
+        from .agents.persona_router import PersonaRouter
+        return PersonaRouter
 
     def route_specs(self) -> list[ModuleRouteSpec]:
         """Declare the VR module's HTTP route surface.

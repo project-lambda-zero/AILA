@@ -4,6 +4,7 @@ export interface User {
   id?: string;
   username?: string;
   role?: string;
+  team_id?: string | null;
 }
 
 export interface LoginResponse {

@@ -590,6 +590,73 @@ class McpInstanceCatalog:
             await session.refresh(row)
             return row
 
+    async def ensure_instance(
+        self,
+        *,
+        module_scope: str,
+        name: str,
+        transport: str,
+        endpoint: str,
+        capability_tags: list[str] | tuple[str, ...] | None = None,
+    ) -> McpServerInstance:
+        """Idempotent upsert keyed on ``(module_scope, name)``.
+
+        Absent row: inserts with ``approval_state=PENDING`` and
+        ``enabled=True`` so the operator sees the row on the admin surface
+        and can approve it. Present row: updates only ``transport`` +
+        ``endpoint`` (the transport-layer contract from the module's
+        declared descriptor), NEVER touching ``approval_state``,
+        ``enabled``, or ``capability_tags`` -- those are operator-owned
+        columns that boot reconciliation must not clobber.
+
+        Returns the refreshed row.
+        """
+        if transport not in _ALLOWED_TRANSPORTS:
+            raise ValueError(
+                f"unknown transport {transport!r}; "
+                f"expected one of {sorted(_ALLOWED_TRANSPORTS)}",
+            )
+        async with async_session_scope() as session:
+            statement = select(McpServerInstance).where(
+                McpServerInstance.module_scope == module_scope,
+                McpServerInstance.name == name,
+            )
+            existing = (await session.exec(statement)).first()
+            if existing is None:
+                row = McpServerInstance(
+                    id=str(uuid4()),
+                    name=name,
+                    transport=transport,
+                    endpoint=endpoint,
+                    capability_tags=encode_capability_tags(capability_tags),
+                    enabled=True,
+                    module_scope=module_scope,
+                    team_id=None,
+                    approval_state=McpApprovalState.PENDING.value,
+                    approved_hash=None,
+                    schema_hash=None,
+                    server_card_json=None,
+                    created_at=utc_now(),
+                    updated_at=None,
+                )
+                session.add(row)
+                await session.commit()
+                await session.refresh(row)
+                return row
+            changed = False
+            if existing.transport != transport:
+                existing.transport = transport
+                changed = True
+            if existing.endpoint != endpoint:
+                existing.endpoint = endpoint
+                changed = True
+            if changed:
+                existing.updated_at = utc_now()
+                session.add(existing)
+                await session.commit()
+                await session.refresh(existing)
+            return existing
+
     def instance_to_dict(self, row: McpServerInstance) -> dict[str, Any]:
         """Project a row to an operator-facing dict.
 

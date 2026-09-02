@@ -218,6 +218,30 @@ async def _write_phase_directive(
         await uow.session.commit()
 
 
+async def _maybe_write_phase_deadline_warning(
+    branch_model: Any,
+    branch_id: str,
+    turns_remaining: int,
+) -> None:
+    """Inject a phase deadline warning into observables when near the phase cap."""
+    if turns_remaining > 2:
+        return
+    async with UnitOfWork() as uow:
+        branch = (await uow.session.exec(
+            _select(branch_model).where(branch_model.id == branch_id)
+        )).first()
+        if branch is None:
+            return
+        case_state = decode_case_state(branch.case_state_json)
+        case_state.observables["_directive.phase_deadline"] = (
+            f"PHASE DEADLINE: {turns_remaining} turn(s) remaining in this phase. "
+            "You MUST formulate your taint path, emit exploit payload/PoC, or discard unproven leads before phase close."
+        )
+        branch.case_state_json = encode_case_state(case_state)
+        uow.session.add(branch)
+        await uow.session.commit()
+
+
 def state_investigation_loop(
     bindings: InvestigationStateBindings,
     hooks: InvestigationStateHooks,
@@ -400,6 +424,10 @@ def state_investigation_loop(
             # support.
             if bindings.specialist_spawn_fn is not None:
                 await bindings.specialist_spawn_fn(investigation_id)
+
+            await _maybe_write_phase_deadline_warning(
+                bindings.branch_model, branch_id, max_turns - turn_attempt + 1,
+            )
 
             try:
                 result = await researcher.run_turn()

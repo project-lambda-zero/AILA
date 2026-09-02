@@ -233,26 +233,69 @@ def _model_supports_temperature(model_id: str) -> bool:
 
 
 def _strip_json_fences(content: str) -> str:
-    """Remove Markdown code fences from an LLM JSON response.
+    """Remove Markdown code fences, thinking tags, and surrounding prose from an LLM JSON response.
 
-    OmniRoute routed to Anthropic Claude returns ```json\\n{...}\\n``` even
-    when response_format=json_schema is requested. This strips the fence so
-    json.loads() works downstream. Safe for clean JSON (no-op).
+    Handles:
+    - <think>...</think> reasoning blocks from thinking models (DeepSeek / Qwen / Nemotron).
+    - ```json ... ``` code fences anywhere in the response.
+    - Direct JSON payloads.
     """
     if not content:
         return content
     text = content.strip()
-    if text.startswith("```"):
-        # Drop opening fence (possibly "```json" or "```")
+
+    # Strip <think>...</think> reasoning blocks if present
+    text = re.sub(r"<think>[\s\S]*?</think>", "", text).strip()
+
+    # If wrapped or containing markdown code fence, extract block between fences
+    fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+    if fence_match:
+        text = fence_match.group(1).strip()
+    elif text.startswith("```"):
         first_nl = text.find("\n")
-        if first_nl == -1:
-            return text
-        text = text[first_nl + 1:]
-        # Drop trailing fence
+        if first_nl != -1:
+            text = text[first_nl + 1:]
         if text.rstrip().endswith("```"):
-            text = text.rstrip()
-            text = text[: -3].rstrip()
+            text = text.rstrip()[:-3].rstrip()
+
     return text
+
+
+def _clean_and_repair_json(content: str) -> str:
+    """Extract and repair JSON from model output containing reasoning, code fences, or commentary."""
+    if not content:
+        return content
+    cleaned = _strip_json_fences(content)
+    try:
+        json.loads(cleaned)
+        return cleaned
+    except json.JSONDecodeError:
+        pass
+
+    # Try raw_decode on first { or [
+    start_obj = cleaned.find("{")
+    start_arr = cleaned.find("[")
+    starts = [s for s in (start_obj, start_arr) if s >= 0]
+    if starts:
+        start = min(starts)
+        try:
+            parsed, _ = json.JSONDecoder().raw_decode(cleaned[start:])
+            return json.dumps(parsed)
+        except json.JSONDecodeError:
+            pass
+
+    # Try matching outer object { ... }
+    if start_obj >= 0:
+        end_obj = cleaned.rfind("}")
+        if end_obj > start_obj:
+            slice_text = cleaned[start_obj : end_obj + 1]
+            try:
+                parsed = json.loads(slice_text)
+                return json.dumps(parsed)
+            except json.JSONDecodeError:
+                pass
+
+    return cleaned
 
 
 def _inject_strict_schema_requirements(schema: dict[str, Any]) -> dict[str, Any]:
@@ -1001,7 +1044,7 @@ class AilaLLMClient:
                         "aila.chat_structured.attempts", attempt + 1
                     )
                     final = LLMResponse(
-                        content=response.content,
+                        content=parsed.model_dump_json(),
                         model=response.model,
                         usage=accumulated_usage,
                         disabled=False,
@@ -2003,35 +2046,15 @@ class AilaLLMClient:
 
     @staticmethod
     def _validate_json_or_fallback(content: str) -> str:
-        """Validate that *content* is JSON, with a markdown-fence fallback (LLM-06 / D-10).
+        """Validate that *content* is JSON, with thinking-block and markdown-fence fallback (LLM-06 / D-10).
 
         If the model returned valid JSON, return it as-is.
-        If the model wrapped JSON in a ```json ... ``` fence, strip the fence
-        and return the inner JSON when it parses.
+        If the model wrapped JSON in <think> tags, markdown code fences, or commentary,
+        strip them and extract the inner JSON.
 
-        Returns the validated JSON string.
-        Raises LLMError if validation fails completely.
+        Returns the repaired JSON string.
         """
-        try:
-            json.loads(content)
-            return content
-        except json.JSONDecodeError:
-            # Try to extract JSON from markdown code blocks
-            stripped = content.strip()
-            if stripped.startswith("```"):
-                lines = stripped.split("\n")
-                # Remove first and last lines (``` markers)
-                inner = "\n".join(lines[1:-1] if lines[-1].strip() == "```" else lines[1:])
-                try:
-                    json.loads(inner)
-                    return inner
-                except json.JSONDecodeError:
-                    pass
-
-            raise LLMError(
-                "LLM response is not valid JSON and could not be recovered",
-                retryable=True,
-            )
+        return _clean_and_repair_json(content)
 
     @staticmethod
     def _parse_model(content: str, model_class: type[BaseModel]) -> BaseModel | None:
@@ -2042,22 +2065,8 @@ class AilaLLMClient:
         bumping the logger to DEBUG. The full content is in the LLM cost
         record's response_preview column for replay.
         """
-        try:
-            data = json.loads(content)
-            return model_class.model_validate(data)
-        except json.JSONDecodeError as exc:
-            logger.warning(
-                "_parse_model: JSON decode failed for %s -- %s. head=%r",
-                model_class.__name__, exc, content[:200],
-            )
-            return None
-        except ValidationError as exc:
-            logger.warning(
-                "_parse_model: schema validation failed for %s -- %s",
-                model_class.__name__,
-                str(exc).replace("\n", " | ")[:600],
-            )
-            return None
+        parsed, _, _ = AilaLLMClient._parse_model_verbose(content, model_class)
+        return parsed
 
     @staticmethod
     def _parse_model_verbose(
@@ -2083,14 +2092,31 @@ class AilaLLMClient:
         simpler ``_parse_model`` stays for call sites that only care
         whether the response parsed.
         """
+        cleaned = _clean_and_repair_json(content)
+        data = None
+        decode_err: Exception | None = None
         try:
-            data = json.loads(content)
+            data = json.loads(cleaned)
         except json.JSONDecodeError as exc:
+            decode_err = exc
+            # Fallback: extract the first top-level JSON object or array using raw_decode
+            start_obj = cleaned.find("{")
+            start_arr = cleaned.find("[")
+            starts = [s for s in (start_obj, start_arr) if s >= 0]
+            if starts:
+                start = min(starts)
+                try:
+                    data, _ = json.JSONDecoder().raw_decode(cleaned[start:])
+                    decode_err = None
+                except json.JSONDecodeError as raw_exc:
+                    decode_err = raw_exc
+
+        if data is None or decode_err is not None:
             logger.warning(
                 "_parse_model_verbose: JSON decode failed for %s -- %s. head=%r",
-                model_class.__name__, exc, content[:200],
+                model_class.__name__, decode_err, content[:200],
             )
-            return None, str(exc), None
+            return None, str(decode_err), None
         try:
             return model_class.model_validate(data), None, None
         except ValidationError as exc:

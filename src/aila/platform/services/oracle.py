@@ -37,12 +37,12 @@ from __future__ import annotations
 
 import json
 import logging
-from pathlib import Path
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from aila.platform.prompts.registry import PromptRegistry
+from aila.platform.prompts.version_store import PromptVersionStore
 from aila.platform.services.ledger import (
     _SYSTEM_ACTOR,
     LedgerPermissionError,
@@ -55,12 +55,11 @@ _log = logging.getLogger(__name__)
 
 _ORACLE_ACTOR = "__oracle__"
 
-# RFC-09 criterion 1: the adjudicator prompt lives in a versionable .md file
-# resolved through PromptRegistry, not an inline literal, so cost / seal rows
-# carry the resolved prompt attribution.
-_PROMPT_DIR = Path(__file__).resolve().parents[1] / "prompts"
+# RFC-09 / req 20: the adjudicator prompt is resolved from the DB prompt version store
+# via :class:`PromptRegistry`.
 _ADJUDICATOR_PROMPT_REGISTRY = PromptRegistry(
-    _PROMPT_DIR, fallback_base="system_oracle_specialist_adjudicator.md",
+    module="platform",
+    version_store=PromptVersionStore(),
 )
 
 

@@ -191,3 +191,26 @@ async def test_resolve_family_missing_and_no_default_returns_none(test_db) -> No
     base = _key()
     got = await store.resolve(base, alias="production", model_family="claude")
     assert got is None
+
+
+@pytest.mark.asyncio
+async def test_list_all_prompts(test_db) -> None:
+    del test_db
+    store = PromptVersionStore()
+    prefix = f"test_domain_{uuid4().hex[:6]}"
+    k1 = f"{prefix}/agent_a"
+    k2 = f"{prefix}/agent_b"
+    v1 = await store.register(k1, "BODY FOR AGENT A", author="alice", notes="initial")
+    await store.set_alias(k1, "production", v1, actor="alice", reason="deploy")
+    await store.register(k2, "BODY FOR AGENT B", author="bob")
+
+    all_prompts = await store.list_all_prompts(prefix=prefix)
+    assert len(all_prompts) == 2
+    by_key = {p["key"]: p for p in all_prompts}
+    assert by_key[k1]["version"] == "1.0.0"
+    assert by_key[k1]["production_version"] == "1.0.0"
+    assert by_key[k1]["aliases"] == ["production"]
+    assert by_key[k1]["author"] == "alice"
+    assert by_key[k2]["version"] == "1.0.0"
+    assert by_key[k2]["production_version"] is None
+

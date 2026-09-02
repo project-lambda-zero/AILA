@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AILA Console</title>
+    <link rel="icon" type="image/svg+xml" href="/aila-monogram.svg" />
 
     <!--
       #47 -- Content-Security-Policy (defence-in-depth XSS mitigation).
@@ -13,7 +14,7 @@
     -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com; connect-src 'self' http: https: ws: wss:; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self';"
+      content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com; connect-src 'self' http: https: ws: wss:; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'self';"
     />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
 
@@ -27,11 +28,11 @@
     <!--
       AILA design system fonts.
         Display / emphasis = Apoc Revelations (self-hosted .otf)
-        Mono               = Monaspace Neon   (self-hosted .otf)
+        Mono               = Spline Sans Mono (Google Fonts)
         Body / UI          = Familjen Grotesk (Google Fonts)
-        Fallbacks          = Newsreader (serif), JetBrains Mono (mono)
-      The two self-hosted signature faces are preloaded so the shell
-      paints in-brand on first frame; @font-face lives in globals.css.
+        Fallbacks          = Newsreader (serif), ui-monospace (mono)
+      The self-hosted display face is preloaded so the shell paints
+      in-brand on first frame; @font-face lives in globals.css.
     -->
     <link
       rel="preload"
@@ -40,18 +41,11 @@
       type="font/otf"
       crossorigin
     />
-    <link
-      rel="preload"
-      href="/fonts/MonaspaceNeon-Regular.otf"
-      as="font"
-      type="font/otf"
-      crossorigin
-    />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,300;1,6..72,400&family=Familjen+Grotesk:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=JetBrains+Mono:wght@400;500;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;1,6..72,300;1,6..72,400&family=Familjen+Grotesk:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Spline+Sans+Mono:ital,wght@0,300..700;1,300..700&display=swap"
     />
   </head>
   <body>

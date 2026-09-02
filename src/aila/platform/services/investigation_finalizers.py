@@ -105,6 +105,8 @@ async def synthesize_no_finding_outcomes(
     build_no_finding_payload: Callable[..., dict[str, Any]],
     only_id: str | None = None,
     orphan_terminal_status: str = InvestigationStatus.FAILED.value,
+    get_int: Callable[[str], Awaitable[int]] | None = None,
+    get_str: Callable[[str], Awaitable[str]] | None = None,
 ) -> int:
     """Synthesize a no-finding outcome for orphaned investigations.
 
@@ -205,6 +207,20 @@ async def synthesize_no_finding_outcomes(
     now_iso = now.isoformat()
     synthesized = 0
 
+    # F2: resolve reconciler policy once per tick. Defaults preserve the
+    # prior behavior (write the no-finding memo at ``approved`` with no
+    # minimum-turns floor). Modules opt in by binding ``get_int`` /
+    # ``get_str`` config readers; the keys resolve against the module's
+    # ConfigRegistry namespace so a PUT /config lands on the next tick.
+    no_finding_state = "approved"
+    min_turns_before_close = 0
+    if get_str is not None:
+        raw_state = await get_str("reconciler_no_finding_state")
+        if raw_state == "draft":
+            no_finding_state = "draft"
+    if get_int is not None:
+        min_turns_before_close = max(0, await get_int("reconciler_min_turns_before_close"))
+
     for inv_id in orphan_inv_ids:
         # Issue #202: per-inv savepoint so a single row's failure
         # (constraint violation, transient DB error, concurrent
@@ -224,6 +240,8 @@ async def synthesize_no_finding_outcomes(
                     now=now,
                     now_iso=now_iso,
                     orphan_terminal_status=orphan_terminal_status,
+                    no_finding_state=no_finding_state,
+                    min_turns_before_close=min_turns_before_close,
                 ):
                     synthesized += 1
         except (SQLAlchemyError, RuntimeError) as exc:
@@ -257,6 +275,8 @@ async def _synthesize_one_no_finding(
     now: Any,
     now_iso: str,
     orphan_terminal_status: str = InvestigationStatus.FAILED.value,
+    no_finding_state: str = "approved",
+    min_turns_before_close: int = 0,
 ) -> bool:
     """Synthesize a no-finding outcome for one investigation.
 
@@ -410,6 +430,38 @@ async def _synthesize_one_no_finding(
         )
         return True
 
+    # F2: minimum-turns floor. When configured (> 0), an orphaned
+    # investigation where NO branch reached the floor has not done
+    # enough work to justify a clean no-finding memo. Route it to the
+    # resumable terminal status instead of writing a hollow outcome;
+    # stall recovery re-dispatches it. Default 0 keeps prior behavior.
+    if min_turns_before_close > 0 and all(
+        r[2] < min_turns_before_close for r in unwrapped
+    ):
+        await uow.session.exec(
+            update(inv)
+            .where(inv.id == inv_id)
+            .where(inv.status == InvestigationStatus.RUNNING.value)
+            .values(
+                status=orphan_terminal_status,
+                stopped_at=now,
+                updated_at=now,
+            ),
+        )
+        await close_orphan_branches_on_terminal(
+            uow, inv_id, branch_table=branch_table,
+            reason="below_min_turns_floor", now=now,
+        )
+        _log.info(
+            "synthesize_no_finding: inv=%s marked %s (max branch turns "
+            "%d < floor %d across %d branches -- not enough work to "
+            "synthesize a no-finding outcome; resumable)",
+            inv_id, orphan_terminal_status.upper(),
+            max(r[2] for r in unwrapped), min_turns_before_close,
+            len(unwrapped),
+        )
+        return True
+
     summary_text = (
         "Investigation auto-closed by reconciler: every branch "
         "reached a terminal state without proposing a finding. "
@@ -456,7 +508,7 @@ async def _synthesize_one_no_finding(
                 :payload, :confidence, :evidence,
                 false, NULL,
                 'skipped', NULL,
-                :now, 'approved'
+                :now, :state
             )
             ON CONFLICT (id) DO NOTHING
             """,
@@ -470,6 +522,9 @@ async def _synthesize_one_no_finding(
             "confidence": "caveated",
             "evidence": "[]",
             "now": now,
+            # Clamp to the two valid states; a direct caller passing
+            # anything else falls back to the prior ``approved`` shape.
+            "state": "draft" if no_finding_state == "draft" else "approved",
         },
     )
     await uow.session.exec(
@@ -773,6 +828,8 @@ async def synthesize_no_finding_for_investigation(
     no_finding_outcome_kind: str,
     build_no_finding_payload: Callable[..., dict[str, Any]],
     orphan_terminal_status: str = InvestigationStatus.FAILED.value,
+    get_int: Callable[[str], Awaitable[int]] | None = None,
+    get_str: Callable[[str], Awaitable[str]] | None = None,
 ) -> int:
     """Per-id wrapper for :func:`synthesize_no_finding_outcomes`.
 
@@ -793,6 +850,8 @@ async def synthesize_no_finding_for_investigation(
             build_no_finding_payload=build_no_finding_payload,
             only_id=investigation_id,
             orphan_terminal_status=orphan_terminal_status,
+            get_int=get_int,
+            get_str=get_str,
         )
         await uow.commit()
     return wrote

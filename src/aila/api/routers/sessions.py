@@ -37,6 +37,7 @@ from aila.api.schemas.sessions import (
     SessionResponse,
     SessionSummary,
 )
+from aila.platform.llm.errors import LLMError
 from aila.platform.services.audit import record_audit_event
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import SessionMessageRecord, SessionRecord
@@ -71,6 +72,24 @@ def _session_to_response(record: SessionRecord) -> SessionResponse:
     )
 
 
+def _decode_actions(raw: str | None) -> list[dict[str, object]]:
+    """Parse the persisted ``actions_json`` blob into a list of dicts.
+
+    A NULL, blank, malformed, or wrongly-typed value degrades to an
+    empty list -- the frontend treats "no actions" as the same shape
+    regardless of source.
+    """
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [entry for entry in parsed if isinstance(entry, dict)]
+
+
 def _message_to_response(record: SessionMessageRecord) -> SessionMessageResponse:
     return SessionMessageResponse(
         message_id=record.id,
@@ -78,6 +97,7 @@ def _message_to_response(record: SessionMessageRecord) -> SessionMessageResponse
         content=record.content,
         run_id=record.run_id,
         created_at=record.created_at,
+        actions=_decode_actions(record.actions_json),
     )
 
 
@@ -280,6 +300,8 @@ async def _sync_message(
         )
 
     async def _handle() -> SessionMessageRecord:
+        from sqlmodel import select
+
         async with async_session_scope() as db:
             sess_record = await db.get(SessionRecord, session_id)
             if sess_record is None or sess_record.user_id != auth.user_id:
@@ -287,6 +309,21 @@ async def _sync_message(
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Session '{session_id}' not found or belongs to another user -- verify the session_id via POST /sessions",
                 )
+            # req 25: load prior turns BEFORE inserting the new user
+            # row so ``history`` is the conversation as it stood when
+            # the operator's message arrived. dante receives the new
+            # message separately via ``query=``.
+            prior_stmt = (
+                select(SessionMessageRecord)
+                .where(SessionMessageRecord.session_id == session_id)
+                .order_by(SessionMessageRecord.created_at)  # type: ignore[arg-type]
+            )
+            prior_rows = list((await db.exec(prior_stmt)).all())
+            history = [
+                {"role": row.role, "content": row.content}
+                for row in prior_rows
+                if row.role in ("user", "assistant") and row.content
+            ]
             db.add(SessionMessageRecord(
                 session_id=session_id,
                 role="user",
@@ -295,27 +332,36 @@ async def _sync_message(
             ))
             await db.commit()
 
-        # Run the platform OUTSIDE the DB session. handle() is async and drives a
-        # multi-step agent run: awaiting it here is the correctness fix (the
-        # result was previously an un-awaited coroutine, so the reply echoed the
-        # user's own text) and keeps a pooled connection off the long run (#63).
+        # req 25: route through the platform ``dante`` console agent
+        # instead of the ModuleRouter. dante proposes actions the
+        # frontend executes on confirm; the session router itself
+        # never enqueues a scan or writes to any module transcript.
+        actions_payload: list[dict[str, object]] = []
         try:
-            platform_response = await platform.handle(query=req.content, team_id=auth.team_id)
-            response_text = (platform_response.message or "").strip()
-            response_run_id = platform_response.run_id
+            reply = await platform.console_reply(
+                query=req.content,
+                history=history,
+                team_id=auth.team_id,
+            )
+            response_text = (reply.text or "").strip()
+            actions_payload = list(reply.actions)
             if not response_text:
                 response_text = EMPTY_RESPONSE_TEXT
-        except Exception:
-            _log.exception("Platform handle() failed for session %s", session_id)
+        except (LLMError, RuntimeError, ValueError, TypeError, KeyError, OSError) as exc:
+            _log.exception("dante console_reply failed for session %s: %s", session_id, exc)
             response_text = "I encountered an error processing your request."
-            response_run_id = None
+            actions_payload = []
+        # dante does not trigger a background scan directly; the
+        # frontend enqueues on operator confirm, so run_id stays None.
+        response_run_id: str | None = None
 
         async with async_session_scope() as db:
             asst_msg = SessionMessageRecord(
                 session_id=session_id,
                 role="assistant",
                 content=response_text,
-                run_id=response_run_id,  # TASK-06: inline scan run_id if triggered
+                run_id=response_run_id,
+                actions_json=json.dumps(actions_payload) if actions_payload else None,
             )
             db.add(asst_msg)
             # #52-3.2: flush populates the PK so the audit payload references
@@ -399,34 +445,61 @@ async def _stream_message(
             )
             await db.commit()
 
+    # req 25: load prior conversation BEFORE we insert the user turn
+    # so history mirrors the sync path (excludes the just-sent message,
+    # which dante receives via ``query=``).
+    async def _load_history() -> list[dict[str, str]]:
+        from sqlmodel import select
+
+        async with async_session_scope() as db:
+            stmt = (
+                select(SessionMessageRecord)
+                .where(SessionMessageRecord.session_id == session_id)
+                .order_by(SessionMessageRecord.created_at)  # type: ignore[arg-type]
+            )
+            rows = list((await db.exec(stmt)).all())
+        return [
+            {"role": row.role, "content": row.content}
+            for row in rows
+            if row.role in ("user", "assistant") and row.content
+        ]
+
+    history = await _load_history()
     await _add_user_msg()
 
     async def _stream_generator() -> AsyncGenerator[str, None]:
-        # handle() is async and exposes no token-level callback, so await it in
-        # the request's event loop and stream the resolved summary as a single
-        # token event. The previous path ran it in a worker thread and called
-        # the async handle without awaiting it, so the stream carried the echoed
-        # input, never a real response. Progress-level streaming via handle()'s
-        # progress_callback is a separate enhancement.
-        # #60: count this live stream against the global SSE ceiling. The
-        # try/finally guarantees .dec() runs on every exit path including
-        # client disconnect (the generator is cancelled -> finally runs).
+        # req 25: route through the platform ``dante`` console agent
+        # (see :meth:`AILAPlatform.console_reply`). Awaits the reply,
+        # streams the text as one token event, then a done event
+        # carrying the actions the frontend should render as confirm
+        # buttons.
+        # #60: count this live stream against the global SSE ceiling.
+        # The try/finally guarantees .dec() runs on every exit path
+        # including client disconnect (generator cancelled -> finally).
         ACTIVE_SSE.inc()
         try:
-            run_id_val: str | None = None
+            actions_payload: list[dict[str, object]] = []
             try:
-                resp = await platform.handle(query=req.content, team_id=auth.team_id)
-                full_text = (resp.message or "").strip()
-                run_id_val = resp.run_id
-            except Exception:
-                _log.exception("Platform error during SSE streaming for session %s", session_id)
+                reply = await platform.console_reply(
+                    query=req.content,
+                    history=history,
+                    team_id=auth.team_id,
+                )
+                full_text = (reply.text or "").strip()
+                actions_payload = list(reply.actions)
+            except (LLMError, RuntimeError, ValueError, TypeError, KeyError, OSError) as exc:
+                _log.exception(
+                    "dante console_reply failed during SSE streaming for session %s: %s",
+                    session_id,
+                    exc,
+                )
                 full_text = "I encountered an error processing your request."
+                actions_payload = []
 
             if not full_text:
                 full_text = EMPTY_RESPONSE_TEXT
 
-            if full_text:
-                yield f"data: {json.dumps({'token': full_text, 'type': 'token'})}\n\n"
+            yield f"data: {json.dumps({'token': full_text, 'type': 'token'})}\n\n"
 
             # Persist the assistant message once the response resolves (D-07).
             async with async_session_scope() as db:
@@ -434,11 +507,20 @@ async def _stream_message(
                     session_id=session_id,
                     role="assistant",
                     content=full_text,
-                    run_id=run_id_val,
+                    run_id=None,
+                    actions_json=json.dumps(actions_payload) if actions_payload else None,
                 ))
                 await db.commit()
 
-            yield f"data: {json.dumps({'type': 'done', 'run_id': run_id_val})}\n\n"
+            yield (
+                "data: "
+                + json.dumps({
+                    "type": "done",
+                    "run_id": None,
+                    "actions": actions_payload,
+                })
+                + "\n\n"
+            )
         finally:
             ACTIVE_SSE.dec()
 

@@ -10,6 +10,11 @@ from aila.modules.vr.services.cve_service import (
     CVEService,
     CVEServiceError,
 )
+from aila.modules.vr.services.distinctness import (
+    compute_distinctness_score,
+    extract_candidate_text,
+    extract_corpus_texts,
+)
 from aila.modules.vr.services.fuzz_service import (
     FuzzCampaignService,
     FuzzServiceError,
@@ -36,20 +41,23 @@ from aila.modules.vr.services.target_analysis import (
 from aila.modules.vr.services.target_ingestion import TargetIngestionService
 
 __all__ = [
+    "CVEService",
+    "CVEServiceError",
     "FuzzCampaignService",
     "FuzzServiceError",
     "MCP_SERVERS",
     "McpRegistryService",
-    "CVEService",
-    "CVEServiceError",
-    "TargetAnalysisError",
-    "TargetAnalysisService",
     "MultiTargetService",
     "MultiTargetServiceError",
     "PatternRetrievalResult",
     "PatternStore",
     "PatternStoreError",
+    "TargetAnalysisError",
+    "TargetAnalysisService",
     "TargetIngestionService",
     "classify_crash_severity_default",
+    "compute_distinctness_score",
+    "extract_candidate_text",
+    "extract_corpus_texts",
     "triage_crash",
 ]

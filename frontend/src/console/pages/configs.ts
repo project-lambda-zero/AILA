@@ -1,7 +1,37 @@
 import { createElement } from "react";
 
-import type { PageColumn, PageConfig } from "./DataPage";
-import { LlmChatTranscript, llmPreviewLine } from "./LlmLogEntry";
+import { css } from "../css";
+import { AuditEventDetail } from "./AuditEventDetail";
+import { SeverityBadge, StatusBadge, WorkflowStateBadge } from "./badges";
+import { formatFireTime, humanizeCron, nextRuns } from "./cronPreview";
+import type { PageAction, PageColumn, PageConfig } from "./DataPage";
+import { LlmLogViewer } from "./LlmLogViewer";
+import { AgentPromptViewer, PromptBodyDetail, PromptFullViewer } from "./PromptViewer";
+
+/** Build a workflow-transition PageAction for a findings DataPage. Each POST
+ * hits /findings/{id}/transition with the module id and target state; the
+ * `whenField: "workflow_state"` gate hides the button on rows whose current
+ * state cannot legally reach the target. Notes are collected in a small pre-
+ * flight modal so operators can record why the state changed. */
+function transitionAction(moduleId: string, target: string, sources: string[]): PageAction {
+  return {
+    label: "\u2192 " + target,
+    method: "POST",
+    endpoint: "/findings/{id}/transition",
+    body: { module_id: moduleId, target_state: target },
+    whenField: "workflow_state",
+    whenStatus: sources,
+    fields: [
+      { name: "notes", label: "notes", type: "textarea", placeholder: "optional context recorded on the workflow record" },
+    ],
+  };
+}
+
+const mwTransition = (target: string, sources: string[]): PageAction =>
+  transitionAction("malware", target, sources);
+
+const vrTransition = (target: string, sources: string[]): PageAction =>
+  transitionAction("vr", target, sources);
 
 /** Column shorthand: field + auto-labelled from the field name. */
 // Auto-assign a shared semantic renderer (badges.tsx) for fields whose names
@@ -38,6 +68,26 @@ const c = (field: string, label?: string): PageColumn => ({
   kind: KIND_FIELDS[field],
 });
 
+/** Actions on the auth surface that read as medium severity even when they
+ * succeed -- minting, revoking, or issuing a credential is a security-relevant
+ * event worth surfacing above routine activity. */
+const AUDIT_MEDIUM_ACTIONS: Record<string, true> = {
+  create_api_key: true,
+  revoke_api_key: true,
+  token_issue: true,
+  token_refresh: true,
+};
+
+/** Audit severity is a read-time projection of (action, status), NOT a stored
+ * column: a failed event is high, an auth-surface action is medium, everything
+ * else is low. Named `severity` so the chip reads through the same tone map as
+ * every other severity chip on the console (badges.tsx SEVERITY_TONE). */
+function auditSeverity(row: Record<string, unknown>): "high" | "medium" | "low" {
+  if (String(row["status"] ?? "").toLowerCase() === "failed") return "high";
+  if (AUDIT_MEDIUM_ACTIONS[String(row["action"] ?? "")]) return "medium";
+  return "low";
+}
+
 /** One DataPage config per left-rail item, keyed `${moduleId}:${pageId}`.
  * Endpoints + fields are the real backend contract (mapped from the routers).
  * The registry turns each of these into a live data window. */
@@ -47,27 +97,170 @@ export const PAGE_CONFIGS = {
     title: "vr \u00b7 workspaces",
     endpoint: "/vr/workspaces",
     columns: [c("name"), c("slug"), c("status"), c("target_count", "targets"), c("active_investigation_count", "active"), c("created_at", "created")],
+    filters: [{ name: "name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "vr:targets": {
     title: "vr \u00b7 targets",
     endpoint: "/vr/targets",
     columns: [c("display_name", "name"), c("kind"), c("status"), c("analysis_state", "analysis"), c("primary_language", "lang"), c("workspace_name", "workspace"), c("created_at", "created")],
-  },
-  "vr:vuln-research": {
-    title: "vr \u00b7 research projects",
-    endpoint: "/vr/projects",
-    columns: [c("name"), c("cve_id", "cve"), c("status"), c("finding_count", "findings"), c("latest_disclosure_status", "disclosure"), c("created_at", "created")],
+    filters: [{ name: "display_name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "vr:investigations": {
     title: "vr \u00b7 investigations",
     endpoint: "/vr/investigations",
-    blurb: "click a row to raise its x-ray; the targets page drills down per target",
-    columns: [c("title"), c("kind"), c("status"), c("strategy_family", "strategy"), c("branch_count", "branches"), c("message_count", "turns"), c("outcome_count", "outcomes"), c("cost_actual_usd", "cost $")],
+    // Server-side pagination + filters: /vr/investigations paginates by
+    // offset/limit (meta.total) and accepts ?q=&status=&kind= (api_router
+    // list_investigations). The filters below are marked server:true so they
+    // narrow the full catalogue and the page count reflects the filtered
+    // total, not just the loaded page.
+    pagination: true,
+    paginationParams: "offset",
+    filters: [
+      { name: "q", label: "search title", type: "text", server: true },
+      { name: "status", label: "status", type: "select", server: true, options: [
+        { value: "running", label: "running" },
+        { value: "paused", label: "paused" },
+        { value: "stalled", label: "stalled" },
+        { value: "completed", label: "completed" },
+        { value: "failed", label: "failed" },
+        { value: "abandoned", label: "abandoned" },
+        { value: "created", label: "created" },
+      ] },
+      { name: "kind", label: "kind", type: "select", server: true, options: [
+        { value: "discovery", label: "discovery" },
+        { value: "variant_hunt", label: "variant hunt" },
+        { value: "triage", label: "triage" },
+        { value: "n_day", label: "n-day" },
+        { value: "audit", label: "audit" },
+        { value: "masvs_audit", label: "masvs audit" },
+        { value: "apk_static_audit", label: "apk static audit" },
+      ] },
+      // targets label uses `display_name` because VRTargetSummary has no
+      // `name` field. `has_outcomes` offers only the `true` option since an
+      // empty select reads as any. Polarity and verifier verdict are
+      // enumerable sets, so they are `select`, not free text.
+      { name: "target_id", label: "target", type: "select", server: true, optionsFrom: "/vr/targets", optionsValueField: "id", optionsLabelField: "display_name" },
+      { name: "workspace_id", label: "workspace", type: "select", server: true, optionsFrom: "/vr/workspaces", optionsValueField: "id", optionsLabelField: "name" },
+      // No project_id filter: VRInvestigationRecord.project_id is never set on
+      // any creation path (main create, variant-hunt children, and fuzz child
+      // copies all leave it NULL), and VRInvestigationSummary carries no
+      // project_id field -- so the filter could only ever return zero rows and
+      // the column could never confirm a match. The n-day project surface is
+      // the CVE-reproduction page instead (req 4 / vr-navigation-ia AC4).
+      { name: "has_outcomes", label: "outcomes", type: "select", server: true, options: [{ value: "true", label: "with outcomes" }] },
+      { name: "primary_outcome_polarity", label: "verdict polarity", type: "select", server: true, options: [
+        { value: "finding", label: "finding" },
+        { value: "no_finding", label: "no finding" },
+        { value: "inconclusive", label: "inconclusive" },
+      ] },
+      { name: "verifier_verdict", label: "verdict", type: "select", server: true, options: [
+        { value: "confirmed", label: "confirmed" },
+        { value: "refuted", label: "refuted" },
+        { value: "inconclusive", label: "inconclusive" },
+      ] },
+    ],
+    // Result-first columns. `kind` is the operator's classification of the
+    // investigation (discovery / variant_hunt / triage / n_day / audit);
+    // `strategy_family` is the reasoning playbook the engine runs, which the
+    // server derives from `kind` by default -- so it duplicates `kind` on
+    // almost every row and is dropped here (still visible in the x-ray when
+    // overridden). `verdict` is the polarity of the primary outcome, `outcome`
+    // its type, `findings` the concrete finding records produced, `outcomes`
+    // the count of typed reasoning outcomes.
+    columns: [
+      c("title"),
+      c("kind"),
+      c("status"),
+      {
+        field: "primary_outcome_polarity",
+        label: "verdict",
+        render: (v) => {
+          if (v === null || v === undefined || v === "") return "\u2014";
+          const s = String(v);
+          const tone = s === "finding" ? "ok" : s === "inconclusive" ? "warn" : "muted";
+          return createElement(StatusBadge, { value: s.replace(/_/g, " "), tone });
+        },
+      },
+      {
+        field: "primary_outcome_kind",
+        label: "outcome",
+        render: (v) => (v === null || v === undefined || v === "" ? "\u2014" : String(v).replace(/_/g, " ")),
+      },
+      {
+        field: "linked_finding_ids",
+        label: "findings",
+        render: (v) => {
+          const n = Array.isArray(v) ? v.length : 0;
+          return createElement(
+            "span",
+            { style: css(`font-family:var(--font-mono);font-variant-numeric:tabular-nums;color:${n > 0 ? "var(--accent)" : "var(--text-faint)"};`) },
+            String(n),
+          );
+        },
+      },
+      c("outcome_count", "outcomes"),
+      c("cost_actual_usd", "cost $"),
+      c("message_count", "turns"),
+    ],
+    actions: [
+      {
+        label: "delete",
+        method: "DELETE",
+        endpoint: "/vr/investigations/{id}",
+        destructive: true,
+        confirm: "Permanently delete this investigation and its reasoning records?",
+      },
+    ],
+    bulkActions: [
+      {
+        label: "delete selected",
+        method: "DELETE",
+        endpoint: "/vr/investigations/{id}",
+        destructive: true,
+        confirm: "Permanently delete the selected investigations?",
+      },
+    ],
   },
   "vr:patterns": {
     title: "vr \u00b7 patterns",
     endpoint: "/vr/patterns",
+    // /vr/patterns paginates by offset/limit (meta.total) and filters by
+    // kind/status/scope; the filters below are server-side so they narrow the
+    // full catalog and the page count reflects the filtered total.
+    pagination: true,
+    paginationParams: "offset",
     columns: [c("kind"), c("summary"), c("confidence"), c("status"), c("scope"), c("trust_tier", "trust"), c("times_retrieved", "reused")],
+    // Review transitions go through the existing PATCH contract (there is no
+    // dedicated review endpoint by design): promote draft -> active, and
+    // archive active -> archived. Each is gated on the row's lifecycle status
+    // so the button only shows on rows it can legally move.
+    actions: [
+      { label: "promote to active", method: "PATCH", endpoint: "/vr/patterns/{id}", body: { status: "active" }, whenField: "status", whenStatus: ["draft"] },
+      { label: "archive", method: "PATCH", endpoint: "/vr/patterns/{id}", body: { status: "archived" }, whenField: "status", whenStatus: ["active"], confirm: "archive this pattern? archived patterns are no longer returned by applicable-pattern retrieval." },
+    ],
+    bulkActions: [
+      { label: "archive selected", method: "PATCH", endpoint: "/vr/patterns/{id}", body: { status: "archived" }, confirm: "Archive the selected patterns?" },
+    ],
+    filters: [
+      { name: "kind", label: "kind", type: "select", server: true, options: [
+        { value: "exploitation_technique", label: "exploitation technique" },
+        { value: "fuzzing_strategy", label: "fuzzing strategy" },
+        { value: "search_heuristic", label: "search heuristic" },
+        { value: "tool_recipe", label: "tool recipe" },
+        { value: "triage_rule", label: "triage rule" },
+      ] },
+      { name: "status", label: "status", type: "select", server: true, options: [
+        { value: "draft", label: "draft" },
+        { value: "active", label: "active" },
+        { value: "archived", label: "archived" },
+      ] },
+      { name: "scope", label: "scope", type: "select", server: true, options: [
+        { value: "local", label: "local" },
+        { value: "workspace", label: "workspace" },
+        { value: "team", label: "team" },
+        { value: "global", label: "global" },
+      ] },
+    ],
   },
   "vr:findings": {
     title: "vr \u00b7 findings",
@@ -76,17 +269,92 @@ export const PAGE_CONFIGS = {
     // (api_router.py:1665+), so offset-mode pagination reads the true total.
     pagination: true,
     paginationParams: "offset",
-    columns: [c("crash_type", "crash"), c("vulnerable_function", "function"), c("disclosure_status", "disclosure"), c("assigned_cve_id", "cve"), c("cvss_score", "cvss"), c("cwe_id", "cwe"), c("evidence_count", "evidence")],
+    columns: [
+      c("crash_type", "crash"),
+      c("vulnerable_function", "function"),
+      {
+        field: "workflow_state",
+        label: "state",
+        render: (v) => createElement(WorkflowStateBadge, { value: v ?? "new" }),
+      },
+      c("disclosure_status", "disclosure"),
+      c("assigned_cve_id", "cve"),
+      c("cvss_score", "cvss"),
+      c("cwe_id", "cwe"),
+      c("evidence_count", "evidence"),
+    ],
+    filters: [{ name: "crash_type", label: "crash type", type: "text" }, { name: "workflow_state", label: "state", type: "select" }],
+    // Enrich a finding in place: writers leave triage/classification fields
+    // NULL for stub and direct-dispatch findings, so the operator fills them
+    // through the pre-flight modal (fields prefill from the row where present).
+    // PATCH /vr/findings/{id} is the project-agnostic edit endpoint so null-
+    // project stubs are editable; the response re-derives the list row.
+    actions: [
+      {
+        label: "edit",
+        method: "PATCH",
+        endpoint: "/vr/findings/{id}",
+        fields: [
+          { name: "crash_type", label: "crash type", type: "text", fromRow: "crash_type", placeholder: "e.g. overflow_heap, uaf, oob_write" },
+          { name: "vulnerable_function", label: "vulnerable function", type: "text", fromRow: "vulnerable_function" },
+          { name: "cvss_score", label: "cvss score", type: "number", fromRow: "cvss_score", placeholder: "0.0 - 10.0" },
+          { name: "cvss_vector", label: "cvss vector", type: "text", fromRow: "cvss_vector" },
+          { name: "cwe_id", label: "cwe id", type: "text", fromRow: "cwe_id", placeholder: "e.g. CWE-416" },
+          { name: "assigned_cve_id", label: "cve id", type: "text", fromRow: "assigned_cve_id", placeholder: "e.g. CVE-2025-1234" },
+          { name: "evidence_refs", label: "evidence refs", type: "tags", placeholder: "message / outcome ids or source citations" },
+        ],
+      },
+      // Workflow transitions. Each row calls POST /findings/{id}/transition
+      // with module_id="vr" and the target state; whenStatus gates the button
+      // by the row's current workflow_state so only legal edges appear. The
+      // graph mirrors module.py workflow_definitions() (base triage +
+      // vr.false_positive / vr.accepted_risk) -- keep in lockstep.
+      vrTransition("investigating", ["new", "mitigated", "vr.false_positive", "vr.accepted_risk"]),
+      vrTransition("mitigated", ["investigating"]),
+      vrTransition("verified", ["mitigated"]),
+      vrTransition("closed", ["verified"]),
+      vrTransition("vr.false_positive", ["investigating"]),
+      vrTransition("vr.accepted_risk", ["investigating"]),
+    ],
   },
   "vr:disclosures": {
     title: "vr \u00b7 disclosures",
     endpoint: "/vr/disclosures",
-    columns: [c("finding_id", "finding"), c("kind"), c("status"), c("poc_tier", "poc"), c("severity_rating", "severity"), c("bounty_awarded_usd", "bounty $"), c("created_at", "created")],
+    // /vr/disclosures paginates by offset/limit with meta{total,offset,limit}
+    // (api_router.py:7440+), so offset-mode reads the true total and the list
+    // is reachable past the default 50-row page.
+    pagination: true,
+    paginationParams: "offset",
+    // Each row embeds its resolved channel (VRDisclosureSubmissionSummary.
+    // track_info), so the track name shows as a column and the full track
+    // detail (program_url, accepted_poc_tiers, embargo_default_days, ...)
+    // renders in the click-open detail panel via StructuredValue -- there is
+    // no separate disclosure-tracks page.
+    columns: [
+      c("finding_id", "finding"),
+      {
+        field: "track_info",
+        label: "track",
+        render: (v) => {
+          const info = v as { display_name?: unknown } | null;
+          const name = info && typeof info === "object" ? info.display_name : null;
+          return name != null && name !== "" ? String(name) : "\u2014";
+        },
+      },
+      c("kind"),
+      c("status"),
+      c("poc_tier", "poc"),
+      c("severity_rating", "severity"),
+      c("bounty_awarded_usd", "bounty $"),
+      c("created_at", "created"),
+    ],
+    filters: [{ name: "kind", label: "kind", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "vr:fuzz-campaigns": {
     title: "vr \u00b7 fuzz campaigns",
     endpoint: "/vr/fuzz/campaigns",
     columns: [c("name"), c("engine_id", "engine"), c("status"), c("coverage_pct", "coverage %"), c("crashes_found", "crashes"), c("total_execs", "execs"), c("execs_per_sec", "exec/s")],
+    filters: [{ name: "name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }],
     actions: [
       {
         label: "launch",
@@ -105,67 +373,82 @@ export const PAGE_CONFIGS = {
       },
     ],
   },
-  "vr:mcp-servers": {
-    title: "vr \u00b7 mcp servers",
-    endpoint: "/vr/mcp/servers",
-    columns: [c("name"), c("base_url", "url"), c("status"), c("latency_ms", "latency"), c("tool_count", "tools"), c("last_probed_at", "probed")],
-  },
-  "vr:mcp-call-log": {
-    title: "vr \u00b7 mcp call log",
-    endpoint: "/vr/mcp/calls",
-    columns: [c("server_id", "server"), c("action"), c("status"), c("http_status", "http"), c("latency_ms", "latency"), c("error_excerpt", "error"), c("called_at", "called")],
-  },
   // ---- Malware (prefix /malware) ---------------------------------------
-  "malware:malware-analysis": {
-    title: "malware \u00b7 analysis",
-    endpoint: "/malware/investigations",
-    columns: [c("title"), c("kind"), c("status"), c("strategy_family", "strategy"), c("branch_count", "branches"), c("outcome_count", "outcomes"), c("cost_actual_usd", "cost $"), c("created_at", "created")],
-  },
   "malware:workspaces": {
     title: "malware \u00b7 workspaces",
     endpoint: "/malware/workspaces",
     columns: [c("name"), c("slug"), c("status"), c("target_count", "targets"), c("active_investigation_count", "active"), c("created_at", "created")],
+    filters: [{ name: "name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "malware:targets": {
     title: "malware \u00b7 targets",
     endpoint: "/malware/targets",
     columns: [c("display_name", "name"), c("kind"), c("primary_language", "lang"), c("status"), c("analysis_state", "analysis"), c("uploaded_filename", "file"), c("created_at", "created")],
+    filters: [{ name: "display_name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "malware:investigations": {
     title: "malware \u00b7 investigations",
     endpoint: "/malware/investigations",
     columns: [c("title"), c("kind"), c("status"), c("strategy_family", "strategy"), c("branch_count", "branches"), c("message_count", "turns"), c("outcome_count", "outcomes"), c("cost_actual_usd", "cost $")],
+    filters: [{ name: "title", label: "title", type: "text" }, { name: "status", label: "status", type: "select" }],
   },
   "malware:observations": {
     title: "malware \u00b7 observations",
     endpoint: "/malware/observations",
     scopeFrom: { endpoint: "/malware/targets", param: "target_id" },
-    blurb: "scoped to the first target; pick another target in the header scope selector",
     columns: [c("kind"), c("polarity"), c("source"), c("target_id", "target"), c("investigation_id", "investigation"), c("created_at", "created")],
+    filters: [{ name: "kind", label: "kind", type: "text" }, { name: "polarity", label: "polarity", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "malware:patterns": {
     title: "malware \u00b7 patterns",
     endpoint: "/malware/patterns",
     columns: [c("kind"), c("summary"), c("confidence"), c("status"), c("scope"), c("trust_tier", "trust"), c("times_retrieved", "reused")],
+    filters: [{ name: "kind", label: "kind", type: "text" }, { name: "status", label: "status", type: "select" }],
   },
   "malware:findings": {
     title: "malware \u00b7 findings",
     endpoint: "/malware/findings",
-    columns: [c("kind"), c("confidence"), c("target_id", "target"), c("investigation_id", "investigation"), c("operator_notes", "notes"), c("created_at", "created")],
+    columns: [
+      c("kind"),
+      c("confidence"),
+      {
+        field: "workflow_state",
+        label: "state",
+        render: (v) => createElement(WorkflowStateBadge, { value: v ?? "new" }),
+      },
+      c("target_id", "target"),
+      c("investigation_id", "investigation"),
+      c("operator_notes", "notes"),
+      c("created_at", "created"),
+    ],
+    filters: [{ name: "kind", label: "kind", type: "text" }, { name: "workflow_state", label: "state", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
+    // Workflow transitions. Each row calls POST /findings/{id}/transition with
+    // module_id="malware" and the target state; whenStatus gates the button by
+    // the row's current workflow_state so only legal edges appear. The graph
+    // mirrors the backend contract in module.py workflow_definitions() -- keep
+    // in lockstep. Notes are optional operator context, sent verbatim.
+    actions: [
+      mwTransition("investigating", ["new", "mitigated", "malware.benign_confirmed", "malware.quarantined"]),
+      mwTransition("mitigated", ["investigating"]),
+      mwTransition("verified", ["mitigated"]),
+      mwTransition("closed", ["verified"]),
+      mwTransition("malware.benign_confirmed", ["investigating"]),
+      mwTransition("malware.quarantined", ["investigating"]),
+    ],
   },
   "malware:families": {
     title: "malware \u00b7 families",
     endpoint: "/malware/families",
     scopeFrom: { endpoint: "/malware/workspaces", param: "workspace_id" },
-    blurb: "scoped to the first workspace; pick another workspace in the header scope selector",
     columns: [c("name"), c("actor_cluster", "actor"), c("status"), c("sample_count", "samples"), c("playbook_count", "playbooks"), c("created_at", "created")],
+    filters: [{ name: "name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "malware:playbooks": {
     title: "malware \u00b7 playbooks",
     endpoint: "/malware/playbooks",
     scopeFrom: { endpoint: "/malware/workspaces", param: "workspace_id" },
-    blurb: "scoped to the first workspace; pick another workspace in the header scope selector",
     columns: [c("name"), c("description"), c("status"), c("run_count", "runs"), c("last_run_at", "last run"), c("created_at", "created")],
+    filters: [{ name: "name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "last_run_at", label: "last run", type: "date-range" }],
     actions: [
       {
         label: "run",
@@ -175,23 +458,14 @@ export const PAGE_CONFIGS = {
         confirm: "Run this playbook now?",
       },
     ],
-  },
-  "malware:mcp-servers": {
-    title: "malware \u00b7 mcp servers",
-    endpoint: "/malware/mcp/servers",
-    columns: [c("name"), c("base_url", "url"), c("status"), c("latency_ms", "latency"), c("tool_count", "tools")],
-    actions: [
+    bulkActions: [
       {
-        label: "re-probe",
+        label: "run selected",
         method: "POST",
-        endpoint: "/malware/mcp/servers/{id}/probe",
+        endpoint: "/malware/playbooks/{id}/run",
+        confirm: "Run the selected playbooks now?",
       },
     ],
-  },
-  "malware:mcp-call-log": {
-    title: "malware \u00b7 mcp call log",
-    endpoint: "/malware/mcp/call-log",
-    columns: [c("called_at", "when"), c("server_id", "server"), c("action"), c("status"), c("http_status", "http"), c("latency_ms", "latency"), c("error_excerpt", "error")],
   },
 
   // ---- Forensics (prefix /forensics) -----------------------------------
@@ -200,6 +474,7 @@ export const PAGE_CONFIGS = {
     endpoint: "/forensics/projects",
     itemsKey: "items",
     columns: [c("name"), c("project_kind", "kind"), c("status"), c("system_name", "system"), c("evidence_count", "evidence"), c("artifact_count", "artifacts"), c("lead_count", "leads"), c("investigation_count", "investigations")],
+    filters: [{ name: "name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }],
     actions: [
       {
         label: "check readiness",
@@ -215,6 +490,7 @@ export const PAGE_CONFIGS = {
     title: "admin \u00b7 users",
     endpoint: "/users",
     columns: [c("username"), c("email"), c("role"), c("team_id", "team"), c("is_active", "active"), c("last_login_at", "last login"), c("created_at", "created")],
+    filters: [{ name: "username", label: "username", type: "text" }, { name: "role", label: "role", type: "select" }, { name: "last_login_at", label: "last login", type: "date-range" }],
     actions: [
       {
         label: "deactivate",
@@ -237,6 +513,7 @@ export const PAGE_CONFIGS = {
     title: "admin \u00b7 teams",
     endpoint: "/admin/teams",
     columns: [c("name"), c("description"), c("member_count", "members"), c("created_at", "created"), c("updated_at", "updated")],
+    filters: [{ name: "name", label: "name", type: "text" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "admin:api-keys": {
     title: "admin \u00b7 api keys",
@@ -244,6 +521,59 @@ export const PAGE_CONFIGS = {
     itemsKey: "keys",
     idField: "key_id",
     columns: [c("key_prefix", "prefix"), c("role"), c("label"), c("created_by", "by"), c("created_at", "created"), c("revoked_at", "revoked")],
+    filters: [
+      { name: "role", label: "role", type: "multi-select" },
+      {
+        name: "revoked_at",
+        label: "status",
+        type: "segmented",
+        options: [
+          { value: "active", label: "active" },
+          { value: "revoked", label: "revoked" },
+        ],
+        deriveValue: (r) => (r.revoked_at ? "revoked" : "active"),
+      },
+      {
+        name: "label",
+        label: "search",
+        type: "text",
+        deriveValue: (r) => `${r.label ?? ""} ${r.key_prefix ?? ""}`,
+      },
+      { name: "created_at", label: "created", type: "date-range" },
+    ],
+    pageActions: [
+      {
+        label: "mint key",
+        method: "POST",
+        endpoint: "/auth/keys",
+        body: { role: "reader" },
+        fields: [
+          {
+            name: "role",
+            label: "role",
+            type: "select",
+            options: [
+              { value: "reader", label: "reader" },
+              { value: "operator", label: "operator" },
+              { value: "admin", label: "admin" },
+            ],
+          },
+          { name: "label", label: "label", type: "text", placeholder: "human-readable name" },
+          {
+            name: "team_id",
+            label: "team id (god-tier only)",
+            type: "text",
+            placeholder: "blank = your own team",
+            godTierOnly: true,
+          },
+        ],
+        reveal: {
+          title: "api key created",
+          note: "copy the raw key now -- it is never shown again",
+          fields: ["raw_key", "key_prefix", "role", "label"],
+        },
+      },
+    ],
     actions: [
       {
         label: "revoke",
@@ -253,11 +583,21 @@ export const PAGE_CONFIGS = {
         confirm: "Revoke this API key? This cannot be undone.",
       },
     ],
+    bulkActions: [
+      {
+        label: "revoke selected",
+        method: "DELETE",
+        endpoint: "/auth/keys/{id}",
+        destructive: true,
+        confirm: "Revoke the selected API keys? This cannot be undone.",
+      },
+    ],
   },
   "admin:oidc-providers": {
     title: "admin \u00b7 oidc providers",
     endpoint: "/auth/oidc/providers",
     columns: [c("provider_name", "name"), c("provider_type", "type"), c("display_name", "display"), c("issuer_url", "issuer"), c("client_id", "client"), c("is_enabled", "enabled")],
+    filters: [{ name: "display_name", label: "display name", type: "text" }],
   },
   // ---- Admin: operations ------------------------------------------------
   "admin:task-queue": {
@@ -266,6 +606,7 @@ export const PAGE_CONFIGS = {
     itemsKey: "tasks",
     idField: "task_id",
     columns: [c("task_id", "task"), c("track"), c("status"), c("fn_path", "fn"), c("created_at", "created"), c("started_at", "started"), c("completed_at", "completed")],
+    filters: [{ name: "track", label: "track", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
     actions: [
       {
         label: "cancel",
@@ -312,6 +653,7 @@ export const PAGE_CONFIGS = {
     endpoint: "/admin/tasks/dead-letter",
     idField: "task_id",
     columns: [c("task_id", "task"), c("track"), c("fn_path", "fn"), c("exception_class", "exception"), c("error"), c("attempts"), c("dead_lettered_at", "when")],
+    filters: [{ name: "track", label: "track", type: "text" }],
     actions: [
       {
         label: "requeue",
@@ -320,70 +662,134 @@ export const PAGE_CONFIGS = {
         confirm: "Requeue this dead-lettered task?",
       },
     ],
+    bulkActions: [
+      {
+        label: "requeue selected",
+        method: "POST",
+        endpoint: "/admin/tasks/dead-letter/{id}/requeue",
+        confirm: "Requeue the selected dead-lettered tasks?",
+      },
+    ],
   },
   "admin:health": {
     title: "admin \u00b7 health",
     endpoint: "/health/comprehensive",
     itemsKey: "subsystems",
-    blurb: "per-subsystem comprehensive health",
     columns: [],
+    // subsystems is a real multi-row list (SubsystemHealth per probe); both
+    // controls narrow auto-derived columns the table actually renders --
+    // name (text substring) and status (row-derived select over the live
+    // SubsystemStatus enum). Client-side, so no backend coupling.
+    filters: [
+      { name: "name", label: "subsystem", type: "text" },
+      { name: "status", label: "status", type: "select" },
+    ],
   },
   "admin:automation": {
     title: "admin \u00b7 automation",
     endpoint: "/automation/schedules",
-    columns: [c("action_id", "action"), c("target_name", "target"), c("cron_expression", "cron"), c("enabled"), c("last_run_at", "last run"), c("last_run_result", "result")],
+    columns: [
+      c("action_id", "action"),
+      c("target_name", "target"),
+      c("cron_expression", "cron"),
+      {
+        // display-only humanized cron column derived from cron_expression
+        // (distinct `field` so the React key + auto-derived filter options
+        // don't collide with the raw cron column above).
+        field: "cron_human",
+        label: "schedule",
+        render: (_value, row) => {
+          const raw = typeof row["cron_expression"] === "string" ? String(row["cron_expression"]) : "";
+          return raw ? humanizeCron(raw) : "\u2014";
+        },
+      },
+      c("enabled"),
+      c("last_run_at", "last run"),
+      c("last_run_result", "result"),
+    ],
+    filters: [
+      {
+        name: "action_id",
+        label: "action",
+        type: "select",
+        optionsFrom: "/automation/actions",
+        optionsValueField: "action_id",
+        optionsLabelField: "action_id",
+      },
+      {
+        name: "enabled",
+        label: "enabled",
+        type: "select",
+        options: [
+          { value: "true", label: "yes" },
+          { value: "false", label: "no" },
+        ],
+      },
+      { name: "target_name", label: "target name", type: "text" },
+      { name: "last_run_at", label: "last run", type: "date-range" },
+    ],
   },
   "admin:workflows": {
     title: "admin \u00b7 workflows",
     endpoint: "/admin/workflows/runs",
     columns: [c("run_id", "run"), c("current_state", "state"), c("definition_id", "definition"), c("retries_in_state", "retries"), c("version"), c("updated_at", "updated")],
+    filters: [
+      { name: "run_id", label: "run", type: "text" },
+      { name: "definition_id", label: "definition", type: "text", server: true },
+      { name: "current_state", label: "state", type: "select", server: true },
+      { name: "updated_at", label: "updated", type: "date-range" },
+    ],
   },
   "admin:scheduled-reports": {
     title: "admin \u00b7 scheduled reports",
     endpoint: "/scheduled-reports",
-    columns: [c("name"), c("report_type", "type"), c("cron_expression", "cron"), c("is_active", "active"), c("last_run_at", "last run"), c("created_at", "created")],
-    actions: [
+    columns: [
+      c("name"),
+      c("report_type", "type"),
+      c("cron_expression", "cron"),
       {
-        label: "trigger now",
-        method: "POST",
-        endpoint: "/scheduled-reports/{id}/trigger",
-        confirm: "Trigger this report now?",
+        // display-only humanized cron column derived from cron_expression
+        // (distinct `field` so the React key + auto-derived filter options
+        // don't collide with the raw cron column above).
+        field: "cron_human",
+        label: "schedule",
+        render: (_value, row) => {
+          const raw = typeof row["cron_expression"] === "string" ? String(row["cron_expression"]) : "";
+          return raw ? humanizeCron(raw) : "\u2014";
+        },
       },
+      {
+        // display-only next-fire-time column: first upcoming run from the
+        // cron expression, formatted UTC. Empty/absent expression yields an
+        // em dash rather than an empty cell.
+        field: "next_run",
+        label: "next run",
+        render: (_value, row) => {
+          const raw = typeof row["cron_expression"] === "string" ? String(row["cron_expression"]) : "";
+          if (!raw) return "\u2014";
+          const runs = nextRuns(raw, 1);
+          return runs.length ? formatFireTime(runs[0]) : "\u2014";
+        },
+      },
+      c("is_active", "active"),
+      c("last_run_at", "last run"),
+      c("created_at", "created"),
     ],
-  },
-  // ---- Admin: cost & reporting -----------------------------------------
-  "admin:cost": {
-    title: "admin \u00b7 cost",
-    endpoint: "/cost/history",
-    itemsKey: "months",
-    blurb: "monthly LLM cost history",
-    columns: [c("year_month", "month"), c("total_cost_usd", "cost $"), c("total_tokens", "tokens")],
-  },
-  "admin:executive": {
-    title: "admin \u00b7 executive",
-    endpoint: "/executive/health",
-    blurb: "fleet finding + severity summary",
-    columns: [],
-    pageActions: [
+    filters: [
+      { name: "name", label: "name", type: "text" },
       {
-        label: "risk summary pdf",
-        method: "GET",
-        endpoint: "/executive/risk-summary-pdf",
-        download: true,
+        name: "report_type",
+        label: "type",
+        type: "select",
+        optionsFrom: "/scheduled-reports/kinds",
+        optionsValueField: "report_type",
+        optionsLabelField: "name",
       },
+      { name: "is_active", label: "is active", type: "select" },
+      { name: "last_run_at", label: "last run", type: "date-range" },
     ],
   },
   // ---- Admin: data & config --------------------------------------------
-  "admin:tag-vocabulary": {
-    title: "admin \u00b7 tag vocabulary",
-    endpoint: "/tags/vocabulary",
-    columns: [c("tag_key", "tag"), c("description"), c("is_system_default", "system"), c("created_at", "created")],
-  },
-  "admin:saved-filters": {
-    title: "admin \u00b7 saved filters",
-    endpoint: "/saved-filters",
-    columns: [c("name"), c("entity_type", "entity"), c("is_pinned", "pinned"), c("shared_with_team", "shared"), c("created_at", "created")],
-  },
   "admin:config": {
     title: "admin \u00b7 config",
     endpoint: "/config",
@@ -413,6 +819,7 @@ export const PAGE_CONFIGS = {
     title: "admin \u00b7 tools",
     endpoint: "/tools",
     columns: [c("tool_key", "key"), c("name"), c("description"), c("module_id", "module")],
+    filters: [{ name: "name", label: "name", type: "text" }],
   },
   // ---- Admin: audit -----------------------------------------------------
   "admin:audit-logs": {
@@ -423,185 +830,350 @@ export const PAGE_CONFIGS = {
     // PaginatedResponse envelope (schemas/common.py:24), so server-side
     // pagination works exactly.
     pagination: true,
-    columns: [c("created_at", "when"), c("stage"), c("action"), c("status"), c("target"), c("user_id", "user"), c("run_id", "run")],
+    // Derived `severity` is a read-time projection of (action, status), never a
+    // stored column (auditSeverity). The five backend filters ride the req 28
+    // primitive server-side so they compose with pagination + true total: the
+    // multi-selects post repeated params (OR within a field), `search` maps to
+    // the target ILIKE, and the `created_at` range posts created_at_since /
+    // created_at_until -- all consumed by GET /audit/events.
+    columns: [
+      c("created_at", "when"),
+      c("stage"),
+      c("action"),
+      c("status"),
+      { field: "severity", label: "severity", render: (_v, row) => createElement(SeverityBadge, { value: auditSeverity(row) }) },
+      c("target"),
+      c("user_id", "user"),
+      c("run_id", "run"),
+    ],
+    filters: [
+      { name: "stage", label: "stage", type: "multi-select", server: true },
+      { name: "action", label: "action", type: "multi-select", server: true },
+      { name: "status", label: "status", type: "multi-select", server: true },
+      { name: "user_id", label: "user", type: "multi-select", server: true },
+      { name: "search", label: "target", type: "text", server: true },
+      { name: "created_at", label: "when", type: "date-range", server: true },
+    ],
+    detailRenderers: {
+      details: (v, row) => createElement(AuditEventDetail, { value: v, row }),
+    },
   },
   "admin:llm-log": {
     title: "admin \u00b7 llm log",
     endpoint: "/admin/llm-log",
     itemsKey: "items",
-    // Prompt + response previews arrive as opaque 200-char strings that
-    // are sometimes JSON (chat-messages array or a `{summary: ...}`
-    // response). Renderers turn either shape into a single readable line
-    // so the table doesn't leak raw JSON; the full transcript view lives
-    // in LlmLogEntry.tsx (`LlmChatTranscript`) for the detail panel.
+    // Row previews were dropped from the table: they leaked opaque JSON
+    // fragments and the same information is available in-context via the
+    // rowViewer floater. The viewer fetches the full stored transcript
+    // (paired audit seal when present, row preview when disabled) via
+    // GET /admin/llm-log/{id}/content and renders it as a two-pane chat
+    // transcript, so the list stays scannable while the detail carries
+    // the full body. Filters ride the req 28 primitive server-side and
+    // compose with pagination + true meta.total.
+    pagination: true,
+    paginationParams: "offset",
     columns: [
       c("timestamp", "when"),
       c("model"),
       c("task_type", "task"),
-      {
-        field: "prompt_preview",
-        label: "prompt",
-        render: (v) => llmPreviewLine(v, "prompt") ?? "\u2014",
-      },
-      {
-        field: "response_preview",
-        label: "response",
-        render: (v) => llmPreviewLine(v, "response") ?? "\u2014",
-      },
+      c("user_id", "user"),
+      c("run_id", "run"),
       c("input_tokens", "in"),
       c("output_tokens", "out"),
       c("cost_usd", "cost $"),
       c("duration_ms", "ms"),
       c("status"),
     ],
-    detailRenderers: {
-      prompt_preview: (v) => createElement(LlmChatTranscript, { value: v }),
-      response_preview: (v) => createElement(LlmChatTranscript, { value: v }),
+    filters: [
+      { name: "model", label: "model", type: "multi-select", server: true },
+      { name: "task_type", label: "task", type: "multi-select", server: true },
+      { name: "status", label: "status", type: "multi-select", server: true },
+      { name: "user_id", label: "user", type: "text", server: true },
+      { name: "team_id", label: "team", type: "text", server: true },
+      { name: "search", label: "search", type: "text", server: true },
+      { name: "timestamp", label: "when", type: "date-range", server: true },
+      { name: "cost_usd", label: "cost $", type: "numeric-range", server: true },
+    ],
+    rowViewer: {
+      actionLabel: "view content",
+      title: (row) => {
+        const id = row["id"];
+        const model = row["model"];
+        const idStr = typeof id === "string" || typeof id === "number" ? String(id) : "?";
+        const modelStr = typeof model === "string" && model !== "" ? model : "llm call";
+        return `llm log \u00b7 ${modelStr} \u00b7 ${idStr}`;
+      },
+      render: (row) => createElement(LlmLogViewer, { row }),
     },
   },
   // ---- Admin: platform (added -- previously unlisted features) ----------
-  "admin:dashboard": {
-    title: "admin \u00b7 dashboard",
-    endpoint: "/dashboard",
-    blurb: "fleet risk + stats snapshot",
-    columns: [],
-  },
-  "admin:systems": {
-    title: "admin \u00b7 systems",
-    endpoint: "/systems",
-    itemsKey: "items",
-    columns: [c("name"), c("host"), c("distro"), c("connectivity_status", "conn"), c("last_scan_at", "last scan"), c("last_scan_status", "scan status"), c("top_severity", "top sev")],
-  },
-  "admin:topology": {
-    title: "admin \u00b7 topology",
-    endpoint: "/topology",
-    itemsKey: "nodes",
-    blurb: "fleet nodes",
-    columns: [],
-  },
+  // admin:systems is intentionally not a DataPage config: it is served by
+  // the bespoke SystemsRegistryPage (registry.tsx) which owns the rich
+  // registry surface (create/edit/tags/heartbeat + role filter + probe).
   "admin:sessions": {
     title: "admin \u00b7 sessions",
     endpoint: "/sessions",
     itemsKey: "items",
     columns: [c("session_id", "session"), c("user_id", "user"), c("title"), c("message_count", "messages"), c("last_message_at", "last msg"), c("created_at", "created")],
-  },
-  "admin:notifications": {
-    title: "admin \u00b7 notifications",
-    endpoint: "/notifications",
-    columns: [c("title"), c("category"), c("source_module", "module"), c("is_read", "read"), c("created_at", "created")],
-    actions: [
-      {
-        label: "mark read",
-        method: "POST",
-        endpoint: "/notifications/{id}/read",
-        // no whenStatus: always shown; the backend marks read idempotently
-      },
-    ],
-    bulkActions: [
-      {
-        label: "mark read",
-        method: "POST",
-        endpoint: "/notifications/{id}/read",
-      },
-    ],
-    pageActions: [
-      {
-        label: "mark all read",
-        method: "POST",
-        endpoint: "/notifications/read-all",
-        confirm: "Mark all notifications as read?",
-      },
-    ],
+    filters: [{ name: "title", label: "title", type: "text" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "admin:mcp-instances": {
     title: "admin \u00b7 mcp instances",
     endpoint: "/platform/mcp/instances",
+    // Server-side pagination + filters: the platform router accepts
+    // module_scope / transport / approval_state / enabled (comma-OR),
+    // `search` (ILIKE on name+endpoint) and offset/limit with meta.total.
+    // Row detail (registered in registry.tsx) opens the live tools schema
+    // from GET /platform/mcp/instances/{id}/tools so drift is visible without
+    // hitting the bridge by hand.
+    pagination: true,
+    paginationParams: "offset",
     columns: [c("name"), c("transport"), c("endpoint"), c("enabled"), c("module_scope", "module"), c("approval_state", "approval"), c("created_at", "created")],
+    filters: [
+      { name: "search", label: "search", type: "text", server: true },
+      { name: "module_scope", label: "module", type: "select", server: true, options: [
+        { value: "vr", label: "vr" },
+        { value: "malware", label: "malware" },
+      ] },
+      { name: "transport", label: "transport", type: "select", server: true, options: [
+        { value: "http", label: "http" },
+        { value: "stdio", label: "stdio" },
+      ] },
+      { name: "approval_state", label: "approval", type: "select", server: true, options: [
+        { value: "pending", label: "pending" },
+        { value: "approved", label: "approved" },
+        { value: "revoked", label: "revoked" },
+      ] },
+      { name: "enabled", label: "enabled", type: "select", server: true, options: [
+        { value: "true", label: "true" },
+        { value: "false", label: "false" },
+      ] },
+    ],
     actions: [
       {
         label: "approve",
         method: "POST",
         endpoint: "/platform/mcp/instances/{id}/approve",
-        whenStatus: ["pending", "pending_approval"],
+        // Approve is legal for any row not already approved. `whenField`
+        // reads approval_state (not status/is_active) via the shared gate.
+        whenField: "approval_state",
+        whenStatus: ["pending", "revoked"],
+        confirm: "Approve this MCP instance? Its current tool schema hash is pinned.",
       },
       {
         label: "revoke",
         method: "POST",
         endpoint: "/platform/mcp/instances/{id}/revoke",
+        whenField: "approval_state",
         whenStatus: ["approved"],
         destructive: true,
-        confirm: "Revoke this MCP instance? Its tools become unavailable.",
+        // McpInstanceRevokeRequest.reason: Field(min_length=1); the modal
+        // enforces the same rule client-side via `required`.
+        fields: [
+          { name: "reason", label: "reason", type: "textarea", required: true, placeholder: "why this instance is being revoked (recorded on the approval-change record)" },
+        ],
+      },
+    ],
+    bulkActions: [
+      {
+        label: "approve selected",
+        method: "POST",
+        endpoint: "/platform/mcp/instances/{id}/approve",
+        confirm: "Approve the selected MCP instances?",
       },
     ],
   },
+  "admin:mcp-servers": {
+    title: "admin \u00b7 mcp servers",
+    endpoint: "/platform/mcp/servers",
+    // Row id is the composite `<module_scope>:<server_id>`; the platform
+    // route uses it verbatim for the PATCH URL. `idField: "id"` matches the
+    // envelope shape.
+    idField: "id",
+    columns: [
+      c("module_scope", "module"),
+      c("server_id", "server"),
+      c("base_url", "url"),
+      c("status"),
+      c("latency_ms", "latency"),
+      c("tool_count", "tools"),
+      c("last_probed_at", "probed"),
+      c("error"),
+    ],
+    // `GET /platform/mcp/servers` accepts only `module_scope` as a query param
+    // (comma-OR), so that filter narrows server-side. It has no `status` param,
+    // so `status` filters the fetched (unpaginated) rows client-side against the
+    // "reachable"/"unreachable" probe projection -- a server:true here would be
+    // dropped by FastAPI and narrow nothing.
+    filters: [
+      { name: "module_scope", label: "module", type: "select", server: true, options: [
+        { value: "vr", label: "vr" },
+        { value: "malware", label: "malware" },
+      ] },
+      { name: "status", label: "status", type: "select", options: [
+        { value: "reachable", label: "reachable" },
+        { value: "unreachable", label: "unreachable" },
+      ] },
+    ],
+    actions: [
+      {
+        // PATCH /platform/mcp/servers/{id} writes the new base_url to the
+        // ConfigRegistry key the descriptor declares and re-probes the one
+        // server; the returned row shape matches the list projection so the
+        // table refresh reflects the new state.
+        label: "edit url",
+        method: "PATCH",
+        endpoint: "/platform/mcp/servers/{id}",
+        fields: [
+          { name: "base_url", label: "base url", type: "text", required: true, fromRow: "base_url", placeholder: "https://host:port" },
+        ],
+        confirm: "Update this MCP server base URL and re-probe?",
+      },
+    ],
+  },
+  "admin:mcp-call-log": {
+    title: "admin \u00b7 mcp call log",
+    endpoint: "/platform/mcp/calls",
+    // Server-paginated by offset/limit (meta.total). Every filter is
+    // server:true so the backend narrows the consolidated call-log table.
+    pagination: true,
+    paginationParams: "offset",
+    columns: [
+      c("module_scope", "module"),
+      c("server_id", "server"),
+      c("action"),
+      c("status"),
+      c("http_status", "http"),
+      c("latency_ms", "latency"),
+      c("error_excerpt", "error"),
+      c("called_at", "called"),
+    ],
+    filters: [
+      { name: "module_scope", label: "module", type: "select", server: true, options: [
+        { value: "vr", label: "vr" },
+        { value: "malware", label: "malware" },
+      ] },
+      { name: "server_id", label: "server", type: "text", server: true },
+      { name: "status", label: "status", type: "select", server: true, options: [
+        { value: "ok", label: "ok" },
+        { value: "http_error", label: "http_error" },
+        { value: "transport_error", label: "transport_error" },
+        { value: "timeout", label: "timeout" },
+      ] },
+      { name: "called_at", label: "called", type: "date-range", server: true },
+    ],
+  },
   "admin:specialist-agents": {
-    title: "admin \u00b7 specialist agents",
-    endpoint: "/agents/specialists?module_id=vr",
-    blurb: "vr module specialists",
-    columns: [c("name"), c("module_id", "module"), c("capability"), c("strategy_family", "strategy"), c("enabled"), c("created_at", "created")],
+    title: "admin \u00b7 agent registry",
+    endpoint: "/agents/specialists",
+    columns: [
+      c("name"),
+      c("agent_type", "type"),
+      c("module_id", "module"),
+      c("capability"),
+      c("model_role", "model role"),
+      c("prompt_key", "prompt"),
+      c("rag_scope", "rag scope"),
+      c("description"),
+      c("enabled"),
+      c("created_at", "created"),
+    ],
+    detailLinks: {
+      prompt_key: { module: "admin", section: "prompts", label: "prompts" },
+    },
+    rowViewer: {
+      actionLabel: "view prompt",
+      title: (row) => `prompt \u00b7 ${String(row["prompt_key"] || row["name"] || "agent")}`,
+      render: (row, close) => createElement(AgentPromptViewer, { row, close }),
+    },
+    filters: [
+      { name: "module_id", label: "module", type: "select", server: true, options: [
+        { value: "", label: "all modules" },
+        { value: "vr", label: "vr" },
+        { value: "platform", label: "platform" },
+        { value: "malware", label: "malware" },
+        { value: "forensics", label: "forensics" },
+      ] },
+      { name: "agent_type", label: "type", type: "select", server: true, options: [
+        { value: "", label: "all types" },
+        { value: "core", label: "core" },
+        { value: "specialist", label: "specialist" },
+        { value: "system", label: "system" },
+      ] },
+      { name: "name", label: "name", type: "text" },
+      { name: "capability", label: "capability", type: "text" },
+    ],
+    pageActions: [
+      { label: "seed all defaults", method: "POST", endpoint: "/agents/specialists/all/seed" },
+      { label: "seed vr", method: "POST", endpoint: "/agents/specialists/vr/seed" },
+      { label: "seed platform", method: "POST", endpoint: "/agents/specialists/platform/seed" },
+      { label: "seed malware", method: "POST", endpoint: "/agents/specialists/malware/seed" },
+      { label: "seed forensics", method: "POST", endpoint: "/agents/specialists/forensics/seed" },
+    ],
   },
-  "admin:platform-corpus": {
-    title: "admin \u00b7 platform corpus",
-    endpoint: "/platform/eval/corpus/stats",
-    blurb: "eval corpus stats",
-    columns: [],
+  "admin:prompts": {
+    title: "admin \u00b7 prompts",
+    endpoint: "/admin/prompts",
+    idField: "key",
+    columns: [
+      c("key", "prompt key"),
+      c("version", "latest"),
+      c("production_version", "production"),
+      c("aliases"),
+      c("author"),
+      c("body_snippet", "body preview"),
+      c("body_length", "chars"),
+      c("created_at", "registered"),
+    ],
+    detailRenderers: {
+      body: (val, row) => createElement(PromptBodyDetail, { body: String(val || row["body_snippet"] || "") }),
+      body_snippet: (val, row) => createElement(PromptBodyDetail, { body: String(row["body"] || val || "") }),
+    },
+    rowViewer: {
+      actionLabel: "view full prompt",
+      title: (row) => `prompt \u00b7 ${String(row["key"] || "prompt")}`,
+      render: (row, close) => createElement(PromptFullViewer, { row, close }),
+    },
+    filters: [
+      { name: "prefix", label: "module / domain", type: "select", server: true, options: [
+        { value: "", label: "all domains" },
+        { value: "vr", label: "vr" },
+        { value: "platform", label: "platform" },
+        { value: "malware", label: "malware" },
+        { value: "forensics", label: "forensics" },
+      ] },
+      { name: "key", label: "prompt key", type: "text" },
+      { name: "author", label: "author", type: "text" },
+    ],
   },
-
   // ---- VR: additional (previously unmapped) ----------------------------
   "vr:cves": {
     title: "vr \u00b7 cves",
     endpoint: "/vr/cves",
-    columns: [],
-  },
-  "vr:fuzz-proposals": {
-    title: "vr \u00b7 fuzz proposals",
-    endpoint: "/vr/fuzz/proposals",
-    columns: [],
-    detailLinks: {
-      target_id: { module: "vr", section: "targets", label: "target" },
-      source_investigation_id: { module: "vr", section: "investigations", label: "investigation" },
-    },
-    actions: [
-      {
-        label: "accept",
-        method: "POST",
-        endpoint: "/vr/fuzz/proposals/{id}/accept",
-        whenStatus: ["pending", "submitted"],
-        confirm: "Accept this proposal? It will write the harness, build, and create a campaign.",
-      },
-      {
-        label: "reject",
-        method: "POST",
-        endpoint: "/vr/fuzz/proposals/{id}/reject",
-        whenStatus: ["pending", "submitted"],
-        destructive: true,
-        confirm: "Reject this proposal?",
-      },
+    columns: [c("cve_id", "cve"), c("title"), c("source"), c("cvss_score", "cvss"), c("published_at", "published")],
+    filters: [
+      { name: "cve_id", label: "cve", type: "text" },
+      { name: "title", label: "title", type: "text" },
+      { name: "source", label: "source", type: "select" },
     ],
   },
-  "vr:crashes": {
-    title: "vr \u00b7 fuzz crashes",
-    endpoint: "/vr/fuzz/crashes",
-    columns: [],
-    detailLinks: {
-      campaign_id: { module: "vr", section: "fuzz-campaigns", label: "campaign" },
-      target_id: { module: "vr", section: "targets", label: "target" },
-      source_investigation_id: { module: "vr", section: "investigations", label: "investigation" },
-    },
-  },
 
-  // ---- Malware: additional ---------------------------------------------
-  "malware:projects": {
-    title: "malware \u00b7 projects",
-    endpoint: "/malware/projects",
-    columns: [],
+  // ---- Vulnerability: reports & cves (DataPage; scan/findings/radar/viz/cves are bespoke) --
+  "vulnerability:cves": {
+    title: "vulnerability \u00b7 cves",
+    endpoint: "/vr/cves",
+    columns: [c("cve_id", "cve"), c("title"), c("source"), c("cvss_score", "cvss"), c("published_at", "published")],
+    filters: [
+      { name: "cve_id", label: "cve", type: "text" },
+      { name: "title", label: "title", type: "text" },
+      { name: "source", label: "source", type: "select" },
+    ],
   },
-
-  // ---- Vulnerability: reports (DataPage; scan/findings/radar/viz are bespoke) --
   "vulnerability:reports": {
     title: "vulnerability \u00b7 reports",
     endpoint: "/vulnerability/reports/list",
     columns: [c("title"), c("target"), c("status"), c("finding_count", "findings"), c("created_at", "created")],
+    filters: [{ name: "title", label: "title", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
 
   // Forensics sub-resources (evidence / artifacts / leads / timeline / ...)
@@ -612,58 +1184,126 @@ export const PAGE_CONFIGS = {
   "admin:automation-actions": {
     title: "admin \u00b7 automation actions",
     endpoint: "/automation/actions",
-    columns: [],
+    idField: "action_id",
+    columns: [c("action_id", "action"), c("description"), c("module_id", "module")],
+    filters: [
+      { name: "module_id", label: "module", type: "select" },
+      { name: "action_id", label: "action id", type: "text" },
+    ],
   },
   "admin:eval-calibrators": {
     title: "admin \u00b7 eval calibrators",
     endpoint: "/admin/eval/calibrators",
-    columns: [],
+    columns: [
+      c("task_type", "task type"),
+      c("method"),
+      c("status"),
+      c("ece_before"),
+      c("ece_after"),
+      {
+        // display-only computed column derived from ece_before/ece_after
+        // (distinct `field` so the React key + auto-derived filter options
+        // don't collide with the raw ece_after column above).
+        field: "ece_delta",
+        label: "\u0394 ece",
+        numeric: true,
+        render: (_v, row) => {
+          const b = Number(row.ece_before);
+          const a = Number(row.ece_after);
+          if (Number.isNaN(b) || Number.isNaN(a)) return "\u2014";
+          return (b - a).toFixed(4);
+        },
+      },
+      c("sample_count", "samples"),
+      c("actor"),
+      c("created_at", "created"),
+      c("superseded_by", "superseded by"),
+    ],
+    filters: [
+      { name: "task_type", label: "task type", type: "select" },
+      { name: "status", label: "status", type: "select" },
+      { name: "method", label: "method", type: "text" },
+    ],
+    groupBy: "task_type",
+    selectCreatedRow: true,
+    actions: [
+      {
+        label: "promote",
+        method: "POST",
+        endpoint: "/admin/eval/calibrators/{id}/promote",
+        whenField: "status",
+        whenStatus: ["candidate"],
+        fields: [
+          { name: "approver_ids", label: "approver ids", type: "tags", required: true, placeholder: "space/comma separated approver ids" },
+        ],
+      },
+    ],
+  },
+  "admin:calibration-proposals": {
+    title: "admin \u00b7 calibration proposals",
+    endpoint: "/admin/eval/calibration-proposals",
+    columns: [
+      c("outcome_kind", "outcome kind"),
+      c("before_threshold", "before"),
+      c("after_threshold", "after"),
+      c("approve_count", "approves"),
+      c("reject_count", "rejects"),
+      c("status"),
+      c("actor"),
+      c("created_at", "created"),
+    ],
+    filters: [
+      { name: "outcome_kind", label: "outcome kind", type: "select" },
+      { name: "status", label: "status", type: "select" },
+    ],
+    actions: [
+      {
+        label: "promote",
+        method: "POST",
+        endpoint: "/admin/eval/calibration-proposals/{id}/promote",
+        whenField: "status",
+        whenStatus: ["active"],
+        fields: [
+          { name: "approver_ids", label: "approver ids", type: "tags", required: true, placeholder: "space/comma separated approver ids" },
+        ],
+      },
+    ],
   },
 
   // ---- Final coverage: stats / reference endpoints ---------------------
-  "vr:disclosure-tracks": {
-    title: "vr \u00b7 disclosure tracks",
-    endpoint: "/vr/disclosure-tracks",
-    columns: [],
-  },
-  "malware:health": {
-    title: "malware \u00b7 health",
-    endpoint: "/malware/health",
-    blurb: "module health snapshot",
-    columns: [],
-  },
   "admin:teams-cross-view": {
     title: "admin \u00b7 teams cross-view",
     endpoint: "/admin/teams/cross-view",
-    columns: [],
-  },
-  "admin:cost-roi": {
-    title: "admin \u00b7 cost roi",
-    endpoint: "/cost/roi",
-    columns: [],
-  },
-  "admin:topology-subnets": {
-    title: "admin \u00b7 topology subnets",
-    endpoint: "/topology/subnets",
-    columns: [],
+    // CrossTeamStatsRow has no `id`; key rows on team_id so selection and the
+    // detail drill (registry.tsx -> TeamCrossDetail, GET /admin/teams/{id})
+    // resolve. Columns bind 1:1 to the projection fields. The endpoint is
+    // unpaginated and takes no filter params, so the req 28 filters run
+    // client-side over the fetched set (server: unset).
+    idField: "team_id",
+    empty: "no teams \u2014 create one from admin \u00b7 teams",
+    columns: [c("team_name", "team"), c("systems_count", "systems"), c("runs_count", "runs"), c("members_count", "members"), c("team_id", "id")],
+    filters: [
+      { name: "team_name", label: "team", type: "text" },
+      { name: "systems_count", label: "systems", type: "numeric-range" },
+      { name: "runs_count", label: "runs", type: "numeric-range" },
+      { name: "members_count", label: "members", type: "numeric-range" },
+    ],
   },
   "admin:queue-depth": {
     title: "admin \u00b7 queue depth",
     endpoint: "/tasks/queue-depth",
-    blurb: "task counts by status",
     columns: [],
+    // No filters by design: /tasks/queue-depth returns a single dict[str,int]
+    // aggregate, which toRows renders as exactly ONE row (status keys become
+    // columns). A filter narrows nothing on a one-row aggregate, so any control
+    // would be decorative -- forbidden by the structural-honesty constraint in
+    // specs/table-filtering-global.md. Not a list config in that spec's sense.
   },
-  "admin:finding-states": {
-    title: "admin \u00b7 finding states",
-    endpoint: "/findings/workflow/states",
-    blurb: "finding workflow state machine",
-    columns: [],
-  },
-  "admin:widget-layout": {
-    title: "admin \u00b7 widget layout",
-    endpoint: "/widgets/layout",
-    columns: [],
-  },
+  // admin:finding-states is a bespoke read-only overview (see
+  // AdminFindingStatesPage) since the endpoint returns a state machine, not a
+  // list of rows a DataPage can render honestly.
+  // admin:widget-layout is a bespoke editor page (see WidgetLayoutPage); it
+  // reads/writes /widgets/layout as a single JSON blob, not a table of rows.
 } satisfies Record<string, PageConfig>;
 
 /** DELETE wiring per page (a delete button with confirm is legitimate human
@@ -671,29 +1311,25 @@ export const PAGE_CONFIGS = {
  * `{id}` / `{scope}` are filled from the selected row + active scope. */
 const DELETES: Record<string, { delete: string; idField?: string }> = {
   "vr:workspaces": { delete: "/vr/workspaces/{id}" },
-  "vr:targets": { delete: "/vr/targets/{id}" },
-  "vr:vuln-research": { delete: "/vr/projects/{id}" },
+  // vr:targets delete lives in the bespoke VRTargetDetail action toolbar
+  // (with kind/state-aware siblings), so no generic header delete here.
   "vr:investigations": { delete: "/vr/investigations/{id}" },
   "vr:patterns": { delete: "/vr/patterns/{id}" },
   "vr:disclosures": { delete: "/vr/disclosures/{id}" },
   "vr:fuzz-campaigns": { delete: "/vr/fuzz/campaigns/{id}" },
   "malware:workspaces": { delete: "/malware/workspaces/{id}" },
-  "malware:targets": { delete: "/malware/targets/{id}" },
+  // malware:targets delete lives in the bespoke MalwareTargetDetail action
+  // toolbar (soft-archive + state-aware siblings), so no generic header
+  // delete here -- mirrors vr:targets above.
   "malware:investigations": { delete: "/malware/investigations/{id}" },
   "malware:patterns": { delete: "/malware/patterns/{id}" },
   "malware:findings": { delete: "/malware/findings/{id}" },
   "malware:families": { delete: "/malware/families/{id}" },
   "malware:playbooks": { delete: "/malware/playbooks/{id}" },
-  "malware:projects": { delete: "/malware/projects/{id}" },
   "admin:teams": { delete: "/admin/teams/{id}" },
-  "admin:api-keys": { delete: "/auth/keys/{id}", idField: "key_id" },
   "admin:oidc-providers": { delete: "/auth/oidc/providers/{id}" },
   "admin:automation": { delete: "/automation/schedules/{id}" },
   "admin:scheduled-reports": { delete: "/scheduled-reports/{id}" },
-  "admin:tag-vocabulary": { delete: "/tags/vocabulary/{id}", idField: "tag_key" },
-  "admin:saved-filters": { delete: "/saved-filters/{id}" },
-  "admin:systems": { delete: "/systems/{id}" },
-  "admin:notifications": { delete: "/notifications/{id}" },
   "admin:mcp-instances": { delete: "/platform/mcp/instances/{id}" },
 };
 

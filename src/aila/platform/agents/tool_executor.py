@@ -302,6 +302,7 @@ class ToolExecutorHelpersBase:
                     # should SenderKind.ENGINE's value ever change.
                     self._message_model.sender_kind == SenderKind.ENGINE.value,
                 )
+                .where(self._message_model.superseded_at.is_(None))
                 .order_by(self._message_model.created_at.desc())
                 .limit(50)
             )).all()
@@ -345,6 +346,7 @@ class ToolExecutorHelpersBase:
             rows = (await uow.session.exec(
                 _select(self._message_model)
                 .where(self._message_model.branch_id == branch_id)
+                .where(self._message_model.superseded_at.is_(None))
                 .order_by(self._message_model.created_at.desc())
                 .limit(100)
             )).all()
@@ -416,6 +418,7 @@ class ToolExecutorHelpersBase:
                 _select(self._message_model)
                 .where(self._message_model.branch_id == branch_id)
                 .where(self._message_model.payload_kind == PayloadKind.TEXT.value)
+                .where(self._message_model.superseded_at.is_(None))
                 .order_by(self._message_model.created_at.desc())
                 .limit(50)
             )).all()
@@ -1864,6 +1867,7 @@ class ToolExecutorHelpersBase:
                     self._message_model.payload_kind
                     == PayloadKind.TOOL_CALL.value,
                 )
+                .where(self._message_model.superseded_at.is_(None))
                 .order_by(self._message_model.created_at.desc())
                 .limit(window)
             )).all()

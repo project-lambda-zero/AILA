@@ -92,8 +92,8 @@ async def test_seed_registers_and_aliases_both_analyzer_os_variants() -> None:
     file-fallback path byte-for-byte so a pin never re-wires the resolved
     body onto a different assembly than the code path would produce."""
     seeded = await seed_prompt_versions()
-    # Both linux and windows keys had no production alias -> both flipped.
-    assert seeded == 2
+    # Both linux and windows keys plus network commentary and writeup -> 4 flipped.
+    assert seeded == 4
 
     for analyzer_os in ("linux", "windows"):
         key = _freeflow_prompt_key(analyzer_os)

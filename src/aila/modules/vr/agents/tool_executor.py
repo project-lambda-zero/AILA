@@ -884,6 +884,7 @@ class ToolExecutor(ToolExecutorHelpersBase):
                 _select(VRInvestigationMessageRecord)
                 .where(VRInvestigationMessageRecord.branch_id == branch_id)
                 .where(VRInvestigationMessageRecord.payload_kind == PayloadKind.TOOL_CALL.value)
+                .where(VRInvestigationMessageRecord.superseded_at.is_(None))
                 .order_by(VRInvestigationMessageRecord.created_at.desc())
                 .limit(4)
             )).all()

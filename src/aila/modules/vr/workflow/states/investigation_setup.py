@@ -487,6 +487,7 @@ _SETUP_BINDINGS = InvestigationStateBindings(
     pattern_store_factory=lambda: PatternStore(knowledge=KnowledgeService()),
     specialist_spawn_fn=_spawn_ratified_specialists,
     routing_history_provider=_routing_history_provider_factory(),
+    module_id="vr",
 )
 _SETUP_HOOKS = InvestigationStateHooks(
     resolve_cve_intel=_resolve_cve_intel,

@@ -56,6 +56,8 @@ class ManagedSystemRecord(TeamScopedMixin, SQLModel, table=True):
     port: int = 22
     distro: str = Field(default="unknown")
     description: str = Field(default="")
+    role: str = Field(default="", index=True)
+    """Free-text role/kind so a module picker can filter (examples: vuln-scan/analysis/poc/fuzz/forensics/sandbox). Empty string means unspecified."""
     private_key_path: str | None = None
     private_key_secret_id: str | None = None
     private_key_passphrase_secret_id: str | None = None
@@ -865,6 +867,12 @@ class SessionMessageRecord(SQLModel, table=True):
     role: str = Field(sa_column=Column(Text, nullable=False))  # "user" | "assistant"
     content: str = Field(default="", sa_column=Column(Text, server_default=""))
     run_id: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    # req 25: JSON-encoded list of DanteAction dicts proposed on an
+    # assistant turn by the platform ``dante`` agent. NULL on legacy
+    # rows and on user turns. The frontend renders each action as a
+    # confirm/open button and executes the mapped mutation via the
+    # existing per-kind endpoint on operator confirm.
+    actions_json: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 
@@ -885,6 +893,33 @@ class ExplainCacheRecord(SQLModel, table=True):
     run_id: str = Field(sa_column=Column(Text, nullable=False))
     content: str = Field(default="", sa_column=Column(Text, server_default=""))
     cached_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+
+
+class SandboxExecHistoryRecord(SQLModel, table=True):
+    """Shape-only history of admin sandbox exec dispatches (req 33).
+
+    One row per successful POST /platform/sandbox/exec. Records the SHAPE
+    of the call (argv, exit code, timing, result flags) and the acting
+    god-tier admin -- never stdin, stdout, or stderr bodies. The admin
+    sandbox is a shared platform resource; this table is an audit of who
+    ran what, not a transcript.
+
+    Written by: POST /platform/sandbox/exec after a successful run.
+    Consumed by: GET /platform/sandbox/history (RecentExecutionsPanel).
+    """
+
+    __tablename__ = "sandbox_exec_history"
+    __table_args__ = (Index("ix_sandbox_exec_history_created_at", "created_at"),)
+
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
+    actor_user_id: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    argv: list[str] = Field(sa_column=Column("argv", JSONB, nullable=False))
+    exit_code: int | None = Field(default=None, sa_column=Column(Integer, nullable=True))
+    duration_s: float = Field(sa_column=Column(Float, nullable=False))
+    timed_out: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default="false"))
+    oom: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default="false"))
+    truncated: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default="false"))
+    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 
 # ---------------------------------------------------------------------------
@@ -930,27 +965,6 @@ class WidgetLayoutRecord(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     user_id: str = Field(index=True, unique=True)
     layout_json: str = Field(default="{}", sa_column=Column(Text))
-    updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
-
-
-class SavedFilterRecord(SQLModel, table=True):
-    """User-saved filter configuration for entity list views.
-
-    shared_with_team=True makes the filter visible to all users in the same group (D-41/D-42).
-    Written by: POST /saved-filters.
-    Consumed by: GET /saved-filters (BE-09).
-    """
-
-    __tablename__ = "saved_filter_records"
-
-    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    user_id: str = Field(index=True)
-    name: str
-    entity_type: str = Field(index=True)
-    filter_json: str = Field(default="{}", sa_column=Column(Text))
-    is_pinned: bool = Field(default=False)
-    shared_with_team: bool = Field(default=False)
-    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
     updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 
 
@@ -1214,6 +1228,10 @@ from aila.platform.lifecycle.assignments import LifecycleCanaryAssignment
 # create_all path (tests, fresh installs) and Alembic autogen see the table.
 from aila.platform.lifecycle.models import LifecycleTransitionRecord
 from aila.platform.llm.cost_record import LLMCostRecord
+
+# RFC-04 phase 2: consolidated platform MCP call-log table. Imported so
+# create_all / Alembic autogen register the ``mcp_call_log`` table.
+from aila.platform.mcp.call_log_record import McpCallLogRecord
 
 # RFC-11 step 1: MCP server instance catalog. Imported so create_all
 # and Alembic autogen see the mcp_server_instances table.

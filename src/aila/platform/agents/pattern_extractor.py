@@ -109,7 +109,8 @@ class PatternExtractorBase:
     _target_model: ClassVar[type[Any]]
     _message_model: ClassVar[type[Any]]
     _branch_model: ClassVar[type[Any]]
-    _prompt_path: ClassVar[Path]
+    _prompt_template: ClassVar[str] = ""
+    _prompt_path: ClassVar[Path | None] = None
 
     def __init__(
         self,
@@ -405,7 +406,12 @@ class PatternExtractorBase:
         )
 
     def _build_prompt(self, outcome: Any, transcript: str) -> str:
-        template = self._prompt_path.read_text(encoding="utf-8")
+        if self._prompt_template:
+            template = self._prompt_template
+        elif self._prompt_path is not None and self._prompt_path.exists():
+            template = self._prompt_path.read_text(encoding="utf-8")
+        else:
+            template = ""
         outcome_summary = (
             f"kind={outcome.outcome_kind} confidence={outcome.confidence} "
             f"payload={outcome.payload_json or '{}'}"

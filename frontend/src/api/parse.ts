@@ -33,10 +33,31 @@
  * import `asRecord`/`isRecord` from here rather than re-defining them.
  */
 
+import { ApiError } from "./client";
+
 /** Type guard: `v` is a plain object (not array, not null).
  * Canonical shell-wide guard -- do not re-define at call sites. */
 export function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+/** Surface a backend rejection as clean text. FastAPI's HTTPException body is
+ * `{"detail": "..."}` which `apiFetch` throws verbatim as the ApiError message;
+ * parse it out so the operator sees the sentence, not the JSON wrapper. Falls
+ * back to the raw message / status for non-JSON bodies and non-ApiError values. */
+export function apiErrDetail(err: unknown): string {
+  if (err instanceof ApiError) {
+    try {
+      const parsed: unknown = JSON.parse(err.message);
+      const obj = asRecord(parsed);
+      const detail = obj ? obj.detail : null;
+      if (typeof detail === "string" && detail.trim() !== "") return detail;
+    } catch {
+      // Body was not JSON -- fall through to the raw message.
+    }
+    return err.message || `HTTP ${err.status}`;
+  }
+  return err instanceof Error ? err.message : String(err);
 }
 
 /** Narrow `v` to a plain object or `null`. */

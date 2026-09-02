@@ -109,6 +109,30 @@ export interface FieldOptionsSpec {
   labelField?: string;
 }
 
+/** Fetch a list endpoint and map each row to {value,label}. Returns `[]` for a
+ * missing endpoint so callers can request options unconditionally. Shared by
+ * the form-select hook and the DataPage filter primitive so both derive
+ * options from the same row-mapping rules. */
+export async function fetchFieldOptions(spec: FieldOptionsSpec): Promise<FieldOption[]> {
+  const endpoint = spec.endpoint ?? "";
+  if (!endpoint) return [];
+  const raw = await apiFetch<unknown>(endpoint);
+  let arr: unknown[] = [];
+  if (Array.isArray(raw)) arr = raw;
+  else if (raw && typeof raw === "object") {
+    const obj = raw as Record<string, unknown>;
+    const k = LIST_KEYS.find((name) => Array.isArray(obj[name]));
+    if (k) arr = obj[k] as unknown[];
+  }
+  const out: FieldOption[] = [];
+  for (const row of arr) {
+    if (!row || typeof row !== "object") continue;
+    const opt = pickOption(row as Record<string, unknown>, spec.valueField, spec.labelField);
+    if (opt) out.push(opt);
+  }
+  return out;
+}
+
 /** Fetch a list endpoint and map each row to {value,label}. Empty options
  * (missing endpoint, still loading) return `[]` so the caller renders a
  * disabled/placeholder select without extra branching. */
@@ -116,23 +140,7 @@ export function useFieldOptions(spec: FieldOptionsSpec) {
   const endpoint = spec.endpoint ?? "";
   const q = useQuery({
     queryKey: ["field-options", endpoint, spec.valueField ?? "", spec.labelField ?? ""],
-    queryFn: async (): Promise<FieldOption[]> => {
-      const raw = await apiFetch<unknown>(endpoint);
-      let arr: unknown[] = [];
-      if (Array.isArray(raw)) arr = raw;
-      else if (raw && typeof raw === "object") {
-        const obj = raw as Record<string, unknown>;
-        const k = LIST_KEYS.find((name) => Array.isArray(obj[name]));
-        if (k) arr = obj[k] as unknown[];
-      }
-      const out: FieldOption[] = [];
-      for (const row of arr) {
-        if (!row || typeof row !== "object") continue;
-        const opt = pickOption(row as Record<string, unknown>, spec.valueField, spec.labelField);
-        if (opt) out.push(opt);
-      }
-      return out;
-    },
+    queryFn: (): Promise<FieldOption[]> => fetchFieldOptions(spec),
     enabled: Boolean(endpoint),
     staleTime: 30_000,
   });

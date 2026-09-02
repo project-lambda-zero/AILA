@@ -97,6 +97,75 @@ class AliasInfo(BaseModel):
     updated_at: datetime
 
 
+class PromptSummary(BaseModel):
+    key: str
+    version: str
+    production_version: str | None = None
+    aliases: list[str] = []
+    author: str = ""
+    notes: str = ""
+    content_hash: str = ""
+    body: str = ""
+    body_snippet: str = ""
+    body_length: int = 0
+    created_at: datetime
+
+
+class PromptDetail(BaseModel):
+    key: str
+    version: str
+    body: str
+    content_hash: str
+    author: str = ""
+    notes: str = ""
+    aliases: list[str] = []
+    created_at: datetime
+
+
+@router.get("", response_model=DataEnvelope[list[PromptSummary]])
+@limiter.limit("60/minute")
+async def list_all_prompts(
+    request: Request,
+    prefix: str | None = Query(default=None, max_length=256),
+    ctx: AuthContext = Depends(_require_admin),
+) -> DataEnvelope[list[PromptSummary]]:
+    """List all distinct registered prompt keys with active production aliases and latest versions."""
+    del request, ctx
+    summaries = await _STORE.list_all_prompts(prefix=prefix)
+    return DataEnvelope(data=[PromptSummary(**s) for s in summaries])
+
+
+@router.get("/body", response_model=DataEnvelope[PromptDetail])
+@limiter.limit("60/minute")
+async def get_prompt_body(
+    request: Request,
+    key: str = Query(min_length=1, max_length=256),
+    version: str | None = Query(default=None, max_length=32),
+    alias: str | None = Query(default=None, max_length=32),
+    ctx: AuthContext = Depends(_require_admin),
+) -> DataEnvelope[PromptDetail]:
+    """Retrieve full prompt text by explicit version or active alias pointer."""
+    del request, ctx
+    row = await _STORE.resolve(key, version=version, alias=alias or ("production" if not version else None))
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Prompt not found for key '{key}' (version='{version}', alias='{alias}')",
+        )
+    aliases = await _STORE.list_aliases(key)
+    active_aliases = [a.alias for a in aliases if a.version == row.version]
+    return DataEnvelope(data=PromptDetail(
+        key=row.key,
+        version=row.version,
+        body=row.body,
+        content_hash=row.content_hash,
+        author=row.author or "",
+        notes=row.notes or "",
+        aliases=active_aliases,
+        created_at=row.created_at,
+    ))
+
+
 @router.post("/versions", status_code=status.HTTP_201_CREATED)
 @limiter.limit("30/minute")
 async def register_version(

@@ -105,6 +105,11 @@ synthesize_no_finding_outcomes = partial(
     # resumable: stall_recovery flips it back to running and re-runs
     # setup, which respawns a branch. FAILED would be a hard dead-end.
     orphan_terminal_status=InvestigationStatus.STALLED.value,
+    # F2: read the reconciler policy toggles live at call time (namespace
+    # vr) so PUT /config lands on the next reconciler tick without a
+    # worker restart. Defaults (approved / 0) preserve prior behavior.
+    get_int=_cfg.get_int,
+    get_str=_cfg.get_str,
 )
 
 close_rejected_outcomes = partial(
@@ -138,6 +143,8 @@ synthesize_no_finding_for_investigation = partial(
     no_finding_outcome_kind=_VR_NO_FINDING_OUTCOME_KIND,
     build_no_finding_payload=_build_vr_no_finding_payload,
     orphan_terminal_status=InvestigationStatus.STALLED.value,
+    get_int=_cfg.get_int,
+    get_str=_cfg.get_str,
 )
 
 abandon_stale_branches = partial(

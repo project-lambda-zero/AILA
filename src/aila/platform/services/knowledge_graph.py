@@ -30,6 +30,7 @@ tests.
 
 from __future__ import annotations
 
+import json
 from collections import deque
 from collections.abc import Iterable
 from datetime import datetime
@@ -527,7 +528,19 @@ class KnowledgeGraph:
         for entry_id in induced_ids:
             row = rows_by_id.get(entry_id)
             namespace = row.namespace if row is not None else None
-            tier = trust_tier_from_namespace(namespace)
+            # RFC-12 D1: model-distilled kinds (``*.semantic.*`` /
+            # ``*.pattern.*``) require ``confirmed=true`` in the entry
+            # metadata to hold the verified tier -- parse the JSON once
+            # so an unconfirmed row is down-weighted like an observation.
+            metadata: dict[str, Any] | None = None
+            if row is not None and row.entry_metadata:
+                try:
+                    parsed = json.loads(row.entry_metadata)
+                except (json.JSONDecodeError, TypeError):
+                    parsed = None
+                if isinstance(parsed, dict):
+                    metadata = parsed
+            tier = trust_tier_from_namespace(namespace, metadata)
             trust_factor[entry_id] = (
                 float(target_derived_weight)
                 if tier == TRUST_TIER_TARGET_DERIVED

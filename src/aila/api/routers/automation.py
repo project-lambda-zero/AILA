@@ -311,6 +311,7 @@ async def list_actions(
                 action_id=a.action_id,
                 description=a.description,
                 module_id=a.module_id,
+                param_schema=a.param_schema,
             )
             for a in actions
         ],

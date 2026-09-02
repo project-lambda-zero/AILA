@@ -26,7 +26,12 @@ async def test_read_kind_filter(test_db) -> None:
     svc = LedgerService()
     inv = "inv-kind"
     await svc.append_general(inv, "b1", "discovery", {"a": 1})
-    await svc.append_general(inv, "b1", "note", {"b": 2})
+    # A recon-phase note stays a note; a non-recon note would coerce to
+    # discovery (issue #02 L3), so this test uses the recon tag to
+    # isolate the read filter from the coercion path.
+    await svc.append_general(
+        inv, "b1", "note", {"phase": "recon", "b": 2},
+    )
     disc = await svc.read_general(inv, kinds=["discovery"])
     assert len(disc) == 1
     assert disc[0]["kind"] == "discovery"

@@ -13,7 +13,6 @@ import json
 import logging
 import time
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any
 
 from aila.platform.agents.idempotent_llm import idempotent_llm_call
@@ -26,29 +25,27 @@ from aila.platform.contracts.obligations import (
     adjudicate,
 )
 from aila.platform.llm.cost import reconcile_budget_state
-from aila.platform.prompts import PromptRegistry
+from aila.platform.prompts import PromptNotFoundError, PromptRegistry
+from aila.platform.prompts.seeds import VR_NDAY_TEXT
+from aila.platform.prompts.version_store import PromptVersionStore
 from aila.platform.services.evidence_pack import BoundedEvidencePack, EvidenceSection
 from aila.platform.services.factory import ServiceFactory
 
 from ..config_schema import VRConfigSchema
 from ..contracts.finding import CrashType
 
-_PROMPT_DIR = Path(__file__).parent / "prompts"
 _PROMPT_REGISTRY = PromptRegistry(
-    _PROMPT_DIR,
     module="vr",
-    fallback_base="system_nday_researcher.md",
+    version_store=PromptVersionStore(),
 )
 
 
 def _load_system_prompt() -> str:
-    """Return the N-day researcher system prompt from the registry.
-
-    RFC-09 criterion 1: body lives in ``prompts/system_nday_researcher.md``
-    resolved via :class:`PromptRegistry` so cost / seal rows carry the
-    resolved ``prompt_content_hash`` + ``prompt_version`` stamp.
-    """
-    return _PROMPT_REGISTRY.load("nday_researcher")
+    """Return the N-day researcher system prompt from the registry."""
+    try:
+        return _PROMPT_REGISTRY.load("nday_researcher")
+    except PromptNotFoundError:
+        return VR_NDAY_TEXT
 
 __all__ = ["NdayResearcher"]
 

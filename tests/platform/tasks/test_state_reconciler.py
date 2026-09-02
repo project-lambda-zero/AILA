@@ -583,3 +583,145 @@ class TestInvestigationInFlightGuard:
 
         assert requeues == [task_id]  # no lock -> genuinely dead, requeue resumes
         assert report.investigation_action == "requeued_run"
+
+
+# ---------------------------------------------------------------------------
+# Terminal-cursor reconciliation (VR-truth Stream C3)
+# ---------------------------------------------------------------------------
+
+
+async def _read_cursor_state(task_id: str) -> str | None:
+    async with async_session_scope() as session:
+        row = await session.get(WorkflowStateCursor, task_id)
+        return None if row is None else row.current_state
+
+
+class TestTerminalCursorReconciliation:
+    """Operator-terminal investigation (COMPLETED / FAILED / ABANDONED)
+    with a workflow_state_cursor parked at a live mid-pipeline state:
+    the reconciler must drive the cursor to the matching engine terminal
+    sentinel instead of refusing. A still-running investigation MUST
+    stay untouched."""
+
+    async def test_completed_investigation_terminalizes_stranded_cursor(
+        self, test_db,
+    ) -> None:
+        del test_db
+        inv_id = await _seed_vr_investigation("completed")
+        task_id = await _seed_inv_task(inv_id, status=TaskStatus.DONE.value)
+        await _seed_inv_cursor(task_id, inv_id, "recon")
+
+        r = _NoLockReconciler(lock_present=False)
+        report = await r.reconcile_investigation(inv_id, binding=_vr_binding())
+
+        assert report.healed is True
+        assert report.investigation_action == "terminalized_cursor"
+        assert report.refusal_reason is None
+        assert await _read_cursor_state(task_id) == "__succeeded__"
+
+    async def test_failed_investigation_uses_failed_sentinel(
+        self, test_db,
+    ) -> None:
+        del test_db
+        inv_id = await _seed_vr_investigation("failed")
+        task_id = await _seed_inv_task(inv_id, status=TaskStatus.FAILED.value)
+        await _seed_inv_cursor(task_id, inv_id, "recon")
+
+        r = _NoLockReconciler(lock_present=False)
+        report = await r.reconcile_investigation(inv_id, binding=_vr_binding())
+
+        assert report.healed is True
+        assert report.investigation_action == "terminalized_cursor"
+        assert await _read_cursor_state(task_id) == "__failed__"
+
+    async def test_abandoned_investigation_uses_cancelled_sentinel(
+        self, test_db,
+    ) -> None:
+        del test_db
+        inv_id = await _seed_vr_investigation("abandoned")
+        task_id = await _seed_inv_task(inv_id, status=TaskStatus.CANCELLED.value)
+        await _seed_inv_cursor(task_id, inv_id, "recon")
+
+        r = _NoLockReconciler(lock_present=False)
+        report = await r.reconcile_investigation(inv_id, binding=_vr_binding())
+
+        assert report.healed is True
+        assert report.investigation_action == "terminalized_cursor"
+        assert await _read_cursor_state(task_id) == "__cancelled__"
+
+    async def test_terminal_investigation_no_stranded_cursor_refuses(
+        self, test_db,
+    ) -> None:
+        """COMPLETED investigation whose cursor is already at a reserved
+        terminal is a normal cleanly-closed row; the reconciler must
+        return the historical refusal instead of manufacturing a healed
+        event."""
+        del test_db
+        inv_id = await _seed_vr_investigation("completed")
+        task_id = await _seed_inv_task(inv_id, status=TaskStatus.DONE.value)
+        await _seed_inv_cursor(task_id, inv_id, "__succeeded__")
+
+        r = _NoLockReconciler(lock_present=False)
+        report = await r.reconcile_investigation(inv_id, binding=_vr_binding())
+
+        assert report.healed is False
+        assert report.refusal_reason == "terminal"
+        assert report.investigation_action is None
+        assert await _read_cursor_state(task_id) == "__succeeded__"
+
+    async def test_paused_cursor_on_terminal_investigation_untouched(
+        self, test_db,
+    ) -> None:
+        """A __paused__ cursor is operator intent; even on an
+        operator-terminal investigation the reconciler must not rewrite
+        it. The pass reports refusal_reason=terminal because no cursor
+        was actually moved."""
+        del test_db
+        inv_id = await _seed_vr_investigation("abandoned")
+        task_id = await _seed_inv_task(inv_id, status=TaskStatus.CANCELLED.value)
+        await _seed_inv_cursor(task_id, inv_id, "__paused__")
+
+        r = _NoLockReconciler(lock_present=False)
+        report = await r.reconcile_investigation(inv_id, binding=_vr_binding())
+
+        assert report.healed is False
+        assert report.refusal_reason == "terminal"
+        assert await _read_cursor_state(task_id) == "__paused__"
+
+    async def test_running_investigation_cursor_untouched(
+        self, test_db,
+    ) -> None:
+        """A still-running investigation with a live cursor must NEVER
+        be touched by the terminal-cursor path -- the invariant would
+        otherwise erase a live checkpoint under a live worker."""
+        del test_db
+        inv_id = await _seed_vr_investigation("running")
+        task_id = await _seed_inv_task(inv_id, status=TaskStatus.RUNNING.value)
+        await _seed_inv_cursor(task_id, inv_id, "recon")
+
+        r = _NoLockReconciler(lock_present=True)
+        report = await r.reconcile_investigation(inv_id, binding=_vr_binding())
+
+        assert report.investigation_action != "terminalized_cursor"
+        # Live cursor stays where it was.
+        assert await _read_cursor_state(task_id) == "recon"
+
+    async def test_stalled_investigation_still_refuses(
+        self, test_db,
+    ) -> None:
+        """STALLED is owned by the stall-recovery sweep's CAS claim. The
+        terminal-cursor reconciliation must NOT race it -- keep the
+        historical refusal path."""
+        del test_db
+        inv_id = await _seed_vr_investigation("stalled")
+        task_id = await _seed_inv_task(inv_id, status=TaskStatus.FAILED.value)
+        await _seed_inv_cursor(task_id, inv_id, "recon")
+
+        r = _NoLockReconciler(lock_present=False)
+        report = await r.reconcile_investigation(inv_id, binding=_vr_binding())
+
+        assert report.healed is False
+        assert report.refusal_reason == "terminal"
+        assert await _read_cursor_state(task_id) == "recon"
+
+

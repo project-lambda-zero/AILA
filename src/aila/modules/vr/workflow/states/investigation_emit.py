@@ -24,6 +24,7 @@ from typing import Any
 from sqlmodel import select as _select
 
 from aila.modules.vr._task_queue import default_task_queue
+from aila.modules.vr.agents.branch_manager import BranchManager
 from aila.modules.vr.agents.outcome_dispatcher import OutcomeDispatcher
 from aila.modules.vr.agents.pattern_extractor import (
     PatternExtractor,
@@ -133,6 +134,61 @@ async def _record_experience(
     )
 
 
+def _build_branch_manager(investigation_id: str) -> Any:
+    """Return a :class:`BranchManager` bound to ``investigation_id``.
+
+    Called by the platform aggregation spine to merge duplicate-signature
+    branches and promote the strongest positive. Kept trivial so the
+    guarded factory site in the emit chokepoint sees a plain
+    :class:`RuntimeError` when the module surface is broken, not a
+    hidden partial construction.
+    """
+    return BranchManager(investigation_id)
+
+
+def _build_falsifier_agent() -> Any:
+    """Construct a :class:`FalsifierAgent` bound to the platform LLM client.
+
+    The falsifier drives one refutation attempt per finalize pass over
+    the strongest positive outcome. Deferred imports keep the emit
+    handler's construction cost bounded (the falsifier + AilaLLMClient +
+    ConfigRegistry + SecretStore chain only lands when the aggregate
+    step actually reaches for it). Reuses the same idempotent
+    completion adapter shape as :mod:`aila.modules.vr.agents.explorer_planner`
+    so a retried worker replays the cached refutation instead of paying
+    the model API a second time.
+    """
+    from aila.platform.agents.falsifier import FalsifierAgent  # noqa: PLC0415
+    from aila.platform.agents.idempotent_llm import (  # noqa: PLC0415
+        idempotent_llm_call,
+    )
+    from aila.platform.llm.client import AilaLLMClient  # noqa: PLC0415
+    from aila.storage.registry import ConfigRegistry  # noqa: PLC0415
+    from aila.storage.secrets import SecretStore  # noqa: PLC0415
+
+    _client = AilaLLMClient(
+        registry=ConfigRegistry(), secret_store=SecretStore(),
+    )
+
+    async def _completion(
+        *, prompt: str, system: str, **_kwargs: Any,
+    ) -> str:
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": prompt},
+        ]
+        response, _cache_hit = await idempotent_llm_call(
+            _client,
+            method="chat",
+            task_type="falsifier",
+            messages=messages,
+            investigation_id=_kwargs.get("investigation_id", ""),
+        )
+        return str(response.content or "")
+
+    return FalsifierAgent(_completion)
+
+
 def _build_emit_handler() -> Any:
     from aila.modules.vr.workflow.task import (
         run_vr_auto_patch,
@@ -168,6 +224,14 @@ def _build_emit_handler() -> Any:
         finalize=finalize_investigation,
         branch_table="vr_investigation_branches",
         record_experience=_record_experience,
+        # Aggregation spine wiring (issue .run/issues/19_aggregation_spine.md).
+        # Threads a per-investigation :class:`BranchManager` and a
+        # :class:`FalsifierAgent` into the platform aggregate finalizer
+        # so merge/promote/refute actually run in production. Both are
+        # constructed inside a guarded try in the emit chokepoint; a
+        # factory raise degrades the aggregate step to skeleton-only.
+        branch_pool_factory=_build_branch_manager,
+        falsifier_factory=_build_falsifier_agent,
     )
     # VR has no post-completion proposers.
     return _build_emit_state(bindings, InvestigationStateHooks())

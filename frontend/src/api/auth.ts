@@ -21,6 +21,7 @@ function decodeToken(token: string): User {
   if ("user_id" in json && typeof json.user_id === "string") out.id = json.user_id;
   if ("username" in json && typeof json.username === "string") out.username = json.username;
   if ("role" in json && typeof json.role === "string") out.role = json.role;
+  if ("team_id" in json && typeof json.team_id === "string") out.team_id = json.team_id;
   return out;
 }
 

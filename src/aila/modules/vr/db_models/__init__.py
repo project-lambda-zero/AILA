@@ -13,7 +13,6 @@ from .fuzz import VRFuzzCampaignRecord, VRFuzzCrashRecord
 from .fuzz_proposal import VRFuzzCampaignProposalRecord
 from .investigation import VRInvestigationRecord
 from .investigation_target import VRInvestigationTargetRecord
-from .mcp_call_log import VRMcpCallLogRecord
 from .message import VRInvestigationMessageRecord
 from .outcome import VRInvestigationOutcomeRecord
 from .outcome_review import VRInvestigationOutcomeReviewRecord
@@ -36,7 +35,6 @@ __all__ = [
     "VRInvestigationMessageRecord",
     "VRInvestigationOutcomeRecord",
     "VRInvestigationOutcomeReviewRecord",
-    "VRMcpCallLogRecord",
     "VRInvestigationRecord",
     "VRInvestigationTargetRecord",
     "VRPatternRecord",

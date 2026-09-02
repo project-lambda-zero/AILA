@@ -132,8 +132,16 @@ _TERMINAL_STATUSES: frozenset[str] = frozenset({
 
 # Ledger kinds worth feeding the distillation prompt. ``objective`` is
 # stateful bookkeeping; ``decision`` is the quorum's approval envelope,
-# not a first-class trace of what was learned.
-_EPISODIC_KINDS: tuple[str, ...] = ("discovery", "note")
+# not a first-class trace of what was learned. ``adjudication`` (issue
+# #07 -- ledger economics, RFC #253/#266) carries reject / refute
+# verdicts against a hypothesis or outcome: the single most reusable
+# fact an investigation produces, so the distiller MUST ingest it as
+# negative knowledge alongside the discovery / note traces. Adjudications
+# are not confirmation-gated -- the ``confirmed_only=True`` upstream
+# filter is discovery-only by construction (see
+# :func:`aila.platform.services.ledger._confirmed_discovery_ids`) so
+# non-discovery kinds pass through untouched.
+_EPISODIC_KINDS: tuple[str, ...] = ("discovery", "note", "adjudication")
 
 # Isolation tuple used at every reachable failure point below. Bare
 # ``except Exception`` is banned by the honesty audit, and a per-
@@ -544,6 +552,14 @@ async def _write_facts(
                     "investigation_id": investigation_id,
                     "team_id": team_id,
                     "fact_index": index,
+                    # RFC-12 D1/D2: the consolidator only distills from
+                    # ledger discoveries the sibling quorum confirmed
+                    # (``read_general(confirmed_only=True)`` upstream),
+                    # so every fact written here is quorum-backed.
+                    # ``trust_tier_from_namespace`` reads this flag to
+                    # lift the row from ``target_derived`` (the default
+                    # for model-distilled kinds) to ``verified``.
+                    "confirmed": True,
                 },
                 dedup_key=f"{DEDUP_KEY_PREFIX}:{investigation_id}:{index}",
                 team_id=team_id,
@@ -641,9 +657,17 @@ async def consolidate_recent_investigations(
                 continue
 
             try:
+                # RFC-12 D2: model distillation MUST feed only on ledger
+                # discoveries the sibling quorum confirmed -- unconfirmed
+                # discoveries from stalled or refuted branches are exactly
+                # the material that produced dishonest ``vr.semantic.*``
+                # rows. Non-discovery kinds (``note``) have no confirmation
+                # concept and pass through untouched (see
+                # ``LedgerService.read_general``).
                 entries = await ledger.read_general(
                     candidate["investigation_id"],
                     kinds=list(_EPISODIC_KINDS),
+                    confirmed_only=True,
                     limit=max_ledger_entries,
                     session=session,
                 )

@@ -1,7 +1,7 @@
 {
   "name": "@aila/shell",
   "private": true,
-  "version": "0.5.50",
+  "version": "0.5.51",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 3000",
@@ -27,6 +27,9 @@
     "@tailwindcss/vite": "catalog:vite",
     "@tanstack/react-query": "catalog:query",
     "@tanstack/react-table": "catalog:query",
+    "@tanstack/react-virtual": "catalog:query",
+    "@xterm/addon-fit": "catalog:ui",
+    "@xterm/xterm": "catalog:ui",
     "@xyflow/react": "catalog:flow",
     "class-variance-authority": "catalog:ui",
     "clsx": "catalog:ui",

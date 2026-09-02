@@ -3,6 +3,9 @@
 Provides per-user notification persistence with read/unread tracking.
 
 Per RT-05 / D-32: user-scoped -- never returns other users' notifications (T-138-18).
+Per req 44: system-produced alerts (user_id="__system__", written by cost.py
+missing-pricing and budget_alert.py 80%/100%) are visible to every authenticated
+user as read-only rows; mutations stay scoped to the row owner.
 Per D-27: DataEnvelope response.
 Per D-26: offset/limit pagination.
 Per D-31: slowapi rate limiting.
@@ -13,7 +16,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import func
-from sqlmodel import select
+from sqlmodel import or_, select
 
 from aila.api.auth import AuthContext, require_user_or_api_key
 from aila.api.limiter import limiter
@@ -26,6 +29,11 @@ from aila.storage.db_models import NotificationRecord
 __all__ = ["router"]
 
 _log = logging.getLogger(__name__)
+
+# System-produced alerts (cost.py missing-pricing, budget_alert.py 80%/100%)
+# carry this user_id. They are visible to every authenticated user as read-only
+# rows (req 44); real user rows stay scoped to their owner (T-138-18).
+_SYSTEM_USER_ID = "__system__"
 
 router = APIRouter(prefix="/notifications", tags=["notifications"], dependencies=[Depends(require_user_or_api_key)])
 
@@ -58,14 +66,18 @@ async def list_notifications(
     offset: int = 0,
     auth: AuthContext = Depends(require_user_or_api_key),
 ) -> DataEnvelope[list[NotificationResponse]]:
-    """List notifications for the current user (T-138-18: scoped to auth.user_id).
-
-    Optionally filter by is_read state.
+    """List notifications visible to the current user: their own rows plus
+    read-only __system__ alerts (req 44). Optionally filter by is_read state.
     """
     async with async_session_scope() as session:
         # #204: count + page in SQL. Previously loaded every matching row
         # into Python and sliced ``[offset:offset+limit]``.
-        base_filter = [NotificationRecord.user_id == auth.user_id]
+        base_filter = [
+            or_(
+                NotificationRecord.user_id == auth.user_id,
+                NotificationRecord.user_id == _SYSTEM_USER_ID,
+            )
+        ]
         if is_read is not None:
             base_filter.append(NotificationRecord.is_read == is_read)
 
@@ -97,12 +109,16 @@ async def get_unread_notifications(
 ) -> DataEnvelope[UnreadNotificationsResponse]:
     """Return unread count and the 10 most recent unread notifications.
 
-    Per T-138-18: strictly scoped to auth.user_id.
+    Per T-138-18: user rows are strictly scoped to auth.user_id. Per req 44:
+    unread __system__ alerts are included so cost/budget warnings surface.
     """
     async with async_session_scope() as session:
         # #204: SQL count + LIMIT 10 instead of loading every unread row.
         unread_filter = [
-            NotificationRecord.user_id == auth.user_id,
+            or_(
+                NotificationRecord.user_id == auth.user_id,
+                NotificationRecord.user_id == _SYSTEM_USER_ID,
+            ),
             NotificationRecord.is_read.is_(False),
         ]
         count_stmt = select(func.count(NotificationRecord.id)).where(*unread_filter)
@@ -138,11 +154,11 @@ async def mark_notification_read(
 ) -> DataEnvelope[NotificationResponse]:
     """Mark a notification as read. Sets read_at timestamp.
 
-    Per T-138-18: validates notification belongs to auth.user_id.
+    Per T-138-18: validates notification belongs to auth.user_id or is a __system__ alert.
     """
     async with async_session_scope() as session:
         record = await session.get(NotificationRecord, notification_id)
-        if record is None or record.user_id != auth.user_id:
+        if record is None or (record.user_id != auth.user_id and record.user_id != _SYSTEM_USER_ID):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Notification '{notification_id}' not found",
@@ -167,11 +183,14 @@ async def mark_all_notifications_read(
     request: Request,
     auth: AuthContext = Depends(require_user_or_api_key),
 ) -> DataEnvelope[dict[str, int]]:
-    """Mark all unread notifications for the current user as read."""
+    """Mark all unread notifications for the current user and visible system alerts as read."""
     now = utc_now()
     async with async_session_scope() as session:
         stmt = select(NotificationRecord).where(
-            NotificationRecord.user_id == auth.user_id,
+            or_(
+                NotificationRecord.user_id == auth.user_id,
+                NotificationRecord.user_id == _SYSTEM_USER_ID,
+            ),
             NotificationRecord.is_read == False,
         )
         unread = (await session.exec(stmt)).all()
@@ -200,7 +219,7 @@ async def delete_notification(
     """Delete a notification. Per T-138-18: validates ownership before deletion."""
     async with async_session_scope() as session:
         record = await session.get(NotificationRecord, notification_id)
-        if record is None or record.user_id != auth.user_id:
+        if record is None or (record.user_id != auth.user_id and record.user_id != _SYSTEM_USER_ID):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Notification '{notification_id}' not found",

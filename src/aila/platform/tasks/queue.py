@@ -410,6 +410,7 @@ class TaskQueue:
         group_id: str = "system",
         team_id: str | None = None,
         bypass_dedup: bool = False,
+        defer_seconds: float = 0.0,
     ) -> TaskHandle:
         """Submit a background task. Returns a TaskHandle for status polling.
 
@@ -572,7 +573,8 @@ class TaskQueue:
             # round-trip. A crash in that window used to leave a QUEUED row
             # with no ARQ job (the defer SELECT ran after the commit and a
             # process death between them orphaned the row).
-            defer_seconds = await self._compute_investigation_defer(kwargs)
+            computed_defer = await self._compute_investigation_defer(kwargs)
+            defer_seconds = max(defer_seconds, computed_defer)
 
         initial_status = TaskStatus.WAITING if depends_on else TaskStatus.QUEUED
 

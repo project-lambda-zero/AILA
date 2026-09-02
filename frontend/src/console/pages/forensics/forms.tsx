@@ -180,6 +180,13 @@ export interface FindingRow extends Record<string, unknown> {
   name?: string | null;
   user?: string | null;
   finding_user?: string | null;
+  /** Numeric id of the FindingRecord; used as the {finding_id} in
+   * POST /findings/{finding_id}/transition. */
+  id?: number | string | null;
+  finding_id?: number | string | null;
+  /** Latest FindingWorkflowRecord.current_state populated by the backend on
+   * every LIST row; default "new" when no record has been written yet. */
+  workflow_state?: string;
 }
 
 const REASON_PRESETS = [

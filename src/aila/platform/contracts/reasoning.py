@@ -87,6 +87,17 @@ class Hypothesis(BaseModel):
     claim: str
     why_plausible: str = ""
     kill_criterion: str = ""
+    # F1 promotion provenance. Empty by default. An agent sets this to a
+    # short evidence citation (file:line, tool-output id, or probe id)
+    # when it has CONFIRMED the hypothesis -- refuted its own
+    # kill_criterion with cited evidence and found no mitigating guard.
+    # A non-empty value marks the hypothesis as a proven positive the
+    # branch must submit as a ``direct_finding`` rather than close on a
+    # weaker no-finding polarity. This is an agent judgment (mirrors how
+    # rejection is an agent judgment, not a string match); the engine
+    # only enforces consistency between the flag and the submit polarity.
+    # Rides on the case_state JSON, so no migration is required.
+    confirmed_by: str = ""
     # Turn number at which this hypothesis became live. Used by
     # ``render_case_model`` to surface aging so the agent feels
     # pressure to close hypotheses that have been live for many turns

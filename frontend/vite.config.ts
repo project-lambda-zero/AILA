@@ -97,6 +97,9 @@ function manualChunks(id: string): string | undefined {
   if (/[\\/]node_modules[\\/]motion[\\/]/.test(id)) {
     return "vendor-motion";
   }
+  if (/[\\/]node_modules[\\/]@xterm[\\/]/.test(id)) {
+    return "vendor-xterm";
+  }
   if (/[\\/]node_modules[\\/](monaco-editor|@monaco-editor)[\\/]/.test(id)) {
     return "vendor-monaco";
   }
@@ -122,7 +125,7 @@ export default defineConfig({
     __APP_BUILD_SHA__: JSON.stringify(buildSha),
   },
   optimizeDeps: {
-    include: ["ogl"],
+    include: ["ogl", "@xterm/xterm", "@xterm/addon-fit"],
   },
   resolve: {
     alias: [

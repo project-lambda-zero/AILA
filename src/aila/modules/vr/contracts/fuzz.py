@@ -241,6 +241,16 @@ class VRFuzzCrashCreate(BaseModel):
         max_length=16384,
         description="Top-frames stack trace (truncated to fit a single row).",
     )
+    reproducer_head_hex: str | None = Field(
+        default=None,
+        max_length=1_048_576,
+        description=(
+            "Inline hex preview of the minimised reproducer's first bytes. "
+            "When present, stored directly on the crash record without "
+            "reading from disk; when absent, the service falls back to "
+            "the config-gated local-root read of ``reproducer_path``."
+        ),
+    )
     extra: dict[str, Any] = Field(default_factory=dict)
 
 

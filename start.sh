@@ -593,7 +593,7 @@ case "$COMMAND" in
     echo "[aila] Backend restarted; rest of stack untouched." ; exit 0 ;;
   restart-frontend)
     load_env; restart_one "frontend" "$FRONTEND_PORT"; mkdir -p "$RUN_DIR"
-    spawn_shell "frontend" "corepack pnpm --filter @aila/shell run dev"
+    spawn_shell "frontend" "pnpm --filter @aila/shell run dev"
     echo "[aila] Frontend restarted; rest of stack untouched." ; exit 0 ;;
   restart-workers)
     load_env
@@ -673,9 +673,9 @@ if [[ "$AILA_START_IDA_HEADLESS" == "1" && -d "$IDA_HEADLESS_DIR" ]]; then
   # WMI Win32_Process.Create (Job-Object breakaway) like spawn(); env vars
   # are set through a cmd /c prefix so they survive regardless of how WMI
   # seeds the child environment.
-  IDA_HEADLESS_PID=$("$PS" -NoProfile -Command \
-      "(Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine='cmd /c set IDA_HEADLESS_HTTP_PORT=${IDA_HEADLESS_PORT}&& set IDA_HEADLESS_HTTP_HOST=127.0.0.1&& ${IDA_HEADLESS_EXE}'; CurrentDirectory='${_ida_cwd}'}).ProcessId" \
-    2>/dev/null | tr -d '\r\n ')
+  IDA_HEADLESS_PID=$("$PS" -NoProfile -ExecutionPolicy Bypass -File "$(_winpath "$SCRIPT_DIR/scripts/start_hidden.ps1")" \
+      -CommandLine "cmd /c set IDA_HEADLESS_HTTP_PORT=${IDA_HEADLESS_PORT}&& set IDA_HEADLESS_HTTP_HOST=127.0.0.1&& ${IDA_HEADLESS_EXE}" \
+      -CurrentDirectory "${_ida_cwd}" 2>/dev/null | sed -n 's/^ProcessId=//p' | tr -d '\r\n ')
   if [[ -n "$IDA_HEADLESS_PID" ]]; then
     record_pid "ida-headless" "$IDA_HEADLESS_PID"
     echo "[aila]   ida-headless started (PID $IDA_HEADLESS_PID)"
@@ -720,11 +720,11 @@ if [[ "$AILA_START_FRONTEND" == "1" ]]; then
   if [[ -d frontend ]]; then
     if [[ ! -d frontend/node_modules ]]; then
       echo "[aila]   node_modules missing -- running pnpm install..."
-      corepack pnpm install 2>&1 | tail -3
+      pnpm install 2>&1 | tail -3
     fi
     echo "[aila] Starting frontend..."
     spawn_shell "frontend" \
-      "corepack pnpm --filter @aila/shell run dev"
+      "pnpm --filter @aila/shell run dev"
   else
     echo "[aila]   WARNING: frontend/ not found -- skipping"
   fi

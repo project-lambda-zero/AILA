@@ -133,14 +133,20 @@ async def test_spawn_inserts_reactivates_abandons_and_enqueues() -> None:
                 == PersonaVoice.MADDIE.value,
             ),
         )).first()
-        msg_count = len((await uow.session.exec(
+        noor_a_msgs = (await uow.session.exec(
             select(VRInvestigationMessageRecord)
             .where(VRInvestigationMessageRecord.branch_id == noor_a),
-        )).all())
+        )).all()
+        total_msgs = len(noor_a_msgs)
+        active_msgs = len([m for m in noor_a_msgs if m.superseded_at is None])
 
     assert a.status == "active"
     assert a.turn_count == 0
-    assert msg_count == 0  # reactivation wiped the branch message history
+    # Reactivation soft-supersedes the prior transcript instead of deleting
+    # it (req 26): the message row survives for display + audit, but the
+    # reactivated branch reads as a fresh slate (zero active messages).
+    assert total_msgs == 1
+    assert active_msgs == 0
     assert b.status == "abandoned"
     assert b.closed_reason == "duplicate_persona_cleanup"
     assert maddie is not None

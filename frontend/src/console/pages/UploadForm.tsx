@@ -33,6 +33,9 @@ import type {
 } from "../../api/intake";
 import type { ModulePageProps } from "../contract";
 import { css } from "../css";
+import { ConsoleWindow } from "../window";
+import { WizardShell, FieldHelp } from "../wizards";
+import type { WizardFieldIssue, WizardStepDef } from "../wizards";
 
 /* -------------------------------------------------------------------------- *
  * Per-kind spec
@@ -101,9 +104,9 @@ const VR_KINDS: KindSpec[] = [
     key: "protocol_capture",
     label: "protocol capture",
     group: "capture",
-    mode: "vr-descriptor",
+    mode: "vr-upload",
+    file: { accept: ".pcap,.pcapng,.cap", hint: "PCAP / PCAPNG packet capture" },
     descriptor: [
-      { name: "pcap_path", label: "pcap path", placeholder: "", required: true },
       { name: "protocol", label: "protocol", placeholder: "rtsp" },
     ],
   },
@@ -111,9 +114,9 @@ const VR_KINDS: KindSpec[] = [
     key: "crash_input",
     label: "crash input",
     group: "capture",
-    mode: "vr-descriptor",
+    mode: "vr-upload",
+    file: { accept: "", hint: "crash artifact / seed payload" },
     descriptor: [
-      { name: "crash_artifact_path", label: "crash artifact", placeholder: "", required: true },
       { name: "parent_finding_id", label: "parent finding", placeholder: "" },
     ],
   },
@@ -244,27 +247,12 @@ const inputStyle = css(
 );
 const selectStyle = inputStyle;
 
-function ctlBtn(label: string, title: string, onClick: () => void): JSX.Element {
-  return (
-    <button
-      type="button"
-      title={title}
-      onClick={onClick}
-      style={css(
-        "width:30px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;border:0;border-left:1px solid var(--border-soft);background:transparent;color:var(--text-muted);cursor:pointer;font-family:inherit;font-size:12px;",
-      )}
-    >
-      {label}
-    </button>
-  );
-}
-
 /* -------------------------------------------------------------------------- *
  * Component
  * -------------------------------------------------------------------------- */
 
 export default function UploadForm(props: UploadFormProps): JSX.Element {
-  const { module, onBack, onMinimize, isFullscreen, onToggleFullscreen, onDone } = props;
+  const { module, onBack, onMinimize, isFullscreen, onToggleFullscreen, onDone, windowId, title: windowTitle, isFocused, onFocus } = props;
   const kinds = module === "vr" ? VR_KINDS : MAL_KINDS;
   const groups = module === "vr" ? GROUPS_VR : GROUPS_MAL;
 
@@ -347,6 +335,61 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
         .map((t) => t.trim())
         .filter((t) => t.length > 0),
     [tagsRaw],
+  );
+
+  // Convert the submit-gating conditions into named-field WizardShell issues so
+  // the shared shell can render the invalid-field summary and disable Finish
+  // without a silent bare-disabled control.
+  const wsRowsForIssues = workspaces.data ?? [];
+  const issues: WizardFieldIssue[] = useMemo(() => {
+    if (created) return [];
+    const out: WizardFieldIssue[] = [];
+    if (!workspaces.isLoading) {
+      if (wsRowsForIssues.length === 0) {
+        out.push({ label: "workspace", reason: "none available -- create one first" });
+      } else if (workspaceId.trim() === "") {
+        out.push({ label: "workspace", reason: "required" });
+      }
+    }
+    if (displayName.trim() === "") {
+      out.push({ label: "display name", reason: "required" });
+    }
+    if (wantsFile && !file) {
+      out.push({
+        label: spec.mode === "vr-apk" ? "apk file" : "file",
+        reason: "pick a file",
+      });
+    }
+    for (const f of spec.descriptor) {
+      if (f.required && (descriptor[f.name] ?? "").trim() === "") {
+        out.push({ label: f.label, reason: "required" });
+      }
+    }
+    return out;
+    // wsRowsForIssues is derived from workspaces.data each render; workspaces.data
+    // is the true dep.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    created,
+    workspaces.data,
+    workspaces.isLoading,
+    workspaceId,
+    displayName,
+    wantsFile,
+    file,
+    spec,
+    descriptor,
+  ]);
+
+  const wizardSteps: WizardStepDef[] = useMemo(
+    () => [
+      {
+        id: "upload",
+        title: "register target",
+        purpose: `pick a ${module} kind, fill the required fields, and submit an upload or descriptor to the backend.`,
+      },
+    ],
+    [module],
   );
 
   async function onSubmit(): Promise<void> {
@@ -509,7 +552,10 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
   const basicsBlock: ReactNode = (
     <div style={css("display:flex;flex-direction:column;gap:10px;")}>
       <label style={css("display:flex;flex-direction:column;gap:4px;")}>
-        <span style={labelStyle}>workspace</span>
+        <span style={css("display:flex;align-items:center;gap:6px;")}>
+          <span style={labelStyle}>workspace</span>
+          <FieldHelp text="The workspace this target is filed under. Defaults to the first workspace on the account -- change it if a different team owns this target." />
+        </span>
         {wsLoading ? (
           <span style={css("font-size:11px;color:var(--text-faint);")}>{"loading workspaces\u2026"}</span>
         ) : wsError ? (
@@ -537,7 +583,10 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
         )}
       </label>
       <label style={css("display:flex;flex-direction:column;gap:4px;")}>
-        <span style={labelStyle}>display name</span>
+        <span style={css("display:flex;align-items:center;gap:6px;")}>
+          <span style={labelStyle}>display name</span>
+          <FieldHelp text="How this target appears in target lists. Human-readable, no ids." />
+        </span>
         <input
           value={displayName}
           onChange={(e): void => setDisplayName(e.target.value)}
@@ -559,7 +608,18 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
 
   const fileBlock: ReactNode = wantsFile ? (
     <div style={css("display:flex;flex-direction:column;gap:6px;")}>
-      <span style={labelStyle}>{spec.mode === "vr-apk" ? "apk file" : "binary / sample"}</span>
+      <span style={css("display:flex;align-items:center;gap:6px;")}>
+        <span style={labelStyle}>{spec.mode === "vr-apk" ? "apk file" : "binary / sample"}</span>
+        <FieldHelp
+          text={
+            spec.mode === "vr-apk"
+              ? "The APK to analyze. Uploaded in a single request and the server runs the APK_DECODE / JADX / STATIC_SUMMARY pipeline."
+              : spec.mode === "vr-upload"
+                ? "The binary the backend stores under this target. The target row is created first, then the file is uploaded to that id."
+                : "The sample file. Uploaded in a single request to the malware ingest endpoint."
+          }
+        />
+      </span>
       <input
         ref={fileInputRef}
         type="file"
@@ -595,18 +655,6 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
     </div>
   ) : null;
 
-  const submitStyle = css(
-    `padding:0 16px;height:32px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:${
-      canSubmit ? "var(--text-on-accent)" : "var(--text-faint)"
-    };background:${
-      canSubmit ? "var(--accent)" : "var(--surface-card)"
-    };border:1px solid ${
-      canSubmit ? "var(--accent)" : "var(--border-soft)"
-    };border-radius:3px;cursor:${
-      canSubmit ? "pointer" : "not-allowed"
-    };box-shadow:${canSubmit ? "0 0 16px rgba(255,95,135,0.3)" : "none"};`,
-  );
-
   const doneStyle = css(
     "padding:11px 13px;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 7%,transparent);border-radius:3px;display:flex;flex-direction:column;gap:6px;",
   );
@@ -614,24 +662,80 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
   const kindLabel = spec.label;
   const title = `${module} \u00b7 upload target`;
 
+  const statusStrip = (
+    <>
+      <span
+        style={{
+          display: "flex",
+          alignItems: "center",
+          padding: "0 11px",
+          background: "var(--accent)",
+          color: "var(--text-on-accent)",
+          fontWeight: 700,
+          letterSpacing: "0.14em",
+        }}
+      >
+        {title}
+      </span>
+      <span
+        style={{
+          display: "flex",
+          alignItems: "center",
+          padding: "0 11px",
+          textTransform: "none",
+          letterSpacing: "0.03em",
+          color: "var(--text-muted)",
+        }}
+      >
+        {spec.mode === "vr-apk"
+          ? "single-shot POST /vr/targets/upload-apk"
+          : spec.mode === "vr-upload"
+            ? "POST /vr/targets \u2192 POST /vr/targets/{id}/upload"
+            : spec.mode === "vr-descriptor"
+              ? "POST /vr/targets (descriptor only)"
+              : "single-shot POST /malware/targets/upload"}
+      </span>
+      <span style={{ flex: 1 }} />
+    </>
+  );
+
   return (
-    <div
-      style={{
-        position: "absolute",
-        inset: 0,
-        display: "flex",
-        flexDirection: "column",
-        background: "transparent",
-        fontFamily: "var(--font-mono)",
-        color: "var(--text-primary)",
-      }}
+    <ConsoleWindow
+      id={windowId}
+      kind="page"
+      title={windowTitle}
+      isFullscreen={isFullscreen}
+      isFocused={isFocused}
+      onFocus={onFocus}
+      onClose={onBack}
+      onMinimize={onMinimize}
+      onToggleFullscreen={onToggleFullscreen}
+      footerExtras={statusStrip}
     >
+      <WizardShell
+        heading={title}
+        steps={wizardSteps}
+        current={0}
+        issues={issues}
+        onBack={onBack}
+        onNext={(): void => {
+          /* single-step wizard: primary is Finish, Next is never rendered */
+        }}
+        onFinish={(): void => void onSubmit()}
+        backLabel={created ? "close" : "cancel"}
+        finishLabel={spec.mode === "vr-descriptor" ? "create target" : "upload"}
+        busy={busy}
+        error={error}
+        onRetry={(): void => void onSubmit()}
+        showPrimary={!created}
+      >
       <main style={{ flex: 1, minHeight: 0, display: "flex", gap: 10, padding: 12 }}>
         {/* LEFT: kind grid */}
         <div style={{ ...css(`flex:1 1 44%;${panelBox}`) }}>
           <div style={panelTitle}>
             <span style={dot} />
             <span style={css("color:var(--text-primary);")}>kind</span>
+            <FieldHelp text="What shape of target this is. The kind picks the upload endpoint and which extra descriptor fields the form asks for." />
             <span style={css("flex:1;")} />
             <span style={css("color:var(--text-faint);text-transform:none;letter-spacing:0.04em;")}>
               {module}
@@ -662,16 +766,6 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
             {basicsBlock}
             {fileBlock}
             {descriptorBlock}
-
-            {error ? (
-              <div
-                style={css(
-                  "padding:8px 10px;border:1px solid var(--status-warn);color:var(--status-warn);font-size:11px;border-radius:2px;background:color-mix(in srgb,var(--status-warn) 8%,transparent);white-space:pre-wrap;word-break:break-word;",
-                )}
-              >
-                {error}
-              </div>
-            ) : null}
 
             {created ? (
               <div style={doneStyle}>
@@ -737,86 +831,10 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
               </div>
             ) : null}
 
-            <div style={css("flex:1;")} />
-            <div
-              style={css(
-                "display:flex;align-items:center;gap:9px;padding-top:10px;border-top:1px solid var(--border-soft);",
-              )}
-            >
-              <button
-                type="button"
-                onClick={onBack}
-                style={css(
-                  "padding:0 12px;height:32px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);background:transparent;border:1px solid var(--border-soft);border-radius:3px;cursor:pointer;",
-                )}
-              >
-                {created ? "close" : "cancel"}
-              </button>
-              <span style={css("flex:1;")} />
-              {busy ? (
-                <span style={css("font-size:11px;color:var(--accent);letter-spacing:0.06em;")}>
-                  {"submitting\u2026"}
-                </span>
-              ) : null}
-              <button type="button" onClick={(): void => void onSubmit()} style={submitStyle} disabled={!canSubmit}>
-                {spec.mode === "vr-descriptor" ? "create target \u25b8" : "upload \u25b8"}
-              </button>
-            </div>
           </div>
         </div>
       </main>
-      <footer
-        style={{
-          flex: "0 0 24px",
-          height: 24,
-          display: "flex",
-          alignItems: "stretch",
-          background: "var(--surface-chrome)",
-          borderTop: "2px solid var(--border)",
-          fontSize: 9.5,
-          letterSpacing: "0.1em",
-          textTransform: "uppercase",
-          color: "var(--text-faint)",
-        }}
-      >
-        <span
-          style={{
-            display: "flex",
-            alignItems: "center",
-            padding: "0 11px",
-            background: "var(--accent)",
-            color: "var(--text-on-accent)",
-            fontWeight: 700,
-            letterSpacing: "0.14em",
-          }}
-        >
-          {title}
-        </span>
-        <span
-          style={{
-            display: "flex",
-            alignItems: "center",
-            padding: "0 11px",
-            textTransform: "none",
-            letterSpacing: "0.03em",
-            color: "var(--text-muted)",
-          }}
-        >
-          {spec.mode === "vr-apk"
-            ? "single-shot POST /vr/targets/upload-apk"
-            : spec.mode === "vr-upload"
-              ? "POST /vr/targets \u2192 POST /vr/targets/{id}/upload"
-              : spec.mode === "vr-descriptor"
-                ? "POST /vr/targets (descriptor only)"
-                : "single-shot POST /malware/targets/upload"}
-        </span>
-        <span style={{ flex: 1 }} />
-        {onToggleFullscreen
-          ? ctlBtn(isFullscreen ? "\u2921" : "\u2922", isFullscreen ? "exit fullscreen" : "fullscreen", onToggleFullscreen)
-          : null}
-        {ctlBtn("\u2014", "minimize", onMinimize)}
-        {ctlBtn("\u2715", "close", onBack)}
-      </footer>
-    </div>
+      </WizardShell>
+    </ConsoleWindow>
   );
 }

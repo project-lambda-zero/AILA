@@ -35,7 +35,6 @@ import hashlib
 import json
 import logging
 import time
-from pathlib import Path
 from typing import Any
 
 from aila.config import Settings
@@ -59,6 +58,13 @@ from aila.platform.llm.correlation import (
 )
 from aila.platform.prompts import LoadedPrompt, PromptNotFoundError, PromptRegistry
 from aila.platform.prompts.pinning import resolve_pinned_prompt
+from aila.platform.prompts.seeds import (
+    FORENSICS_BASE_TEXT,
+    FORENSICS_NETWORK_COMMENTARY_TEXT,
+    FORENSICS_OS_HINT_LINUX_TEXT,
+    FORENSICS_OS_HINT_WINDOWS_TEXT,
+    FORENSICS_WRITEUP_TEXT,
+)
 from aila.platform.prompts.version_store import PromptVersionStore
 from aila.platform.services.reasoning import CyberReasoningEngine
 from aila.platform.services.reasoning_graphs import ReasoningGraphService
@@ -94,13 +100,9 @@ async def _read_float_config(key: str) -> float:
 
 # ---------------------------------------------------------------------------
 # System prompts -- OS-dispatched, but strategy-neutral. No CTF playbooks.
-# RFC-09 criterion 1: prompt text lives under ``prompts/`` as ``.md`` files.
-# The final assembled prompt is base + OS-specific hint; that assembly stays
-# in code so both variants stay honest and the caller keeps one system_prompt.
 # ---------------------------------------------------------------------------
 
-_PROMPT_DIR = Path(__file__).parent / "prompts"
-_PROMPT_REGISTRY = PromptRegistry(_PROMPT_DIR, fallback_base="system_base.md")
+_PROMPT_REGISTRY = PromptRegistry(module="forensics", version_store=PromptVersionStore())
 _PROMPT_VERSION_STORE = PromptVersionStore()
 
 
@@ -109,7 +111,7 @@ def _freeflow_analyzer_os(analyzer_os: str) -> str:
 
     ``"windows"`` selects the Windows hint; every other value (including
     ``"darwin"`` and empty string) falls back to Linux. Keeping this in one
-    place ensures the version-store key and the file-fallback body agree on
+    place ensures the version-store key and the baseline body agree on
     the effective OS variant so pin identity does not diverge from body.
     """
     return "windows" if analyzer_os == "windows" else "linux"
@@ -119,7 +121,7 @@ def _freeflow_prompt_key(analyzer_os: str) -> str:
     """Version-store key for the assembled forensics free-flow system prompt.
 
     Distinct per effective analyzer OS since the assembled body differs
-    (base + ``os_hint_windows.md`` vs. base + ``os_hint_linux.md``). Aligned
+    (base + Windows hint vs. base + Linux hint). Aligned
     with the vr / malware key convention: ``{module}/{role}/{variant}``.
     """
     return f"forensics/freeflow/{_freeflow_analyzer_os(analyzer_os)}"
@@ -129,23 +131,12 @@ def _load_freeflow_prompt(analyzer_os: str) -> str:
     """Return the base system prompt + the OS-specific hint concatenated.
 
     Preserves the pre-RFC-09 assembly behavior exactly: ``base + windows``
-    for a Windows analyzer, ``base + linux`` otherwise. Both files are
-    resolved through the platform :class:`PromptRegistry` so a later
-    version-store entry can override either without touching this module.
-
-    This sync helper stays the file-only baseline. The live turn path
-    goes through :func:`_resolve_freeflow_prompt` which prefers a pinned
-    version-store body and only falls back to this assembly when the
-    store has nothing (or faults) -- matching the vr / malware _load_prompt
-    contract without breaking callers that still want the byte-identical
-    file assembly.
+    for a Windows analyzer, ``base + linux`` otherwise.
     """
-    base = _PROMPT_REGISTRY.load("base")
+    base = FORENSICS_BASE_TEXT
     hint_leaf = _freeflow_analyzer_os(analyzer_os)
-    hint_path = _PROMPT_DIR / f"os_hint_{hint_leaf}.md"
-    if not hint_path.exists():
-        raise FileNotFoundError(f"forensics OS hint missing: {hint_path}")
-    return base + hint_path.read_text(encoding="utf-8")
+    hint = FORENSICS_OS_HINT_WINDOWS_TEXT if hint_leaf == "windows" else FORENSICS_OS_HINT_LINUX_TEXT
+    return base + hint
 
 
 async def _resolve_freeflow_prompt(
@@ -225,6 +216,26 @@ async def seed_prompt_versions() -> int:
         version = await _PROMPT_VERSION_STORE.register(
             key, body, author="bootstrap",
             notes="file baseline (RFC-09 activation seed)",
+        )
+        if await _PROMPT_VERSION_STORE.resolve(key, alias="production") is not None:
+            continue
+        await _PROMPT_VERSION_STORE.set_alias(
+            key, "production", version,
+            actor="bootstrap", reason="initial file baseline",
+        )
+        seeded += 1
+
+    extra_entries: tuple[tuple[str, str], ...] = (
+        (
+            "forensics/base/network_commentary/default",
+            FORENSICS_NETWORK_COMMENTARY_TEXT,
+        ),
+        ("prompts/base/writeup/default", FORENSICS_WRITEUP_TEXT),
+    )
+    for key, body in extra_entries:
+        version = await _PROMPT_VERSION_STORE.register(
+            key, body, author="bootstrap",
+            notes="RFC-09 rule-58 migration seed",
         )
         if await _PROMPT_VERSION_STORE.resolve(key, alias="production") is not None:
             continue

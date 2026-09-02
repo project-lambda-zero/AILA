@@ -1,13 +1,17 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ChangeEvent, JSX, ReactNode } from "react";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiFetch, API_BASE } from "../../api/client";
+import { useAuth } from "../../api/auth";
+import { apiFetch, apiFetchEnvelope, API_BASE } from "../../api/client";
+import { fetchFieldOptions } from "../../api/mutations";
+import type { FieldOption } from "../../api/mutations";
 import { asRecord, readArray } from "../../api/parse";
 import type { ModulePageProps } from "../contract";
 import { css } from "../css";
-import { semanticCell, StatusBadge } from "./badges";
+import { ConsoleWindow } from "../window";
+import { semanticCell, statusRailColor, StatusBadge } from "./badges";
 import { EventTimeline } from "./EventTimeline";
 import FieldForm from "./FieldForm";
 import type { FormSpec } from "./FieldForm";
@@ -16,24 +20,166 @@ import StructuredValue from "./StructuredValue";
 
 /** A column projected from a list row. `render` overrides the default cell
  * text; `kind` selects a shared semantic renderer (status/severity/time/cost)
- * from badges.tsx. */
+ * from badges.tsx. Set `numeric` to force right alignment + tabular figures on
+ * a computed column whose value has no backing row field to auto-detect. */
 export interface PageColumn {
   field: string;
   label: string;
   kind?: "status" | "severity" | "time" | "cost";
+  numeric?: boolean;
   render?: (value: unknown, row: Record<string, unknown>) => ReactNode;
 }
 
-/** A client-side filter control. Filters apply to the fetched rows before
- * render; when the page also sets `fetchAllPages` the filter sees the full
- * dataset and pagination slices the filtered set. For server-paginated pages
- * without fetchAllPages, a filter narrows the current page only (documented
- * limitation -- prefer fetchAllPages for filterable catalogs). */
+/** A filter control rendered under the page title. Filters apply to the
+ * fetched rows before render; when the page also sets `fetchAllPages` the
+ * filter sees the full dataset and pagination slices the filtered set. For
+ * server-paginated pages without fetchAllPages, a client-side filter narrows
+ * the current page only (documented limitation -- prefer fetchAllPages, or
+ * `server: true` where the backend supports the param). */
 export interface PageFilter {
+  /** Row field the filter narrows; MUST be a rendered column so the control
+   * always acts on visible data. For date/numeric ranges this is the field
+   * compared; for server filters it is also the query-param base name. */
   name: string;
   label: string;
-  type: "text" | "select";
+  /** text = case-insensitive substring; select = exact match (single);
+   * multi-select = row value in the chosen set; segmented = exact match via a
+   * button group; date-range = two ISO date inputs (inclusive of the end
+   * day); numeric-range = two numeric bounds (inclusive). */
+  type: "text" | "select" | "multi-select" | "segmented" | "date-range" | "numeric-range";
+  /** Static options for select / multi-select / segmented. When omitted AND
+   * `optionsFrom` is unset, the option list is derived from the distinct row
+   * values of `name` in the fetched set (honest zero-config enum filter). */
   options?: { value: string; label: string }[];
+  /** Source options from a live list endpoint (select / multi-select /
+   * segmented), mirroring FormSpec.optionsFrom. Rows map to {value,label} via
+   * `optionsValueField` / `optionsLabelField` (default id-like / name-like).
+   * Overrides row-derived options; static `options` win over both. */
+  optionsFrom?: string;
+  optionsValueField?: string;
+  optionsLabelField?: string;
+  /** When true, the value is sent to the endpoint as a query param instead of
+   * narrowing fetched rows client-side; the backend applies it across the full
+   * dataset and returns the true `meta.total`, so it composes with server
+   * pagination. Param encoding by type: text/select/segmented -> `name=value`;
+   * multi-select -> repeated `name=v1&name=v2`; date-range ->
+   * `name_since` / `name_until`; numeric-range -> `name_min` / `name_max`.
+   * Inputs are debounced ~250ms. */
+  server?: boolean;
+  /** Compute the value this filter matches on from the whole row instead of
+   * reading `row[name]` directly. Lets one control span multiple columns
+   * (e.g. search `label` + `key_prefix` under one text box) or map derived
+   * state (e.g. `revoked_at` presence -> "active"/"revoked"). When absent,
+   * matching behavior is unchanged. `deriveOptions` still reads `row[name]`,
+   * so pair `deriveValue` with static `options` for select/segmented. */
+  deriveValue?: (row: Record<string, unknown>) => string;
+  /** Initial scalar value applied on mount (text / select / segmented). Use
+   * when the backend requires a narrowing param and there is no meaningful
+   * "all" -- e.g. `/agents/specialists?module_id=` is required, so the module
+   * selector seeds with `vr`. Ignored for multi-select / range filters. */
+  defaultValue?: string;
+}
+
+/** A two-ended range value (date-range / numeric-range). `lo` is
+ * since/min, `hi` is until/max. */
+type RangeVal = { lo: string; hi: string };
+/** The runtime value held for one filter: a scalar (text/select/segmented),
+ * a set (multi-select), or a range (date-range/numeric-range). */
+type FilterValue = string | string[] | RangeVal;
+
+const asScalar = (v: FilterValue | undefined): string => (typeof v === "string" ? v : "");
+const asList = (v: FilterValue | undefined): string[] => (Array.isArray(v) ? v : []);
+const asRange = (v: FilterValue | undefined): RangeVal =>
+  v != null && typeof v === "object" && !Array.isArray(v) ? v : { lo: "", hi: "" };
+
+/** True when the filter currently holds a narrowing value. */
+function filterHasValue(f: PageFilter, v: FilterValue | undefined): boolean {
+  if (f.type === "multi-select") return asList(v).length > 0;
+  if (f.type === "date-range" || f.type === "numeric-range") {
+    const r = asRange(v);
+    return r.lo.trim() !== "" || r.hi.trim() !== "";
+  }
+  return asScalar(v).trim() !== "";
+}
+
+/** Distinct non-empty row values for a field, as {value,label} options. */
+function deriveOptions(rows: Record<string, unknown>[], field: string): FieldOption[] {
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const raw = row[field];
+    if (raw === null || raw === undefined || typeof raw === "object") continue;
+    const s = String(raw);
+    if (s !== "") seen.add(s);
+  }
+  return [...seen].sort().map((v) => ({ value: v, label: v }));
+}
+
+/** Whether a single row passes one client-side filter. */
+function matchFilter(f: PageFilter, v: FilterValue | undefined, row: Record<string, unknown>): boolean {
+  const cell = f.deriveValue ? f.deriveValue(row) : row[f.name];
+  if (f.type === "multi-select") {
+    const sel = asList(v);
+    return sel.length === 0 || sel.includes(String(cell ?? ""));
+  }
+  if (f.type === "numeric-range") {
+    const r = asRange(v);
+    const n = Number(cell);
+    if (!Number.isFinite(n)) return false;
+    if (r.lo.trim() !== "" && n < Number(r.lo)) return false;
+    if (r.hi.trim() !== "" && n > Number(r.hi)) return false;
+    return true;
+  }
+  if (f.type === "date-range") {
+    const r = asRange(v);
+    const t = Date.parse(String(cell ?? ""));
+    if (Number.isNaN(t)) return false;
+    if (r.lo.trim() !== "") {
+      const loT = Date.parse(r.lo);
+      if (!Number.isNaN(loT) && t < loT) return false;
+    }
+    if (r.hi.trim() !== "") {
+      const hiT = Date.parse(r.hi);
+      // Date inputs yield a bare day at UTC midnight; include the whole hi day.
+      if (!Number.isNaN(hiT) && t > hiT + 86_399_999) return false;
+    }
+    return true;
+  }
+  const needle = asScalar(v).trim();
+  if (f.type === "select" || f.type === "segmented") return String(cell ?? "") === needle;
+  return String(cell ?? "").toLowerCase().includes(needle.toLowerCase());
+}
+
+/** One field collected in an action's pre-flight modal. Deliberately small:
+ * an action body is a handful of scalars, not a full record -- that is what
+ * the typed create/edit FormSpec is for. */
+export interface ActionField {
+  /** Body key the value is sent under. */
+  name: string;
+  label: string;
+  /** Widget: `text` (default), `textarea` (multi-line, e.g. a revoke reason),
+   * `number`, `select` (needs `options`), or `tags` (sent as a string[], e.g.
+   * approver_ids). */
+  type?: "text" | "textarea" | "number" | "select" | "tags";
+  /** Choices for a `select` field. */
+  options?: FieldOption[];
+  placeholder?: string;
+  required?: boolean;
+  /** Prefill the field from this row field when the action opens on a row. */
+  fromRow?: string;
+  /** When true, the field is only shown and collected for a god-tier admin
+   * (JWT with no `team_id`). Hidden and never submitted for team-scoped
+   * callers; use for fields the backend only accepts from god-tier. */
+  godTierOnly?: boolean;
+}
+
+/** One-shot reveal of an action's JSON response, shown once in a modal after
+ * success -- for secrets the server never returns again. */
+export interface ActionReveal {
+  title?: string;
+  /** Response keys to surface, in order. Empty -> the whole payload. */
+  fields?: string[];
+  /** Caption above the payload (e.g. "copy now -- not shown again"). */
+  note?: string;
 }
 
 /** A row-level action rendered in the detail header (and optionally inline).
@@ -44,18 +190,33 @@ export interface PageAction {
   method: "POST" | "PATCH" | "PUT" | "DELETE" | "GET";
   /** Endpoint template with `{id}` (and `{scope}`) substituted from the row. */
   endpoint: string;
-  /** Optional JSON body template; `{id}`/`{scope}` substitute like the path. */
+  /** Optional JSON body template; `{id}`/`{scope}` substitute like the path.
+   * Values collected via `fields` merge OVER this template. */
   body?: Record<string, unknown>;
-  /** Only show/enable when the row's status field matches one of these
-   * (lowercased compare). Empty means always available. */
+  /** Only show/enable when the gate field matches one of these (lowercased
+   * compare). Empty means always available. The gate field is `whenField`
+   * when set, else the row's `status` (with `is_active` fallback). */
   whenStatus?: string[];
-  /** Confirmation prompt before firing (destructive or irreversible). */
+  /** Row field the `whenStatus` gate reads. Defaults to `status`/`is_active`.
+   * Set to gate on another state column (e.g. `approval_state`,
+   * `analysis_state`). */
+  whenField?: string;
+  /** Confirmation prompt before firing (destructive or irreversible). Skipped
+   * when `fields` is set -- the collection modal is the explicit confirm. */
   confirm?: string;
-  /** Show the action only when the row is in this state -- used with
-   * whenStatus to render a contextual "resume" instead of "pause", etc. */
+  /** Tone the control as destructive (warn color). */
   destructive?: boolean;
   /** GET + open the substituted URL in a new tab (server streams a file). */
   download?: boolean;
+  /** Fields collected from the operator in a small pre-flight modal before the
+   * call fires. Collected values are serialized (number -> Number, tags ->
+   * string[], else string) and merged over `body`, then sent as the JSON
+   * body. Use where the endpoint requires operator input (e.g. a revoke
+   * `reason`, a promote `approver_ids`). */
+  fields?: ActionField[];
+  /** When set, the call's JSON response is shown once in a modal after
+   * success (e.g. a freshly minted API key). */
+  reveal?: ActionReveal;
 }
 
 /** Declarative config for a backend-backed list window. One of these per nav
@@ -123,6 +284,28 @@ export interface PageConfig {
    * ({items: [{created_at, stage, action, status, ...}], total}) like
    * /audit/events. Renders newest-first with semantic status badges. */
   detailEvents?: { endpoint: string; itemsKey?: string };
+  /** Per-row floating viewer. When set, DataPage renders a button in the
+   * detail header labelled `actionLabel`; clicking opens a page-local
+   * <ConsoleWindow kind="floater"> whose body is `render(row, close)`.
+   * DataPage owns the floater's open/minimized/fullscreen state so any page
+   * can attach a rich detail viewer without hand-rolling window plumbing.
+   * `title(row)` computes the window title from the selected row. */
+  rowViewer?: {
+    actionLabel: string;
+    title: (row: Record<string, unknown>) => string;
+    render: (row: Record<string, unknown>, close: () => void) => ReactNode;
+  };
+  /** When set, the rendered (filtered, paginated) rows are partitioned into
+   * sections keyed by `row[groupBy]`. Group keys sort by localeCompare; within
+   * each group, active rows (`status`/`is_active` == "active") float to the
+   * top, then remaining rows sort by `created_at` ascending (oldest candidate
+   * first). Unset -> flat rendering, identical to today. */
+  groupBy?: string;
+  /** When set, a successful create via the typed FieldForm modal auto-selects
+   * the newest fetched row (rows are created_at DESC, so first of the fetched
+   * set) and opens the detail panel. No effect when the config has no
+   * `create` form or when creates come from a bespoke `onNewClick`. */
+  selectCreatedRow?: boolean;
 }
 
 const ROW_KEYS = ["items", "results", "rows", "entries", "records", "data", "findings", "investigations", "targets", "workspaces"];
@@ -134,6 +317,17 @@ function toRows(data: unknown, itemsKey?: string): Record<string, unknown>[] {
   if (Array.isArray(data)) return wrap(data);
   const obj = asRecord(data);
   if (obj) {
+    if (obj.data && !Array.isArray(obj.data) && typeof obj.data === "object") {
+      const nested = asRecord(obj.data);
+      if (nested) {
+        const preferred = itemsKey ? readArray(nested, itemsKey) : null;
+        if (preferred) return wrap(preferred);
+        for (const k of ROW_KEYS) {
+          const arr = readArray(nested, k);
+          if (arr) return wrap(arr);
+        }
+      }
+    }
     const preferred = itemsKey ? readArray(obj, itemsKey) : null;
     if (preferred) return wrap(preferred);
     for (const k of ROW_KEYS) {
@@ -160,19 +354,29 @@ function cellText(v: unknown): string {
   return String(v);
 }
 
-function ctlBtn(label: string, title: string, onClick: () => void): JSX.Element {
-  return (
-    <button
-      type="button"
-      title={title}
-      onClick={onClick}
-      style={css(
-        "width:30px;flex:0 0 auto;display:flex;align-items:center;justify-content:center;border:0;border-left:1px solid var(--border-soft);background:transparent;color:var(--text-muted);cursor:pointer;font-family:inherit;font-size:12px;",
-      )}
-    >
-      {label}
-    </button>
-  );
+/** Turn a reveal action's response payload into ordered [label, value] pairs
+ * for the one-shot reveal modal. Named `reveal.fields` win; otherwise every
+ * top-level key of the payload object is shown. */
+function revealEntries(r: { action: PageAction; payload: unknown }): [string, string][] {
+  const obj = asRecord(r.payload);
+  if (!obj) {
+    const s = typeof r.payload === "string" ? r.payload : JSON.stringify(r.payload, null, 2);
+    return [["result", s]];
+  }
+  const want = r.action.reveal?.fields;
+  const keys = want && want.length > 0 ? want : Object.keys(obj);
+  return keys.map((k) => {
+    const v = obj[k];
+    const s =
+      v == null
+        ? "\u2014"
+        : typeof v === "string"
+          ? v
+          : typeof v === "number" || typeof v === "boolean"
+            ? String(v)
+            : JSON.stringify(v);
+    return [k, s] as [string, string];
+  });
 }
 
 export default function DataPage(
@@ -192,12 +396,20 @@ export default function DataPage(
      * of the generic field grid. Receives the selected row. Used for
      * drill-down panels (e.g. a target row's investigations). */
     detailBody?: (row: Record<string, unknown>) => ReactNode;
+    /** Node rendered in the filter/toolbar bar (right group, next to
+     * pageActions). Lets a bespoke wrapper add a page-level control that
+     * carries local React state -- e.g. a "preview applicable" button that
+     * opens a query overlay -- without inventing a config-level capability. */
+    toolbarExtra?: ReactNode;
   },
 ): JSX.Element {
-  const { config, configKey, onNewClick, onRowActivate, detailBody, onBack, onMinimize, isFullscreen, onToggleFullscreen, onOpenPage } = props;
+  const { config, configKey, onNewClick, onRowActivate, detailBody, toolbarExtra, onBack, onMinimize, isFullscreen, onToggleFullscreen, onOpenPage, windowId, title: windowTitle, isFocused, onFocus } = props;
   const createSpec: FormSpec | undefined = (CREATE_FORMS as Record<string, FormSpec>)[configKey];
   const editSpec: FormSpec | undefined = (EDIT_FORMS as Record<string, FormSpec>)[configKey];
   const idField = config.idField ?? "id";
+  const isGodTier = useAuth((s) => s.user?.role === "admin" && !s.user?.team_id);
+  const visibleFields = (a: PageAction): ActionField[] =>
+    (a.fields ?? []).filter((f) => !f.godTierOnly || isGodTier);
   // Some list endpoints require a parent scope (e.g. /malware/families needs
   // ?workspace_id=). Resolve the first available parent id, then scope the URL.
   const scopeQ = useQuery({
@@ -236,11 +448,33 @@ export default function DataPage(
   const pagParams = config.paginationParams ?? "page";
   const PAGE_SIZE = 50;
   const [page, setPage] = useState<number>(1);
-  // Client-side filters: one active value per configured filter. Text matches
-  // by substring (case-insensitive); select matches exactly.
-  const [filterVals, setFilterVals] = useState<Record<string, string>>({});
+  // One active value per configured filter. Scalars for text/select/segmented,
+  // a string[] for multi-select, a {lo,hi} range for date/numeric ranges. Any
+  // change resets pagination to page 1.
+  const [filterVals, setFilterVals] = useState<Record<string, FilterValue>>(() => {
+    const init: Record<string, FilterValue> = {};
+    for (const f of config.filters ?? []) {
+      if (f.defaultValue != null && (f.type === "text" || f.type === "select" || f.type === "segmented")) {
+        init[f.name] = f.defaultValue;
+      }
+    }
+    return init;
+  });
   const setFilter = (name: string, value: string): void => {
     setFilterVals((cur) => ({ ...cur, [name]: value }));
+    setPage(1);
+  };
+  const toggleFilter = (name: string, value: string): void => {
+    setFilterVals((cur) => {
+      const set = new Set(asList(cur[name]));
+      if (set.has(value)) set.delete(value);
+      else set.add(value);
+      return { ...cur, [name]: [...set] };
+    });
+    setPage(1);
+  };
+  const setRangeFilter = (name: string, key: "lo" | "hi", value: string): void => {
+    setFilterVals((cur) => ({ ...cur, [name]: { ...asRange(cur[name]), [key]: value } }));
     setPage(1);
   };
   const pageUrl = (endpoint: string, page: number, pageSize: number): string => {
@@ -250,16 +484,82 @@ export default function DataPage(
     }
     return `${endpoint}${sep}page=${page}&page_size=${pageSize}`;
   };
+  // Server-side filters (filter.server === true) are sent to the endpoint as
+  // query params so the backend narrows the full dataset and reports the true
+  // meta.total. Debounce the raw input values ~250ms so a text search issues
+  // one request per pause, not one per keystroke; selects ride the same delay.
+  const [debouncedVals, setDebouncedVals] = useState<Record<string, FilterValue>>({});
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedVals(filterVals), 250);
+    return () => clearTimeout(t);
+  }, [filterVals]);
+  const serverQS = useMemo(() => {
+    const parts: string[] = [];
+    const enc = encodeURIComponent;
+    for (const f of config.filters ?? []) {
+      if (!f.server) continue;
+      const v = debouncedVals[f.name];
+      if (f.type === "multi-select") {
+        for (const item of asList(v)) {
+          const s = item.trim();
+          if (s) parts.push(`${enc(f.name)}=${enc(s)}`);
+        }
+      } else if (f.type === "date-range" || f.type === "numeric-range") {
+        const r = asRange(v);
+        const lo = r.lo.trim();
+        const hi = r.hi.trim();
+        const loSuf = f.type === "date-range" ? "since" : "min";
+        const hiSuf = f.type === "date-range" ? "until" : "max";
+        if (lo) parts.push(`${enc(f.name)}_${loSuf}=${enc(lo)}`);
+        if (hi) parts.push(`${enc(f.name)}_${hiSuf}=${enc(hi)}`);
+      } else {
+        const s = asScalar(v).trim();
+        if (s) parts.push(`${enc(f.name)}=${enc(s)}`);
+      }
+    }
+    return parts.join("&");
+  }, [config.filters, debouncedVals]);
+  const queryEndpoint = serverQS && effectiveEndpoint
+    ? `${effectiveEndpoint}${effectiveEndpoint.includes("?") ? "&" : "?"}${serverQS}`
+    : effectiveEndpoint;
+  // Filters that source their option list from a live endpoint. `useQueries`
+  // handles the variable-length list in one hook call, so option fetches stay
+  // rule-of-hooks safe regardless of how many filters a config declares.
+  const optionFilters = useMemo(
+    () => (config.filters ?? []).filter((f) => f.optionsFrom),
+    [config.filters],
+  );
+  const optionResults = useQueries({
+    queries: optionFilters.map((f) => ({
+      queryKey: ["filter-options", f.optionsFrom ?? "", f.optionsValueField ?? "", f.optionsLabelField ?? ""],
+      queryFn: (): Promise<FieldOption[]> =>
+        fetchFieldOptions({ endpoint: f.optionsFrom, valueField: f.optionsValueField, labelField: f.optionsLabelField }),
+      staleTime: 30_000,
+    })),
+  });
+  const dynamicOptions: Record<string, { options: FieldOption[]; loading: boolean }> = {};
+  optionFilters.forEach((f, i) => {
+    dynamicOptions[f.name] = {
+      options: optionResults[i]?.data ?? [],
+      loading: optionResults[i]?.isLoading ?? false,
+    };
+  });
   const q = useQuery({
-    queryKey: ["datapage", effectiveEndpoint, pagination && !fetchAllPages ? page : 1],
+    queryKey: ["datapage", queryEndpoint, pagination && !fetchAllPages ? page : 1],
     queryFn: async () => {
-      const first = (await apiFetch<unknown>(pageUrl(effectiveEndpoint, pagination && !fetchAllPages ? page : 1, pagination && !fetchAllPages ? PAGE_SIZE : 250))) as Record<string, unknown>;
+      const firstUrl = pageUrl(queryEndpoint, pagination && !fetchAllPages ? page : 1, pagination && !fetchAllPages ? PAGE_SIZE : 250);
+      // Offset-paginated endpoints report the true total in a sibling `meta`
+      // object ({data, meta}); apiFetch unwraps to `data` and drops it, so read
+      // the full envelope for that path and let toRows find rows under `data`.
+      const first = (await (pagination && !fetchAllPages && pagParams === "offset"
+        ? apiFetchEnvelope<unknown>(firstUrl)
+        : apiFetch<unknown>(firstUrl))) as Record<string, unknown>;
       if (!fetchAllPages) return first;
       const pages = typeof first?.pages === "number" ? first.pages : 1;
       if (pages <= 1) return first;
       const rest = await Promise.all(
         Array.from({ length: pages - 1 }, (_, i) =>
-          apiFetch<unknown>(pageUrl(effectiveEndpoint, i + 2, 250)),
+          apiFetch<unknown>(pageUrl(queryEndpoint, i + 2, 250)),
         ),
       );
       const merged = (rest as Record<string, unknown>[]).reduce<Record<string, unknown>>(
@@ -277,20 +577,34 @@ export default function DataPage(
     refetchInterval: 15000,
   });
   const allRows = useMemo(() => toRows(q.data, config.itemsKey), [q.data, config.itemsKey]);
-  // Client-side filter pass. Every configured filter narrows the fetched
-  // rows; the result feeds both the table and (with fetchAllPages) the
-  // client-side pagination slice.
+  // config.selectCreatedRow: flag set on create-success; the effect below
+  // consumes it once the next fetched dataset lands and auto-selects the
+  // newest row (rows come back created_at DESC, so index 0 of the fetched
+  // set is the just-created record).
+  const [pendingSelectFirst, setPendingSelectFirst] = useState(false);
+  // Consume the create-success flag once the next fetched set lands. Clearing
+  // the flag before setSel avoids re-firing on the 15s poll.
+  useEffect(() => {
+    if (!pendingSelectFirst) return;
+    if (allRows.length === 0) return;
+    setPendingSelectFirst(false);
+    setSel(allRows[0]);
+  }, [pendingSelectFirst, allRows]);
+  // Options for an option-bearing filter: static `options` win, then a live
+  // `optionsFrom` list, else the distinct row values of the field (so a bare
+  // `{type:"select"}` becomes an honest enum filter with no backend coupling).
+  const optionsFor = (f: PageFilter): { options: FieldOption[]; loading: boolean } => {
+    if (f.options && f.options.length > 0) return { options: f.options, loading: false };
+    if (f.optionsFrom) return dynamicOptions[f.name] ?? { options: [], loading: true };
+    return { options: deriveOptions(allRows, f.name), loading: false };
+  };
+  // Client-side filter pass. Every non-server filter narrows the fetched rows;
+  // the result feeds both the table and (with fetchAllPages) the client-side
+  // pagination slice.
   const filteredRows = useMemo(() => {
-    const active = (config.filters ?? []).filter((f) => (filterVals[f.name] ?? "").trim() !== "");
+    const active = (config.filters ?? []).filter((f) => !f.server && filterHasValue(f, filterVals[f.name]));
     if (active.length === 0) return allRows;
-    return allRows.filter((row) =>
-      active.every((f) => {
-        const needle = filterVals[f.name].trim().toLowerCase();
-        const hay = row[f.name];
-        if (f.type === "select") return String(hay ?? "") === filterVals[f.name];
-        return String(hay ?? "").toLowerCase().includes(needle);
-      }),
-    );
+    return allRows.filter((row) => active.every((f) => matchFilter(f, filterVals[f.name], row)));
   }, [allRows, config.filters, filterVals]);
   // Effective row set + total for display. fetchAllPages: the page slices the
   // client-side filtered set. Server pagination: rows come from the backend
@@ -334,9 +648,39 @@ export default function DataPage(
       .slice(0, 8)
       .map((k) => ({ field: k, label: k.replace(/_/g, " ") }));
   }, [config.columns, rows]);
+  // Numeric columns get right alignment + monospace tabular figures so counts
+  // and costs form clean vertical rulers the eye can scan. Derived from the
+  // first row's value type plus the cost semantic kind.
+  const numericFields = useMemo(() => {
+    const first = rows[0];
+    return new Set(
+      columns
+        .filter((c) => c.numeric === true || c.kind === "cost" || (first !== undefined && typeof first[c.field] === "number"))
+        .map((c) => c.field),
+    );
+  }, [columns, rows]);
   const [sel, setSel] = useState<Record<string, unknown> | null>(null);
   // Which form is open (if any) and the row it's editing (null for create).
   const [formMode, setFormMode] = useState<"create" | "edit" | null>(null);
+  // Optional page-local floater viewer (config.rowViewer). Holds the row
+  // whose content is being shown plus its own {minimized, fullscreen} state
+  // so the viewer window behaves like any other console surface. Closing
+  // clears the row; opening a different row replaces the payload but keeps
+  // the window in place.
+  const [viewerRow, setViewerRow] = useState<Record<string, unknown> | null>(null);
+  const [viewerMinimized, setViewerMinimized] = useState(false);
+  const [viewerFullscreen, setViewerFullscreen] = useState(false);
+  const [viewerFocused, setViewerFocused] = useState(false);
+  const openViewer = (row: Record<string, unknown>): void => {
+    setViewerRow(row);
+    setViewerMinimized(false);
+    setViewerFocused(true);
+  };
+  const closeViewer = (): void => {
+    setViewerRow(null);
+    setViewerFullscreen(false);
+    setViewerFocused(false);
+  };
 
   // ---- delete only (create/update belong in real typed wizards) --------
   const qc = useQueryClient();
@@ -368,6 +712,41 @@ export default function DataPage(
       void qc.invalidateQueries({ queryKey: ["datapage", effectiveEndpoint] });
     },
   });
+  // Action-body collection + one-shot reveal state. `actionForm` holds the
+  // action awaiting operator input (with its target row); `actionVals` are the
+  // in-progress field values; `reveal` holds a completed action's response to
+  // show once.
+  const [actionForm, setActionForm] = useState<{ action: PageAction; row: Record<string, unknown> | null } | null>(null);
+  const [actionVals, setActionVals] = useState<Record<string, string>>({});
+  const [actionErr, setActionErr] = useState<string | null>(null);
+  const [reveal, setReveal] = useState<{ action: PageAction; payload: unknown } | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  // Fire one action call: path + static body substituted, collected `extra`
+  // merged over the body, response captured when the action declares a reveal.
+  const fireAction = (a: PageAction, row: Record<string, unknown> | null, extra?: Record<string, unknown>): void => {
+    const sub = (s: string): string =>
+      s
+        .replace("{scope}", encodeURIComponent(activeScope))
+        .replace("{id}", encodeURIComponent(String(row?.[idField] ?? "")));
+    const base: Record<string, unknown> = a.body
+      ? Object.fromEntries(Object.entries(a.body).map(([k, v]) => [k, typeof v === "string" ? sub(v) : v]))
+      : {};
+    const merged = { ...base, ...(extra ?? {}) };
+    const body = Object.keys(merged).length > 0 ? merged : undefined;
+    action.mutate(
+      { path: sub(a.endpoint), method: a.method, body },
+      a.reveal
+        ? {
+            onSuccess: (data: unknown) => {
+              setReveal({ action: a, payload: data });
+              setCopied(false);
+            },
+          }
+        : undefined,
+    );
+  };
+
   const doAction = (a: PageAction, row: Record<string, unknown> | null): void => {
     if (a.download) {
       const url = a.endpoint
@@ -376,21 +755,63 @@ export default function DataPage(
       window.open(`${API_BASE}${url.startsWith("/") ? url : `/${url}`}`, "_blank", "noopener");
       return;
     }
+    const shown = visibleFields(a);
+    if (shown.length > 0) {
+      // Prefill declared fields from the row, then collect the rest in a modal
+      // whose submit is the explicit confirm.
+      const init: Record<string, string> = {};
+      for (const f of shown) {
+        if (f.fromRow && row && row[f.fromRow] != null) init[f.name] = String(row[f.fromRow]);
+      }
+      setActionVals(init);
+      setActionErr(null);
+      setActionForm({ action: a, row });
+      return;
+    }
     if (a.confirm && !window.confirm(a.confirm)) return;
-    const sub = (s: string): string =>
-      s
-        .replace("{scope}", encodeURIComponent(activeScope))
-        .replace("{id}", encodeURIComponent(String(row?.[idField] ?? "")));
-    const body: Record<string, unknown> | undefined = a.body
-      ? Object.fromEntries(Object.entries(a.body).map(([k, v]) => [k, typeof v === "string" ? sub(v) : v]))
-      : undefined;
-    action.mutate({ path: sub(a.endpoint), method: a.method, body });
+    fireAction(a, row);
+  };
+
+  // Serialize the collected action fields (number/tags/string) and fire.
+  const submitActionForm = (): void => {
+    if (!actionForm) return;
+    const { action: a, row } = actionForm;
+    const out: Record<string, unknown> = {};
+    for (const f of visibleFields(a)) {
+      const s = (actionVals[f.name] ?? "").trim();
+      if (s === "") {
+        if (f.required) {
+          setActionErr(`${f.label} is required`);
+          return;
+        }
+        continue;
+      }
+      if (f.type === "number") {
+        const n = Number(s);
+        if (Number.isNaN(n)) {
+          setActionErr(`${f.label} must be a number`);
+          return;
+        }
+        out[f.name] = n;
+      } else if (f.type === "tags") {
+        out[f.name] = s.split(/[\s,]+/).filter(Boolean);
+      } else {
+        out[f.name] = s;
+      }
+    }
+    setActionForm(null);
+    fireAction(a, row, out);
+  };
+
+  const copyReveal = (v: string): void => {
+    void navigator.clipboard?.writeText(v);
+    setCopied(true);
   };
   const visibleActions = (row: Record<string, unknown>): PageAction[] =>
     (config.actions ?? []).filter((a) => {
       if (!a.whenStatus || a.whenStatus.length === 0) return true;
-      const status = String(row["status"] ?? row["is_active"] ?? "").toLowerCase();
-      return a.whenStatus.includes(status);
+      const gate = a.whenField ? row[a.whenField] : (row["status"] ?? row["is_active"]);
+      return a.whenStatus.includes(String(gate ?? "").toLowerCase());
     });
 
   // ---- bulk selection ----------------------------------------------------
@@ -445,7 +866,7 @@ export default function DataPage(
     ) : rows.length === 0 ? (
       <div style={emptyNote}>{config.empty ?? "no records."}</div>
     ) : (
-      <table style={css("width:100%;border-collapse:collapse;font-size:11px;")}>
+      <table className="dp-table" style={css("width:100%;border-collapse:collapse;font-size:11px;")}>
               <thead>
                 <tr>
                   {config.bulkActions && config.bulkActions.length > 0 ? (
@@ -464,7 +885,7 @@ export default function DataPage(
                     <th
                       key={c.field}
                       style={css(
-                        "position:sticky;top:0;text-align:left;padding:7px 10px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-size:8.5px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);white-space:nowrap;z-index:1;",
+                        `position:sticky;top:0;text-align:${numericFields.has(c.field) ? "right" : "left"};padding:8px 12px;background:var(--surface-chrome);border-bottom:1px solid color-mix(in srgb,var(--accent) 32%,var(--border));font-family:var(--font-mono);font-size:9px;font-weight:500;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-muted);white-space:nowrap;z-index:1;`,
                       )}
                     >
                       {c.label}
@@ -473,45 +894,113 @@ export default function DataPage(
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row, i) => {
-                  const key = cellText(row[idField]) + i;
-                  const active = sel === row;
-                  return (
-                    <tr
-                      key={key}
-                      onClick={(e) => {
-                        const target = e.target as HTMLElement;
-                        if (target.tagName === "INPUT") return; // checkbox click handled by its own onChange
-                        if (onRowActivate) onRowActivate(row);
-                        else setSel((cur) => (cur === row ? null : row));
-                      }}
-                      style={css(
-                        `cursor:pointer;border-bottom:1px solid var(--border-faint);${active ? "background:color-mix(in srgb,var(--accent) 12%,transparent);" : ""}`,
-                      )}
-                    >
-                      {config.bulkActions && config.bulkActions.length > 0 ? (
-                        <td style={css("padding:6px 8px;width:28px;")}>
-                          <input
-                            type="checkbox"
-                            checked={selected.has(String(row[idField] ?? ""))}
-                            onChange={() => toggleRow(row)}
-                            onClick={(e) => e.stopPropagation()}
-                          />
-                        </td>
-                      ) : null}
-                      {columns.map((c) => (
+                {(() => {
+                  const renderRow = (row: Record<string, unknown>, i: number): JSX.Element => {
+                    const key = cellText(row[idField]) + i;
+                    const active = sel === row;
+                    // Status-toned left ribbon: a continuous vertical rail the eye
+                    // follows down the table, encoding each row's state at the
+                    // left edge. Rendered as an inset box-shadow (no layout shift)
+                    // so hover/active are free to use a background tint. Active
+                    // wins the ribbon in accent so the selected row still reads.
+                    const rail = active ? "var(--accent)" : statusRailColor(row["status"]) ?? "transparent";
+                    return (
+                      <tr
+                        key={key}
+                        onClick={(e) => {
+                          const target = e.target as HTMLElement;
+                          if (target.tagName === "INPUT") return; // checkbox click handled by its own onChange
+                          if (onRowActivate) onRowActivate(row);
+                          else setSel((cur) => (cur === row ? null : row));
+                        }}
+                        style={css(
+                          `cursor:pointer;border-bottom:1px solid var(--border-faint);box-shadow:inset 3px 0 0 ${rail};${active ? "background:color-mix(in srgb,var(--accent) 16%,transparent);" : ""}`,
+                        )}
+                      >
+                        {config.bulkActions && config.bulkActions.length > 0 ? (
+                          <td style={css("padding:6px 8px;width:28px;")}>
+                            <input
+                              type="checkbox"
+                              checked={selected.has(String(row[idField] ?? ""))}
+                              onChange={() => toggleRow(row)}
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          </td>
+                        ) : null}
+                        {columns.map((c, ci) => {
+                          const isNum = numericFields.has(c.field);
+                          const isTitle = ci === 0 && !c.kind;
+                          // Title column anchors the row (bright, semibold);
+                          // numeric columns get mono tabular figures; everything
+                          // else recedes to muted so the eye lands on the anchor
+                          // and the status color, not a wall of even text.
+                          const emphasis = isTitle
+                            ? "color:var(--text-primary);font-weight:600;"
+                            : isNum
+                              ? "color:var(--text-muted);font-family:var(--font-mono);font-variant-numeric:tabular-nums;"
+                              : "color:var(--text-muted);";
+                          return (
+                            <td
+                              key={c.field}
+                              style={css(
+                                `padding:7px 12px;max-width:${isTitle ? 460 : 320}px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:${isNum ? "right" : "left"};${emphasis}`,
+                              )}
+                            >
+                              {c.render ? c.render(row[c.field], row) : c.kind ? semanticCell(c.kind, row[c.field]) : cellText(row[c.field])}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  };
+                  const groupField = config.groupBy;
+                  if (!groupField) return rows.map(renderRow);
+                  // Group the visible rows by row[groupField]. Sort keys
+                  // localeCompare; within each group, active-first then
+                  // created_at ASC (oldest candidate first) per req 41 spec.
+                  const groups = new Map<string, Record<string, unknown>[]>();
+                  for (const row of rows) {
+                    const gk = String(row[groupField] ?? "");
+                    const bucket = groups.get(gk);
+                    if (bucket) bucket.push(row);
+                    else groups.set(gk, [row]);
+                  }
+                  const isActive = (r: Record<string, unknown>): boolean => {
+                    const s = String(r["status"] ?? r["is_active"] ?? "").toLowerCase();
+                    return s === "active";
+                  };
+                  const createdAt = (r: Record<string, unknown>): number => {
+                    const t = Date.parse(String(r["created_at"] ?? ""));
+                    return Number.isFinite(t) ? t : Number.POSITIVE_INFINITY;
+                  };
+                  const keys = [...groups.keys()].sort((a, b) => a.localeCompare(b));
+                  const colSpan = columns.length + (config.bulkActions && config.bulkActions.length > 0 ? 1 : 0);
+                  const out: JSX.Element[] = [];
+                  let idx = 0;
+                  for (const gk of keys) {
+                    const bucket = [...(groups.get(gk) ?? [])].sort((a, b) => {
+                      const ax = isActive(a);
+                      const bx = isActive(b);
+                      if (ax !== bx) return ax ? -1 : 1;
+                      return createdAt(a) - createdAt(b);
+                    });
+                    out.push(
+                      <tr key={`__group_${gk}`} style={css("background:var(--surface-chrome);")}>
                         <td
-                          key={c.field}
-                          style={css(
-                            "padding:6px 10px;color:var(--text-primary);max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;",
-                          )}
+                          colSpan={colSpan}
+                          style={css("padding:6px 12px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-muted);")}
                         >
-                          {c.render ? c.render(row[c.field], row) : c.kind ? semanticCell(c.kind, row[c.field]) : cellText(row[c.field])}
+                          {gk || "\u2014"}
                         </td>
-                      ))}
-                    </tr>
-                  );
-                })}
+                      </tr>,
+                    );
+                    for (const row of bucket) {
+                      out.push(renderRow(row, idx));
+                      idx += 1;
+                    }
+                  }
+                  return out;
+                })()}
               </tbody>
             </table>
     );
@@ -521,7 +1010,7 @@ export default function DataPage(
       <div style={css(`flex:${sel ? "1 1 62%" : "1 1 100%"};min-width:0;` + panelBox)}>
         <div style={panelTitle}>
           <span style={dot} />
-          <span style={css("color:var(--text-primary);")}>{config.title}</span>
+          <span style={css("color:var(--text-primary);font-family:var(--font-display);font-weight:400;")}>{config.title}</span>
           {config.scopeFrom && scopeParents.length ? (
             <span style={css("display:inline-flex;align-items:center;gap:6px;")}>
               <span style={css("font-size:8.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);")}>scope</span>
@@ -553,36 +1042,112 @@ export default function DataPage(
           ) : null}
           <span style={css("color:var(--text-faint);text-transform:none;letter-spacing:0.04em;")}>{rows.length} rows</span>
         </div>
-        {(config.filters && config.filters.length > 0) || pagination ? (
+        {(config.filters && config.filters.length > 0) || pagination || toolbarExtra ? (
           <div style={css("display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--border-soft);flex-wrap:wrap;")}>
             {config.filters && config.filters.length > 0 ? (
               <span style={css("font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);")}>filter</span>
             ) : null}
-            {config.filters?.map((f) =>
-              f.type === "select" ? (
-                <select
-                  key={f.name}
-                  value={filterVals[f.name] ?? ""}
-                  onChange={(e: ChangeEvent<HTMLSelectElement>) => setFilter(f.name, e.target.value)}
-                  style={css("background:var(--surface-sunk);border:1px solid var(--border-soft);color:var(--text-muted);font-family:var(--font-mono);font-size:11px;padding:3px 8px;border-radius:2px;max-width:180px;text-transform:none;letter-spacing:normal;cursor:pointer;")}
-                >
-                  <option value="">{f.label}</option>
-                  {(f.options ?? []).map((o) => (
-                    <option key={o.value} value={o.value}>{o.label}</option>
-                  ))}
-                </select>
-              ) : (
+            {config.filters?.map((f) => {
+              if (f.type === "date-range" || f.type === "numeric-range") {
+                const r = asRange(filterVals[f.name]);
+                const inputType = f.type === "date-range" ? "date" : "number";
+                return (
+                  <span key={f.name} style={css("display:inline-flex;align-items:center;gap:4px;")}>
+                    <input
+                      type={inputType}
+                      aria-label={`${f.label} from`}
+                      value={r.lo}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setRangeFilter(f.name, "lo", e.target.value)}
+                      style={css(FILTER_CTL + "max-width:130px;")}
+                    />
+                    <span style={css("color:var(--text-faint);font-size:10px;")}>{"\u2013"}</span>
+                    <input
+                      type={inputType}
+                      aria-label={`${f.label} to`}
+                      value={r.hi}
+                      onChange={(e: ChangeEvent<HTMLInputElement>) => setRangeFilter(f.name, "hi", e.target.value)}
+                      style={css(FILTER_CTL + "max-width:130px;")}
+                    />
+                  </span>
+                );
+              }
+              if (f.type === "segmented") {
+                const { options } = optionsFor(f);
+                const cur = asScalar(filterVals[f.name]);
+                return (
+                  <span key={f.name} role="group" aria-label={f.label} style={css("display:inline-flex;border:1px solid var(--border-soft);border-radius:2px;overflow:hidden;")}>
+                    {options.map((o) => {
+                      const on = cur === o.value;
+                      return (
+                        <button
+                          key={o.value}
+                          type="button"
+                          aria-pressed={on}
+                          onClick={() => setFilter(f.name, on ? "" : o.value)}
+                          style={css(`padding:3px 9px;border:0;border-right:1px solid var(--border-soft);background:${on ? "var(--accent)" : "transparent"};color:${on ? "var(--surface-sunk)" : "var(--text-muted)"};font-family:var(--font-mono);font-size:10px;letter-spacing:0.04em;text-transform:none;cursor:pointer;`)}
+                        >
+                          {o.label}
+                        </button>
+                      );
+                    })}
+                  </span>
+                );
+              }
+              if (f.type === "multi-select") {
+                const { options, loading } = optionsFor(f);
+                const sel = asList(filterVals[f.name]);
+                return (
+                  <span key={f.name} role="group" aria-label={f.label} style={css("display:inline-flex;align-items:center;gap:4px;flex-wrap:wrap;")}>
+                    <span style={css("font-size:10px;color:var(--text-faint);letter-spacing:0.04em;")}>{f.label}</span>
+                    {loading ? <span style={css("font-size:10px;color:var(--text-faint);")}>loading{"\u2026"}</span> : null}
+                    {options.map((o) => {
+                      const on = sel.includes(o.value);
+                      return (
+                        <button
+                          key={o.value}
+                          type="button"
+                          aria-pressed={on}
+                          onClick={() => toggleFilter(f.name, o.value)}
+                          style={css(`padding:2px 7px;border:1px solid ${on ? "var(--accent)" : "var(--border-soft)"};border-radius:2px;background:${on ? "color-mix(in srgb,var(--accent) 18%,transparent)" : "var(--surface-sunk)"};color:${on ? "var(--accent)" : "var(--text-muted)"};font-family:var(--font-mono);font-size:10px;letter-spacing:0.03em;text-transform:none;cursor:pointer;`)}
+                        >
+                          {o.label}
+                        </button>
+                      );
+                    })}
+                  </span>
+                );
+              }
+              if (f.type === "select") {
+                const { options, loading } = optionsFor(f);
+                return (
+                  <select
+                    key={f.name}
+                    aria-label={f.label}
+                    value={asScalar(filterVals[f.name])}
+                    onChange={(e: ChangeEvent<HTMLSelectElement>) => setFilter(f.name, e.target.value)}
+                    style={css(FILTER_CTL + "max-width:180px;cursor:pointer;")}
+                  >
+                    <option value="">{loading ? "loading\u2026" : f.label}</option>
+                    {options.map((o) => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
+                  </select>
+                );
+              }
+              return (
                 <input
                   key={f.name}
                   type="text"
-                  value={filterVals[f.name] ?? ""}
+                  aria-label={f.label}
+                  value={asScalar(filterVals[f.name])}
                   onChange={(e: ChangeEvent<HTMLInputElement>) => setFilter(f.name, e.target.value)}
                   placeholder={f.label}
-                  style={css("background:var(--surface-sunk);border:1px solid var(--border-soft);color:var(--text-muted);font-family:var(--font-mono);font-size:11px;padding:3px 8px;border-radius:2px;max-width:160px;text-transform:none;letter-spacing:normal;")}
+                  style={css(FILTER_CTL + "max-width:160px;")}
                 />
-              ),
-            )}
+              );
+            })}
             <span style={css("flex:1;")} />
+            {toolbarExtra}
             {config.pageActions?.map((a) => (
               <button
                 key={a.label}
@@ -597,7 +1162,7 @@ export default function DataPage(
             {pagination ? (
               <span style={css("display:inline-flex;align-items:center;gap:6px;")}>
                 <button type="button" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1} style={css("border:0;background:transparent;color:var(--text-muted);cursor:pointer;font-size:11px;")}>{"\u25c0"}</button>
-                <span style={css("font-size:10px;color:var(--text-faint);text-transform:none;letter-spacing:0.03em;")}>page {page} / {pageCount} \u00b7 {total} total</span>
+                <span style={css("font-size:10px;color:var(--text-faint);text-transform:none;letter-spacing:0.03em;")}>page {page} / {pageCount} {"\u00b7"} {total} total</span>
                 <button type="button" onClick={() => setPage((p) => p + 1)} disabled={page >= pageCount} style={css("border:0;background:transparent;color:var(--text-muted);cursor:pointer;font-size:11px;")}>{"\u25b6"}</button>
               </span>
             ) : null}
@@ -635,7 +1200,7 @@ export default function DataPage(
         <div style={css("flex:1 1 38%;min-width:0;" + panelBox)}>
             <div style={panelTitle}>
               <span style={dot} />
-              <span style={css("color:var(--text-primary);")}>detail</span>
+              <span style={css("color:var(--text-primary);font-family:var(--font-display);font-weight:400;")}>detail</span>
               {sel && sel["status"] != null ? (
                 <StatusBadge value={sel["status"]} />
               ) : null}
@@ -652,6 +1217,15 @@ export default function DataPage(
               {config.delete ? (
                 <button type="button" onClick={() => sel && doDelete(sel)} style={css(`padding:3px 10px;border:1px solid ${H_WARN}66;border-radius:2px;background:transparent;color:${H_WARN};font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;`)}>delete</button>
               ) : null}
+              {sel && config.rowViewer ? (
+                <button
+                  type="button"
+                  onClick={() => openViewer(sel)}
+                  style={css("padding:3px 10px;border:1px solid var(--accent);border-radius:2px;background:transparent;color:var(--accent);font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;")}
+                >
+                  {config.rowViewer.actionLabel}
+                </button>
+              ) : null}
               {sel ? (
                 visibleActions(sel).map((a) => (
                   <button
@@ -667,6 +1241,11 @@ export default function DataPage(
               ) : null}
               <button type="button" onClick={() => setSel(null)} style={css("background:transparent;border:0;color:var(--text-faint);cursor:pointer;font-size:13px;margin-left:4px;")}>{"\u2715"}</button>
             </div>
+            {action.isError ? (
+              <div style={css("padding:6px 12px;border-bottom:1px solid #d64545;background:color-mix(in srgb,#d64545 10%,transparent);color:#d64545;font-family:var(--font-mono);font-size:10px;letter-spacing:0.02em;text-transform:none;word-break:break-word;")}>
+                {action.error instanceof Error ? action.error.message : "action failed"}
+              </div>
+            ) : null}
             <div style={css("flex:1;min-height:0;overflow:auto;padding:12px 14px;display:grid;grid-template-columns:140px 1fr;gap:6px 12px;font-size:11px;align-content:start;")}>
               {detailBody ? (
                 detailBody(sel)
@@ -716,20 +1295,28 @@ export default function DataPage(
   const activeSpec: FormSpec | null =
     formMode === "create" ? createSpec ?? null : formMode === "edit" ? editSpec ?? null : null;
 
+  const statusStrip = (
+    <>
+      <span style={{ display: "flex", alignItems: "center", padding: "0 11px", background: "var(--status-ok)", color: "var(--text-on-accent)", fontWeight: 700, letterSpacing: "0.14em" }}>{config.title}</span>
+      <span style={{ flex: 1 }} />
+      <span style={{ display: "flex", alignItems: "center", padding: "0 11px", textTransform: "none" }}>{rows.length} records</span>
+    </>
+  );
+
   return (
-    <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", background: "transparent", fontFamily: "var(--font-mono)", color: "var(--text-primary)" }}>
+    <ConsoleWindow
+      id={windowId}
+      kind="page"
+      title={windowTitle}
+      isFullscreen={isFullscreen}
+      isFocused={isFocused}
+      onFocus={onFocus}
+      onClose={onBack}
+      onMinimize={onMinimize}
+      onToggleFullscreen={onToggleFullscreen}
+      footerExtras={statusStrip}
+    >
       <main style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>{body}</main>
-      <footer style={{ flex: "0 0 24px", height: 24, display: "flex", alignItems: "stretch", background: "var(--surface-chrome)", borderTop: "2px solid var(--border)", fontSize: 9.5, letterSpacing: "0.1em", textTransform: "uppercase", color: "var(--text-faint)" }}>
-        <span style={{ display: "flex", alignItems: "center", padding: "0 11px", background: "var(--status-ok)", color: "var(--text-on-accent)", fontWeight: 700, letterSpacing: "0.14em" }}>{config.title}</span>
-        {config.blurb ? (
-          <span style={{ display: "flex", alignItems: "center", padding: "0 11px", textTransform: "none", letterSpacing: "0.03em", color: "var(--text-muted)" }}>{config.blurb}</span>
-        ) : null}
-        <span style={{ flex: 1 }} />
-        <span style={{ display: "flex", alignItems: "center", padding: "0 11px", textTransform: "none" }}>{rows.length} records</span>
-        {onToggleFullscreen ? ctlBtn(isFullscreen ? "\u2921" : "\u2922", isFullscreen ? "exit fullscreen" : "fullscreen", onToggleFullscreen) : null}
-        {ctlBtn("\u2014", "minimize", onMinimize)}
-        {ctlBtn("\u2715", "close", onBack)}
-      </footer>
       {activeSpec ? (
         <div
           role="dialog"
@@ -744,14 +1331,138 @@ export default function DataPage(
             <FieldForm
               spec={activeSpec}
               initial={formMode === "edit" ? sel : null}
-              onDone={() => setFormMode(null)}
+              onDone={() => {
+                if (formMode === "create" && config.selectCreatedRow) {
+                  setPendingSelectFirst(true);
+                }
+                setFormMode(null);
+              }}
               onCancel={() => setFormMode(null)}
               invalidateKey={["datapage", effectiveEndpoint]}
             />
           </div>
         </div>
       ) : null}
-    </div>
+      {actionForm ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={`${actionForm.action.label} details`}
+          onClick={() => setActionForm(null)}
+          style={css("position:absolute;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;padding:32px;z-index:21;")}
+        >
+          <form
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={(e) => {
+              e.preventDefault();
+              submitActionForm();
+            }}
+            style={css("width:min(460px,100%);max-height:100%;overflow:auto;display:flex;flex-direction:column;gap:12px;padding:18px;background:var(--surface-card);border:1px solid var(--border);border-radius:3px;")}
+          >
+            <div style={css("font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-primary);")}>{actionForm.action.label}</div>
+            {visibleFields(actionForm.action).map((f) => (
+              <label key={f.name} style={actionLabel}>
+                <span>
+                  {f.label}
+                  {f.required ? " *" : ""}
+                </span>
+                {f.type === "textarea" ? (
+                  <textarea
+                    value={actionVals[f.name] ?? ""}
+                    placeholder={f.placeholder}
+                    onChange={(e: ChangeEvent<HTMLTextAreaElement>) => setActionVals((c) => ({ ...c, [f.name]: e.target.value }))}
+                    style={css(ACTION_INPUT + "min-height:64px;resize:vertical;")}
+                  />
+                ) : f.type === "select" ? (
+                  <select
+                    value={actionVals[f.name] ?? ""}
+                    onChange={(e: ChangeEvent<HTMLSelectElement>) => setActionVals((c) => ({ ...c, [f.name]: e.target.value }))}
+                    style={css(ACTION_INPUT + "cursor:pointer;")}
+                  >
+                    <option value="">{f.placeholder ?? "select\u2026"}</option>
+                    {(f.options ?? []).map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type={f.type === "number" ? "number" : "text"}
+                    value={actionVals[f.name] ?? ""}
+                    placeholder={f.type === "tags" ? f.placeholder ?? "comma or space separated" : f.placeholder}
+                    onChange={(e: ChangeEvent<HTMLInputElement>) => setActionVals((c) => ({ ...c, [f.name]: e.target.value }))}
+                    style={css(ACTION_INPUT)}
+                  />
+                )}
+              </label>
+            ))}
+            {actionErr ? <div style={actionErrBox}>{actionErr}</div> : null}
+            <div style={css("display:flex;justify-content:flex-end;gap:8px;")}>
+              <button type="button" onClick={() => setActionForm(null)} style={actionGhostBtn}>
+                cancel
+              </button>
+              <button type="submit" disabled={action.isPending} style={actionPrimaryBtn}>
+                {actionForm.action.label}
+              </button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+      {reveal ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label={reveal.action.reveal?.title ?? "result"}
+          onClick={() => setReveal(null)}
+          style={css("position:absolute;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;padding:32px;z-index:22;")}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={css("width:min(520px,100%);max-height:100%;overflow:auto;display:flex;flex-direction:column;gap:12px;padding:18px;background:var(--surface-card);border:1px solid var(--border);border-radius:3px;")}
+          >
+            <div style={css("font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-primary);")}>{reveal.action.reveal?.title ?? reveal.action.label}</div>
+            {reveal.action.reveal?.note ? (
+              <div style={css("font-family:var(--font-mono);font-size:10px;color:var(--status-ok);letter-spacing:0.03em;text-transform:none;")}>{reveal.action.reveal.note}</div>
+            ) : null}
+            {revealEntries(reveal).map(([k, v]) => (
+              <div key={k} style={css("display:flex;flex-direction:column;gap:4px;")}>
+                <span style={css("font-family:var(--font-mono);font-size:9px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);")}>{k}</span>
+                <div style={css("display:flex;align-items:flex-start;gap:6px;")}>
+                  <code style={css("flex:1;min-width:0;word-break:break-all;background:var(--surface-sunk);border:1px solid var(--border);border-radius:2px;padding:7px 8px;font-family:var(--font-mono);font-size:11px;color:var(--text-primary);")}>{v}</code>
+                  <button type="button" onClick={() => copyReveal(v)} style={actionGhostBtn}>
+                    {copied ? "copied" : "copy"}
+                  </button>
+                </div>
+              </div>
+            ))}
+            <div style={css("display:flex;justify-content:flex-end;")}>
+              <button type="button" onClick={() => setReveal(null)} style={actionPrimaryBtn}>
+                done
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {config.rowViewer && viewerRow ? (
+        <ConsoleWindow
+          id={`${windowId}:viewer`}
+          kind="floater"
+          title={config.rowViewer.title(viewerRow)}
+          initialRect={{ x: 160, y: 120, w: 880, h: 560 }}
+          minSize={{ w: 480, h: 320 }}
+          isFullscreen={viewerFullscreen}
+          isMinimized={viewerMinimized}
+          isFocused={viewerFocused}
+          onFocus={() => setViewerFocused(true)}
+          onClose={closeViewer}
+          onMinimize={() => setViewerMinimized((m) => !m)}
+          onToggleFullscreen={() => setViewerFullscreen((f) => !f)}
+        >
+          {config.rowViewer.render(viewerRow, closeViewer)}
+        </ConsoleWindow>
+      ) : null}
+    </ConsoleWindow>
   );
 }
 
@@ -764,3 +1475,22 @@ const panelTitle = css(
 );
 const dot = css("width:8px;height:8px;border-radius:1px;background:var(--accent);box-shadow:0 0 6px var(--accent);flex:0 0 auto;");
 const H_WARN = "#ffb85f";
+const FILTER_CTL =
+  "background:var(--surface-sunk);border:1px solid var(--border-soft);color:var(--text-muted);font-family:var(--font-mono);font-size:11px;padding:3px 8px;border-radius:2px;text-transform:none;letter-spacing:normal;";
+// Action-body collection modal + one-shot reveal modal styling. ACTION_INPUT
+// is a raw string (concatenated per-widget like FILTER_CTL); the rest are
+// resolved style objects.
+const ACTION_INPUT =
+  "background:var(--surface-sunk);border:1px solid var(--border);border-radius:2px;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;padding:6px 8px;letter-spacing:0.02em;text-transform:none;outline:none;";
+const actionLabel = css(
+  "display:flex;flex-direction:column;gap:4px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);",
+);
+const actionErrBox = css(
+  "border:1px solid #ffb85f;border-radius:2px;padding:7px 9px;background:color-mix(in srgb,#ffb85f 12%,transparent);color:#ffb85f;font-family:var(--font-mono);font-size:10px;letter-spacing:0.02em;text-transform:none;",
+);
+const actionPrimaryBtn = css(
+  "padding:6px 14px;border:1px solid var(--accent);background:var(--accent);color:var(--text-on-accent);font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;border-radius:2px;",
+);
+const actionGhostBtn = css(
+  "padding:6px 12px;border:1px solid var(--border);background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;border-radius:2px;",
+);

@@ -365,13 +365,26 @@ async def _run_two_phase_dispatch(
     # the top level (no "output" wrapper key exists).
     response = terminal_output.get("response") if isinstance(terminal_output, dict) else None
     if response is None:
+        error_detail = (
+            terminal_output.get("error")
+            or terminal_output.get("error_class")
+            or terminal_output.get("message")
+            or "inner_workflow_returned_no_response"
+        )
+        failed_state = terminal_output.get("failed_state")
         _dispatch_log.warning(
             "workflow.dispatch.no_response",
             run_id=run_id,
             inner_definition_id=inner_definition.definition_id,
+            error=error_detail,
+            failed_state=failed_state,
             terminal_keys=sorted(terminal_output.keys()),
         )
-        return {"response": None, "error": "inner_workflow_returned_no_response"}
+        return {
+            "response": None,
+            "error": f"inner_workflow_failed_at_{failed_state}: {error_detail}" if failed_state else str(error_detail),
+            "inner_output": terminal_output,
+        }
 
     return {"response": response}
 

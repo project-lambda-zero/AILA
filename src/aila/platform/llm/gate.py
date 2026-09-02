@@ -33,10 +33,18 @@ logger = logging.getLogger(__name__)
 
 
 def extract_confidence(content: str, finish_reason: str) -> float:
-    """Extract confidence score from LLM response content.
+    """Extract the model's self-reported confidence score.
 
     Primary: parse JSON, look for confidence_score field (float 0.0-1.0).
     Fallback: heuristic based on finish_reason and content length.
+
+    Contract E2 note: the returned value is self-reported and MUST NOT
+    alone drive auto-accept at the gate. The model has every incentive
+    to inflate this number. The auto-accept branch in :func:`make_gate_step`
+    now requires an independent, evidence-derived corroboration signal
+    (see :func:`_has_corroboration`); self-report is discounted -- it
+    can still be MEDIUM/LOW/REJECT-mapped and still feeds the calibrator,
+    but on its own it cannot clear the HIGH auto-accept bar.
 
     Args:
         content: The raw response content string.
@@ -68,6 +76,54 @@ def extract_confidence(content: str, finish_reason: str) -> float:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _has_corroboration(ctx: dict[str, Any]) -> bool:
+    """Return True when the gate sees an evidence-derived corroborating signal.
+
+    Contract E1 seam: HIGH self-reported confidence alone MUST NOT
+    auto-accept. This helper reports whether an independent, non-self-
+    reported signal is available at gate time. The gate step consults
+    it before honouring the ``level == "HIGH"`` auto-accept branch;
+    when no corroboration is present, HIGH is downgraded to the flag
+    path (Contract E1).
+
+    Real signals available at gate time (post-call, post-validate step
+    per :data:`aila.platform.llm.pipeline.POST_CALL_STEPS`):
+
+    * ``ctx["evidence_validation"]`` -- the ``EvidenceValidationReport``
+      dict written by :func:`aila.platform.llm.validate.make_validate_step`.
+      Corroborates only when ``overall_pass`` is True, at least one
+      citation was validated (``citations_valid >= 1``), and no citation
+      was flagged as hallucinated. Empty reports (validators registered
+      but nothing to check) and reports containing a hallucination are
+      NOT corroboration.
+    * ``ctx["corroboration_confirmed"]`` -- a boolean an upstream caller
+      writes when the response is backed by a prior confirmed hypothesis
+      or a verifier-confirmed verdict on the same claim (Contract C1/C2
+      wiring on the caller side). The gate treats ``True`` as a real
+      corroborating signal; any other value (missing, None, False) is
+      not corroboration.
+    """
+    report = ctx.get("evidence_validation")
+    if isinstance(report, dict):
+        try:
+            citations_valid = int(report.get("citations_valid") or 0)
+            citations_hallucinated = int(
+                report.get("citations_hallucinated") or 0
+            )
+        except (TypeError, ValueError):
+            citations_valid = 0
+            citations_hallucinated = 1
+        if (
+            bool(report.get("overall_pass"))
+            and citations_valid >= 1
+            and citations_hallucinated == 0
+        ):
+            return True
+    if ctx.get("corroboration_confirmed") is True:
+        return True
+    return False
 
 
 def _map_confidence_level(
@@ -204,6 +260,41 @@ async def _resolve_thresholds(
                     high = medium
 
     return high, medium, reject
+
+
+async def _resolve_bool_flag(
+    config_provider: LLMConfigProvider,
+    task_type: str,
+    key_stem: str,
+    *,
+    default: bool,
+) -> bool:
+    """Read a ConfigRegistry boolean flag scoped by task_type.
+
+    Reads ``platform.{key_stem}_{task_type}`` first, then
+    ``platform.{key_stem}`` (unscoped fallback). Any registry outage
+    or parse failure degrades to ``default`` so a config-plane fault
+    can never flip a truth-safety knob silently.
+    """
+    registry = config_provider._registry
+    for key in (f"{key_stem}_{task_type}", key_stem):
+        try:
+            raw = await registry.get("platform", key)
+        except (OSError, RuntimeError, ValueError, TypeError, AttributeError):
+            continue
+        if raw is None:
+            continue
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, (int, float)):
+            return bool(raw)
+        if isinstance(raw, str):
+            token = raw.strip().lower()
+            if token in {"0", "false", "no", "off"}:
+                return False
+            if token in {"1", "true", "yes", "on"}:
+                return True
+    return default
 
 
 async def _resolve_consensus_config(
@@ -410,18 +501,43 @@ def make_gate_step(
 
         # Map to level
         level = _map_confidence_level(score, high, medium, reject)
-        ctx["confidence"] = level
 
-        # Route by level
-        if level == "HIGH":
-            pass  # Auto-accept, no extra work
-        elif level == "MEDIUM":
-            ctx["confidence_flagged"] = True
-        elif level == "LOW":
-            # Consensus retry
+        # Contract E1: HIGH self-report alone MUST NOT auto-accept. When
+        # no independent evidence-derived signal corroborates the response,
+        # downgrade HIGH to the MEDIUM flag path so a reviewer sees it
+        # instead of it slipping through as auto-accepted. See
+        # :func:`_has_corroboration` for what counts as a real signal.
+        corroborated = _has_corroboration(ctx)
+        if level == "HIGH" and not corroborated:
+            level = "MEDIUM"
+            ctx["high_downgraded_no_corroboration"] = True
+        ctx["confidence"] = level
+        ctx["corroboration_present"] = corroborated
+
+        # Issue .run/issues/26_uncertainty_stack.md /
+        # .run/vr_truth_uncertainty_stack.md: the historical gate
+        # re-sampled the HONEST tail (LOW self-report) and waved the
+        # OVERCONFIDENT tail (uncorroborated HIGH) through untouched.
+        # In a 75%-false-positive domain that inversion optimises for
+        # false positives. Contract E1 (see :func:`_has_corroboration`)
+        # already downgrades an uncorroborated HIGH to MEDIUM and marks
+        # ``ctx["high_downgraded_no_corroboration"]``; the resample-
+        # target inversion consumes that marker as the re-sample entry
+        # point instead of the LOW branch alone.
+        should_consensus_from_high_downgrade = (
+            ctx.get("high_downgraded_no_corroboration") is True
+            and await _resolve_bool_flag(
+                config_provider, routing.task_type,
+                "llm_pipeline_gate_resample_downgraded_high",
+                default=True,
+            )
+        )
+
+        async def _consensus_pass(reason: str) -> None:
             ctx["consensus_attempted"] = True
+            ctx["consensus_reason"] = reason
             strategy, _, retries = await _resolve_consensus_config(
-                config_provider, routing.task_type
+                config_provider, routing.task_type,
             )
             ctx["consensus_retries"] = retries
             ctx["consensus_strategy"] = strategy
@@ -436,21 +552,63 @@ def make_gate_step(
                 run_id=ctx.get("run_id") or None,
                 team_id=ctx.get("team_id") or None,
             )
+            if result is None:
+                return
+            winner_resp, winner_raw = result
+            # C6: the consensus winner's raw score also flows through
+            # the calibrator so downstream thresholding sees a
+            # consistently-shaped number regardless of which branch
+            # produced it.
+            winner_score = await _apply_calibration(
+                config_provider, routing.task_type, winner_raw,
+            )
+            ctx["response"] = winner_resp
+            new_level = _map_confidence_level(
+                winner_score, high, medium, reject,
+            )
+            # Contract E1 (centralized clamp): a consensus-driven HIGH is
+            # still self-report -- multiple agreeing re-draws are not an
+            # independent, evidence-derived signal (see
+            # :func:`_has_corroboration`). Without corroboration the
+            # ceiling stays MEDIUM regardless of which branch entered
+            # consensus (a bare LOW self-report OR a downgraded,
+            # uncorroborated HIGH), so the overconfident tail can never
+            # auto-accept on self-report alone -- the false-positive path
+            # #272 closes, now enforced for the LOW branch too.
+            if new_level == "HIGH" and not _has_corroboration(ctx):
+                new_level = "MEDIUM"
+                ctx["consensus_high_capped_no_corroboration"] = True
+            ctx["confidence"] = new_level
+            ctx["consensus_winner_score"] = winner_score
+            ctx["consensus_winner_raw_score"] = winner_raw
 
-            if result is not None:
-                winner_resp, winner_raw = result
-                # C6: the consensus winner's raw score also flows through
-                # the calibrator so downstream thresholding sees a
-                # consistently-shaped number regardless of which branch
-                # produced it.
-                winner_score = await _apply_calibration(
-                    config_provider, routing.task_type, winner_raw,
+        # Route by level
+        if level == "HIGH":
+            pass  # Auto-accept, no extra work
+        elif level == "MEDIUM":
+            ctx["confidence_flagged"] = True
+            # Inverted target: an uncorroborated HIGH (downgraded to
+            # MEDIUM by the E1 gate above) is what the consensus loop
+            # SHOULD re-draw -- the model reported high confidence and
+            # produced no evidence to back it, exactly the tail the
+            # spec's 75% false-positive base rate flags as most likely
+            # wrong. Route it through the same retry machinery the LOW
+            # branch uses.
+            if should_consensus_from_high_downgrade:
+                # E1 invariant is enforced centrally inside
+                # ``_consensus_pass``: a re-sampled uncorroborated HIGH
+                # may push DOWN but can never re-promote to auto-accept
+                # HIGH on self-report alone. The same clamp now guards
+                # the LOW branch below.
+                await _consensus_pass(
+                    reason="high_downgraded_no_corroboration",
                 )
-                ctx["response"] = winner_resp
-                new_level = _map_confidence_level(winner_score, high, medium, reject)
-                ctx["confidence"] = new_level
-                ctx["consensus_winner_score"] = winner_score
-                ctx["consensus_winner_raw_score"] = winner_raw
+        elif level == "LOW":
+            # Consensus retry -- honest low-confidence self-report.
+            # Kept because a bare LOW with no better option still needs
+            # sample-variance reduction, but the inversion above means
+            # the LOW branch no longer carries the whole burden.
+            await _consensus_pass(reason="low_self_report")
         elif level == "REJECT":
             # Emit audit event before raising
             _emit_gate_event(ctx, routing, score, level, emitter)
@@ -471,8 +629,13 @@ def make_gate_step(
             "consensus_attempted": ctx.get("consensus_attempted", False),
             "consensus_retries": ctx.get("consensus_retries", 0),
             "consensus_strategy": ctx.get("consensus_strategy", ""),
+            "consensus_reason": ctx.get("consensus_reason", ""),
             "consensus_winner_score": ctx.get("consensus_winner_score"),
             "consensus_winner_raw_score": ctx.get("consensus_winner_raw_score"),
+            "corroboration_present": ctx.get("corroboration_present", False),
+            "high_downgraded_no_corroboration": ctx.get(
+                "high_downgraded_no_corroboration", False
+            ),
         }
 
         existing_meta = ctx.get("pipeline_metadata")

@@ -17,12 +17,16 @@ Endpoints:
 from __future__ import annotations
 
 import logging
+import os
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.exc import SQLAlchemyError
+from sqlmodel import select
 
 from aila.api.auth import AuthContext, require_user_or_api_key
 from aila.api.constants import ROLE_ADMIN
+from aila.api.deps import get_config_registry
 from aila.api.limiter import limiter
 from aila.api.schemas.envelope import DataEnvelope
 from aila.config import get_settings
@@ -33,7 +37,9 @@ from aila.platform.services.sandbox import (
     SandboxSpec,
     SandboxUnavailableError,
 )
-from aila.platform.services.sandbox.service import SandboxService
+from aila.platform.services.sandbox.service import SandboxProbe, SandboxService
+from aila.storage.database import async_session_scope
+from aila.storage.db_models import SandboxExecHistoryRecord
 
 __all__ = ["router"]
 
@@ -132,7 +138,69 @@ class SandboxStatus(BaseModel):
     provisioned: bool
     ssh_host: str
     ssh_reachable: bool | None
+    host_os: str
     checks: list[SandboxCheck]
+
+
+class SandboxProbeResponse(BaseModel):
+    """Response body for ``POST /platform/sandbox/probe``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool
+    detail: str
+    duration_ms: int
+    tool_installed: bool = True
+    tool_missing: bool = False
+    installed_path: str | None = None
+
+
+class SandboxBootstrapRequest(BaseModel):
+    """Request body for ``POST /platform/sandbox/install``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    tool: str = Field(default="nsjail", description="Sandbox tool to install: 'nsjail' or 'firecracker'.")
+
+
+class SandboxBootstrapResponse(BaseModel):
+    """Response body for ``POST /platform/sandbox/install``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    ok: bool
+    detail: str
+    output: str
+    duration_ms: int
+
+
+class SandboxTargetRequest(BaseModel):
+    """Request body for ``POST /platform/sandbox/target``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    system_id: str | None = Field(default=None, description="Registered system ID from Systems Registry.")
+    system_name: str | None = Field(default=None, description="System name.")
+    host: str = Field(..., description="SSH host IP or hostname.")
+    username: str = Field(default="root", description="SSH username.")
+    port: int = Field(default=22, description="SSH port.")
+    backend: str | None = Field(default=None, description="Target backend: 'nsjail' or 'firecracker'.")
+
+
+class SandboxHistoryRow(BaseModel):
+    """Response row for ``GET /platform/sandbox/history``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    actor_user_id: str | None
+    argv: list[str]
+    exit_code: int | None
+    duration_s: float
+    timed_out: bool
+    oom: bool
+    truncated: bool
+    created_at: str
 
 
 def _to_response(result: SandboxResult) -> SandboxResultResponse:
@@ -201,6 +269,22 @@ async def exec_sandbox(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"sandbox backend failed: {exc}",
         ) from exc
+
+    try:
+        async with async_session_scope() as session:
+            session.add(SandboxExecHistoryRecord(
+                actor_user_id=ctx.user_id,
+                argv=list(spec.argv),
+                exit_code=result.exit_code,
+                duration_s=result.duration_s,
+                timed_out=result.timed_out,
+                oom=result.oom,
+                truncated=result.truncated,
+            ))
+            await session.commit()
+    except SQLAlchemyError as exc:
+        _log.warning("platform.sandbox.exec history insert failed: %s", exc)
+
     return DataEnvelope(data=_to_response(result))
 
 
@@ -259,5 +343,123 @@ async def sandbox_status(
         provisioned=provisioned,
         ssh_host=ssh_host,
         ssh_reachable=None,
+        host_os=os.name,
         checks=checks,
     ))
+
+
+def _history_row(record: SandboxExecHistoryRecord) -> SandboxHistoryRow:
+    return SandboxHistoryRow(
+        id=record.id,
+        actor_user_id=record.actor_user_id,
+        argv=list(record.argv),
+        exit_code=record.exit_code,
+        duration_s=record.duration_s,
+        timed_out=record.timed_out,
+        oom=record.oom,
+        truncated=record.truncated,
+        created_at=record.created_at.isoformat(),
+    )
+
+
+@router.post("/probe", status_code=status.HTTP_200_OK)
+@limiter.limit("10/minute")
+async def probe_sandbox(
+    request: Request,
+    ctx: AuthContext = Depends(_require_admin),
+) -> DataEnvelope[SandboxProbeResponse]:
+    """Run a bounded live SSH round-trip to the configured sandbox host.
+
+    Never raises on a failed probe; the response body carries ``ok=False``
+    plus an actionable ``detail`` so the governance panel can flip
+    ``ssh_reachable`` and surface the reason inline.
+    """
+    del ctx
+    registry = get_config_registry(request)
+    service = SandboxService(build_platform_settings(get_settings()), config_registry=registry)
+    probe: SandboxProbe = await service.probe()
+    return DataEnvelope(data=SandboxProbeResponse(
+        ok=probe.ok,
+        detail=probe.detail,
+        duration_ms=probe.duration_ms,
+        tool_installed=probe.tool_installed,
+        tool_missing=probe.tool_missing,
+        installed_path=probe.installed_path,
+    ))
+
+
+@router.post("/target", status_code=status.HTTP_200_OK)
+@limiter.limit("30/minute")
+async def set_sandbox_target(
+    request: Request,
+    body: SandboxTargetRequest,
+    ctx: AuthContext = Depends(_require_admin),
+) -> DataEnvelope[SandboxProbeResponse]:
+    """Atomically configure the sandbox host target and run an immediate probe."""
+    del ctx
+    registry = get_config_registry(request)
+    if body.backend:
+        await registry.set("platform", "sandbox_backend", body.backend)
+    if body.system_id is not None:
+        await registry.set("platform", "sandbox_system_id", str(body.system_id))
+    if body.system_name is not None:
+        await registry.set("platform", "sandbox_system_name", body.system_name)
+    await registry.set("platform", "sandbox_ssh_host", body.host.strip())
+    await registry.set("platform", "sandbox_ssh_user", body.username.strip())
+    await registry.set("platform", "sandbox_ssh_port", body.port)
+
+    service = SandboxService(build_platform_settings(get_settings()), config_registry=registry)
+    probe: SandboxProbe = await service.probe()
+    return DataEnvelope(data=SandboxProbeResponse(
+        ok=probe.ok,
+        detail=probe.detail,
+        duration_ms=probe.duration_ms,
+        tool_installed=probe.tool_installed,
+        tool_missing=probe.tool_missing,
+        installed_path=probe.installed_path,
+    ))
+
+
+@router.post("/install", status_code=status.HTTP_200_OK)
+@limiter.limit("5/minute")
+async def install_sandbox_tooling(
+    request: Request,
+    body: SandboxBootstrapRequest,
+    ctx: AuthContext = Depends(_require_admin),
+) -> DataEnvelope[SandboxBootstrapResponse]:
+    """Automated installation of sandbox binaries on the configured remote host."""
+    del request, ctx
+    service = SandboxService(build_platform_settings(get_settings()))
+    result = await service.bootstrap_tooling(tool=body.tool)
+    return DataEnvelope(data=SandboxBootstrapResponse(
+        ok=result.ok,
+        detail=result.detail,
+        output=result.output,
+        duration_ms=result.duration_ms,
+    ))
+
+
+@router.get("/history", status_code=status.HTTP_200_OK)
+@limiter.limit("30/minute")
+async def sandbox_history(
+    request: Request,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    ctx: AuthContext = Depends(_require_admin),
+) -> DataEnvelope[list[SandboxHistoryRow]]:
+    """Return recent admin sandbox exec dispatches, newest first.
+
+    Reads the shape-only history table populated by successful POSTs to
+    ``/platform/sandbox/exec``. NEVER exposes stdin, stdout, or stderr --
+    those are not stored.
+    """
+    del request, ctx
+    async with async_session_scope() as session:
+        stmt = (
+            select(SandboxExecHistoryRecord)
+            .order_by(SandboxExecHistoryRecord.created_at.desc())  # type: ignore[attr-defined]
+            .offset(offset)
+            .limit(limit)
+        )
+        rows = (await session.exec(stmt)).all()
+    return DataEnvelope(data=[_history_row(r) for r in rows])

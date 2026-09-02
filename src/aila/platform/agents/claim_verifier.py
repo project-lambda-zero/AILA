@@ -43,23 +43,31 @@ import json
 import logging
 import re
 from collections.abc import Callable
-from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Literal
 from uuid import uuid4
 
 import httpx
+from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
 from aila.platform.agents.idempotent_llm import idempotent_llm_call
 from aila.platform.contracts import utc_now
+from aila.platform.llm.errors import BudgetExceededError, LLMError
 from aila.platform.mcp.factory import make_bridge
-from aila.platform.prompts import PromptRegistry
+from aila.platform.prompts import PromptNotFoundError, PromptRegistry
+from aila.platform.prompts.seeds import (
+    CLAIM_VERIFIER_EXTRACTOR_TEXT,
+    CLAIM_VERIFIER_VERDICT_TEXT,
+)
+from aila.platform.prompts.version_store import PromptVersionStore
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.uow import UnitOfWork
 
 __all__ = [
     "ClaimVerifierAgentBase",
+    "ClaimVerifierExtractorResponse",
+    "ClaimVerifierVerdictResponse",
     "is_negative_finding_claim",
     "platform_claim_verifier_seed_entries",
 ]
@@ -96,38 +104,38 @@ def _normalize_probe_tool_name(tool: str) -> str:
     return tool.split(".", 1)[1] if "." in tool else tool
 
 
-_PROMPT_DIR = Path(__file__).parent / "prompts"
 _EXTRACTOR_REGISTRY = PromptRegistry(
-    _PROMPT_DIR,
     module="platform",
-    fallback_base="system_claim_verifier_extractor.md",
+    version_store=PromptVersionStore(),
 )
 _VERDICT_REGISTRY = PromptRegistry(
-    _PROMPT_DIR,
     module="platform",
-    fallback_base="system_claim_verifier_verdict.md",
+    version_store=PromptVersionStore(),
 )
 
 
 def _load_extractor_prompt() -> str:
     """Return the extractor system prompt from the platform prompt registry.
 
-    RFC-09 criterion 1: prompt body lives in a versioned ``.md`` file
-    beside this module, resolved via :class:`PromptRegistry` so cost /
-    seal rows carry the prompt_content_hash + prompt_version stamp.
-    The strategy leaf ``claim_verifier_extractor`` matches the fallback
-    base filename so the resolver returns the same file either way.
+    RFC-09 / req 20: prompt body is resolved from the version store via
+    :class:`PromptRegistry` so cost / seal rows carry the prompt_content_hash +
+    prompt_version stamp.
     """
-    return _EXTRACTOR_REGISTRY.load("claim_verifier_extractor")
+    try:
+        return _EXTRACTOR_REGISTRY.load("claim_verifier_extractor")
+    except PromptNotFoundError:
+        return CLAIM_VERIFIER_EXTRACTOR_TEXT
 
 
 def _load_verdict_prompt() -> str:
     """Return the verdict system prompt from the platform prompt registry.
 
-    Sibling to :func:`_load_extractor_prompt`; same platform-owned
-    versioned ``.md`` file layout.
+    Sibling to :func:`_load_extractor_prompt`.
     """
-    return _VERDICT_REGISTRY.load("claim_verifier_verdict")
+    try:
+        return _VERDICT_REGISTRY.load("claim_verifier_verdict")
+    except PromptNotFoundError:
+        return CLAIM_VERIFIER_VERDICT_TEXT
 
 
 def platform_claim_verifier_seed_entries() -> tuple[tuple[str, str], ...]:
@@ -145,9 +153,60 @@ def platform_claim_verifier_seed_entries() -> tuple[tuple[str, str], ...]:
     the row, the second returns the existing version.
     """
     return (
-        ("platform/claim_verifier/extractor", _load_extractor_prompt()),
-        ("platform/claim_verifier/verdict", _load_verdict_prompt()),
+        ("platform/claim_verifier/extractor", CLAIM_VERIFIER_EXTRACTOR_TEXT),
+        ("platform/claim_verifier/verdict", CLAIM_VERIFIER_VERDICT_TEXT),
     )
+
+
+# Structured-output schemas (VR-truth stream B2). Both LLM stages route
+# through ``llm_client.chat_structured`` with these Pydantic models so
+# the provider returns schema-valid JSON or the client's bounded
+# correction loop escalates -- a parse-hostile response no longer
+# launders silently into an ``inconclusive`` verdict. Field shapes
+# mirror the seed prompts in ``prompts/seeds.py``; extra fields are
+# tolerated (default Pydantic behaviour) so a mildly-verbose model
+# reply still validates.
+class _ExtractorProbeSpec(BaseModel):
+    """One audit-mcp probe call: tool name plus its arguments dict."""
+
+    tool: str
+    args: dict[str, Any] = Field(default_factory=dict)
+
+
+class _ExtractorPrecondition(BaseModel):
+    """One falsifiable precondition with the probe that would refute it."""
+
+    id: str
+    rank: int | None = None
+    claim: str
+    if_refuted_then: str = ""
+    probe: _ExtractorProbeSpec
+    refutation_signature: str = ""
+
+
+class ClaimVerifierExtractorResponse(BaseModel):
+    """Extractor LLM structured output -- list of preconditions."""
+
+    preconditions: list[_ExtractorPrecondition] = Field(default_factory=list)
+
+
+class _VerdictPrecondition(BaseModel):
+    """One precondition's verdict-side result summary."""
+
+    id: str
+    claim: str = ""
+    result: Literal["true", "false", "unknown"] = "unknown"
+    evidence: str = ""
+
+
+class ClaimVerifierVerdictResponse(BaseModel):
+    """Verdict LLM structured output -- final classification + rationale."""
+
+    verdict: Literal["confirmed", "refuted", "inconclusive"]
+    confidence: float = Field(ge=0.0, le=1.0)
+    preconditions: list[_VerdictPrecondition] = Field(default_factory=list)
+    counter_evidence: str = ""
+    summary: str = ""
 
 
 # A general "no <thing> found / identified" negative-conclusion pattern the
@@ -472,7 +531,99 @@ class ClaimVerifierAgentBase:
         del orig_payload
         raise NotImplementedError
 
+    async def _after_verifier_report_persisted(
+        self, uow: Any, outcome_row: Any, payload: dict[str, Any],
+    ) -> None:
+        """Module hook: sync any denormalized investigation columns
+        derived from the now-final verifier report. Base is a no-op;
+        VR overrides to keep the investigations-list filter columns
+        (``primary_outcome_polarity``, ``verifier_verdict``) in sync
+        with the freshly-persisted verifier report. Called inside the
+        same ``UnitOfWork`` block that wrote the outcome update, before
+        the enclosing commit, so the investigation update commits
+        atomically with the outcome.
+        """
+        del uow, outcome_row, payload
+        return None
+
     # ---- Hooks with defaults (VR-shaped) that subclasses may override ----
+
+    async def _load_evidence_packet(
+        self,
+        *,
+        canonical: Any,
+        canonical_payload: dict[str, Any],
+        index_id: str,
+    ) -> dict[str, Any]:
+        """Assemble the proposing-branch evidence packet.
+
+        Default returns an empty dict so malware / forensics keep the
+        pre-existing behaviour (extractor and verdict see the claim +
+        panel narrative only). VR overrides this to read the proposing
+        branch's ``case_state_json`` observables, its cited evidence
+        refs, and the ``McpCallLogRecord`` tool log for the
+        investigation / branch (issue #01 G1,
+        `.run/vr_truth_adjudication_source.md`).
+
+        Contract shape when non-empty (batch decision):
+        ``{"case_state": dict, "citations": list[str],
+        "tool_calls": [{"tool": str, "args": dict,
+        "result_digest": str}]}``
+        """
+        del canonical, canonical_payload, index_id
+        return {}
+
+    def _render_evidence_packet_section(
+        self, packet: dict[str, Any],
+    ) -> str:
+        """Render the evidence packet as a prompt section injected into
+        BOTH the extractor and verdict prompts.
+
+        Default returns ``""`` -- a subclass that did not override
+        :meth:`_load_evidence_packet` produces the empty packet and
+        therefore no injected section, preserving the pre-existing
+        extractor / verdict input shape for modules that do not
+        participate in the VR-truth G1 evidence-packet flow.
+        """
+        del packet
+        return ""
+
+    async def _is_auto_promotable_source_kind(self, kind: str) -> bool:
+        """Return True when ``kind`` is eligible for auto-promotion.
+
+        Default keeps the pre-existing narrow equality check
+        (``kind == self._promote_source_kind``) so malware / forensics
+        continue to promote only the single source kind they declared.
+        VR overrides this (issue #260,
+        `.run/vr_truth_adjudication_source.md`) to widen the gate past
+        the ``ASSESSMENT_REPORT``-only path so any dispatched-or-
+        about-to-dispatch confirmed positive kind can be endorsed by
+        the verifier while the already-promoted / confidence-floor /
+        negative-claim guards remain in force.
+
+        Async so overriding subclasses can consult module
+        ``ConfigRegistry`` knobs (vr's
+        ``claim_verifier_broaden_promote_kinds``) without paying a
+        sync-bridge tax; the sole caller is inside the async
+        ``_maybe_auto_promote`` body.
+        """
+        return kind == self._promote_source_kind
+
+    async def _apply_verdict_quorum_override(
+        self, verdict_parsed: ClaimVerifierVerdictResponse,
+    ) -> ClaimVerifierVerdictResponse:
+        """Optionally rewrite the LLM's verdict against a precondition
+        quorum. Default is identity (no rewrite) so malware / forensics
+        continue to bind exactly to whatever the verdict LLM returned.
+
+        Async so overriding subclasses can read module ConfigRegistry
+        threshold knobs. VR overrides this (issue #260, section 5 of
+        `.run/vr_truth_adjudication_source.md`) to relax the implicit
+        100%-preconditions bar down to a configurable threshold that
+        counts ``true`` preconditions against the total after
+        excluding ``unknown`` outcomes and zeroing on any ``false``.
+        """
+        return verdict_parsed
 
     def _check_verifiable_outcome_kind(
         self, canonical_kind: str,
@@ -596,30 +747,70 @@ class ClaimVerifierAgentBase:
             f"## Available audit-mcp probes (live signatures)\n\n{signatures_block}\n\n"
             if signatures_block else ""
         )
+        # VR-truth G1 (issue #01, #247): assemble the proposing-branch
+        # evidence packet (case_state observables + citations + tool
+        # log) and inject it into BOTH LLM stages so the extractor and
+        # verdict reason about the same evidence the panel already
+        # cited, not just the prose ``answer`` field.
+        evidence_packet = await self._load_evidence_packet(
+            canonical=canonical,
+            canonical_payload=canonical_payload,
+            index_id=index_id,
+        )
+        evidence_section = self._render_evidence_packet_section(evidence_packet)
+        evidence_prefix = (
+            f"{evidence_section}\n\n" if evidence_section else ""
+        )
         extractor_input = (
             self._extractor_prelude(loaded["kind"], canonical_kind, index_id)
             + f"{sig_section}"
+            + f"{evidence_prefix}"
             + f"{claim_section}"
             + f"{panel_section}\n"
         )
+        # Stream B2: route the extractor through chat_structured so the
+        # provider (or the client's bounded correction loop) returns
+        # schema-valid JSON. A shape problem now raises LLMError instead
+        # of silently degrading to zero preconditions.
         try:
             extractor_response, _ = await idempotent_llm_call(
                 services.llm_client,
-                method="chat",
+                method="chat_structured",
                 task_type=self._EXTRACTOR_TASK_TYPE,
                 messages=[
                     {"role": "system", "content": _load_extractor_prompt()},
                     {"role": "user", "content": extractor_input},
                 ],
+                model_class=ClaimVerifierExtractorResponse,
                 investigation_id=self.investigation_id,
             )
-        except (RuntimeError, OSError, TimeoutError) as exc:
-            _log.warning("claim_verifier extractor failed inv=%s err=%s",
-                         self.investigation_id, exc)
-            return {"status": "failed", "reason": f"extractor_error:{exc}"}
+        except BudgetExceededError:
+            raise
+        except (
+            httpx.HTTPError, LLMError, OSError,
+            RuntimeError, TimeoutError, ValueError, TypeError,
+        ) as exc:
+            _log.warning(
+                "claim_verifier extractor failed inv=%s err=%s",
+                self.investigation_id, exc,
+                exc_info=True,
+            )
+            return {"status": "failed", "reason": f"extractor_error:{type(exc).__name__}"}
         if extractor_response.disabled:
             return {"status": "skipped", "reason": "llm_kill_switch_active"}
-        preconditions = self._parse_preconditions(extractor_response.content)
+        # chat_structured guarantees JSON matching the schema, but the
+        # LLMResponse carries the raw string -- validate explicitly.
+        try:
+            extractor_parsed = ClaimVerifierExtractorResponse.model_validate_json(
+                extractor_response.content,
+            )
+        except ValueError as exc:
+            _log.warning(
+                "claim_verifier extractor structured payload rejected inv=%s err=%s",
+                self.investigation_id, exc,
+            )
+            return {"status": "failed", "reason": "extractor_schema_invalid"}
+        preconditions = [p.model_dump() for p in extractor_parsed.preconditions]
         if not preconditions:
             return {"status": "failed", "reason": "extractor_returned_no_preconditions"}
         # Pick top-N probes by extractor-supplied rank, not by sequence
@@ -687,35 +878,68 @@ class ClaimVerifierAgentBase:
         )
 
         # Stage 3: verdict -- feed precondition + probe result pairs back
-        verdict_input = self._render_verdict_input(preconditions, probe_results)
+        # plus the same proposing-branch evidence packet the extractor
+        # saw (VR-truth G1, issue #01).
+        verdict_input = evidence_prefix + self._render_verdict_input(
+            preconditions, probe_results,
+        )
+        # Stream B2: verdict also flows through chat_structured. The
+        # explicit ``verdict`` enum plus 0.0-1.0 confidence bound means
+        # a parse-hostile reply surfaces as a defect (WARNING log +
+        # ``verdict_schema_invalid`` failure) instead of being coerced
+        # to ``inconclusive`` -- the coercion is what let bad verdicts
+        # ride into the ledger untagged.
         try:
             verdict_response, _ = await idempotent_llm_call(
                 services.llm_client,
-                method="chat",
+                method="chat_structured",
                 task_type=self._VERDICT_TASK_TYPE,
                 messages=[
                     {"role": "system", "content": _load_verdict_prompt()},
                     {"role": "user", "content": verdict_input},
                 ],
+                model_class=ClaimVerifierVerdictResponse,
                 investigation_id=self.investigation_id,
             )
-        except (RuntimeError, OSError, TimeoutError) as exc:
-            _log.warning("claim_verifier verdict LLM failed inv=%s err=%s",
-                         self.investigation_id, exc)
-            return {"status": "failed", "reason": f"verdict_error:{exc}"}
+        except BudgetExceededError:
+            raise
+        except (
+            httpx.HTTPError, LLMError, OSError,
+            RuntimeError, TimeoutError, ValueError, TypeError,
+        ) as exc:
+            _log.warning(
+                "claim_verifier verdict LLM failed inv=%s err=%s",
+                self.investigation_id, exc,
+                exc_info=True,
+            )
+            return {"status": "failed", "reason": f"verdict_error:{type(exc).__name__}"}
         if verdict_response.disabled:
             return {"status": "skipped", "reason": "llm_kill_switch_active"}
-        verdict = self._parse_verdict(verdict_response.content)
-        if verdict is None:
-            return {"status": "failed", "reason": "verdict_unparseable"}
+        try:
+            verdict_parsed = ClaimVerifierVerdictResponse.model_validate_json(
+                verdict_response.content,
+            )
+        except ValueError as exc:
+            _log.warning(
+                "claim_verifier verdict structured payload rejected inv=%s err=%s",
+                self.investigation_id, exc,
+            )
+            return {"status": "failed", "reason": "verdict_schema_invalid"}
+
+        # VR-truth issue #260 / adjudication-source section 5: relax the
+        # implicit 100%-preconditions bar. Modules that opt into a
+        # quorum threshold rewrite the LLM's verdict here; the default
+        # base hook is identity so malware / forensics stay bound to
+        # exactly what the verdict LLM returned.
+        verdict_parsed = await self._apply_verdict_quorum_override(verdict_parsed)
 
         # Stage 4: persist verifier_report on canonical outcome
         verifier_report = {
-            "verdict": verdict.get("verdict") or "inconclusive",
-            "confidence": verdict.get("confidence"),
-            "preconditions": verdict.get("preconditions") or [],
-            "counter_evidence": verdict.get("counter_evidence") or "",
-            "summary": verdict.get("summary") or "",
+            "verdict": verdict_parsed.verdict,
+            "confidence": verdict_parsed.confidence,
+            "preconditions": [p.model_dump() for p in verdict_parsed.preconditions],
+            "counter_evidence": verdict_parsed.counter_evidence,
+            "summary": verdict_parsed.summary,
             "probes_run": len(probe_results),
             "probes_succeeded": sum(1 for p in probe_results if p["ok"]),
             "verified_at": utc_now().isoformat(),
@@ -747,6 +971,7 @@ class ClaimVerifierAgentBase:
             payload["verifier_report"] = verifier_report
             row.payload_json = json.dumps(payload)
             uow.session.add(row)
+            await self._after_verifier_report_persisted(uow, row, payload)
             await uow.commit()
 
         # Auto-promote on verifier-confirmed positive findings.
@@ -788,9 +1013,7 @@ class ClaimVerifierAgentBase:
           - confidence is not numeric.
           - confidence below the module's ``claim_verifier_auto_promote_floor``.
           - original ``outcome_kind`` is not the module's promote source
-            kind, or ``dispatch_status`` is not SKIPPED (only the
-            operator-promote dead-end auto-closes; anything else is
-            left alone).
+            kind.
           - the original payload already carries ``promoted_to``
             (idempotent re-run protection).
           - :meth:`is_negative_finding_claim` matches the module's
@@ -831,18 +1054,18 @@ class ClaimVerifierAgentBase:
             )).first()
             if original is None:
                 return {"status": "skipped", "reason": "outcome_disappeared"}
-            if original.outcome_kind != self._promote_source_kind:
+            if not await self._is_auto_promotable_source_kind(original.outcome_kind):
                 return {
                     "status": "skipped",
                     "reason": (
                         f"{self._promote_wrong_kind_reason}:{original.outcome_kind}"
                     ),
                 }
-            if original.dispatch_status != self._dispatch_status_skipped:
-                return {
-                    "status": "skipped",
-                    "reason": f"dispatch_status_not_skipped:{original.dispatch_status}",
-                }
+            # Stream B1: widen auto-promote past the operator-SKIPPED
+            # dead-end. A verifier-confirmed finding above the floor is
+            # promoted regardless of the original row's dispatch_status;
+            # the retained confidence floor, negative-claim, and
+            # already-promoted guards still bound the widening.
             try:
                 orig_payload = json.loads(original.payload_json or "{}")
             except (ValueError, TypeError):
@@ -1044,20 +1267,20 @@ class ClaimVerifierAgentBase:
             }
 
     def _parse_preconditions(self, raw_content: str) -> list[dict[str, Any]]:
-        """Extract the preconditions array from the extractor LLM output.
+        """Legacy tolerant precondition parser -- kept for backward compat.
 
-        Tolerates fenced JSON, leading prose, trailing prose. Returns an
-        empty list when parsing fails so the caller emits a clean
-        ``failed`` status instead of a half-loaded report.
+        The active pipeline now consumes structured output validated
+        against :class:`ClaimVerifierExtractorResponse`, so this helper
+        is unused on the hot path. Retained for the characterization
+        test suite and as a fallback for callers on a non-structured
+        provider.
         """
         text = (raw_content or "").strip()
-        # Strip fenced markdown if present
         if text.startswith("```"):
             lines = text.splitlines()
             text = "\n".join(
                 line for line in lines if not line.startswith("```")
             ).strip()
-        # Try direct parse, then bracket-scan fallback
         try:
             obj = json.loads(text)
         except (ValueError, TypeError):
@@ -1126,7 +1349,15 @@ class ClaimVerifierAgentBase:
         return "\n".join(out)
 
     def _parse_verdict(self, raw_content: str) -> dict[str, Any] | None:
-        """Parse the verdict LLM output."""
+        """Legacy tolerant verdict parser -- kept for backward compat.
+
+        The active pipeline now consumes structured output validated
+        against :class:`ClaimVerifierVerdictResponse`, so this helper
+        is unused on the hot path. It is retained as a fallback in
+        case a subclass wires a non-structured provider and for the
+        characterization test suite that pins the tolerant parse
+        behaviour.
+        """
         text = (raw_content or "").strip()
         if text.startswith("```"):
             lines = text.splitlines()

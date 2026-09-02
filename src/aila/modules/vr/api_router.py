@@ -21,7 +21,9 @@ import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from sqlalchemy import exists as sa_exists
 from sqlalchemy import func as sa_func
+from sqlalchemy import or_ as sa_or
 from sqlalchemy import text as sa_text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select
@@ -45,7 +47,7 @@ from aila.platform.services.investigation_summaries import (
     build_message_summary,
     build_outcome_summary,
 )
-from aila.platform.services.ssrf import SSRFBlockedError
+from aila.platform.services.ssrf import SSRFBlockedError, endpoint_of
 from aila.platform.uow import UnitOfWork
 from aila.storage.db_models import WorkflowStateCursor
 
@@ -195,7 +197,7 @@ def _descriptor_from_spec(spec: Any) -> str:
     return _json.dumps(descriptor)
 
 
-__all__ = ["DisclosureUpdate", "create_vr_router"]
+__all__ = ["DisclosureUpdate", "FindingUpdate", "create_vr_router"]
 
 _log = logging.getLogger(__name__)
 _cfg = ModuleConfigReader("vr")
@@ -210,6 +212,20 @@ class DisclosureUpdate(BaseModel):
     vendor_contact: str | None = Field(default=None, max_length=512)
     assigned_cve_id: str | None = Field(default=None, max_length=32)
     patch_version: str | None = Field(default=None, max_length=64)
+
+
+class FindingUpdate(BaseModel):
+    """PATCH body for enriching a finding's triage/classification fields."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    crash_type: str | None = Field(default=None, max_length=64)
+    vulnerable_function: str | None = Field(default=None, max_length=255)
+    cvss_score: float | None = Field(default=None, ge=0, le=10)
+    cvss_vector: str | None = Field(default=None, max_length=128)
+    cwe_id: str | None = Field(default=None, max_length=16)
+    assigned_cve_id: str | None = Field(default=None, max_length=32)
+    evidence_refs: list[str] | None = Field(default=None)
 
 
 class _ReenqueueBody(BaseModel):
@@ -372,8 +388,18 @@ def _summary_from_record(
     )
 
 
-def _finding_from_record(record: Any) -> VRFinding:
-    """Project a ``VRFindingRecord`` row to the public ``VRFinding``."""
+def _finding_from_record(
+    record: Any,
+    *,
+    workflow_state: str = "new",
+) -> VRFinding:
+    """Project a ``VRFindingRecord`` row to the public ``VRFinding``.
+
+    ``workflow_state`` is the caller-resolved value from the latest
+    ``FindingWorkflowRecord`` row for this finding (module_id='vr'), or
+    ``"new"`` when the caller has no batch mapping to consult or the
+    finding has no workflow row yet.
+    """
     from .contracts import CrashType, PoCResult
 
     poc: PoCResult | None = None
@@ -424,6 +450,7 @@ def _finding_from_record(record: Any) -> VRFinding:
         cvss_vector=record.cvss_vector,
         cwe_id=record.cwe_id,
         evidence_count=evidence_count,
+        workflow_state=workflow_state,
     )
 
 
@@ -750,7 +777,11 @@ def _investigation_summary(
     Binds the shared platform builder to VR's contract class. VR does not
     set ``workspace_id`` from this path (callers that need it join it
     separately). ``live_cost_usd`` overrides the stored
-    ``cost_actual_usd`` when provided.
+    ``cost_actual_usd`` when provided (see the detail endpoint: the
+    stored column is materialized on write by ``accrue_investigation_cost``
+    and the override is a fresh recompute from ``LLMCostRecord`` for
+    detail reads, so pre-#135 rows and any accrue drift still surface
+    the true spend).
 
     ``primary_outcome_polarity`` is injected via ``model_copy`` after
     the shared platform builder returns, because the shared builder
@@ -1609,7 +1640,35 @@ def create_vr_router() -> APIRouter:
                 .offset(offset).limit(limit),
             )).all()
 
-        items = [_finding_from_record(r) for r in rows]
+            # D-37/D-29 -- one batch query resolves the latest workflow
+            # state per finding on the page. Ordered ascending so the
+            # dict-fold's "last wins" leaves the most recent transition
+            # for every finding_id.
+            page_ids = [r.id for r in rows]
+            state_by_finding: dict[str, str] = {}
+            if page_ids:
+                from aila.storage.db_models import FindingWorkflowRecord
+                wf_rows = (await uow.session.exec(
+                    select(
+                        FindingWorkflowRecord.finding_id,
+                        FindingWorkflowRecord.current_state,
+                    )
+                    .where(FindingWorkflowRecord.finding_id.in_(page_ids))
+                    .where(FindingWorkflowRecord.module_id == "vr")
+                    .order_by(FindingWorkflowRecord.created_at.asc()),
+                )).all()
+                for wf in wf_rows:
+                    fid = wf[0] if hasattr(wf, "__getitem__") else wf.finding_id
+                    state = wf[1] if hasattr(wf, "__getitem__") else wf.current_state
+                    state_by_finding[str(fid)] = state
+
+        items = [
+            _finding_from_record(
+                r,
+                workflow_state=state_by_finding.get(r.id, "new"),
+            )
+            for r in rows
+        ]
         meta = PaginatedMeta(total=total, offset=offset, limit=limit).model_dump()
         return DataEnvelope(data=items, meta=meta)
 
@@ -1651,6 +1710,68 @@ def create_vr_router() -> APIRouter:
                     detail=f"Finding {finding_id!r} not found.",
                 )
         return DataEnvelope(data=_finding_from_record(row))
+
+    @router.patch(
+        "/findings/{finding_id}",
+        response_model=DataEnvelope[VRFinding],
+        summary="Enrich a finding's triage/classification fields.",
+    )
+    @limiter.limit("30/minute")
+    async def update_finding_global(
+        request: Request,
+        finding_id: str,
+        body: FindingUpdate,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRFinding]:
+        """Enrich a finding in place (project-agnostic, team-scoped).
+
+        Companion to the disclosure PATCH: that route advances the
+        coordinated-disclosure lifecycle, this one fills the triage and
+        classification fields (crash_type, vulnerable_function, cvss,
+        cwe, cve, evidence refs) that a writer left NULL. Project-agnostic
+        so stub findings with a null project_id can still be enriched.
+        """
+        del request
+        from aila.platform.contracts import utc_now
+
+        from .contracts.evidence_ref import EvidenceRefList
+        from .db_models import VRFindingRecord
+
+        async with UnitOfWork() as uow:
+            stmt = select(VRFindingRecord).where(
+                VRFindingRecord.id == finding_id,
+            )
+            if auth.team_id is not None:
+                stmt = stmt.where(VRFindingRecord.team_id == auth.team_id)
+            finding = (await uow.session.exec(stmt)).first()
+            if finding is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Finding {finding_id!r} not found.",
+                )
+
+            if body.crash_type is not None:
+                finding.crash_type = body.crash_type
+            if body.vulnerable_function is not None:
+                finding.vulnerable_function = body.vulnerable_function
+            if body.cvss_score is not None:
+                finding.cvss_score = body.cvss_score
+            if body.cvss_vector is not None:
+                finding.cvss_vector = body.cvss_vector
+            if body.cwe_id is not None:
+                finding.cwe_id = body.cwe_id
+            if body.assigned_cve_id is not None:
+                finding.assigned_cve_id = body.assigned_cve_id
+            if body.evidence_refs is not None:
+                finding.evidence_refs_json = EvidenceRefList.model_validate(
+                    body.evidence_refs,
+                ).model_dump_json()
+            finding.updated_at = utc_now()
+            uow.session.add(finding)
+            await uow.session.commit()
+            await uow.session.refresh(finding)
+
+        return DataEnvelope(data=_finding_from_record(finding))
 
     @router.get(
         "/projects/{project_id}/findings",
@@ -2253,7 +2374,7 @@ def create_vr_router() -> APIRouter:
             "Delete a target. Refuses with 409 if any investigations or "
             "findings reference it. Cascade-deletes stub/log dependents "
             "(vr_projects, vr_target_tag_index, vr_investigation_targets, "
-            "vr_mcp_call_log, vr_fuzz_campaign_proposals) in the same "
+            "mcp_call_log, vr_fuzz_campaign_proposals) in the same "
             "transaction so a stale operator-created project stub does not "
             "block the delete with an FK violation."
         ),
@@ -2314,7 +2435,7 @@ def create_vr_router() -> APIRouter:
             # evidence -- vr_projects is operator-created scaffolding,
             # vr_target_tag_index is denormalized tag lookup,
             # vr_investigation_targets is a join row (already guarded
-            # by the inv_count check above), vr_mcp_call_log is historical
+            # by the inv_count check above), mcp_call_log is historical
             # audit trail keyed by target, and vr_fuzz_campaign_proposals
             # are auto-generated. Same transaction so partial failure
             # rolls back. Tables that don't exist on this deployment are
@@ -2323,7 +2444,7 @@ def create_vr_router() -> APIRouter:
                 "vr_projects",
                 "vr_target_tag_index",
                 "vr_investigation_targets",
-                "vr_mcp_call_log",
+                "mcp_call_log",
                 "vr_fuzz_campaign_proposals",
             ):
                 try:
@@ -2676,8 +2797,10 @@ def create_vr_router() -> APIRouter:
             )
 
         registry_svc = McpRegistryService()
-        # _spec/_resolved_url are 'private' by convention but stable
-        # since they back the public /mcp/servers route too.
+        # _spec/_resolved_url are underscore-prefixed by convention but
+        # called directly here to resolve the operator-set audit_mcp
+        # base_url (env -> ConfigRegistry -> catalog -> default) for the
+        # SSRF-guarded refresh POST below. They back no HTTP route.
         spec = registry_svc._spec("audit_mcp")
         if spec is None:
             raise HTTPException(
@@ -2697,6 +2820,7 @@ def create_vr_router() -> APIRouter:
             async with build_async_http_client(
                 _build_platform_settings(_get_settings()),
                 timeout=120.0,
+                allow_endpoints=endpoint_of(base_url),
             ) as client:
                 resp = await client.post(
                     f"{base_url}/tools/refresh_index",
@@ -2846,6 +2970,7 @@ def create_vr_router() -> APIRouter:
             async with build_async_http_client(
                 _build_platform_settings(_get_settings()),
                 timeout=300.0,
+                allow_endpoints=endpoint_of(base_url),
             ) as client:
                 resp = await client.post(
                     f"{base_url}/upload",
@@ -4336,22 +4461,40 @@ def create_vr_router() -> APIRouter:
     @router.get(
         "/investigations",
         response_model=DataEnvelope[list[VRInvestigationSummary]],
-        summary="List investigations (filterable by target_id, kind, status, q).",
+        summary=(
+            "List investigations (filterable by target_id, project_id, "
+            "workspace_id, kind, status, q, favorites, has_outcomes, "
+            "primary_outcome_polarity, verifier_verdict)."
+        ),
     )
     @limiter.limit("60/minute")
     async def list_investigations(
         request: Request,
         auth: AuthContext = Depends(require_auth),
         target_id: str | None = Query(default=None),
+        project_id: str | None = Query(default=None),
+        workspace_id: str | None = Query(default=None),
         kind: str | None = Query(default=None),
         investigation_status: str | None = Query(default=None, alias="status"),
         q: str | None = Query(default=None, description="Case-insensitive title substring filter."),
         favorites: bool = Query(default=False, description="Restrict to is_favorite=true rows."),
+        has_outcomes: bool = Query(
+            default=False,
+            description="Restrict to investigations with at least one outcome row.",
+        ),
+        primary_outcome_polarity: str | None = Query(
+            default=None,
+            description="Filter by persisted primary_outcome_polarity (finding / no_finding / inconclusive).",
+        ),
+        verifier_verdict: str | None = Query(
+            default=None,
+            description="Filter by persisted verifier_verdict (confirmed / refuted / inconclusive).",
+        ),
         offset: int = Query(default=0, ge=0),
         limit: int = Query(default=50, ge=1, le=500),
     ) -> DataEnvelope[list[VRInvestigationSummary]]:
         del request
-        from .db_models import VRInvestigationRecord
+        from .db_models import VRInvestigationRecord, VRProjectRecord, VRTargetRecord
 
         async with UnitOfWork() as uow:
             base = _team_filter(select(VRInvestigationRecord), VRInvestigationRecord, auth)
@@ -4362,6 +4505,50 @@ def create_vr_router() -> APIRouter:
             if target_id is not None:
                 base = base.where(VRInvestigationRecord.target_id == target_id)
                 count_base = count_base.where(VRInvestigationRecord.target_id == target_id)
+            if project_id is not None:
+                base = base.where(VRInvestigationRecord.project_id == project_id)
+                count_base = count_base.where(VRInvestigationRecord.project_id == project_id)
+            if workspace_id is not None:
+                # An investigation belongs to a workspace when its
+                # target_id is a vr_targets row scoped to that workspace
+                # OR its project_id resolves through vr_projects.target_id
+                # to such a target. vr_projects has no direct workspace_id
+                # column, so the project side needs the join hop.
+                ws_targets = select(VRTargetRecord.id).where(
+                    VRTargetRecord.workspace_id == workspace_id,
+                )
+                ws_projects = (
+                    select(VRProjectRecord.id)
+                    .join(VRTargetRecord, VRTargetRecord.id == VRProjectRecord.target_id)
+                    .where(VRTargetRecord.workspace_id == workspace_id)
+                )
+                ws_cond = sa_or(
+                    VRInvestigationRecord.target_id.in_(ws_targets),
+                    VRInvestigationRecord.project_id.in_(ws_projects),
+                )
+                base = base.where(ws_cond)
+                count_base = count_base.where(ws_cond)
+            if has_outcomes:
+                oc_exists = sa_exists().where(
+                    VRInvestigationOutcomeRecord.investigation_id == VRInvestigationRecord.id,
+                    VRInvestigationOutcomeRecord.superseded_at.is_(None),
+                )
+                base = base.where(oc_exists)
+                count_base = count_base.where(oc_exists)
+            if primary_outcome_polarity is not None:
+                base = base.where(
+                    VRInvestigationRecord.primary_outcome_polarity == primary_outcome_polarity,
+                )
+                count_base = count_base.where(
+                    VRInvestigationRecord.primary_outcome_polarity == primary_outcome_polarity,
+                )
+            if verifier_verdict is not None:
+                base = base.where(
+                    VRInvestigationRecord.verifier_verdict == verifier_verdict,
+                )
+                count_base = count_base.where(
+                    VRInvestigationRecord.verifier_verdict == verifier_verdict,
+                )
             if kind is not None:
                 base = base.where(VRInvestigationRecord.kind == kind)
                 count_base = count_base.where(VRInvestigationRecord.kind == kind)
@@ -4414,7 +4601,9 @@ def create_vr_router() -> APIRouter:
                         VRInvestigationMessageRecord.investigation_id,
                         sa_func.count(),
                     )
-                    .where(VRInvestigationMessageRecord.investigation_id.in_(row_ids))
+                    .where(
+                        VRInvestigationMessageRecord.investigation_id.in_(row_ids),
+                    )
                     .group_by(VRInvestigationMessageRecord.investigation_id),
                 )).all()
                 msg_counts = {iid: int(c) for iid, c in msg_pairs}
@@ -4423,7 +4612,10 @@ def create_vr_router() -> APIRouter:
                         VRInvestigationOutcomeRecord.investigation_id,
                         sa_func.count(),
                     )
-                    .where(VRInvestigationOutcomeRecord.investigation_id.in_(row_ids))
+                    .where(
+                        VRInvestigationOutcomeRecord.investigation_id.in_(row_ids),
+                        VRInvestigationOutcomeRecord.superseded_at.is_(None),
+                    )
                     .group_by(VRInvestigationOutcomeRecord.investigation_id),
                 )).all()
                 oc_counts = {iid: int(c) for iid, c in oc_pairs}
@@ -4431,7 +4623,10 @@ def create_vr_router() -> APIRouter:
                 if primary_ids:
                     outcome_rows = (await uow.session.exec(
                         select(VRInvestigationOutcomeRecord)
-                        .where(VRInvestigationOutcomeRecord.id.in_(list(primary_ids.values()))),
+                        .where(
+                            VRInvestigationOutcomeRecord.id.in_(list(primary_ids.values())),
+                            VRInvestigationOutcomeRecord.superseded_at.is_(None),
+                        ),
                     )).all()
                 primary_by_inv: dict[str, Any] = {}
                 for o in outcome_rows:
@@ -4538,11 +4733,16 @@ def create_vr_router() -> APIRouter:
             )
             message_count = (await uow.session.exec(
                 select(sa_func.count()).select_from(VRInvestigationMessageRecord)
-                .where(VRInvestigationMessageRecord.investigation_id == investigation_id)
+                .where(
+                    VRInvestigationMessageRecord.investigation_id == investigation_id,
+                )
             )).one()
             outcome_count = (await uow.session.exec(
                 select(sa_func.count()).select_from(VRInvestigationOutcomeRecord)
-                .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
+                .where(
+                    VRInvestigationOutcomeRecord.investigation_id == investigation_id,
+                    VRInvestigationOutcomeRecord.superseded_at.is_(None),
+                )
             )).one()
 
             primary_outcome_kind: str | None = None
@@ -4555,6 +4755,7 @@ def create_vr_router() -> APIRouter:
                 primary = (await uow.session.exec(
                     select(VRInvestigationOutcomeRecord).where(
                         VRInvestigationOutcomeRecord.id == inv.primary_outcome_id,
+                        VRInvestigationOutcomeRecord.superseded_at.is_(None),
                     ),
                 )).first()
                 if primary is not None:
@@ -4607,9 +4808,15 @@ def create_vr_router() -> APIRouter:
 
         # Live cost -- sum LLMCostRecord by run_id (which the reasoning
         # engine threads as the investigation id). The stored
-        # cost_actual_usd has no writers so without this override every
-        # read returned $0 regardless of actual spend, making the budget
-        # gauge decorative.
+        # cost_actual_usd IS materialized on write by
+        # aila.platform.services.investigation_cost.accrue_investigation_cost
+        # (called from platform.llm.cost.persist_cost_record in the same
+        # transaction as the LLMCostRecord insert, per #135). This live
+        # recompute is the authoritative source of truth returned to the
+        # detail endpoint: it back-fills rows created before #135 landed
+        # and detects any drift where an accrue was skipped (e.g. cost
+        # records whose run_id did not resolve to a concrete investigation
+        # table at write time). Cheap: one indexed sum per read.
         async with UnitOfWork() as uow_cost:
             live_cost = await compute_live_investigation_cost(
                 uow_cost, investigation_id,
@@ -4699,7 +4906,10 @@ def create_vr_router() -> APIRouter:
                 )
             oc = (await uow.session.exec(
                 select(VRInvestigationOutcomeRecord)
-                .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
+                .where(
+                    VRInvestigationOutcomeRecord.investigation_id == investigation_id,
+                    VRInvestigationOutcomeRecord.superseded_at.is_(None),
+                )
                 .order_by(VRInvestigationOutcomeRecord.created_at.asc())
                 .limit(1)
             )).first()
@@ -5284,6 +5494,12 @@ def create_vr_router() -> APIRouter:
             # history but the inv pointer is reset.
             prior_outcome_id = inv.primary_outcome_id
             inv.primary_outcome_id = None
+            # Clear the denormalized filter columns too so a reopened
+            # investigation drops out of primary_outcome_polarity /
+            # verifier_verdict scoped queries until the next primary
+            # outcome lands.
+            inv.primary_outcome_polarity = None
+            inv.verifier_verdict = None
             uow.session.add(inv)
 
             # Abandon any prior halvar branches still in a non-terminal
@@ -5403,16 +5619,33 @@ def create_vr_router() -> APIRouter:
                     status_code=status.HTTP_404_NOT_FOUND,
                     detail=f"Investigation {investigation_id} not found.",
                 )
-            # Refuse to reset a running investigation -- operator must
-            # pause first so the engine isn't writing while we wipe.
-            if inv.status == InvestigationStatus.RUNNING.value:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=(
-                        "Cannot reset a RUNNING investigation. Pause it "
-                        "first via POST /pause, then call reset."
-                    ),
-                )
+
+            # Stop any in-flight or queued worker tasks and purge
+            # cursors so the investigation resets cleanly even if it was
+            # previously running or stalled with orphan tasks.
+            from aila.platform.llm.cancellation import (
+                cancel_for_investigation,
+                clear_for_investigation,
+            )
+            from aila.platform.services.investigation_lifecycle import (
+                cancel_investigation_tasks,
+                purge_arq_jobs_for_investigation,
+                purge_investigation_cursors,
+            )
+
+            _now = utc_now()
+
+            await cancel_investigation_tasks(
+                uow.session,
+                investigation_id,
+                marker="operator_reset\n",
+                now=_now,
+            )
+            await purge_investigation_cursors(uow.session, investigation_id, only_crashed=False)
+            try:
+                cancel_for_investigation(investigation_id)
+            except (OSError, RuntimeError, ValueError, TypeError):
+                pass
 
             branches = (await uow.session.exec(
                 select(VRInvestigationBranchRecord).where(
@@ -5421,24 +5654,37 @@ def create_vr_router() -> APIRouter:
             )).all()
             branch_ids = [b.id for b in branches]
 
-            # 1) Delete every message on every branch (full reasoning wipe).
+            # 1) Soft-supersede every message on every branch. The full
+            # reasoning transcript stays on disk for display + audit;
+            # agent-context reads filter superseded_at IS NULL to see a
+            # fresh slate. Only stamp rows currently active so a re-reset
+            # does not re-stamp already-archived history.
             for bid in branch_ids:
                 msgs = (await uow.session.exec(
                     select(VRInvestigationMessageRecord).where(
                         VRInvestigationMessageRecord.branch_id == bid,
+                        VRInvestigationMessageRecord.superseded_at.is_(None),
                     ),
                 )).all()
                 for m in msgs:
-                    await uow.session.delete(m)
+                    m.superseded_at = _now
+                    uow.session.add(m)
 
-            # 2) Delete every outcome for this investigation.
+            # 2) Archive every outcome for this investigation. The prior
+            # run's ratified outcomes survive on disk for display + audit
+            # (the evidence graph and outcome endpoints still render them);
+            # agent-context reads filter superseded_at IS NULL to see a
+            # fresh slate. Only stamp rows currently active so a re-reset
+            # does not re-stamp already-archived history.
             outcomes = (await uow.session.exec(
                 select(VRInvestigationOutcomeRecord).where(
                     VRInvestigationOutcomeRecord.investigation_id == investigation_id,
+                    VRInvestigationOutcomeRecord.superseded_at.is_(None),
                 ),
             )).all()
             for o in outcomes:
-                await uow.session.delete(o)
+                o.superseded_at = _now
+                uow.session.add(o)
 
             # 3) Drop forked branches; reset root branches to turn 0. A root
             # branch is one whose parent_branch_id was NULL in the original
@@ -5476,7 +5722,25 @@ def create_vr_router() -> APIRouter:
                     uow.session.add(b)
                     reset_count += 1
                 else:
-                    await uow.session.delete(b)
+                    # A forked branch that still has (now-superseded)
+                    # messages CANNOT be hard-deleted -- the FK to
+                    # vr_investigation_messages would fire. Keep the
+                    # branch, mark it terminal so it drops off the live
+                    # branch list, and let its superseded transcript
+                    # remain readable. Only zero-message forks are safe
+                    # to delete outright (self-FKs already nulled above).
+                    msg_count = (await uow.session.exec(
+                        select(sa_func.count()).select_from(VRInvestigationMessageRecord)
+                        .where(VRInvestigationMessageRecord.branch_id == b.id)
+                    )).one()
+                    if int(msg_count) > 0:
+                        b.status = "abandoned"
+                        b.closed_reason = "investigation_reset"
+                        b.closed_at = utc_now()
+                        b.updated_at = utc_now()
+                        uow.session.add(b)
+                    else:
+                        await uow.session.delete(b)
 
             # 4) Reset investigation row itself. message_count + outcome_count
             # are projections derived at summary time (count from the message /
@@ -5489,11 +5753,27 @@ def create_vr_router() -> APIRouter:
             # carry into the fresh 6h budget. The dispatch-hub setup
             # re-stamps ``started_at = now`` on the next worker pick-up.
             inv.started_at = None
+            # Keep the investigation linked to the findings its archived
+            # run produced: the findings rows are preserved intact and the
+            # archived outcomes (superseded above) still carry the
+            # dispatch_target back-pointers, so relinking here means simply
+            # not clearing the back-pointer. A fresh run appends new
+            # findings to the same list (outcome_dispatcher). Nothing is
+            # orphaned.
             inv.updated_at = utc_now()
             uow.session.add(inv)
 
             await uow.session.commit()
             await uow.session.refresh(inv)
+
+        try:
+            await purge_arq_jobs_for_investigation(investigation_id, track="vr")
+        except (OSError, RuntimeError, ValueError, TypeError):
+            pass
+        try:
+            clear_for_investigation(investigation_id)
+        except (OSError, RuntimeError, ValueError, TypeError):
+            pass
 
         return DataEnvelope(data=_investigation_summary(inv))
 
@@ -6227,6 +6507,23 @@ def create_vr_router() -> APIRouter:
 
         rows = await LedgerService().read_general(investigation_id, limit=10_000)
 
+        # F2 latent-by-design: two shapes surfaced by this endpoint are
+        # currently zero across the production corpus and expected to
+        # stay that way until later phases wire their producers.
+        #   1. ``objective_key`` is threaded through on every row but no
+        #      state transition emits ledger rows keyed by objective
+        #      today; the column is reserved so the shared LedgerService
+        #      row shape does not have to break when objective-scoped
+        #      notes start landing. Ledger rows without an objective
+        #      correctly report ``objective_key: null``.
+        #   2. Supersede chains on ledger entries (a superseded row
+        #      pointing at its replacement) are not modeled here. Outcome
+        #      supersede is tracked on ``VRInvestigationOutcomeRecord``
+        #      via ``superseded_at`` (dispatcher path); ledger rows are
+        #      append-only and never rewritten, so a chain field would
+        #      always be null. If/when a supersede producer is wired for
+        #      ledger notes, add the pointer column then; do NOT emit a
+        #      speculative empty ``superseded_by`` on every row.
         items: list[dict[str, Any]] = []
         _text_keys = ("note", "summary", "rationale", "claim", "directive")
         for row in rows:
@@ -6280,7 +6577,7 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[list[dict]]:
         del request
-        from .db_models import VRMcpCallLogRecord
+        from aila.platform.mcp.call_log_record import McpCallLogRecord
 
         inv = await _load_investigation(investigation_id, auth)
         if inv is None:
@@ -6291,9 +6588,10 @@ def create_vr_router() -> APIRouter:
 
         async with UnitOfWork() as uow:
             rows = (await uow.session.exec(
-                select(VRMcpCallLogRecord)
-                .where(VRMcpCallLogRecord.investigation_id == investigation_id)
-                .order_by(VRMcpCallLogRecord.called_at.asc())  # type: ignore[union-attr]
+                select(McpCallLogRecord)
+                .where(McpCallLogRecord.module_scope == "vr")
+                .where(McpCallLogRecord.investigation_id == investigation_id)
+                .order_by(McpCallLogRecord.called_at.asc())  # type: ignore[union-attr]
                 .limit(500)
             )).all()
 
@@ -6572,7 +6870,13 @@ def create_vr_router() -> APIRouter:
                     "claim": h.get("claim", ""),
                     "why_plausible": h.get("why_plausible", ""),
                     "kill_criterion": h.get("kill_criterion", ""),
+                    "confirmed_by": h.get("confirmed_by", "") or "",
                 })
+                # A later branch may carry the confirmation even when the
+                # first branch that hosted the id did not: fill it in on
+                # any pass that has a non-empty provenance.
+                if h.get("confirmed_by") and not claims[hid].get("confirmed_by"):
+                    claims[hid]["confirmed_by"] = h["confirmed_by"]
             for h in state.get("rejected", []) or []:
                 hid = h.get("id")
                 if not hid:
@@ -6629,6 +6933,7 @@ def create_vr_router() -> APIRouter:
                 claim=c.get("claim", ""),
                 why_plausible=c.get("why_plausible", ""),
                 kill_criterion=c.get("kill_criterion", ""),
+                confirmed_by=c.get("confirmed_by", ""),
                 state=hstate,
                 rejection_reason=rejection_reasons.get(hid),
                 resolution_note=resolution_notes.get(hid),
@@ -8516,101 +8821,5 @@ def create_vr_router() -> APIRouter:
                 detail=f"CVE {cve_id} not found.",
             )
         return DataEnvelope(data=summary)
-
-    # ─── MCP server health + config (operator surface) ────────────────────
-    #
-    # AILA is orchestration only -- every analysis call is forwarded to one
-    # of these external MCP servers. The operator needs visibility into
-    # which ones are reachable and an ability to retarget them at a
-    # different workstation without editing env vars (D-33).
-
-    @router.get(
-        "/mcp/servers",
-        summary="List configured MCP servers with live health probes.",
-    )
-    @limiter.limit("60/minute")
-    async def list_mcp_servers(
-        request: Request,
-        auth: AuthContext = Depends(require_auth),
-    ) -> DataEnvelope[list[dict[str, Any]]]:
-        del request
-        from aila.modules.vr.services import McpRegistryService
-
-        servers = await McpRegistryService().probe_all()
-        return DataEnvelope(data=servers)
-
-    @router.patch(
-        "/mcp/servers/{server_id}",
-        summary="Update an MCP server's base_url. Re-probes immediately.",
-    )
-    @limiter.limit("30/minute")
-    async def update_mcp_server(
-        request: Request,
-        server_id: str,
-        body: dict[str, Any],
-        auth: AuthContext = Depends(require_auth),
-    ) -> DataEnvelope[dict[str, Any]]:
-        del request
-        from aila.modules.vr.services import McpRegistryService
-
-        base_url = (body or {}).get("base_url")
-        if not isinstance(base_url, str) or not base_url.strip():
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="base_url (string) required.",
-            )
-        result = await McpRegistryService().update_base_url(server_id, base_url.strip())
-        if result is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"MCP server {server_id!r} not registered.",
-            )
-        return DataEnvelope(data=result)
-
-    @router.get(
-        "/mcp/calls",
-        summary=(
-            "List recent MCP call log entries (most recent first). "
-            "Operator-facing audit trail of every forward() through the "
-            "audit-mcp and ida-headless bridges."
-        ),
-    )
-    @limiter.limit("60/minute")
-    async def list_mcp_calls(
-        request: Request,
-        auth: AuthContext = Depends(require_auth),
-        server_id: str | None = Query(default=None),
-        status_filter: str | None = Query(default=None, alias="status"),
-        offset: int = Query(default=0, ge=0),
-        limit: int = Query(default=50, ge=1, le=200),
-    ) -> DataEnvelope[list[dict[str, Any]]]:
-        del request
-        from .db_models import VRMcpCallLogRecord
-
-        async with UnitOfWork() as uow:
-            stmt = select(VRMcpCallLogRecord)
-            stmt = _team_filter(stmt, VRMcpCallLogRecord, auth)
-            if server_id:
-                stmt = stmt.where(VRMcpCallLogRecord.server_id == server_id)
-            if status_filter:
-                stmt = stmt.where(VRMcpCallLogRecord.status == status_filter)
-            stmt = stmt.order_by(VRMcpCallLogRecord.called_at.desc()).offset(offset).limit(limit)  # type: ignore[union-attr]
-            rows = (await uow.session.exec(stmt)).all()
-
-        items = [
-            {
-                "id": r.id,
-                "server_id": r.server_id,
-                "base_url": r.base_url,
-                "action": r.action,
-                "status": r.status,
-                "http_status": r.http_status,
-                "latency_ms": r.latency_ms,
-                "error_excerpt": r.error_excerpt,
-                "called_at": r.called_at.isoformat() if r.called_at else None,
-            }
-            for r in rows
-        ]
-        return DataEnvelope(data=items)
 
     return router

@@ -75,7 +75,7 @@ export default function CodeBlock({ code, language }: { code: string; language?:
             domReadOnly: true,
             minimap: { enabled: false },
             fontSize: 11,
-            fontFamily: "'Monaspace Neon', ui-monospace, monospace",
+            fontFamily: "'Spline Sans Mono', ui-monospace, monospace",
             lineNumbers: "on",
             scrollBeyondLastLine: false,
             renderLineHighlight: "none",

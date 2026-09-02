@@ -27,19 +27,21 @@ class VRFuzzCampaignProposalRecord(TeamScopedMixin, SQLModel, table=True):
     __tablename__ = "vr_fuzz_campaign_proposals"
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    investigation_id: str = Field(
+    investigation_id: str | None = Field(
+        default=None,
         sa_column=Column(
             "investigation_id",
             ForeignKey("vr_investigations.id"),
-            nullable=False,
+            nullable=True,
             index=True,
         ),
     )
-    outcome_id: str = Field(
+    outcome_id: str | None = Field(
+        default=None,
         sa_column=Column(
             "outcome_id",
             ForeignKey("vr_investigation_outcomes.id"),
-            nullable=False,
+            nullable=True,
         ),
     )
     target_id: str = Field(

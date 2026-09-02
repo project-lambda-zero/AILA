@@ -13,12 +13,13 @@ from .contracts import (
     SandboxSpec,
     SandboxUnavailableError,
 )
-from .service import SandboxConfig, SandboxService
+from .service import SandboxConfig, SandboxProbe, SandboxService
 
 __all__ = [
     "SandboxBackend",
     "SandboxConfig",
     "SandboxExecutionError",
+    "SandboxProbe",
     "SandboxResult",
     "SandboxService",
     "SandboxSpec",

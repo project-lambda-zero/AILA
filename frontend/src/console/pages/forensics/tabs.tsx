@@ -12,8 +12,14 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch, ApiError } from "../../../api/client";
+import {
+  legalNextStates,
+  useFindingWorkflowStates,
+  useTransitionFinding,
+} from "../../../api/findingWorkflow";
 import { asRecord, readArray, readNum, readStr } from "../../../api/parse";
 import { css } from "../../css";
+import { WorkflowStateBadge } from "../badges";
 
 import {
   CtlBtn,
@@ -97,41 +103,102 @@ export interface ProjectSummary {
   updated_at?: string | null;
 }
 
-export function OverviewTab({ projectId, project }: { projectId: string; project: ProjectSummary | null }): JSX.Element {
+export function OverviewTab({ projectId, project, onOpenInvestigation }: { projectId: string; project: ProjectSummary | null; onOpenInvestigation: (id: string) => void }): JSX.Element {
+  const leadsQ = useForensicsQuery<Lead[]>(projectId, ["leads-overview"], `/forensics/projects/${projectId}/leads?limit=10`);
+  const invQ = useForensicsQuery<InvestigationSummary[]>(projectId, ["inv-overview"], `/forensics/projects/${projectId}/investigations`, true, { refetchInterval: 8000 });
+  const artQ = useForensicsQuery<Artifact[]>(projectId, ["art-overview"], `/forensics/projects/${projectId}/artifacts?limit=10`);
+
+  const leads = leadsQ.data ?? [];
+  const invs = invQ.data ?? [];
+  const arts = artQ.data ?? [];
+
+  const leadCols: TableColumn<Lead>[] = [
+    { field: "score", label: "score", width: 64, render: (r) => r.score.toFixed(1) },
+    { field: "artifact_family", label: "family", width: 90 },
+    { field: "artifact_type", label: "type", width: 130 },
+    { field: "reason", label: "reason" },
+  ];
+
+  const invCols: TableColumn<InvestigationSummary>[] = [
+    { field: "question", label: "question" },
+    { field: "status", label: "status", width: 120, render: (r) => <StatusBadge value={r.status} /> },
+    { field: "attempts_used", label: "turns", width: 70, render: (r) => `${r.attempts_used}${r.max_attempts != null ? "/" + r.max_attempts : ""}` },
+    { field: "confidence", label: "confidence", width: 100 },
+  ];
+
+  const artCols: TableColumn<Artifact>[] = [
+    { field: "artifact_family", label: "family", width: 90 },
+    { field: "artifact_type", label: "type" },
+    { field: "source_tool", label: "tool", width: 130 },
+    { field: "lead_score", label: "score", width: 70, render: (r) => (r.lead_score == null ? "\u2014" : r.lead_score.toFixed(2)) },
+  ];
+
   return (
-    <Panel title="project overview" tag={project ? `#${projectId.slice(0, 8)}` : ""}>
-      {project ? (
-        <div style={css("display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:14px;")}>
-          <div>
+    <div style={css("display:flex;flex-direction:column;gap:10px;padding:10px;min-height:0;overflow:auto;")}>
+      {/* metadata row */}
+      <Panel title="project" tag={project ? `#${projectId.slice(0, 8)}` : ""}>
+        {project ? (
+          <div style={css("display:grid;grid-template-columns:1fr 1fr;gap:0;")}>
             <KV
               entries={[
                 ["name", project.name],
                 ["status", <StatusBadge value={project.status} key="s" />],
                 ["kind", project.project_kind],
                 ["analyzer os", project.analyzer_os],
-                ["analyzer system", project.system_name ?? `#${project.system_id}`],
-                ["evidence directory", project.evidence_directory],
-                ["created", project.created_at ?? "\u2014"],
-                ["updated", project.updated_at ?? "\u2014"],
+                ["system", project.system_name ?? `#${project.system_id}`],
+                ["evidence dir", project.evidence_directory],
               ]}
             />
-          </div>
-          <div>
             <KV
               entries={[
-                ["evidence count", project.evidence_count],
-                ["artifact count", project.artifact_count],
-                ["lead count", project.lead_count],
-                ["investigation count", project.investigation_count],
+                ["evidence", project.evidence_count],
+                ["artifacts", project.artifact_count],
+                ["leads", project.lead_count],
+                ["investigations", project.investigation_count],
+                ["created", project.created_at ?? "\u2014"],
                 ["description", project.description || "\u2014"],
               ]}
             />
           </div>
-        </div>
-      ) : (
-        <div style={emptyNote}>project not loaded.</div>
-      )}
-    </Panel>
+        ) : (
+          <div style={emptyNote}>project not loaded.</div>
+        )}
+      </Panel>
+
+      {/* leads + investigations row */}
+      <div style={css("display:grid;grid-template-columns:1fr 1fr;gap:10px;min-height:180px;")}>
+        <Panel title="top leads" tag={`${leads.length}`}>
+          {leadsQ.isLoading ? (
+            <div style={emptyNote}>loading\u2026</div>
+          ) : leads.length === 0 ? (
+            <div style={emptyNote}>no leads yet.</div>
+          ) : (
+            <DataTable rows={leads} columns={leadCols} />
+          )}
+        </Panel>
+
+        <Panel title="investigations" tag={`${invs.length}`}>
+          {invQ.isLoading ? (
+            <div style={emptyNote}>loading\u2026</div>
+          ) : invs.length === 0 ? (
+            <div style={emptyNote}>no investigations yet.</div>
+          ) : (
+            <DataTable rows={invs} columns={invCols} onSelect={(r) => onOpenInvestigation(r.id)} />
+          )}
+        </Panel>
+      </div>
+
+      {/* artifacts row */}
+      <Panel title="recent artifacts" tag={`${arts.length}`} style={{ minHeight: 140 }}>
+        {artQ.isLoading ? (
+          <div style={emptyNote}>loading\u2026</div>
+        ) : arts.length === 0 ? (
+          <div style={emptyNote}>no artifacts yet.</div>
+        ) : (
+          <DataTable rows={arts} columns={artCols} />
+        )}
+      </Panel>
+    </div>
   );
 }
 
@@ -926,6 +993,77 @@ export function SolidEvidenceTab({ projectId }: TabProps): JSX.Element {
 
 /* --- 11. FINDINGS ---------------------------------------------------- */
 
+/** Per-row workflow-transition control. Fetches the forensics-scoped state
+ * machine once and only surfaces the buttons that map to a legal outbound
+ * edge from the row's current `workflow_state`. Backend enforces operator+
+ * role and re-validates the transition; a 422 lands here as an inline error
+ * string rather than a modal. */
+function ForensicsFindingTransition({ row }: { row: FindingRow }): JSX.Element {
+  const machineQ = useFindingWorkflowStates("forensics");
+  const transitionM = useTransitionFinding();
+  const rawId = row["finding_id"] ?? row["id"];
+  const findingId = typeof rawId === "number" || typeof rawId === "string" ? rawId : null;
+  const current = typeof row["workflow_state"] === "string" ? row["workflow_state"] : "new";
+  const allowed = legalNextStates(machineQ.data, current);
+
+  if (findingId === null) {
+    return (
+      <div style={css("border:1px solid var(--border-soft);background:var(--surface-sunk);border-radius:3px;padding:10px 12px;font-size:10.5px;color:var(--text-muted);")}>
+        no finding id on this row {"\u2014"} workflow transitions unavailable.
+      </div>
+    );
+  }
+  return (
+    <div style={css("border:1px solid var(--border-soft);background:var(--surface-sunk);border-radius:3px;padding:11px 12px;display:flex;flex-direction:column;gap:8px;")}>
+      <div style={css("display:flex;align-items:center;gap:9px;")}>
+        <span style={css("font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>
+          workflow transition
+        </span>
+        <span style={css("flex:1;")} />
+        <WorkflowStateBadge value={current} />
+      </div>
+      {machineQ.isLoading ? (
+        <div style={css("font-size:10.5px;color:var(--text-faint);")}>loading state machine {"\u2026"}</div>
+      ) : allowed.length === 0 ? (
+        <div style={css("font-size:10.5px;color:var(--text-muted);")}>
+          no valid transitions from {"\u201c" + current + "\u201d"}.
+        </div>
+      ) : (
+        <div style={css("display:flex;flex-wrap:wrap;gap:6px;")}>
+          {allowed.map((target) => (
+            <button
+              key={target}
+              type="button"
+              disabled={transitionM.isPending}
+              onClick={() => {
+                if (transitionM.isPending) return;
+                transitionM.mutate({
+                  finding_id: findingId,
+                  module_id: "forensics",
+                  target_state: target,
+                });
+              }}
+              style={css(
+                "padding:0 11px;height:26px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.06em;text-transform:uppercase;color:var(--accent);border:1px solid " + H.acc + "59;background:" + H.acc + "1c;border-radius:3px;cursor:" + (transitionM.isPending ? "not-allowed" : "pointer") + ";",
+              )}
+            >
+              {"\u2192 " + target}
+            </button>
+          ))}
+        </div>
+      )}
+      {transitionM.isSuccess ? (
+        <div style={css("font-size:10px;color:" + H.mint + ";")}>transition applied.</div>
+      ) : null}
+      {transitionM.isError ? (
+        <div style={css("font-size:10px;color:var(--status-warn);")}>
+          {"transition failed \u2014 " + (transitionM.error instanceof Error ? transitionM.error.message : "unknown")}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function FindingsTab({ projectId }: TabProps): JSX.Element {
   const q = useForensicsQuery<FindingRow[]>(projectId, ["findings"], `/forensics/projects/${projectId}/findings`);
   const rows = q.data ?? [];
@@ -945,6 +1083,12 @@ export function FindingsTab({ projectId }: TabProps): JSX.Element {
         const rs = readArray(r, "suspicious_reasons");
         return rs ? rs.join(", ") : "\u2014";
       },
+    },
+    {
+      field: "workflow_state",
+      label: "state",
+      width: 140,
+      render: (r) => <WorkflowStateBadge value={r["workflow_state"] ?? "new"} />,
     },
     {
       field: "occurrences",
@@ -991,6 +1135,7 @@ export function FindingsTab({ projectId }: TabProps): JSX.Element {
                 ["occurrences", row["occurrences"]],
               ]}
             />
+            <ForensicsFindingTransition row={row} />
             <div>
               <div style={css("font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);margin:6px 0 4px;")}>raw record</div>
               <DictPanel data={asRecord(row["raw_record"]) ?? {}} />

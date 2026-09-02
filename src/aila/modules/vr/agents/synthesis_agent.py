@@ -21,7 +21,6 @@ carries a ``panel_summary``.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -33,27 +32,28 @@ from aila.modules.vr.db_models import (
 )
 from aila.platform.agents.synthesis_runner import SynthesisRunnerBase
 from aila.platform.llm.sanitize import sanitize_input
-from aila.platform.prompts import PromptRegistry
+from aila.platform.prompts import PromptNotFoundError, PromptRegistry
+from aila.platform.prompts.seeds import VR_SYNTHESIS_TEXT
+from aila.platform.prompts.version_store import PromptVersionStore
 
 __all__ = ["SynthesisAgent", "SynthesisResponse"]
 
-_PROMPT_DIR = Path(__file__).parent / "prompts"
 _PROMPT_REGISTRY = PromptRegistry(
-    _PROMPT_DIR,
     module="vr",
-    fallback_base="system_synthesis.md",
+    version_store=PromptVersionStore(),
 )
 
 
 def _load_system_prompt() -> str:
     """Return the VR synthesis system prompt from the registry.
 
-    RFC-09 criterion 1: body lives in ``prompts/system_synthesis.md``
-    resolved via :class:`PromptRegistry`. Called at class-body import
-    time to populate the ``_SYSTEM_PROMPT`` ClassVar the shared
-    :class:`SynthesisRunnerBase.run` reads.
+    RFC-09 / req 20: body is resolved from the DB prompt version store
+    via :class:`PromptRegistry`.
     """
-    return _PROMPT_REGISTRY.load("synthesis")
+    try:
+        return _PROMPT_REGISTRY.load("synthesis")
+    except PromptNotFoundError:
+        return VR_SYNTHESIS_TEXT
 
 
 class SynthesisResponse(BaseModel):

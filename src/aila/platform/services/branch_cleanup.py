@@ -111,41 +111,62 @@ async def purge_abandoned_branches(
     branch_table: str,
     message_table: str,
 ) -> int:
-    """Hard-delete every abandoned branch under ``investigation_id``.
+    """GC zero-message abandoned branches under ``investigation_id``.
 
-    Messages and parent-branch FK refs are cleaned first so the DELETE
-    does not violate constraints. Returns the number of branches removed.
+    Messages on abandoned branches are soft-superseded (never deleted) so
+    the transcript survives for operator display and audit. Message-
+    bearing abandoned branches are retained as FK parents for those
+    superseded rows; only zero-message abandoned branches are removed so
+    stall/reopen cycles do not accumulate empty dead branches. Returns
+    the number of branches removed.
 
-    Called from the platform reopen path and the persona spawner so
-    stall/reopen cycles do not accumulate dead branches. Modules never
-    call this directly -- the platform lifecycle layer owns it.
+    Called from the platform reopen path and the persona spawner.
+    Modules never call this directly -- the platform lifecycle layer
+    owns it.
     """
-    # Null parent refs pointing at abandoned branches.
+    # Soft-supersede messages on ALL abandoned branches so the transcript
+    # is archived rather than destroyed. Agent-context reads filter on
+    # ``superseded_at IS NULL``; UI + audit reads see the full history.
+    await uow.session.execute(
+        _sql_text(
+            f"UPDATE {message_table} "
+            "SET superseded_at = :ts "
+            "WHERE superseded_at IS NULL "
+            "AND branch_id IN ("
+            f"  SELECT id FROM {branch_table} "
+            "  WHERE investigation_id = :iid AND status = 'abandoned'"
+            ")"
+        ).bindparams(ts=utc_now(), iid=investigation_id),
+    )
+    # Null parent refs pointing at the deletable set (abandoned +
+    # zero-message) so the following DELETE does not violate FKs.
     await uow.session.execute(
         _sql_text(
             f"UPDATE {branch_table} "
             "SET parent_branch_id = NULL "
             "WHERE parent_branch_id IN ("
-            f"  SELECT id FROM {branch_table} "
-            "  WHERE investigation_id = :iid AND status = 'abandoned'"
+            f"  SELECT b.id FROM {branch_table} b "
+            "  WHERE b.investigation_id = :iid "
+            "  AND b.status = 'abandoned' "
+            "  AND NOT EXISTS ("
+            f"    SELECT 1 FROM {message_table} m "
+            "    WHERE m.branch_id = b.id"
+            "  )"
             ")"
         ).bindparams(iid=investigation_id),
     )
-    # Delete messages on abandoned branches.
-    await uow.session.execute(
-        _sql_text(
-            f"DELETE FROM {message_table} "
-            "WHERE branch_id IN ("
-            f"  SELECT id FROM {branch_table} "
-            "  WHERE investigation_id = :iid AND status = 'abandoned'"
-            ")"
-        ).bindparams(iid=investigation_id),
-    )
-    # Delete the abandoned branches.
+    # Delete only zero-message abandoned branches. Superseded messages
+    # still EXIST as rows, so NOT EXISTS keeps any branch that ever had
+    # a message.
     result = await uow.session.execute(
         _sql_text(
-            f"DELETE FROM {branch_table} "
-            "WHERE investigation_id = :iid AND status = 'abandoned'"
+            f"DELETE FROM {branch_table} b "
+            "WHERE b.investigation_id = :iid "
+            "AND b.status = 'abandoned' "
+            "AND NOT EXISTS ("
+            f"  SELECT 1 FROM {message_table} m "
+            "  WHERE m.branch_id = b.id"
+            ")"
         ).bindparams(iid=investigation_id),
     )
     rowcount = result.rowcount or 0

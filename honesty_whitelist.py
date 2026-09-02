@@ -243,7 +243,6 @@ HONESTY_WHITELIST = [
     # propagate -- only truncation-induced exceptions are suppressed.
     ("api/middleware/body_size_limit.py", "broad_exception_catch", "catches everything"),
     ("api/routers/dashboard.py", "broad_exception_catch", "catches everything"),
-    ("api/routers/executive.py", "broad_exception_catch", "catches everything"),
     ("api/routers/findings_workflow.py", "broad_exception_catch", "catches everything"),
     ("api/routers/health.py", "broad_exception_catch", "catches everything"),
     ("api/routers/oidc.py", "broad_exception_catch", "catches everything"),
@@ -594,6 +593,8 @@ HONESTY_WHITELIST = [
      "promotion_without_gate"),
     ("forensics/agents/investigator.py", "seed_prompt_versions",
      "promotion_without_gate"),
+    ("platform/prompts/seeds.py", "seed_platform_prompts",
+     "promotion_without_gate"),
 
     # Category (b): rule 68 content_slice_truncation. These cap the query
     # string written to an AUDIT-LOG detail field (record_audit_event
@@ -652,6 +653,92 @@ HONESTY_WHITELIST = [
     # the prompt is required to keep the synth call inside context.
     ("vr/workflow/task.py", "_run_vr_auto_patch", "[:8000]"),
     ("vr/workflow/task.py", "_fetch_vr_source_ctx", "[:16000]"),
+
+    # ------------------------------------------------------------------
+    # req 25 -- dante console conversational agent.
+    # ------------------------------------------------------------------
+    # api/routers/sessions.py::_decode_actions: parses the persisted
+    # ``actions_json`` blob for the response serializer. NULL / blank /
+    # malformed values MUST degrade to an empty list because the frontend
+    # treats "no proposed actions" as the same shape regardless of source;
+    # an assistant reply with unparseable actions is still a valid message.
+    ("api/routers/sessions.py", "except_return_default",
+     "silently hides failures"),
+
+    # ------------------------------------------------------------------
+    # VR-truth issue #13/#14/#249 W13 -- finalize + verifier gate spine
+    # in platform/agents/outcome_dispatcher.py. The two loaders lazily
+    # import the VR polarity helper and the VR claim verifier's
+    # verify_evidence; the ``except (ImportError, AttributeError)``
+    # branch returns None so non-VR modules (malware / forensics) that
+    # have no verifier deployed skip the gate silently and fall through
+    # to the prior dispatch behaviour. Also intentional: fail-safe
+    # allow when the verifier itself raises so a broken adversarial
+    # pass never permanently blocks a module dispatch.
+    # ------------------------------------------------------------------
+    ("platform/agents/outcome_dispatcher.py",
+     "aila.modules.vr.contracts.outcome",
+     "use module contracts"),
+    ("platform/agents/outcome_dispatcher.py",
+     "aila.modules.vr.agents.claim_verifier",
+     "use module contracts"),
+    ("platform/agents/outcome_dispatcher.py",
+     "inline '# noqa' comment on line 554",
+     "documented justification"),
+    ("platform/agents/outcome_dispatcher.py",
+     "inline '# noqa' comment on line 570",
+     "documented justification"),
+    ("platform/agents/outcome_dispatcher.py",
+     "inline '# noqa' comment on line 826",
+     "documented justification"),
+    ("platform/agents/outcome_dispatcher.py",
+     "inline '# noqa' comment on line 853",
+     "documented justification"),
+    ("platform/agents/outcome_dispatcher.py",
+     "inline '# noqa' comment on line 1076",
+     "documented justification"),
+    ("platform/agents/outcome_dispatcher.py",
+     "except returns empty default",
+     "silently hides failures"),
+    ("platform/agents/outcome_dispatcher.py",
+     "_load_verify_evidence_fn",
+     "RFC-07"),
+
+    # ------------------------------------------------------------------
+    # VR-truth issue #13/#14/#249 W13 -- the finalize FalsifierAgent
+    # builder in vr/workflow/states/investigation_emit.py lazily imports
+    # the platform falsifier, idempotent LLM call, LLM client, config
+    # registry, and secret store inside the builder so the emit state
+    # module stays free of a platform.agents / platform.llm import cycle
+    # at load time.
+    # ------------------------------------------------------------------
+    ("vr/workflow/states/investigation_emit.py",
+     "inline '# noqa' comment on line 161",
+     "documented justification"),
+    ("vr/workflow/states/investigation_emit.py",
+     "inline '# noqa' comment on line 162",
+     "documented justification"),
+    ("vr/workflow/states/investigation_emit.py",
+     "inline '# noqa' comment on line 165",
+     "documented justification"),
+    ("vr/workflow/states/investigation_emit.py",
+     "inline '# noqa' comment on line 166",
+     "documented justification"),
+    ("vr/workflow/states/investigation_emit.py",
+     "inline '# noqa' comment on line 167",
+     "documented justification"),
+
+    # ------------------------------------------------------------------
+    # VR-truth issue #13/#14/#249 W13 -- the module-level
+    # verify_evidence resolver in vr/agents/claim_verifier.py resolves
+    # the audit-mcp index from the investigation target handles on a
+    # best-effort basis; a lookup failure returns "" so the verifier
+    # gate skips rather than crashing the dispatch. Same fail-safe the
+    # platform loader block already carries.
+    # ------------------------------------------------------------------
+    ("vr/agents/claim_verifier.py",
+     "except returns empty default",
+     "silently hides failures"),
 ]
 
 

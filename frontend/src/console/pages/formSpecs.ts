@@ -245,7 +245,9 @@ export const CREATE_FORMS = {
       { name: "confidence", label: "confidence", type: "select", options: PATTERN_CONFIDENCE },
       { name: "evidence_refs", label: "evidence refs", type: "tags" },
       { name: "scope", label: "scope", type: "select", options: PATTERN_SCOPE },
-      { name: "trust_tier", label: "trust tier", type: "select", options: PATTERN_TRUST_TIER },
+      // trust_tier is stamped at write time (RFC-08) and the store overrides
+      // any payload value, so an operator control here would be dead. The
+      // detail view surfaces trust_tier read-only instead.
     ],
   },
   "vr:disclosures": {
@@ -498,92 +500,15 @@ export const CREATE_FORMS = {
       { name: "default_team_id", label: "default team id", type: "text" },
     ],
   },
-  "admin:automation": {
-    title: "admin \u00b7 new automation schedule",
-    endpoint: "/automation/schedules",
-    method: "POST",
-    fields: [
-      {
-        name: "action_id",
-        label: "action",
-        type: "select",
-        required: true,
-        optionsFrom: "/automation/actions",
-        optionsValueField: "action_id",
-        optionsLabelField: "description",
-      },
-      { name: "target_name", label: "target", type: "text", required: true, placeholder: "system or target name" },
-      { name: "cron_expression", label: "cron expression", type: "text", required: true, placeholder: "0 9 * * MON" },
-      { name: "action_kwargs", label: "action arguments", type: "keyval" },
-      { name: "enabled", label: "enabled", type: "checkbox" },
-    ],
-  },
-  "admin:scheduled-reports": {
-    title: "admin \u00b7 new scheduled report",
-    endpoint: "/scheduled-reports",
-    method: "POST",
-    fields: [
-      { name: "name", label: "report name", type: "text", required: true },
-      { name: "report_type", label: "report type", type: "text", required: true, placeholder: "e.g. fleet_health" },
-      { name: "cron_expression", label: "cron expression", type: "text", required: true },
-      {
-        name: "recipient_emails_json",
-        label: "recipients",
-        type: "json-array-tags",
-        placeholder: "one email per chip",
-      },
-      {
-        name: "config_json",
-        label: "report options",
-        type: "json-object-keyval",
-        help: "per-report-type options",
-      },
-      { name: "is_active", label: "active", type: "checkbox" },
-    ],
-  },
-  "admin:saved-filters": {
-    title: "admin \u00b7 new saved filter",
-    endpoint: "/saved-filters",
-    method: "POST",
-    fields: [
-      { name: "name", label: "filter name", type: "text", required: true },
-      { name: "entity_type", label: "applies to (entity type)", type: "text", required: true },
-      { name: "is_pinned", label: "pin", type: "checkbox" },
-      { name: "shared_with_team", label: "share with team", type: "checkbox" },
-    ],
-  },
-  "admin:tag-vocabulary": {
-    title: "admin \u00b7 new tag key",
-    endpoint: "/tags/vocabulary",
-    method: "POST",
-    fields: [
-      {
-        name: "tag_key",
-        label: "tag key",
-        type: "text",
-        required: true,
-        placeholder: "lowercase alphanumeric + underscore/hyphen",
-        help: "pattern ^[a-z0-9_-]+$",
-      },
-      { name: "description", label: "description", type: "textarea" },
-    ],
-  },
-  "admin:systems": {
-    title: "admin \u00b7 new system",
-    endpoint: "/systems",
-    method: "POST",
-    fields: [
-      { name: "name", label: "system name", type: "text", required: true },
-      { name: "host", label: "host / ip", type: "text", required: true },
-      { name: "username", label: "ssh username", type: "text", placeholder: "root" },
-      { name: "port", label: "ssh port", type: "number", min: 1, max: 65535, step: 1 },
-      { name: "distro", label: "distro", type: "text" },
-      { name: "description", label: "description", type: "textarea" },
-      { name: "private_key", label: "ssh private key (pem)", type: "textarea", help: "encrypted at rest" },
-      { name: "password", label: "ssh password", type: "password" },
-      { name: "private_key_passphrase", label: "key passphrase", type: "password" },
-    ],
-  },
+  // NOTE: `admin:automation` CREATE lives in the bespoke AutomationWizard
+  // (registered as `admin:new-automation`), not as a FieldForm spec. The
+  // wizard drives the same POST /automation/schedules with a stepped UX
+  // over the live action catalog + system fleet + cron preset picker.
+  // NOTE: `admin:scheduled-reports` CREATE lives in the bespoke
+  // ScheduledReportWizard (registered as `admin:new-scheduled-report`), not
+  // as a FieldForm spec. The wizard drives the same POST /scheduled-reports
+  // over the live kinds catalog + typed options + email recipient chips +
+  // cron preset picker.
   "admin:mcp-instances": {
     title: "admin \u00b7 new mcp instance",
     endpoint: "/platform/mcp/instances",
@@ -597,6 +522,55 @@ export const CREATE_FORMS = {
       { name: "module_scope", label: "module scope", type: "text" },
       { name: "team_id", label: "team id", type: "text" },
       { name: "instance_id", label: "explicit instance id", type: "text" },
+    ],
+  },
+  "admin:specialist-agents": {
+    title: "admin \u00b7 register agent",
+    endpoint: "/agents/specialists",
+    method: "POST",
+    fields: [
+      { name: "name", label: "agent name", type: "text", required: true, placeholder: "e.g. custom_hunter" },
+      {
+        name: "module_id",
+        label: "module",
+        type: "select",
+        required: true,
+        options: [
+          opt("vr"),
+          opt("platform"),
+          opt("malware"),
+          opt("forensics"),
+        ],
+      },
+      {
+        name: "agent_type",
+        label: "agent classification",
+        type: "select",
+        required: true,
+        options: [
+          opt("core", "core (dialectic spine persona)"),
+          opt("specialist", "specialist (on-demand expert)"),
+          opt("system", "system (arbitrator / verifier)"),
+        ],
+      },
+      { name: "capability", label: "capability", type: "text", required: true, placeholder: "e.g. binary-audit, exploit-dev" },
+      { name: "model_role", label: "model role override", type: "text", placeholder: "researcher, critic, implementer, reasoning, fast" },
+      { name: "prompt_key", label: "prompt store key", type: "text", placeholder: "e.g. vr/vulnerability_research.discovery_research/halvar" },
+      { name: "rag_scope", label: "rag retrieval scope", type: "text", placeholder: "comma-delimited: cve_intel,patterns,knowledge,corpus" },
+      { name: "strategy_family", label: "strategy family", type: "text" },
+      { name: "description", label: "description & instructions", type: "textarea" },
+      { name: "enabled", label: "enabled", type: "checkbox" },
+    ],
+  },
+  "admin:prompts": {
+    title: "admin \u00b7 register prompt version",
+    endpoint: "/admin/prompts/versions",
+    method: "POST",
+    fields: [
+      { name: "key", label: "prompt key", type: "text", required: true, placeholder: "e.g. vr/vulnerability_research.discovery_research/custom_agent" },
+      { name: "author", label: "author", type: "text", placeholder: "e.g. operator" },
+      { name: "notes", label: "change notes", type: "text", placeholder: "e.g. updated verification criteria" },
+      { name: "body", label: "prompt body", type: "textarea", required: true },
     ],
   },
   "admin:eval-calibrators": {
@@ -785,32 +759,6 @@ export const EDIT_FORMS = {
       { name: "is_active", label: "active", type: "checkbox" },
     ],
   },
-  "admin:saved-filters": {
-    title: "admin \u00b7 edit saved filter",
-    endpoint: "/saved-filters/{id}",
-    method: "PATCH",
-    fields: [
-      { name: "name", label: "filter name", type: "text" },
-      { name: "is_pinned", label: "pinned", type: "checkbox" },
-      { name: "shared_with_team", label: "shared with team", type: "checkbox" },
-    ],
-  },
-  "admin:systems": {
-    title: "admin \u00b7 edit system",
-    endpoint: "/systems/{id}",
-    method: "PUT",
-    fields: [
-      { name: "name", label: "system name", type: "text" },
-      { name: "host", label: "host / ip", type: "text" },
-      { name: "username", label: "ssh username", type: "text" },
-      { name: "port", label: "ssh port", type: "number", min: 1, max: 65535, step: 1 },
-      { name: "distro", label: "distro", type: "text" },
-      { name: "description", label: "description", type: "textarea" },
-      { name: "private_key", label: "ssh private key (pem)", type: "textarea", help: "leave blank to keep; explicit null clears" },
-      { name: "password", label: "ssh password", type: "password" },
-      { name: "private_key_passphrase", label: "key passphrase", type: "password" },
-    ],
-  },
   "admin:mcp-instances": {
     title: "admin \u00b7 edit mcp instance",
     endpoint: "/platform/mcp/instances/{id}",
@@ -841,6 +789,55 @@ export const EDIT_FORMS = {
         required: true,
         help: "stored value; an env override (AILA_*) wins at runtime when set",
       },
+    ],
+  },
+  "admin:specialist-agents": {
+    title: "admin \u00b7 edit agent",
+    endpoint: "/agents/specialists",
+    method: "POST",
+    fields: [
+      { name: "name", label: "agent name", type: "text", required: true },
+      {
+        name: "module_id",
+        label: "module",
+        type: "select",
+        required: true,
+        options: [
+          opt("vr"),
+          opt("platform"),
+          opt("malware"),
+          opt("forensics"),
+        ],
+      },
+      {
+        name: "agent_type",
+        label: "agent classification",
+        type: "select",
+        required: true,
+        options: [
+          opt("core", "core (dialectic spine persona)"),
+          opt("specialist", "specialist (on-demand expert)"),
+          opt("system", "system (arbitrator / verifier)"),
+        ],
+      },
+      { name: "capability", label: "capability", type: "text", required: true },
+      { name: "model_role", label: "model role override", type: "text" },
+      { name: "prompt_key", label: "prompt store key", type: "text" },
+      { name: "rag_scope", label: "rag retrieval scope", type: "text" },
+      { name: "strategy_family", label: "strategy family", type: "text" },
+      { name: "description", label: "description & instructions", type: "textarea" },
+      { name: "enabled", label: "enabled", type: "checkbox" },
+    ],
+  },
+  "admin:prompts": {
+    title: "admin \u00b7 register prompt version",
+    endpoint: "/admin/prompts/versions",
+    method: "POST",
+    fields: [
+      { name: "key", label: "prompt key", type: "text", required: true },
+      { name: "author", label: "author", type: "text" },
+      { name: "notes", label: "change notes", type: "text" },
+      { name: "body", label: "prompt body", type: "textarea", required: true },
     ],
   },
 } satisfies Record<string, FormSpec>;

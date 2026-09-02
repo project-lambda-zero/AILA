@@ -14,17 +14,15 @@ from pydantic import BaseModel, Field, field_validator
 
 __all__ = [
     "DashboardResponse",
-    "ExecutiveHealthResponse",
     "FindingTransitionRequest",
     "FindingWorkflowHistoryResponse",
     "FindingWorkflowStateResponse",
     "FleetStats",
     "NotificationResponse",
     "OIDCAuthorizeResponse",
-    "SavedFilterCreate",
-    "SavedFilterResponse",
-    "SavedFilterUpdate",
     "ScheduledReportCreate",
+    "ScheduledReportKindOption",
+    "ScheduledReportKindResponse",
     "ScheduledReportResponse",
     "ScheduledReportTriggerResponse",
     "ScheduledReportUpdate",
@@ -115,33 +113,6 @@ class FindingWorkflowStateResponse(BaseModel):
     history: list[FindingWorkflowHistoryResponse]
 
 
-class SavedFilterCreate(BaseModel):
-    name: str = Field(min_length=1, max_length=128)
-    entity_type: str
-    filter_json: str = Field(default="{}")
-    is_pinned: bool = False
-    shared_with_team: bool = False
-
-
-class SavedFilterUpdate(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=128)
-    filter_json: str | None = None
-    is_pinned: bool | None = None
-    shared_with_team: bool | None = None
-
-
-class SavedFilterResponse(BaseModel):
-    id: str
-    user_id: str
-    name: str
-    entity_type: str
-    filter_json: str
-    is_pinned: bool
-    shared_with_team: bool
-    created_at: datetime
-    updated_at: datetime
-
-
 class WidgetLayoutRequest(BaseModel):
     layout_json: str = Field(description="Frontend-owned JSON layout descriptor (max 64KB)")
 
@@ -190,6 +161,26 @@ class ScheduledReportResponse(BaseModel):
     updated_at: datetime
 
 
+class ScheduledReportKindOption(BaseModel):
+    """One declared config option for a report kind's config_json."""
+
+    key: str
+    type: str
+    label: str
+    default: str | bool | None = None
+    required: bool = False
+    options: list[str] | None = None
+
+
+class ScheduledReportKindResponse(BaseModel):
+    """A report kind the scheduled-report dispatch understands."""
+
+    report_type: str
+    name: str
+    description: str
+    config_schema: list[ScheduledReportKindOption] = Field(default_factory=list)
+
+
 class NotificationResponse(BaseModel):
     id: str
     user_id: str
@@ -211,20 +202,6 @@ class UnreadNotificationsResponse(BaseModel):
 class WorkflowStateDefinition(BaseModel):
     states: list[str]
     transitions: dict[str, list[str]]
-
-
-class ExecutiveHealthResponse(BaseModel):
-    """Fleet-wide risk posture summary for the executive dashboard."""
-
-    total_findings: int = Field(description="Total number of active findings across all systems")
-    severity_breakdown: dict[str, int] = Field(
-        description="Finding counts by severity level (Immediate, High, Moderate, Planned)",
-    )
-    last_scanned_at: str | None = Field(
-        default=None,
-        description="ISO-8601 timestamp of the most recent scan across all findings",
-    )
-    systems_with_findings: int = Field(description="Number of distinct systems with at least one finding")
 
 
 class OIDCAuthorizeResponse(BaseModel):
