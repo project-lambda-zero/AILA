@@ -189,7 +189,14 @@ class PhaseSpec:
     reader, which honors ``trust`` itself); ``capability`` is the persona
     specialty that owns the phase (None means any branch may walk it);
     ``trust`` is ``"confirmed"`` (activate only on quorum-confirmed
-    discoveries) or ``"advisory"`` (any discovery). These are unused by
+    discoveries) or ``"advisory"`` (any discovery). ``priority`` orders
+    activation: the hub evaluates phases by descending priority (ties broken
+    by declaration order), so a high-priority phase (exploit verification
+    once a finding is confirmed) is reached before a lower-priority audit
+    phase regardless of tuple position. ``handler``, when set, replaces the
+    module loop for this phase with ``handler(next_state)`` -- an algorithmic
+    verification state can then sit in the same discovery-driven graph as
+    agent-loop phases. These are unused by
     ``build_phase_workflow`` and ``next`` / ``router`` / ``entry_gate`` are
     unused by ``build_dispatch_workflow``.
     """
@@ -206,6 +213,19 @@ class PhaseSpec:
     condition: GateFn | None = None
     capability: str | None = None
     trust: str = "confirmed"
+    # Dispatch-graph activation priority (``build_dispatch_workflow``). The
+    # hub's ``_pick`` evaluates phases in descending priority, ties broken by
+    # declaration order, so a high-priority phase is activated before a
+    # lower-priority one regardless of tuple position. 0 (default) preserves
+    # pure declaration-order evaluation.
+    priority: int = 0
+    # Dispatch-graph custom state handler (``build_dispatch_workflow``). When
+    # set, the substrate binds ``handler(next_state)`` as the phase's state
+    # instead of the module ``loop_builder``, so an algorithmic verification
+    # state (a deterministic compile/run/verify handler) can share the same
+    # discovery-driven graph as agent-loop phases. None (default) uses the
+    # module loop_builder as before. Unused by ``build_phase_workflow``.
+    handler: Callable[[str], HandlerFn] | None = None
     # Dispatch-graph terminal catch-all (``build_dispatch_workflow``). An
     # unconditional phase declared last that a module uses as its open-ended
     # terminal (VR's ``continued_hunt``). Once it has been visited, the hub
@@ -388,10 +408,16 @@ def make_dispatch_router(
     unchanged.
     """
 
+    # Evaluate phases by descending priority, ties broken by declaration
+    # order. ``sorted`` is stable, so a plain ``-priority`` key preserves
+    # each tier's tuple order. Computed once per router build (not per hub
+    # tick) so the walk pays no repeated sort.
+    _ordered = tuple(sorted(phases, key=lambda p: -p.priority))
+
     async def _pick(
         state_input: dict[str, Any], visited: set[str], branch_capability: Any,
     ) -> tuple[PhaseSpec | None, str]:
-        for phase in phases:
+        for phase in _ordered:
             if phase.name in visited:
                 continue
             if (
@@ -764,8 +790,16 @@ def build_dispatch_workflow(
         ),
     }
     for phase in phases:
+        # A phase may supply its own algorithmic handler (bound to the hub
+        # return state) instead of riding the module agent loop; otherwise
+        # the loop_builder applies the phase regime as before.
+        phase_handler = (
+            phase.handler(DISPATCH_STATE)
+            if phase.handler is not None
+            else loop_builder(phase, DISPATCH_STATE)
+        )
         states[phase.name] = StateSpec(
-            handler=loop_builder(phase, DISPATCH_STATE),
+            handler=phase_handler,
             timeout_s=phase.timeout_s,
             on_failure=phase.on_failure,
             max_retries=phase.max_retries,

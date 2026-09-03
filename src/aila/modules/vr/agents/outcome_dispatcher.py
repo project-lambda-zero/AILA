@@ -191,6 +191,27 @@ def _int_or_none(value: Any) -> int | None:
         return None
 
 
+def _poc_crash_signature(text: str | None) -> str | None:
+    """Derive a compact crash signature from sandbox crash output (#245).
+
+    Prefers the first ``ERROR: AddressSanitizer: <kind>`` line (the sanitizer
+    names the bug class), else the first non-empty output line. Returns None
+    when there is nothing usable so the caller leaves an existing signature
+    untouched.
+    """
+    if not isinstance(text, str) or not text.strip():
+        return None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if "AddressSanitizer" in stripped:
+            return stripped[:128]
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped[:128]
+    return None
+
+
 
 # ASSESSMENT_REPORT is the ONE remaining kind with no downstream
 # dispatch: assessment reports are terminal narrative summaries and
@@ -272,6 +293,8 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
         self,
         knowledge: KnowledgeService | Any,
         task_queue_factory: Any | None = None,
+        poc_runner: Any | None = None,
+        integration_resolver: Any | None = None,
     ) -> None:
         self._knowledge = knowledge
         # Callable returning a TaskQueue-shaped object with
@@ -281,6 +304,14 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
         self._task_queue_factory: Any = (
             task_queue_factory or _build_default_task_queue
         )
+        # #245 post-submit PoC verification. The SSH-driven PoC runner and
+        # the investigation->workstation integration resolver are injected
+        # so tests can supply fakes; both default to the real implementations
+        # built lazily (the runner needs Settings; deferring the import keeps
+        # bootstrap import order clean).
+        self._poc_runner_override: Any = poc_runner
+        self._poc_runner_cached: Any = None
+        self._integration_resolver_override: Any = integration_resolver
 
     def _dispatch_state_guard(self, outcome: VRInvestigationOutcomeRecord) -> str | None:
         """Refuse dispatch of any outcome whose state is not approved.
@@ -347,7 +378,7 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
             )
         if outcome_kind == OutcomeKind.DIRECT_FINDING:
             return await self._dispatch_direct_finding(
-                outcome_id, investigation_id, payload,
+                outcome_id, investigation_id, payload, outcome_row,
             )
         if outcome_kind == OutcomeKind.VARIANT_HUNT_ORDER:
             return await self._dispatch_variant_hunt_order(
@@ -470,6 +501,7 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
         outcome_id: str,
         investigation_id: str,
         payload: dict[str, Any],
+        outcome_row: VRInvestigationOutcomeRecord | None = None,
     ) -> OutcomeDispatchResult:
         """DIRECT_FINDING → vr_findings row.
 
@@ -679,6 +711,21 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
                     investigation_id, finding_id, exc, exc_info=True,
                 )
 
+        # #245 post-submit PoC feedback loop. When the agent submitted a PoC
+        # script with the finding, compile + run it in the SSH sandbox: a
+        # reproduced crash stamps the finding (asan_report, crash_signature,
+        # reliability); a compile failure or a clean (non-reproducing) run
+        # writes a ``_directive.poc_feedback`` observable onto the submitting
+        # branch so the next turn sees why the PoC did not land. Runs after
+        # the finding + KB mirror commit and is entirely best-effort.
+        if payload.get("poc_code"):
+            await self._verify_submitted_poc(
+                finding_id=finding_id,
+                investigation_id=investigation_id,
+                payload=payload,
+                outcome_row=outcome_row,
+            )
+
         # fix §236 -- variant spawn loop is non-atomic across child
         # investigations (each _spawn_variant_child has its own UoW +
         # ARQ enqueue). A crash mid-loop used to leave N children alive
@@ -765,6 +812,248 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
             dispatch_target=f"vr_finding:{finding_id}",
             reason=" ".join(reason_parts),
         )
+
+    def _get_poc_runner(self) -> Any:
+        """Return the injected PoC runner, or build the real one lazily.
+
+        The runner needs Settings; deferring the import + construction to
+        first use keeps module-load import order clean and lets tests inject
+        a fake through the constructor.
+        """
+        if self._poc_runner_override is not None:
+            return self._poc_runner_override
+        if self._poc_runner_cached is None:
+            from aila.config import get_settings
+            from aila.modules.vr.tools.poc_runner import PoCRunnerTool
+            self._poc_runner_cached = PoCRunnerTool(get_settings())
+        return self._poc_runner_cached
+
+    async def _resolve_poc_integration(self, investigation_id: str) -> dict | None:
+        """Resolve the investigation's PoC/analysis workstation SSH integration."""
+        if self._integration_resolver_override is not None:
+            return await self._integration_resolver_override(investigation_id)
+        from aila.modules.vr.services.analysis_system import (
+            resolve_investigation_integration,
+        )
+        return await resolve_investigation_integration(investigation_id)
+
+    async def _verify_submitted_poc(
+        self,
+        *,
+        finding_id: str,
+        investigation_id: str,
+        payload: dict[str, Any],
+        outcome_row: VRInvestigationOutcomeRecord | None,
+    ) -> None:
+        """Compile + run an agent-submitted PoC in the SSH sandbox (#245).
+
+        A reproduced crash stamps the finding (asan_report, crash_signature,
+        poc_reliability). A compile failure, a sandbox run error, or a clean
+        (non-reproducing) run writes a ``_directive.poc_feedback`` observable
+        onto the submitting branch's case_state so the next turn sees why the
+        PoC did not land. A PoC that compiles but names no local target binary
+        (a network/web PoC) is recorded as compile-verified only -- there is
+        no local binary to execute it against. Entirely best-effort: every
+        fault is logged and swallowed so verification never unwinds the
+        already-committed finding.
+        """
+        poc_code = payload.get("poc_code")
+        if not isinstance(poc_code, str) or not poc_code.strip():
+            return
+        branch_id = outcome_row.branch_id if outcome_row is not None else None
+        try:
+            integration = await self._resolve_poc_integration(investigation_id)
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
+            _log.warning(
+                "poc verify: integration resolve failed inv=%s finding=%s: %s",
+                investigation_id, finding_id, exc,
+            )
+            return
+        if not integration:
+            await self._stamp_finding_skip(
+                finding_id, "no_analysis_workstation_registered",
+            )
+            return
+        lang = str(payload.get("poc_language") or "python").lower()
+        if lang not in ("python", "c"):
+            lang = "python"
+        filename = "poc.py" if lang == "python" else "poc.c"
+        runner = self._get_poc_runner()
+        try:
+            compile_res = await runner.forward(
+                action="compile_poc", integration=integration,
+                code=poc_code, language=lang, filename=filename,
+            )
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            _log.warning(
+                "poc verify: compile raised inv=%s finding=%s: %s",
+                investigation_id, finding_id, exc,
+            )
+            return
+        if not isinstance(compile_res, dict) or compile_res.get("status") != "ready":
+            detail = (
+                (compile_res or {}).get("compile_output")
+                or (compile_res or {}).get("error")
+                or "compilation failed"
+            )
+            await self._record_poc_feedback(
+                branch_id, f"PoC did not compile in the sandbox:\n{detail}",
+            )
+            await self._stamp_finding_skip(finding_id, "poc_compile_failed")
+            return
+        poc_path = compile_res.get("script_path") or compile_res.get("binary_path")
+        target_binary = payload.get("target_binary")
+        if not isinstance(target_binary, str) or not target_binary:
+            # Compiled clean, but runtime verification runs the PoC against a
+            # local target binary (argv[1]); a network/web PoC has none.
+            await self._stamp_finding_skip(
+                finding_id, "poc_compiled_no_target_binary",
+            )
+            return
+        try:
+            run_res = await runner.forward(
+                action="run_poc", integration=integration,
+                poc_path=poc_path, target_binary=target_binary,
+            )
+        except (OSError, RuntimeError, ValueError, TypeError) as exc:
+            _log.warning(
+                "poc verify: run raised inv=%s finding=%s: %s",
+                investigation_id, finding_id, exc,
+            )
+            return
+        if not isinstance(run_res, dict) or run_res.get("status") != "ready":
+            detail = (run_res or {}).get("error") or "run failed"
+            await self._record_poc_feedback(
+                branch_id,
+                f"PoC could not be executed in the sandbox: {detail}",
+            )
+            await self._stamp_finding_skip(finding_id, "poc_run_error")
+            return
+        crash_text = run_res.get("stderr_tail") or run_res.get("stdout_tail")
+        if run_res.get("crash_detected"):
+            reliability: str | None = None
+            try:
+                rel_res = await runner.forward(
+                    action="verify_reliability", integration=integration,
+                    poc_path=poc_path, target_binary=target_binary,
+                )
+                if isinstance(rel_res, dict):
+                    raw_rel = rel_res.get("reliability")
+                    reliability = str(raw_rel) if raw_rel is not None else None
+            except (OSError, RuntimeError, ValueError, TypeError) as exc:
+                _log.warning(
+                    "poc verify: reliability raised inv=%s finding=%s: %s",
+                    investigation_id, finding_id, exc,
+                )
+            await self._stamp_finding_crash(
+                finding_id,
+                asan_text=crash_text if isinstance(crash_text, str) else None,
+                reliability=reliability,
+            )
+            return
+        # Ran in the sandbox without crashing -- the PoC does not reproduce.
+        observed = "\n".join(part for part in (
+            f"exit_code={run_res.get('exit_code')}",
+            f"stdout:\n{run_res.get('stdout_tail') or ''}",
+            f"stderr:\n{run_res.get('stderr_tail') or ''}",
+        ) if part)
+        await self._record_poc_feedback(
+            branch_id,
+            "PoC ran in the sandbox without crashing -- it does not yet "
+            f"reproduce the finding:\n{observed}",
+        )
+        await self._stamp_finding_skip(finding_id, "poc_no_crash")
+
+    async def _stamp_finding_skip(self, finding_id: str, reason: str) -> None:
+        """Record why runtime PoC verification was skipped on the finding."""
+        try:
+            async with UnitOfWork() as uow:
+                row = (await uow.session.exec(
+                    _select(VRFindingRecord).where(
+                        VRFindingRecord.id == finding_id,
+                    ),
+                )).first()
+                if row is None:
+                    return
+                row.poc_skip_reason = reason
+                uow.session.add(row)
+                await uow.session.commit()
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
+            _log.warning(
+                "poc verify: skip stamp failed finding=%s: %s", finding_id, exc,
+            )
+
+    async def _stamp_finding_crash(
+        self,
+        finding_id: str,
+        *,
+        asan_text: str | None,
+        reliability: str | None,
+    ) -> None:
+        """Stamp a reproduced-crash finding with its sandbox evidence."""
+        try:
+            async with UnitOfWork() as uow:
+                row = (await uow.session.exec(
+                    _select(VRFindingRecord).where(
+                        VRFindingRecord.id == finding_id,
+                    ),
+                )).first()
+                if row is None:
+                    return
+                if isinstance(asan_text, str) and asan_text.strip():
+                    row.asan_report = asan_text
+                    if not row.crash_signature:
+                        sig = _poc_crash_signature(asan_text)
+                        if sig:
+                            row.crash_signature = sig
+                if isinstance(reliability, str) and reliability.strip():
+                    row.poc_reliability = reliability[:16]
+                uow.session.add(row)
+                await uow.session.commit()
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
+            _log.warning(
+                "poc verify: crash stamp failed finding=%s: %s", finding_id, exc,
+            )
+
+    async def _record_poc_feedback(
+        self, branch_id: str | None, feedback: str,
+    ) -> None:
+        """Write a ``_directive.poc_feedback`` observable onto a branch.
+
+        The next turn on that branch reads the observable from case_state and
+        surfaces the sandbox verdict to the agent so it can fix the PoC. Uses
+        a raw JSON merge (matching the ``_acked_operator_messages`` read path)
+        so it never depends on the full case-state schema.
+        """
+        if not branch_id or not feedback:
+            return
+        try:
+            async with UnitOfWork() as uow:
+                row = (await uow.session.exec(
+                    _select(VRInvestigationBranchRecord).where(
+                        VRInvestigationBranchRecord.id == branch_id,
+                    ),
+                )).first()
+                if row is None:
+                    return
+                try:
+                    case_state = json.loads(row.case_state_json or "{}")
+                except (ValueError, TypeError):
+                    case_state = {}
+                if not isinstance(case_state, dict):
+                    case_state = {}
+                observables = case_state.get("observables")
+                if not isinstance(observables, dict):
+                    observables = {}
+                    case_state["observables"] = observables
+                observables["_directive.poc_feedback"] = feedback[:4000]
+                row.case_state_json = json.dumps(case_state)
+                uow.session.add(row)
+                await uow.session.commit()
+        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
+            _log.warning(
+                "poc verify: feedback write failed branch=%s: %s", branch_id, exc,
+            )
 
     async def _dispatch_variant_hunt_order(
         self,

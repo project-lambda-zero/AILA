@@ -38,7 +38,7 @@ from aila.modules.vr.workflow.states.investigation_setup import (
     _SETUP_BINDINGS,
     _SETUP_HOOKS,
 )
-from aila.platform.services.ledger import make_discovery_condition
+from aila.platform.services.ledger import LedgerService, make_discovery_condition
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.investigation_loop_base import (
     state_investigation_loop as _build_loop_state,
@@ -305,6 +305,140 @@ _BINARY_KINDS = frozenset({
 _MOBILE_KINDS = frozenset({"android_apk", "ipa"})
 _VARIANT_KINDS = _SOURCE_KINDS | _BINARY_KINDS
 
+# Dispatch-hub activation priority tiers (#245). The hub evaluates phases by
+# descending PhaseSpec.priority (ties broken by declaration order), so the
+# order below is the routing intent, not the tuple position:
+#   * recon runs FIRST -- it characterizes the target before any audit or
+#     exploit phase (it is unconditional, so only visit-once removes it).
+#   * once a finding is confirmed, the exploit-verification phases activate
+#     ahead of every audit phase; poc_development (build the PoC) leads,
+#     then exploit_primitive_composition (chain primitives), then the
+#     situational, advisory-trust filter_bypass_synthesis (it must NOT
+#     outrank the confirmed PoC target, so it sits lowest of the three).
+#   * a specialized deep-dive whose vulnerability class recon actually named
+#     runs ahead of the generic source sweeps.
+#   * the generic sweeps and kind-only fallbacks run next.
+#   * continued_hunt is the terminal catch-all, last.
+_PRIORITY_RECON = 110
+_PRIORITY_POC = 100
+_PRIORITY_EXPLOIT_COMPOSE = 96
+_PRIORITY_FILTER_BYPASS = 92
+_PRIORITY_SPECIALIZED = 50
+_PRIORITY_BASELINE = 10
+_PRIORITY_TERMINAL = 0
+
+# Keyword sets for the discovery-gated specialized audit phases (#245). A
+# specialized phase activates only when a shared-ledger discovery names its
+# vulnerability class -- any keyword below appears (case-insensitive
+# substring) in the discovery's claim, rationale, or kill-criterion -- so
+# the panel is routed to the phase that matches what recon surfaced instead
+# of walking every kind-eligible audit phase in declaration order.
+_INJECTION_KEYWORDS = frozenset({
+    "injection", "sql", "cql", "command", "ssti", "eval",
+    "ognl", "spel", "xpath", "ldap", "template",
+})
+_DESERIALIZATION_KEYWORDS = frozenset({
+    "deserial", "objectinputstream", "readobject", "pickle", "yaml",
+    "fastjson", "jackson", "jndi", "unserialize", "binaryformatter", "gadget",
+})
+_AUTH_BYPASS_KEYWORDS = frozenset({
+    "auth", "jwt", "oauth", "idor", "rbac", "abac",
+    "session", "token", "redirect", "bypass",
+})
+_CONCURRENCY_KEYWORDS = frozenset({
+    "race", "toctou", "concurren", "thread", "atomic",
+    "deadlock", "reentran", "double-fetch", "lock",
+})
+_PROTOCOL_STATE_KEYWORDS = frozenset({
+    "protocol", "http", "smuggl", "websocket",
+    "framing", "desync", "packet", "state machine",
+})
+_MEMORY_SAFETY_KEYWORDS = frozenset({
+    "uaf", "use-after-free", "overflow", "oob", "out-of-bounds",
+    "allocator", "free", "heap", "stack", "integer",
+    "malloc", "memcpy", "type confusion",
+})
+_KERNEL_DRIVER_KEYWORDS = frozenset({
+    "ioctl", "driver", "kernel", "method_neither", "deviceiocontrol",
+    "probeforread", "ring0", "ring-0",
+})
+
+
+async def _resolve_target_kind(investigation_id: str) -> str | None:
+    """Return the investigation's primary target ``kind`` (lowercased), or None.
+
+    Shared by :func:`_make_target_kind_condition` and
+    :func:`_make_specialized_phase_condition` so the two dispatch conditions
+    read the target the same way. The VR db-model + UoW imports stay
+    top-level here (this file loads after ``db_models`` is registered).
+    """
+    async with UnitOfWork() as uow:
+        inv = (await uow.session.exec(
+            select(VRInvestigationRecord).where(
+                VRInvestigationRecord.id == investigation_id,
+            ),
+        )).first()
+        if inv is None or not inv.target_id:
+            return None
+        target = (await uow.session.exec(
+            select(VRTargetRecord).where(
+                VRTargetRecord.id == inv.target_id,
+            ),
+        )).first()
+    if target is None:
+        return None
+    return (target.kind or "").strip().lower()
+
+
+def _make_specialized_phase_condition(
+    kinds: frozenset[str],
+    keywords: frozenset[str],
+) -> Callable[[dict[str, Any]], Awaitable[tuple[bool, str]]]:
+    """Build a dispatch-hub condition for a discovery-gated specialized phase.
+
+    Fires when the investigation's target kind is in *kinds* AND at least one
+    shared-ledger ``discovery`` entry names the phase's vulnerability class --
+    any *keyword* appears (case-insensitive substring) in the discovery's
+    ``claim``, ``why_plausible``, or ``kill_criterion``. This routes the panel
+    to the specialized phase recon actually pointed at, rather than activating
+    every kind-eligible audit phase.
+
+    A ratified replan (``_dispatch_replan_relax``) waives the keyword gate: the
+    phase then activates on target kind alone, so an operator/panel replan can
+    still reach a specialized phase recon did not explicitly name.
+    """
+    lowered = tuple(kw.lower() for kw in keywords)
+
+    async def _cond(state_input: dict[str, Any]) -> tuple[bool, str]:
+        investigation_id = state_input.get("investigation_id")
+        if not investigation_id:
+            return False, "no investigation_id on dispatch input"
+        tk = await _resolve_target_kind(str(investigation_id))
+        if tk is None:
+            return False, "no target for investigation"
+        if tk not in kinds:
+            return False, f"target kind {tk!r} not in {sorted(kinds)}"
+        if state_input.get("_dispatch_replan_relax"):
+            return True, f"replan relax: target kind {tk} (keyword gate waived)"
+        discoveries = await LedgerService().read_general(
+            str(investigation_id), kinds=["discovery"],
+        )
+        for row in discoveries:
+            payload = row.get("payload") or {}
+            haystack = " ".join((
+                str(payload.get("claim") or ""),
+                str(payload.get("why_plausible") or ""),
+                str(payload.get("kill_criterion") or ""),
+            )).lower()
+            hit = next((kw for kw in lowered if kw in haystack), None)
+            if hit is not None:
+                return True, f"target kind {tk}; discovery names {hit!r}"
+        return False, (
+            f"target kind {tk} matches but no discovery names this class"
+        )
+
+    return _cond
+
 
 def _make_target_kind_condition(
     kinds: frozenset[str],
@@ -325,22 +459,9 @@ def _make_target_kind_condition(
         investigation_id = state_input.get("investigation_id")
         if not investigation_id:
             return False, "no investigation_id on dispatch input"
-        async with UnitOfWork() as uow:
-            inv = (await uow.session.exec(
-                select(VRInvestigationRecord).where(
-                    VRInvestigationRecord.id == investigation_id,
-                ),
-            )).first()
-            if inv is None or not inv.target_id:
-                return False, "no target for investigation"
-            target = (await uow.session.exec(
-                select(VRTargetRecord).where(
-                    VRTargetRecord.id == inv.target_id,
-                ),
-            )).first()
-        if target is None:
+        tk = await _resolve_target_kind(str(investigation_id))
+        if tk is None:
             return False, "no target for investigation"
-        tk = (target.kind or "").strip().lower()
         if tk in kinds:
             return True, f"target kind {tk} matches {sorted(kinds)}"
         return False, f"target kind {tk!r} not in {sorted(kinds)}"
@@ -383,6 +504,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         max_turns=_RECON_MAX_TURNS,
         allowed_servers=("audit_mcp", "ida_headless"),
         trust="confirmed",
+        priority=_PRIORITY_RECON,
     ),
     PhaseSpec(
         name="source_audit",
@@ -392,6 +514,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         max_turns=_AUDIT_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("audit_mcp",),
+        priority=_PRIORITY_BASELINE,
     ),
     PhaseSpec(
         name="taint_analysis",
@@ -401,51 +524,67 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         max_turns=_AUDIT_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("audit_mcp",),
+        priority=_PRIORITY_BASELINE,
     ),
     PhaseSpec(
         name="injection_audit",
         directive=_INJECTION_AUDIT_DIRECTIVE,
-        condition=_make_target_kind_condition(_SOURCE_KINDS),
+        condition=_make_specialized_phase_condition(
+            _SOURCE_KINDS, _INJECTION_KEYWORDS,
+        ),
         capability="source-audit",
         max_turns=_AUDIT_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("audit_mcp",),
+        priority=_PRIORITY_SPECIALIZED,
     ),
     PhaseSpec(
         name="deserialization_audit",
         directive=_DESERIALIZATION_AUDIT_DIRECTIVE,
-        condition=_make_target_kind_condition(_SOURCE_KINDS),
+        condition=_make_specialized_phase_condition(
+            _SOURCE_KINDS, _DESERIALIZATION_KEYWORDS,
+        ),
         capability="source-audit",
         max_turns=_AUDIT_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("audit_mcp",),
+        priority=_PRIORITY_SPECIALIZED,
     ),
     PhaseSpec(
         name="auth_bypass_audit",
         directive=_AUTH_BYPASS_AUDIT_DIRECTIVE,
-        condition=_make_target_kind_condition(_SOURCE_KINDS),
+        condition=_make_specialized_phase_condition(
+            _SOURCE_KINDS, _AUTH_BYPASS_KEYWORDS,
+        ),
         capability="source-audit",
         max_turns=_AUDIT_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("audit_mcp",),
+        priority=_PRIORITY_SPECIALIZED,
     ),
     PhaseSpec(
         name="concurrency_audit",
         directive=_CONCURRENCY_AUDIT_DIRECTIVE,
-        condition=_make_target_kind_condition(_SOURCE_KINDS),
+        condition=_make_specialized_phase_condition(
+            _SOURCE_KINDS, _CONCURRENCY_KEYWORDS,
+        ),
         capability="source-audit",
         max_turns=_AUDIT_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("audit_mcp",),
+        priority=_PRIORITY_SPECIALIZED,
     ),
     PhaseSpec(
         name="protocol_state_audit",
         directive=_PROTOCOL_STATE_AUDIT_DIRECTIVE,
-        condition=_make_target_kind_condition(_SOURCE_KINDS),
+        condition=_make_specialized_phase_condition(
+            _SOURCE_KINDS, _PROTOCOL_STATE_KEYWORDS,
+        ),
         capability="source-audit",
         max_turns=_AUDIT_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("audit_mcp",),
+        priority=_PRIORITY_SPECIALIZED,
     ),
     PhaseSpec(
         name="dependency_audit",
@@ -455,24 +594,31 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         max_turns=_AUDIT_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("audit_mcp",),
+        priority=_PRIORITY_BASELINE,
     ),
     PhaseSpec(
         name="memory_safety_audit",
         directive=_MEMORY_SAFETY_AUDIT_DIRECTIVE,
-        condition=_make_target_kind_condition(_VARIANT_KINDS),
+        condition=_make_specialized_phase_condition(
+            _VARIANT_KINDS, _MEMORY_SAFETY_KEYWORDS,
+        ),
         capability="binary-audit",
         max_turns=_BINARY_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("audit_mcp", "ida_headless"),
+        priority=_PRIORITY_SPECIALIZED,
     ),
     PhaseSpec(
         name="kernel_driver_audit",
         directive=_KERNEL_DRIVER_AUDIT_DIRECTIVE,
-        condition=_make_target_kind_condition(_BINARY_KINDS),
+        condition=_make_specialized_phase_condition(
+            _BINARY_KINDS, _KERNEL_DRIVER_KEYWORDS,
+        ),
         capability="binary-audit",
         max_turns=_BINARY_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("ida_headless",),
+        priority=_PRIORITY_SPECIALIZED,
     ),
     PhaseSpec(
         name="compiler_hardening_audit",
@@ -482,6 +628,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         max_turns=_HARDENING_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("audit_mcp", "ida_headless"),
+        priority=_PRIORITY_SPECIALIZED,
     ),
     PhaseSpec(
         name="sandbox_escape_audit",
@@ -491,6 +638,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         max_turns=_AUDIT_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("audit_mcp", "ida_headless"),
+        priority=_PRIORITY_SPECIALIZED,
     ),
     PhaseSpec(
         name="crypto_audit",
@@ -500,6 +648,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         max_turns=_HARDENING_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("audit_mcp", "ida_headless"),
+        priority=_PRIORITY_SPECIALIZED,
     ),
     PhaseSpec(
         name="side_channel_audit",
@@ -509,6 +658,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         max_turns=_HARDENING_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("audit_mcp", "ida_headless"),
+        priority=_PRIORITY_SPECIALIZED,
     ),
     PhaseSpec(
         name="variant_hunt",
@@ -518,6 +668,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         max_turns=_AUDIT_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("audit_mcp", "ida_headless"),
+        priority=_PRIORITY_SPECIALIZED,
     ),
     PhaseSpec(
         name="patch_diff_audit",
@@ -527,6 +678,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         max_turns=_AUDIT_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("audit_mcp", "ida_headless"),
+        priority=_PRIORITY_SPECIALIZED,
     ),
     PhaseSpec(
         name="binary_audit",
@@ -536,6 +688,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         max_turns=_BINARY_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("ida_headless",),
+        priority=_PRIORITY_BASELINE,
     ),
     PhaseSpec(
         name="mobile_audit",
@@ -545,6 +698,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         max_turns=_AUDIT_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("android_mcp", "audit_mcp"),
+        priority=_PRIORITY_BASELINE,
     ),
     PhaseSpec(
         name="fuzz_targeting",
@@ -554,6 +708,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         max_turns=_HARDENING_PHASE_MAX_TURNS,
         trust="advisory",
         allowed_servers=("audit_mcp", "ida_headless"),
+        priority=_PRIORITY_BASELINE,
     ),
     PhaseSpec(
         name="filter_bypass_synthesis",
@@ -565,7 +720,8 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         capability="exploit-dev",
         max_turns=_HARDENING_PHASE_MAX_TURNS,
         trust="advisory",
-        allowed_servers=("audit_mcp", "ida_headless"),
+        allowed_servers=("audit_mcp", "ida_headless", "poc_runner"),
+        priority=_PRIORITY_FILTER_BYPASS,
     ),
     PhaseSpec(
         name="exploit_primitive_composition",
@@ -577,7 +733,8 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         capability="exploit-dev",
         max_turns=_AUDIT_PHASE_MAX_TURNS,
         trust="confirmed",
-        allowed_servers=("audit_mcp", "ida_headless"),
+        allowed_servers=("audit_mcp", "ida_headless", "poc_runner"),
+        priority=_PRIORITY_EXPLOIT_COMPOSE,
     ),
     PhaseSpec(
         name="poc_development",
@@ -589,7 +746,8 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         capability="exploit-dev",
         max_turns=_POC_DEV_MAX_TURNS,
         trust="confirmed",
-        allowed_servers=("audit_mcp", "ida_headless"),
+        allowed_servers=("audit_mcp", "ida_headless", "poc_runner"),
+        priority=_PRIORITY_POC,
     ),
     # Terminal open-ended hunt. Unconditional (no ``condition``) so it
     # activates for any target kind once every scoped phase above has been
@@ -607,6 +765,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         allowed_servers=("audit_mcp", "ida_headless"),
         max_retries=_CONTINUED_HUNT_MAX_RETRIES,
         catch_all=True,
+        priority=_PRIORITY_TERMINAL,
     ),
 )
 

@@ -27,6 +27,7 @@ from typing import Any, ClassVar
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
 
+from aila.config import get_settings
 from aila.modules.vr.contracts import PayloadKind
 from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
@@ -34,8 +35,10 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
     VRTargetRecord,
 )
+from aila.modules.vr.services.analysis_system import resolve_investigation_integration
 from aila.modules.vr.services.knowledge_scope import vr_knowledge_namespaces
 from aila.modules.vr.services.mcp_call_logger import record_call
+from aila.modules.vr.tools.poc_runner import PoCRunnerTool
 from aila.platform.agents.observation import (
     ObservationKind,
     ObservationPolarity,
@@ -92,12 +95,17 @@ class ToolExecutor(ToolExecutorHelpersBase):
     #   - android_mcp: APK-facet tools (manifest / signing / permissions)
     #   - knowledge:   RFC-12 read-only knowledge retrieval (available on
     #                  every target kind)
+    #   - poc_runner:  issue #245 SSH-driven PoC compile/run/verify on a
+    #                  remote analysis workstation. Exploit-dev only and
+    #                  further phase-gated (per-phase allowed_servers); the
+    #                  SSH integration is injected server-side in
+    #                  _pre_dispatch_correct_args so the agent never supplies it.
     # The base check (ToolExecutorHelpersBase._dispatch) rejects any other
     # server_id BEFORE adapter lookup with a clear "not exposed to this
     # agent" error. Adding a new bridge requires wiring it in ``__init__``
     # AND appending it here.
     _AGENT_ALLOWED_SERVERS: frozenset[str] = frozenset(
-        {"audit_mcp", "ida_headless", "android_mcp", "knowledge"},
+        {"audit_mcp", "ida_headless", "android_mcp", "knowledge", "poc_runner"},
     )
 
     # ---- Lateral-vulnerability discovery patterns (issue #95, #136) ----
@@ -195,6 +203,7 @@ class ToolExecutor(ToolExecutorHelpersBase):
         audit_mcp: Any = None,
         android_mcp: Any = None,
         knowledge: Any | None = None,
+        poc_runner: Any | None = None,
     ) -> None:
         self._message_model = VRInvestigationMessageRecord
         self._branch_model = VRInvestigationBranchRecord
@@ -215,6 +224,10 @@ class ToolExecutor(ToolExecutorHelpersBase):
                 # RFC-12 agentic path: read-only knowledge retrieval,
                 # scoped server-side in _pre_dispatch_correct_args.
                 "knowledge": knowledge or KnowledgeBridgeTool(),
+                # Issue #245: local SSH-driven PoC runner Tool. Its
+                # integration (SSH config) is injected server-side in
+                # _pre_dispatch_correct_args so the agent can never supply it.
+                "poc_runner": poc_runner or PoCRunnerTool(get_settings()),
             }.items()
             if bridge is not None
         }
@@ -253,6 +266,19 @@ class ToolExecutor(ToolExecutorHelpersBase):
         # round-trip that would return "Unknown index" / a missing kwarg).
         if server_id == "audit_mcp":
             return await self._maybe_correct_index_id(investigation_id, args)
+        # Issue #245: inject the investigation's SSH integration SERVER-SIDE so
+        # the agent can never point the PoC runner at another workstation. Any
+        # agent-supplied ``integration`` is dropped and replaced. Fail-open:
+        # when no integration is registered we leave args untouched and let the
+        # tool return its own "integration required" error, which the executor
+        # surfaces to the agent rather than crashing the dispatch.
+        if server_id == "poc_runner":
+            integration = await resolve_investigation_integration(investigation_id)
+            if integration:
+                scoped = {k: v for k, v in args.items() if k != "integration"}
+                scoped["integration"] = integration
+                return scoped
+            return args
         # RFC-12: inject the workspace-scoped knowledge namespaces SERVER-SIDE
         # so the agent can never widen retrieval beyond its own workspace.
         # Any agent-supplied _namespaces is dropped and replaced.
