@@ -345,12 +345,26 @@ KNOWLEDGE_TOOLS: frozenset[str] = frozenset({
 })
 
 
+# Issue #245: the in-process, SSH-backed PoC runner exposed to
+# exploit-dev agents during dispatch-hub phases. Each action drives a
+# remote analysis/PoC workstation over SSH to compile, run, verify, and
+# tear down reproducers; the generic adapter renders the
+# {status, ...} dicts the tool returns.
+POC_RUNNER_TOOLS: frozenset[str] = frozenset({
+    "compile_poc",
+    "run_poc",
+    "verify_reliability",
+    "cleanup_workspace",
+})
+
+
 # Indexed by server_id used by the bridge dispatch.
 KNOWN_TOOLS: dict[str, frozenset[str]] = {
     "ida_headless": IDA_HEADLESS_TOOLS,
     "audit_mcp": AUDIT_MCP_TOOLS,
     "android_mcp": ANDROID_MCP_TOOLS,
     "knowledge": KNOWLEDGE_TOOLS,
+    "poc_runner": POC_RUNNER_TOOLS,
 }
 
 

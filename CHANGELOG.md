@@ -7,8 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.52] - 2026-09-03 -- Discovery-driven dispatch priority, keyword-gated specialized audits, the post-submit PoC feedback loop, and finalize spine and verifier gate fixes
+
+### Added
+
+- The investigation dispatch hub now selects the next phase by an explicit activation priority instead of tuple declaration order. Recon runs first; once a finding is confirmed the hub opens the proof-of-concept phase ahead of the generic audit sweeps, so a confirmed lead is verified before more turns are spent auditing.
+- Specialized audit phases (injection, deserialization, auth bypass, concurrency, protocol state, memory safety, kernel driver) now activate only when a shared-ledger discovery names their vulnerability class by keyword, routing the panel to the phase recon named rather than every kind-eligible audit phase. A ratified replan waives the keyword gate so target kind alone can reactivate a phase.
+- The reasoning agent can compile and run a proof-of-concept in the isolated SSH sandbox during exploit-development phases through a new `poc_runner` tool. The tool is reachable only from the exploit phases, and its workstation SSH configuration is injected server-side so the agent never supplies it.
+- A submitted proof-of-concept is verified after the finding is recorded. The outcome dispatcher compiles and runs it in the sandbox: a reproduced crash stamps the finding with the sanitizer report, a crash signature, and a reliability ratio, while a compile failure or a non-reproducing run writes a feedback directive onto the submitting branch so the next turn can repair the PoC.
+- A dispatch phase may bind a custom algorithmic state handler in place of the agent loop, so a deterministic verification state can sit in the same discovery-driven graph as the agent-loop phases.
+
 ### Fixed
 
+- The dispatch hub no longer opens the advisory filter-bypass phase ahead of the proof-of-concept phase once a finding is confirmed. The confirmed proof-of-concept phase now takes precedence over the advisory exploit phases through the new activation priority.
 - The investigation finalize spine now runs in production. The aggregate step previously failed on a missing required argument and the error was swallowed, so claim merge, branch promotion, the falsifier pass, and settled-claim markers never executed. Finalize now threads the outcome model, branch pool, falsifier, and ledger through the emit bindings; it also reaps stale open ledger requests and records per-persona shared-claim coverage on each pass.
 - The pre-dispatch verifier gate now runs for every positive outcome. The dispatcher resolved the verifier through a module-level entrypoint that did not exist, so the import failed and verification was skipped. A module-level `verify_evidence` entrypoint now resolves; when the outcome payload omits an audit-mcp index the verifier resolves it from the investigation target handles inside the vr module before judging.
 - Provider prompt-prefix caching now defaults on, matching the resolver's documented default. A schema default of off was materialized as an explicit value that the resolver read as an operator kill switch, so a base install never got the cheaper prefix layout.
