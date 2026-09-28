@@ -4,6 +4,6 @@
   "compilerOptions": {
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "jsx": "react-jsx",
-    "types": ["vite/client", "node", "@testing-library/jest-dom"]
+    "types": ["vite/client", "node"]
   }
 }

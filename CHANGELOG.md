@@ -7,6 +7,19 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.53] - 2026-09-04 -- Frontend dependency purge and workspace catalog reorganization
+
+### Removed
+
+- Removed 27 unused runtime dependencies and 15 unused development dependencies from the shell package. They were carried over from the application stack that existed before the console rebuild (routing, charts, maps, terminals, icon sets, flow diagrams, drag-and-drop, animation, Tailwind, Storybook, and the unit-test harness) and nothing in the current console imports them.
+- Removed the dead Storybook, Vitest, and shadcn CLI configuration files, which referenced directories and packages that no longer exist.
+
+### Changed
+
+- Pruned the pnpm catalogs to the packages still consumed and reduced the security override floors to the three packages still present in the install tree (postcss, nanoid, dompurify).
+- Simplified vendor chunking in the Vite config to the vendor groups the console still ships (react, tanstack, monaco) and removed dead path aliases from the Vite and TypeScript configs.
+- The prune removes 916 packages from the install tree and shrinks the lockfile by roughly ten thousand lines; pnpm audit now reports zero known vulnerabilities.
+
 ## [0.5.52] - 2026-09-03 -- Discovery-driven dispatch priority, keyword-gated specialized audits, the post-submit PoC feedback loop, and finalize spine and verifier gate fixes
 
 ### Added

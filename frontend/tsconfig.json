@@ -3,9 +3,7 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"],
-      "@app/*": ["src/app/*"],
-      "@platform/*": ["src/platform/*"]
+      "@/*": ["./src/*"]
     }
   },
   "include": [
