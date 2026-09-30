@@ -20,7 +20,7 @@ dependencies = [
   "slowapi==0.1.9",
   "python-dotenv==1.2.2",
   "pydantic==2.11.7",
-  "PyJWT==2.13.0",  # CVE-fix bump (PYSEC-2026-175/177/178/179, all fixed in 2.13.0)
+  "PyJWT==2.15.0",  # CVE-fix bump (PYSEC-2026-175/177/178/179, all fixed in 2.13.0)
   "sentence-transformers==5.3.0",
 
   "asyncpg==0.31.0",
