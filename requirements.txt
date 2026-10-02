@@ -14,7 +14,7 @@ slowapi==0.1.9
 python-dotenv==1.2.2
 pydantic==2.11.7
 PyJWT==2.13.0
-sentence-transformers==5.3.0
+sentence-transformers==5.6.0
 asyncpg==0.31.0
 psycopg[binary]==3.3.3
 alembic==1.18.4
