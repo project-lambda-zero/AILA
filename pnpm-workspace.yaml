@@ -7,7 +7,8 @@ packages:
 overrides:
   postcss: ">=8.5.23"
   nanoid: ">=3.3.18"
-  dompurify: ">=3.4.13"
+  dompurify: ">=3.4.17"
+  source-map-js: ">=1.2.2"
 
 catalog:
   typescript: 6.0.2
@@ -20,8 +21,8 @@ catalogs:
     "@types/react-dom": 19.2.3
 
   vite:
-    vite: 8.0.16
-    "@vitejs/plugin-react": 6.0.2
+    vite: 8.3.5
+    "@vitejs/plugin-react": 6.1.2
 
   query:
     "@tanstack/react-query": 5.101.0
@@ -30,10 +31,6 @@ catalogs:
     "@monaco-editor/react": 4.7.0
     monaco-editor: 0.55.1
     zustand: 5.0.14
-
-  testing:
-    "@playwright/test": 1.60.0
-    "@axe-core/playwright": 4.11.3
 
   types:
     "@types/node": 24.7.2

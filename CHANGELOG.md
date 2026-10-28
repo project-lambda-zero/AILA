@@ -7,6 +7,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.54] - 2026-10-29 -- Dependency security floors and removal of dead tooling and files
+
+### Security
+
+- PyJWT moves to 2.15.1, clearing the options-dict mutation advisory (GHSA-gvp8-978c-rx2q, affected 2.11.0 through 2.13.0) and the empty-HMAC-key, JWK, PEM-detection, and recursion advisories fixed in 2.14 and 2.15.
+- sentence-transformers moves to 5.7.0; releases before 5.6.0 let local model loading bypass `trust_remote_code`.
+- python-multipart moves to 0.0.32, past the querystring parsing and negative Content-Length advisories fixed in 0.0.31.
+- The frontend now builds with Vite 8.3.5 and `@vitejs/plugin-react` 6.1.2, and the workspace overrides floor dompurify at 3.4.17 and source-map-js at 1.2.2. `pnpm audit` reports zero known vulnerabilities.
+
+### Removed
+
+- `requirements.txt` and `requirements-dev.txt`. Nothing installed from them (Dockerfile, Makefile, and CI all install from `pyproject.toml`), the dev file had drifted from the `[dev]` extra, and each one duplicated every pip security alert.
+- The Playwright end-to-end suite under `frontend/tests/e2e/`, its screenshots, `playwright.config.ts`, and the Playwright dependencies. Every spec targeted routes and test ids of the frontend that existed before the console rebuild; the current console has no URL routing and none of those test ids.
+- Unreferenced frontend files: three unused fonts, a committed type-check output dump, the theme screenshot script, the frontend `.env.example` (its variable is never read), and the frontend honesty-audit script and whitelist, whose tool no longer exists.
+- The `make storybook` and `make test-frontend` targets and the root `test` and `test:e2e` scripts, which ran tooling that no longer exists.
+- Unused root files (`start_worker.py`, superseded by `python -m aila worker`; `_health_check.ps1`; an accidental `quote` file), the applied one-shot `rewrite_windows_tool_installs.py` codemod, and the forensics `example_workflows.json`, which no code loaded.
+
+### Changed
+
+- README, QUICKSTART, TEST_GUIDE, PRODUCTION_RUBRIC, AGENTS.md, CLAUDE.md, and the frontend agent rules no longer reference removed frontend test commands, the frontend honesty audit, or the `@app`/`@platform` aliases.
+
 ## [0.5.53] - 2026-09-04 -- Frontend dependency purge and workspace catalog reorganization
 
 ### Removed

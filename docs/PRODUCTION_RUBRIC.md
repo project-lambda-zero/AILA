@@ -44,7 +44,6 @@ the upstream advisories shift independently of the codebase).
 |------|---------|---------------|
 | Backend unit tests | `python -m pytest tests/ --ignore=tests/test_e2e.py --ignore=tests/test_e2e_live.py` | Every test the module adds passes. Pre-existing failures are documented in the PR description, not silenced. |
 | Module-specific tests | Tests under `tests/<module>_*.py` cover every state machine branch, every error path, every contract field a caller relies on. | Domain logic, not plumbing -- the test would actually break if the bug came back. No `assert True`-style sentinels. |
-| Frontend unit tests | `pnpm -r run test` | Vitest passes across every workspace package, including the module's own `tests/` folder. |
 | Optional E2E | `pytest tests/test_e2e.py` (Playwright + live infra) | Green only when the change affects user-visible flows; otherwise skipped and noted in the PR. |
 
 Test conduct:
@@ -127,7 +126,6 @@ Test conduct:
 [ ] pnpm install --frozen-lockfile   (lockfile in sync with package.json)
 [ ] pnpm --filter @aila/shell run build
 [ ] make test                        (or: pytest tests/ --ignore=tests/test_e2e*)
-[ ] make test-frontend               (pnpm -r run test)
 [ ] Alembic head matches src/aila/alembic/versions/ tip (if DDL touched)
 [ ] LLMCostRecord pricing configured for any new model_id
 [ ] No new os.getenv in module code (search src/aila/modules/<name>/)

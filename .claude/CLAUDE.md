@@ -77,7 +77,6 @@ pnpm --filter @aila/shell run build                  # production build (single 
 
 # Tests
 python -m pytest tests/ --ignore=tests/test_e2e.py --ignore=tests/test_e2e_live.py -x
-pnpm -r run test                                      # frontend unit tests (shell + modules)
 
 # Or use make
 make install        # full setup (pip + pnpm)
@@ -90,7 +89,6 @@ make db-init        # create tables + stamp head (one-time, fresh DB only)
 make migrate        # alembic upgrade head
 make check          # lint + honesty + compile + typecheck
 make test           # backend unit tests
-make test-frontend
 make backend frontend worker          # dev servers (each in separate terminal)
 ```
 
@@ -135,7 +133,6 @@ pnpm install                                # install / sync all workspace packa
 pnpm dev                                    # alias for: pnpm --filter @aila/shell run dev
 pnpm build                                  # alias for: pnpm --filter @aila/shell run build
 pnpm -r run type-check                      # typecheck across all workspace packages
-pnpm -r run test                            # vitest across all workspace packages
 pnpm --filter @aila/vulnerability-frontend run type-check   # one module
 pnpm add <pkg> --filter @aila/<module>-frontend             # add a dep to a single module
 ```

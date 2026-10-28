@@ -1,10 +1,9 @@
 {
   "name": "aila",
-  "version": "0.5.53",
+  "version": "0.5.54",
   "private": true,
   "packageManager": "pnpm@10.30.3",
   "description": "Modular AI security platform with pluggable analysis modules: a Python core exposing a Typer CLI and a FastAPI REST API, backed by PostgreSQL with pgvector and an ARQ/Redis task queue, paired with a React + Vite + TypeScript frontend.",
-  "main": "index.js",
   "directories": {
     "doc": "docs",
     "test": "tests"
@@ -14,8 +13,6 @@
     "build": "pnpm --filter @aila/shell run build",
     "preview": "pnpm --filter @aila/shell run preview",
     "type-check": "pnpm -r run type-check",
-    "test": "pnpm -r --if-present run test",
-    "test:e2e": "pnpm --filter @aila/shell run test:e2e",
     "clean": "pnpm -r run clean && rm -rf node_modules"
   },
   "engines": {

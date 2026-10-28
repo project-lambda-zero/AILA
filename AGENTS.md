@@ -27,7 +27,6 @@ make worker-vuln                                                              # 
 make worker-forensics                                                         # ARQ worker, forensics queue
 make check                                                                    # lint + honesty + compile + typecheck (full pre-PR gate)
 make test                                                                     # backend pytest (excludes tests/test_e2e*.py)
-make test-frontend                                                            # pnpm -r run test across shell + module packages
 make security-scan                                                            # pip-audit + bandit
 ```
 

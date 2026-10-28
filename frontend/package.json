@@ -1,16 +1,13 @@
 {
   "name": "@aila/shell",
   "private": true,
-  "version": "0.5.53",
+  "version": "0.5.54",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 3000",
     "build": "tsc --noEmit && vite build",
     "type-check": "tsc --noEmit",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
-    "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui",
-    "honesty-audit": "node src/tools/honesty-audit.js src/ --whitelist ../honesty_whitelist.js",
     "clean": "rm -rf dist node_modules .vite"
   },
   "dependencies": {
@@ -23,8 +20,6 @@
   },
   "devDependencies": {
     "@aila/typescript-config": "workspace:*",
-    "@axe-core/playwright": "catalog:testing",
-    "@playwright/test": "catalog:testing",
     "@types/node": "catalog:types",
     "@types/react": "catalog:react19",
     "@types/react-dom": "catalog:react19",

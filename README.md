@@ -554,7 +554,6 @@ Common targets in the root `Makefile`:
 | `docker compose -f infra/utilities/docker-compose.full.yml up --build` | Full-stack containers: postgres + redis + api + 4 workers + frontend. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). |
 | `make test`             | `pytest`, excluding `tests/test_e2e*.py`                                  |
 | `make test-e2e`         | `pytest tests/test_e2e.py -v` (requires live infrastructure)              |
-| `make test-frontend`    | `pnpm --filter @aila/shell run test` (shell package only; module frontends use `pnpm -r run test`) |
 | `make lint`             | `ruff check src/aila/`                                                    |
 | `make typecheck`        | `pnpm -r run type-check` (every workspace package, shell + modules)       |
 | `make honesty`          | `python -m aila.tools.honesty_audit src/aila --whitelist honesty_whitelist.py` |
