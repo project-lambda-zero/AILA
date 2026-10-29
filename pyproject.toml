@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aila"
-version = "0.5.55"
+version = "0.5.56"
 description = "Modular AI security platform with pluggable analysis modules."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "croniter==6.2.2",
   "cryptography==50.0.0",  # security bump (GHSA-g6cj-pr64-35w5; vulnerable range < 50.0.0)
-  "filelock==3.25.2",
+  "filelock==4.2.4",  # nine advisories across <= 4.2.0 (one high); first patched 4.2.1
   "fastapi==0.135.3",
   "httpx==0.28.1",
   "paramiko==5.0.0",  # CVE-2026-44405 (SHA-1 in rsakey.py): vuln_range <= 4.0.0; 5.0.0 is implicitly unaffected

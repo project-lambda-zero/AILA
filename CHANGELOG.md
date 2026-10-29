@@ -7,6 +7,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.56] - 2026-10-29 -- filelock security floor
+
+### Fixed
+
+- `filelock` raised from 3.25.2 to 4.2.4. Nine advisories (one high, six medium, two low) cover releases up to 4.2.0; the first patched release is 4.2.1. The secret keyring keeps its behavior on 4.x: creation, reload, and key rotation under the lock succeed, and a second process waiting on a held keyring lock still times out after 5 seconds.
+
 ## [0.5.55] - 2026-10-29 -- Faster default test runs and removal of 499 hollow tests
 
 ### Changed
