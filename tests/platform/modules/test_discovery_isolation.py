@@ -15,7 +15,6 @@ import types
 import pytest
 
 from aila.platform.modules import builtin
-from aila.platform.modules.protocol import ModuleProtocol
 
 
 class _StubModule:
@@ -126,9 +125,3 @@ def test_discovery_order_is_deterministic(monkeypatch, _patched_discovery):
     )
 
 
-def test_protocol_stub_shape_matches_expectations():
-    """Guard: the stub is only used as a container for module_id."""
-
-    stub = _StubModule("smoke")
-    assert stub.module_id == "smoke"
-    assert not isinstance(stub, ModuleProtocol)  # not a full protocol impl

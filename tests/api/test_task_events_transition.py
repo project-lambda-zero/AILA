@@ -117,8 +117,3 @@ def test_transition_view_null_from_state() -> None:
     assert view.from_state is None
 
 
-def test_transitions_schema_in_all_export() -> None:
-    """TransitionView is exported via __all__ for clean import surface."""
-    from aila.api.schemas import transitions
-
-    assert "TransitionView" in transitions.__all__

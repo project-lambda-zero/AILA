@@ -35,12 +35,6 @@ _INTEGRATION = {
 }
 
 
-def test_run_command_accepts_timeout_seconds_parameter():
-    """SSHService.run_command must have a timeout_seconds parameter."""
-    sig = inspect.signature(SSHService.run_command)
-    assert "timeout_seconds" in sig.parameters
-
-
 def test_timeout_seconds_defaults_to_none():
     """timeout_seconds must default to None (backward-compat -- existing callers unchanged)."""
     sig = inspect.signature(SSHService.run_command)

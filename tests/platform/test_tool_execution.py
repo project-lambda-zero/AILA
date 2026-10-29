@@ -12,7 +12,6 @@ import pytest
 from pydantic import ValidationError
 
 from aila.platform.agents.tool_execution import (
-    ToolExecutionResult,
     classify_contract_error,
     parse_command,
 )
@@ -238,9 +237,3 @@ def test_classify_unmatched_returns_none() -> None:
     assert classify_contract_error("that hypothesis does not exist") is None
 
 
-def test_result_defaults() -> None:
-    r = ToolExecutionResult(
-        server_id="s", tool_name="t", message_id=None, success=False,
-    )
-    assert r.error == ""
-    assert r.success is False

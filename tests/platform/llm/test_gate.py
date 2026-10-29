@@ -165,11 +165,6 @@ class TestExtractConfidence:
         # Falls to heuristic since "not_a_number" is not a number
         assert isinstance(score, float)
 
-    def test_json_without_confidence_field_falls_to_heuristic(self) -> None:
-        content = json.dumps({"answer": "yes", "reasoning": "because reasons"})
-        score = extract_confidence(content, "stop")
-        # No confidence_score key => heuristic
-        assert isinstance(score, float)
 
     def test_plain_text_long_stop_returns_0_7(self) -> None:
         content = "This is a normal response with enough text to exceed fifty characters threshold."

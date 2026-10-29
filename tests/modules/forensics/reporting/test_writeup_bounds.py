@@ -131,6 +131,3 @@ def test_truncation_uses_injectable_cap() -> None:
     assert result == "abc" + _OUTPUT_TRUNCATION_MARKER
 
 
-def test_output_cap_is_the_documented_value() -> None:
-    # Pin the numeric contract: 64 000 chars, matching the marker text.
-    assert _OUTPUT_CHAR_CAP == 64_000

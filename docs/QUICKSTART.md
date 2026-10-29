@@ -253,7 +253,6 @@ Each worker process subscribes to one queue (`arq:queue:<name>`). For multi-modu
 
 ```bash
 make test           # backend unit tests (excludes E2E suites)
-make test-frontend  # frontend unit tests (shell only). For all modules: pnpm -r run test
 make check          # full quality gates: ruff, honesty, compileall, typecheck
 ```
 
@@ -269,7 +268,6 @@ make security-scan                       # pip-audit + bandit
 
 # Frontend (from repo root)
 pnpm -r run type-check                   # TypeScript across shell + all 4 modules
-pnpm -r run test                         # vitest across shell + modules
 pnpm --filter @aila/shell run build      # production build
 ```
 

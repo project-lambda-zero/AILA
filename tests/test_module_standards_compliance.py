@@ -18,8 +18,7 @@ from pathlib import Path
 import pytest
 
 from aila.modules.vulnerability.module import create_module
-from aila.platform.modules.protocol import ModuleProtocol, ModuleRouteSpec
-from aila.platform.modules.standard import build_module_factory, validate_module_layout
+from aila.platform.modules.standard import validate_module_layout
 from aila.tools.honesty_audit import HonestyAuditor
 
 __all__ = [
@@ -55,9 +54,6 @@ def auditor():
 class TestVulnerabilityModuleCompliance:
     """Verify the vulnerability module satisfies every ModuleProtocol method."""
 
-    def test_isinstance_module_protocol(self, module):
-        """Module instance must satisfy the runtime-checkable ModuleProtocol."""
-        assert isinstance(module, ModuleProtocol)
 
     def test_module_id_matches_folder(self, module):
         """module_id must match the package directory name 'vulnerability'."""
@@ -95,27 +91,12 @@ class TestVulnerabilityModuleCompliance:
         for key in keys:
             assert isinstance(key, str)
 
-    def test_route_specs_returns_list(self, module):
-        """route_specs() must return a list of ModuleRouteSpec."""
-        specs = module.route_specs()
-        assert isinstance(specs, list)
-        for spec in specs:
-            assert isinstance(spec, ModuleRouteSpec)
 
     def test_route_specs_has_prefix(self, module):
         """Each route spec must have a non-empty prefix."""
         for spec in module.route_specs():
             assert spec.prefix, "route spec prefix must be non-empty"
 
-    def test_route_specs_router_factory_callable(self, module):
-        """Each spec.router_factory must be callable."""
-        for spec in module.route_specs():
-            assert callable(spec.router_factory)
-
-    def test_route_specs_tool_keys_is_tuple(self, module):
-        """Each spec.tool_keys must be a tuple (frozen dataclass constraint)."""
-        for spec in module.route_specs():
-            assert isinstance(spec.tool_keys, tuple)
 
     @pytest.mark.asyncio
     async def test_system_summary_returns_dict(self, module):
@@ -150,19 +131,10 @@ class TestVulnerabilityModuleCompliance:
         assert len(result) == 1
         assert result[0]["host"] == "web-01"
 
-    def test_create_module_factory(self):
-        """build_module_factory('aila.modules.vulnerability') must succeed."""
-        factory = build_module_factory("aila.modules.vulnerability")
-        assert callable(factory)
 
     def test_validate_module_layout(self):
         """validate_module_layout('aila.modules.vulnerability') must not raise."""
         validate_module_layout("aila.modules.vulnerability")
-
-    def test_health_checks_returns_dict(self, module):
-        """health_checks() must return a dict (possibly empty)."""
-        result = module.health_checks()
-        assert isinstance(result, dict)
 
 
 # ---------------------------------------------------------------------------

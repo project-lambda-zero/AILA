@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aila"
-version = "0.5.52"
+version = "0.5.55"
 description = "Modular AI security platform with pluggable analysis modules."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -20,8 +20,8 @@ dependencies = [
   "slowapi==0.1.9",
   "python-dotenv==1.2.2",
   "pydantic==2.11.7",
-  "PyJWT==2.13.0",  # CVE-fix bump (PYSEC-2026-175/177/178/179, all fixed in 2.13.0)
-  "sentence-transformers==5.3.0",
+  "PyJWT==2.15.1",  # GHSA-gvp8-978c-rx2q (options-dict mutation, 2.11.0-2.13.0) and the 2.14/2.15 HMAC/JWK advisories
+  "sentence-transformers==5.7.0",  # local model loading bypassed trust_remote_code before 5.6.0
 
   "asyncpg==0.31.0",
   "psycopg[binary]==3.3.3",
@@ -42,7 +42,7 @@ dependencies = [
   "reportlab==4.5.1",
   "asn1crypto==1.5.1",  # APK v2/v3 signing block (CMS/PKCS7) parsing in platform.apk
   "PyYAML==6.0.3",      # YAML parsing in platform code (imported unguarded)
-  "python-multipart==0.0.27",  # fastapi Form/File parsing (upload endpoints)
+  "python-multipart==0.0.32",  # fastapi Form/File parsing (upload endpoints); querystring/Content-Length advisories fixed in 0.0.31
   'python-magic==0.4.27; platform_system != "Windows"',
   'python-magic-bin==0.4.14; platform_system == "Windows"',
   # ──────────────────────────────────────────────────────────────
@@ -164,7 +164,7 @@ markers = [
     "e2e: end-to-end tests requiring live infrastructure (deselect with '-m not e2e')",
     "integration: integration tests requiring real API keys (deselect with '-m not integration')",
 ]
-addopts = "--cov=src/aila --cov-report=term-missing -m 'not e2e and not integration'"
+addopts = "-m 'not e2e and not integration'"
 pythonpath = ["src"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"

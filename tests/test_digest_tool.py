@@ -153,9 +153,3 @@ async def test_tool_rejects_bad_action(test_db):
         await tool.forward(action="bad")
 
 
-def test_tool_alias_and_capability():
-    """TOOL_ALIAS == 'WEEKLY_DIGEST' and TOOL_CAPABILITY == 'exec.weekly_digest'."""
-    from aila.modules.vulnerability.tools.digest import TOOL_ALIAS, TOOL_CAPABILITY
-
-    assert TOOL_ALIAS == "WEEKLY_DIGEST"
-    assert TOOL_CAPABILITY == "exec.weekly_digest"

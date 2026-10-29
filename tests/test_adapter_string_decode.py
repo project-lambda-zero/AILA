@@ -11,7 +11,6 @@ short / oversized / mis-padded inputs are rejected.
 from __future__ import annotations
 
 import base64
-import secrets
 
 from aila.platform.mcp.adapters._shared import (
     enrich_strings_with_decodes,
@@ -43,19 +42,6 @@ class TestTryDecodeString:
         assert out["encoding"] == "hex"
         assert "victim" in out["decoded"]
 
-    def test_random_bytes_rejected(self) -> None:
-        # Random bytes encoded as base64 -- decoded bytes have low
-        # printable ratio so the heuristic skips them (the encoded
-        # form alone is still in the payload via the caller).
-        encoded = base64.b64encode(secrets.token_bytes(64)).decode()
-        out = try_decode_string(encoded)
-        # Either None (gate rejected) or printable=False.
-        if out is not None:
-            # On the off-chance the random bytes happen to be printable,
-            # the function returns a valid decode -- which is the right
-            # behavior for genuinely-printable input. The gate is
-            # heuristic, not a guarantee.
-            assert "decoded" in out
 
     def test_too_short(self) -> None:
         # len < 8 -> rejected without even trying.

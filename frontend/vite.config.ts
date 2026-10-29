@@ -3,7 +3,6 @@ import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
-import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
@@ -44,94 +43,40 @@ const appVersion = readPackageVersion();
 const buildSha = readBuildSha();
 
 /**
- * C14 -- partition vendor code into deterministic chunks. Without this,
- * Rollup packs every eager import into a single 1.7 MB+ index chunk.
- * The partitions chosen below match the PRD §C 14 acceptance criteria:
- * react/react-router/@tanstack/recharts/@phosphor-icons each get their
- * own bundle so a route change that only needs (say) recharts can fetch
- * just that chunk, not re-download react with it.
+ * Partition vendor code into deterministic chunks. Without this, Rollup
+ * packs every eager import into a single oversized index chunk.
  *
  * Regex tolerates both POSIX `/` and Windows `\` separators because
  * Vite reports module ids with the host platform's path style.
- * Order matters -- first match wins, so more specific patterns first.
  */
 function manualChunks(id: string): string | undefined {
   if (!id.includes("node_modules")) {
     return undefined;
   }
-  // clsx/cva/tailwind-merge are tiny (~25 KB combined) and pulled in by
-  // every component via the `cn()` helper. Putting them in vendor-react
-  // (eager-loaded) prevents the root entry from statically importing
-  // them from vendor-recharts -- which would force the 430 KB recharts
-  // chunk on every route, defeating C17's lazy boundaries.
-  if (/[\\/]node_modules[\\/](react|react-dom|scheduler|react-is|clsx|class-variance-authority|tailwind-merge)[\\/]/.test(id)) {
+  if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) {
     return "vendor-react";
-  }
-  if (/[\\/]node_modules[\\/]react-router[\\/]/.test(id)) {
-    return "vendor-router";
   }
   if (/[\\/]node_modules[\\/]@tanstack[\\/]/.test(id)) {
     return "vendor-tanstack";
   }
-  // @phosphor-icons must stay OUT of the eager entry chunk (shell chrome
-  // imports many icons; leaving them unchunked collapses ~250 KB of
-  // shell + shared icons into the entry). But a single `vendor-phosphor`
-  // chunk had grown to ~516 KB and tripped the 500 KB advisory. Split the
-  // deep-imported (tree-shakeable) icon set into a few bounded, parallel-
-  // loaded chunks, bucketed deterministically by icon module id, so each
-  // chunk stays well under 500 KB while the entry chunk is unaffected.
-  // See #222.
-  if (/[\\/]node_modules[\\/]@phosphor-icons[\\/]/.test(id)) {
-    let hash = 0;
-    for (let i = 0; i < id.length; i += 1) {
-      hash = (hash * 31 + id.charCodeAt(i)) | 0;
-    }
-    return `vendor-phosphor-${Math.abs(hash) % 4}`;
-  }
-  if (/[\\/]node_modules[\\/](recharts|d3-[a-z-]+|victory-vendor)[\\/]/.test(id)) {
-    return "vendor-recharts";
-  }
-  if (/[\\/]node_modules[\\/]@xyflow[\\/]/.test(id)) {
-    return "vendor-xyflow";
-  }
-  if (/[\\/]node_modules[\\/]motion[\\/]/.test(id)) {
-    return "vendor-motion";
-  }
-  if (/[\\/]node_modules[\\/]@xterm[\\/]/.test(id)) {
-    return "vendor-xterm";
-  }
   if (/[\\/]node_modules[\\/](monaco-editor|@monaco-editor)[\\/]/.test(id)) {
     return "vendor-monaco";
-  }
-  if (/[\\/]node_modules[\\/](leaflet|react-leaflet)[\\/]/.test(id)) {
-    return "vendor-leaflet";
-  }
-  if (/[\\/]node_modules[\\/]@base-ui[\\/]/.test(id)) {
-    return "vendor-base-ui";
-  }
-  if (/[\\/]node_modules[\\/](html2canvas|papaparse|jszip)[\\/]/.test(id)) {
-    return "vendor-data";
   }
   return undefined;
 }
 
 export default defineConfig({
-  plugins: [tailwindcss(), react()],
+  plugins: [react()],
   define: {
-    // Compile-time substitutions read in `platform/config/version.ts`.
+    // Compile-time substitutions for the app version and build SHA.
     // JSON.stringify wraps each value as a string literal so the
     // substitution is syntactically valid wherever the global is read.
     __APP_VERSION__: JSON.stringify(appVersion),
     __APP_BUILD_SHA__: JSON.stringify(buildSha),
   },
-  optimizeDeps: {
-    include: ["ogl", "@xterm/xterm", "@xterm/addon-fit"],
-  },
   resolve: {
     alias: [
       { find: /^@\//, replacement: path.resolve(currentDirectory, "src/") + "/" },
-      { find: "@app", replacement: path.resolve(currentDirectory, "src/app") },
-      { find: "@platform", replacement: path.resolve(currentDirectory, "src/platform") },
     ],
   },
   server: {

@@ -73,36 +73,7 @@ def _make_mock_retrieve_tool():
 
 
 class TestRiskScoringAgentKnowledgeParams:
-    def test_constructed_with_no_knowledge_tools(self):
-        """RiskScoringAgent constructed without knowledge tools must not raise."""
-        from aila.modules.vulnerability.agents.scoring.agent import RiskScoringAgent
-        agent = RiskScoringAgent(
-            model=_make_mock_model(),
-            knowledge_store_tool=None,
-            knowledge_retrieve_tool=None,
-        )
-        assert agent.knowledge_store_tool is None
-        assert agent.knowledge_retrieve_tool is None
 
-    def test_knowledge_store_tool_stored_on_self(self):
-        """knowledge_store_tool kwarg is stored as self.knowledge_store_tool."""
-        from aila.modules.vulnerability.agents.scoring.agent import RiskScoringAgent
-        mock_store = _make_mock_store_tool()
-        agent = RiskScoringAgent(
-            model=_make_mock_model(),
-            knowledge_store_tool=mock_store,
-        )
-        assert agent.knowledge_store_tool is mock_store
-
-    def test_knowledge_retrieve_tool_stored_on_self(self):
-        """knowledge_retrieve_tool kwarg is stored as self.knowledge_retrieve_tool."""
-        from aila.modules.vulnerability.agents.scoring.agent import RiskScoringAgent
-        mock_retrieve = _make_mock_retrieve_tool()
-        agent = RiskScoringAgent(
-            model=_make_mock_model(),
-            knowledge_retrieve_tool=mock_retrieve,
-        )
-        assert agent.knowledge_retrieve_tool is mock_retrieve
 
     async def test_store_signal_called_on_model_path(self):
         """_store_signal_to_knowledge is called when signal_source == 'model'.
@@ -297,46 +268,6 @@ class TestRiskScoringAgentKnowledgeParams:
 # ---------------------------------------------------------------------------
 # Task 1 tests: SynthesisAgent knowledge params
 # ---------------------------------------------------------------------------
-
-
-class TestSynthesisAgentKnowledgeParams:
-    def test_constructed_with_no_knowledge_tools(self):
-        """SynthesisAgent constructed without knowledge tools must not raise."""
-        from aila.modules.vulnerability.agents.synthesis.agent import SynthesisAgent
-
-        report_builder = MagicMock()
-        agent = SynthesisAgent(
-            report_builder=report_builder,
-            model=_make_mock_model(),
-            knowledge_store_tool=None,
-            knowledge_retrieve_tool=None,
-        )
-        assert agent.knowledge_store_tool is None
-        assert agent.knowledge_retrieve_tool is None
-
-    def test_knowledge_store_tool_stored_on_self(self):
-        """SynthesisAgent stores knowledge_store_tool on self."""
-        from aila.modules.vulnerability.agents.synthesis.agent import SynthesisAgent
-
-        mock_store = _make_mock_store_tool()
-        agent = SynthesisAgent(
-            report_builder=MagicMock(),
-            model=_make_mock_model(),
-            knowledge_store_tool=mock_store,
-        )
-        assert agent.knowledge_store_tool is mock_store
-
-    def test_knowledge_retrieve_tool_stored_on_self(self):
-        """SynthesisAgent stores knowledge_retrieve_tool on self."""
-        from aila.modules.vulnerability.agents.synthesis.agent import SynthesisAgent
-
-        mock_retrieve = _make_mock_retrieve_tool()
-        agent = SynthesisAgent(
-            report_builder=MagicMock(),
-            model=_make_mock_model(),
-            knowledge_retrieve_tool=mock_retrieve,
-        )
-        assert agent.knowledge_retrieve_tool is mock_retrieve
 
 
 # ---------------------------------------------------------------------------

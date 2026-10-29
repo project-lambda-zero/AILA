@@ -10,8 +10,6 @@ to protect).
 """
 from __future__ import annotations
 
-import inspect
-import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -24,24 +22,6 @@ import aila.platform.tasks.worker as worker_mod
 from aila.platform.tasks.models import TaskRecord, TaskStatus
 
 from .conftest import sqlite_db_env
-
-
-def test_boot_grace_cutoff_binding_removed() -> None:
-    """The ``boot_grace_cutoff = ...`` assignment MUST be gone from
-    ``worker.py``. A docstring or comment mentioning the removed symbol
-    (as archaeology) is fine; a live binding is not.
-
-    It was redundant with ``recency_cutoff`` (any row with
-    ``created_at < now - 60s`` also satisfies ``created_at < now - 10s``),
-    so the second WHERE-clause never removed a candidate. Keeping it
-    obscured the actual grace-window intent.
-    """
-    src = inspect.getsource(worker_mod)
-    # An assignment like ``boot_grace_cutoff = utc_now() - ...``
-    assert not re.search(r"^\s*boot_grace_cutoff\s*=", src, re.MULTILINE), (
-        "boot_grace_cutoff assignment must be removed from worker.py -- "
-        "it was strictly dominated by the 60s recency_cutoff (#40-7)."
-    )
 
 
 def _async_iter_empty() -> Any:

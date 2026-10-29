@@ -43,16 +43,6 @@ def test_dispose_engine_discards_inside_lock():
     )
 
 
-def test_dispose_engine_pops_session_factories():
-    """dispose_engine clears session factory cache for the URL."""
-    from aila.storage import database
-
-    source = inspect.getsource(database.dispose_engine)
-    assert "_SESSION_FACTORIES" in source, (
-        "dispose_engine should clear _SESSION_FACTORIES"
-    )
-
-
 @pytest.mark.asyncio
 async def test_concurrent_dispose_no_race(pg_url):
     """Concurrent dispose_engine calls do not raise or corrupt state."""

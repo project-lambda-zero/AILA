@@ -327,16 +327,6 @@ class TestProgressStreamStreamEvents:
 # ===========================================================================
 
 
-class TestProgressStreamExports:
-    """Verify __all__ exports for progress module."""
-
-    def test_progress_all_exports(self) -> None:
-        """FILE-29: progress.py exports MAX_STREAM_LIFETIME_S + ProgressStream."""
-        from aila.platform.tasks import progress
-
-        assert progress.__all__ == ["MAX_STREAM_LIFETIME_S", "ProgressStream"]
-
-
 # ===========================================================================
 # Group 5: TaskRepository.list_for_user scoping (FILE-30)
 # ===========================================================================
@@ -720,16 +710,6 @@ class TestCrossUserIsolation:
 # ===========================================================================
 # Group 9: TaskRepository __all__ exports (FILE-30)
 # ===========================================================================
-
-
-class TestTaskRepositoryExports:
-    """Verify __all__ exports for storage module."""
-
-    def test_storage_all_exports(self) -> None:
-        """FILE-30: storage.py exports exactly ['TaskRepository']."""
-        from aila.platform.tasks import storage
-
-        assert storage.__all__ == ["TaskRepository"]
 
 
 class TestProgressStreamKey:

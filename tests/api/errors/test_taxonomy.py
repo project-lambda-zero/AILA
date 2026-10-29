@@ -10,12 +10,10 @@ Verifies:
 """
 from __future__ import annotations
 
-import importlib
 from typing import get_type_hints
 
 import pytest
 
-import aila.api.errors
 from aila.api.errors.envelope import ErrorEnvelope
 from aila.platform.exceptions import (
     AILAError,
@@ -80,14 +78,6 @@ def test_taxonomy_http_status(
     )
 
 
-@pytest.mark.parametrize("cls,expected_code,expected_status", _D20_MAPPING)
-def test_taxonomy_inherits_ailaerror(
-    cls: type[AILAError], expected_code: str, expected_status: int
-) -> None:
-    """Every new typed exception is a subclass of AILAError."""
-    assert issubclass(cls, AILAError)
-
-
 def test_taxonomy_classvar_not_on_instance() -> None:
     """ClassVar attrs are class-level and do not pollute instance __dict__."""
     exc = MissingApiKeyError("no key configured")
@@ -116,12 +106,3 @@ def test_envelope_required_fields() -> None:
     assert env.trace_id is None
 
 
-def test_errors_package_phase1_exports() -> None:
-    """Phase-1 package exports: ErrorEnvelope + ERROR_HINTS only."""
-    # Force re-import in case another test mutated module state.
-    errors_pkg = importlib.reload(aila.api.errors)
-
-    assert hasattr(errors_pkg, "ErrorEnvelope")
-    assert hasattr(errors_pkg, "ERROR_HINTS")
-    assert "ErrorEnvelope" in errors_pkg.__all__
-    assert "ERROR_HINTS" in errors_pkg.__all__

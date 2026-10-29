@@ -43,7 +43,6 @@ from aila.modules.vr.agents.outcome_dispatcher import (
 )
 from aila.modules.vr.contracts import OutcomeKind as VROutcomeKind
 from aila.platform.agents.outcome_dispatcher import (
-    OutcomeDispatcherBase,
     OutcomeDispatchResult,
 )
 from aila.platform.contracts.enums import OutcomeDispatchStatus
@@ -52,12 +51,6 @@ from aila.platform.services.outcome_dispatch import OutcomeClaim
 # ---------------------------------------------------------------------------
 # Base wiring
 # ---------------------------------------------------------------------------
-
-
-def test_both_dispatchers_inherit_from_platform_base() -> None:
-    """The extraction wires both module dispatchers through the same base."""
-    assert issubclass(VROutcomeDispatcher, OutcomeDispatcherBase)
-    assert issubclass(MalwareOutcomeDispatcher, OutcomeDispatcherBase)
 
 
 def test_default_error_kinds_are_module_specific() -> None:

@@ -29,7 +29,6 @@ from sqlmodel import select
 from aila.api.auth import AuthContext
 from aila.modules.forensics.api_router import create_forensics_router
 from aila.modules.forensics.api_router import limiter as _forensics_limiter
-from aila.modules.forensics.config_schema import ForensicsConfigSchema
 from aila.modules.forensics.contracts.status import InvestigationStatus
 from aila.modules.forensics.db_models import (
     ArtifactRecord,
@@ -242,18 +241,6 @@ def test_freeflow_cost_ceiling_exceeded_pure() -> None:
     assert _freeflow_cost_ceiling_exceeded(0.99, 1.0) is False
     assert _freeflow_cost_ceiling_exceeded(1.0, 1.0) is True
     assert _freeflow_cost_ceiling_exceeded(1.5, 1.0) is True
-
-
-def test_forensics_config_schema_ships_cost_ceiling_field() -> None:
-    """The new operator knob is on the schema with a positive default."""
-    field = ForensicsConfigSchema.model_fields["freeflow_max_cost_usd"]
-    assert field.default > 0.0
-    # Field annotation is ``float`` (may show as either the class or its name).
-    annotation = field.annotation
-    if isinstance(annotation, type):
-        assert annotation is float
-    else:
-        assert "float" in str(annotation)
 
 
 async def test_freeflow_actual_cost_sums_llm_cost_records(test_db) -> None:

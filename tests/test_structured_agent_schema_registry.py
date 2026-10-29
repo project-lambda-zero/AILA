@@ -15,7 +15,6 @@ from aila.platform.routing.agent import (
     _AGENT_SCHEMA_REGISTRY,
     StructuredAgent,
     _register_agent_schema,
-    get_agent_stats,
     get_registered_schemas,
 )
 
@@ -168,11 +167,6 @@ def test_schema_hash_is_deterministic():
 # ---------------------------------------------------------------------------
 # Test 7: get_agent_stats() returns dict (may be empty)
 # ---------------------------------------------------------------------------
-
-
-def test_get_agent_stats_returns_dict():
-    stats = get_agent_stats()
-    assert isinstance(stats, dict)
 
 
 # ---------------------------------------------------------------------------

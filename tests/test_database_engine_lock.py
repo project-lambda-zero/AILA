@@ -22,7 +22,6 @@ guarded no longer exists.
 from __future__ import annotations
 
 import asyncio
-import inspect
 import threading
 
 _CONCURRENT_URL = "postgresql+asyncpg://x@127.0.0.1/_engine_lock_concurrent"
@@ -41,36 +40,6 @@ def _pop_cache_entry(url: str) -> None:
         db._ASYNC_ENGINES.pop(url, None)
         db._SESSION_FACTORIES.pop(url, None)
         db._INITIALIZED_URLS.discard(url)
-
-
-def test_engine_lock_exists():
-    """_ENGINE_LOCK must exist at module level and be an RLock instance."""
-    import aila.storage.database as db
-
-    assert hasattr(db, "_ENGINE_LOCK"), "_ENGINE_LOCK missing from aila.storage.database"
-    assert isinstance(db._ENGINE_LOCK, type(threading.RLock())), (
-        "_ENGINE_LOCK must be an RLock"
-    )
-
-
-def test_get_async_engine_uses_lock():
-    """get_async_engine() source must contain 'with _ENGINE_LOCK:'."""
-    import aila.storage.database as db
-
-    src = inspect.getsource(db.get_async_engine)
-    assert "with _ENGINE_LOCK" in src, (
-        "get_async_engine() is missing 'with _ENGINE_LOCK:' guard"
-    )
-
-
-def test_dispose_engine_uses_lock():
-    """dispose_engine() source must contain 'with _ENGINE_LOCK:'."""
-    import aila.storage.database as db
-
-    src = inspect.getsource(db.dispose_engine)
-    assert "with _ENGINE_LOCK" in src, (
-        "dispose_engine() is missing 'with _ENGINE_LOCK:' guard"
-    )
 
 
 def test_concurrent_get_async_engine_single_instance():

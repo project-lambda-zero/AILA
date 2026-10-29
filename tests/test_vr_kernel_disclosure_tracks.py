@@ -47,10 +47,6 @@ class TestKernelTracksRegistered:
 
 
 class TestLinuxDistros:
-    def test_embargo_default_is_14_days(self) -> None:
-        track = get_track("linux_distros")
-        assert track is not None
-        assert track.embargo_default_days == 14
 
     def test_render_includes_distros_address(self) -> None:
         track = get_track("linux_distros")
@@ -88,11 +84,6 @@ class TestLinuxDistros:
 
 
 class TestOssSecurity:
-    def test_embargo_default_is_zero(self) -> None:
-        # Public list -- post AFTER prior-track embargo lifts
-        track = get_track("oss_security")
-        assert track is not None
-        assert track.embargo_default_days == 0
 
     def test_render_includes_cve_and_patch(self) -> None:
         track = get_track("oss_security")

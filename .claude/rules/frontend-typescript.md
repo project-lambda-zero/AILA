@@ -62,15 +62,11 @@ Default exports are forbidden -- the shell's registry imports `{ frontendSpec }`
 ## Vitest
 
 - Test files end in `.test.ts(x)` or `.spec.ts(x)`.
-- For DOM tests: import `@testing-library/jest-dom` matchers via the shell's `setup.ts`. Module test types come from the shared `react-module` tsconfig which already includes `@testing-library/jest-dom` types.
+- For DOM tests: register `@testing-library/jest-dom` matchers in the package's Vitest setup file and add `@testing-library/jest-dom` to that package's tsconfig `types`. The shared `react-module` tsconfig does not include test types.
 - A module that adds tests must declare `vitest`, `@testing-library/react`, `@testing-library/jest-dom`, `@testing-library/user-event` in its `devDependencies`.
 
 ## Forbidden imports
 
 - `react-router-dom` -- use `react-router` (v7 unified them)
 - Direct paths into `node_modules/...` -- let the resolver handle it
-- Relative paths that climb out of a module (`../../../../../frontend/src/...`) -- use `@/`, `@app/`, or `@platform/` aliases instead
-
-## Honesty audit (frontend side)
-
-`frontend/src/tools/honesty-audit.js` runs against shell source. The whitelist is at `frontend/honesty_whitelist.js`. Add a justification when you must suppress a finding; never add inline `// audit-ignore` style comments.
+- Relative paths that climb out of a module (`../../../../../frontend/src/...`) -- use the `@/` alias instead

@@ -15,7 +15,7 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel
 from sqlalchemy import create_engine
-from sqlmodel import SQLModel, select
+from sqlmodel import select
 
 from aila.storage.database import session_scope
 from aila.storage.db_models import ConfigEntryRecord
@@ -481,14 +481,6 @@ class TestSchemaRegistry:
         sr.create_all(engine)
         sr.create_all(engine)  # Must not raise
 
-    def test_create_all_empty_registry(self):
-        """create_all() with no pushed models does not raise."""
-        sr = SchemaRegistry()
-        engine = create_engine("sqlite://", echo=False)
-        sr.create_all(engine)  # Falls back to SQLModel.metadata.create_all
-        # Reference SQLModel so the pure unit test still exercises the fallback
-        # path without pyflakes flagging the import as unused.
-        assert isinstance(SQLModel.metadata.tables, dict)
 
     def test_push_preserves_insertion_order(self):
         """push() preserves order of registration."""

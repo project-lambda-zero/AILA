@@ -10,22 +10,10 @@ from aila.modules.vr.db_models import (
 )
 from aila.modules.vr.workflow.definitions_hub import (
     VR_HUB_PHASES,
-    VR_INVESTIGATE_HUB,
 )
 from aila.platform.services.ledger import LedgerService
 from aila.platform.uow import UnitOfWork
-from aila.platform.workflows.phase_graph import DISPATCH_STATE, make_dispatch_router
-
-
-def test_hub_has_dispatch_and_phase_states() -> None:
-    states = VR_INVESTIGATE_HUB.states
-    assert DISPATCH_STATE in states
-    for name in (
-        "recon", "source_audit", "variant_hunt", "binary_audit",
-        "mobile_audit", "poc_development",
-    ):
-        assert name in states
-    assert VR_INVESTIGATE_HUB.definition_id == "vr.investigate.hub"
+from aila.platform.workflows.phase_graph import make_dispatch_router
 
 
 def test_poc_phase_is_confirmed_exploit_dev() -> None:

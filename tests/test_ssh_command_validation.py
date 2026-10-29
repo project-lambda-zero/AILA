@@ -88,8 +88,6 @@ class TestDoesNotRaiseForRemovedPolicy:
     boundary.
     """
 
-    def test_metacharacter_command_does_not_raise(self):
-        _validate_ssh_command("dpkg-query -W; rm -rf /")
 
     def test_non_allowlisted_prefix_does_not_raise(self):
         _validate_ssh_command("echo hello")

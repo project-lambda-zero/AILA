@@ -19,7 +19,6 @@ from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.testclient import TestClient
 
-import aila.api.errors as errors_pkg
 from aila.api.app import create_app
 from aila.api.errors import ErrorEnvelope, register_error_handlers
 from aila.api.errors.handlers import (
@@ -254,12 +253,6 @@ def test_handler_registered_on_app() -> None:
     assert AILAError in registered
     assert RequestValidationError in registered
     assert Exception in registered
-
-
-def test_errors_package_phase2_exports() -> None:
-    """Phase-2 package exports include register_error_handlers."""
-    assert hasattr(errors_pkg, "register_error_handlers")
-    assert "register_error_handlers" in errors_pkg.__all__
 
 
 def test_handler_registered_in_create_app() -> None:

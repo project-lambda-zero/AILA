@@ -317,32 +317,24 @@ pytest tests/test_e2e.py -v       # or: make test-e2e
 pytest tests/api/test_auth.py
 pytest tests/api/test_auth.py::test_token_issuance
 
-# Coverage already on by default (see [tool.pytest.ini_options].addopts)
+# Filter by keyword
 pytest tests/ -k auth
 ```
 
-`pyproject.toml` sets `addopts = "--cov=src/aila --cov-report=term-missing -m 'not e2e and not integration'"`, so `pytest tests/` skips anything marked `e2e` or `integration` and emits a coverage report at the end. The `e2e` and `integration` markers gate tests that need real API keys or live infrastructure.
+Start Postgres and Redis (`make dev-up`) before running the suite. The unit tests use the real `aila_test` database, and tests that reach the task queue, rate limiter, or token blacklist dial Redis on `127.0.0.1:6379`. With Redis down, each of those connection attempts blocks for 2-4 seconds on Windows before failing, which can multiply suite time.
 
-Frontend tests run through the pnpm workspace:
+`pyproject.toml` sets `addopts = "-m 'not e2e and not integration'"`, so `pytest tests/` skips anything marked `e2e` or `integration`. The `e2e` and `integration` markers gate tests that need real API keys or live infrastructure. Coverage is not collected by default because line tracing slows the suite roughly ninefold; run `make coverage` when you need the report.
 
-```bash
-pnpm -r run test                                          # vitest across shell + every module
-pnpm --filter @aila/shell run test                        # shell only (same as `make test-frontend`)
-pnpm --filter @aila/vulnerability-frontend run test       # one module
-```
-
-End-to-end browser tests live under `frontend/tests/e2e/` and run via Playwright (`frontend/playwright.config.ts`). The config has a `webServer` hook that boots `pnpm run dev` on `http://localhost:3000` and reuses an existing server outside CI. Chromium is the default project; Firefox and WebKit run a smoke subset (auth + dashboard + systems list).
+The frontend has no unit or browser test suite. Its gates are `pnpm -r run type-check` and `pnpm --filter @aila/shell run build`.
 
 ## Coverage Targets
 
-- Backend: `[tool.coverage.report].fail_under = 25` in `pyproject.toml`. `pytest tests/` reports against `src/aila/`. New endpoint code should land with enough tests that the project-wide threshold stays clear.
-- Frontend: `frontend/vitest.config.ts` enforces `lines: 80`, `branches: 70`, `functions: 80` on the `coverage.include` set (currently `src/hooks/**`, `src/platform/features/radar/topologyUtils.ts`, `src/platform/features/viz/useChartExport.ts`).
+- Backend: `[tool.coverage.report].fail_under = 25` in `pyproject.toml`, enforced when coverage runs. New endpoint code should land with enough tests that the project-wide threshold stays clear.
 
-Re-run with coverage explicitly:
+Run with coverage:
 
 ```bash
-pytest tests/ --cov=src/aila --cov-report=term-missing
-pnpm --filter @aila/shell run test -- --coverage
+make coverage    # pytest tests/ --cov=src/aila --cov-report=term-missing
 ```
 
 Focus coverage on:

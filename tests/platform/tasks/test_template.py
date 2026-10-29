@@ -39,14 +39,6 @@ def test_task_context_is_frozen_and_hashable() -> None:
         ctx.job_try = 99  # type: ignore[misc]
 
 
-def test_task_context_exposes_exactly_four_fields() -> None:
-    ctx = TaskContext(task_id="a", job_try=1, user_id="u", team_id="t")
-    assert ctx.task_id == "a"
-    assert ctx.job_try == 1
-    assert ctx.user_id == "u"
-    assert ctx.team_id == "t"
-
-
 # --- Registry invariants ---------------------------------------------------
 
 

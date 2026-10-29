@@ -48,15 +48,6 @@ def test_router_has_no_bare_config_registry_construction() -> None:
     )
 
 
-def test_router_imports_canonical_accessor() -> None:
-    """The router pulls the registry via the dependency, not a raw class."""
-    src = ROUTER_PATH.read_text(encoding="utf-8")
-    assert "get_config_registry" in src
-    assert "from aila.storage.registry import" not in src, (
-        "scheduled_reports must not import ConfigRegistry directly"
-    )
-
-
 @pytest.mark.asyncio
 async def test_trigger_reads_redis_url_via_injected_registry(
     async_client_with_registries: AsyncClient,

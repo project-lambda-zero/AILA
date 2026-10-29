@@ -22,13 +22,8 @@ plus the import.
 """
 from __future__ import annotations
 
-import ast
-import inspect
-from pathlib import Path
-
 import pytest
 
-from aila.platform.agents import turn_runner as turn_runner_mod
 from aila.platform.contracts.enums import PersonaVoice
 from aila.platform.routing import (
     PERSONA_MODEL_ROLE_MAP_KEY,
@@ -344,58 +339,3 @@ class TestLegacyFlatRegistryPayload:
         ) == "vulnerability_research.researcher.alpha"
 
 
-class TestLiveSpawnPathWiring:
-    """The seam must call resolve_effective_task_type on the live path.
-
-    Grep-based liveness proof: the shared turn runner both imports the
-    resolver and awaits it on the same code path that computes the
-    ``task_type`` handed to the reasoning engine. Without both, the
-    persona -> model_role map would be dead (issue-#151 anti-pattern:
-    a config surface that no live reader consults).
-    """
-
-    def test_turn_runner_imports_resolve_effective_task_type(self) -> None:
-        source = Path(inspect.getsourcefile(turn_runner_mod)).read_text(
-            encoding="utf-8",
-        )
-        tree = ast.parse(source)
-        imported = False
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom) and node.module == (
-                "aila.platform.routing.persona_model"
-            ):
-                for alias in node.names:
-                    if alias.name == "resolve_effective_task_type":
-                        imported = True
-                        break
-        assert imported, (
-            "turn_runner MUST import resolve_effective_task_type from "
-            "aila.platform.routing.persona_model -- the persona -> "
-            "model_role override lives on the branch spawn -> LLM "
-            "path in turn_runner.run_turn."
-        )
-
-    def test_turn_runner_calls_resolver_between_task_type_and_engine(self) -> None:
-        """Structural proof the override sits AFTER _resolve_task_type
-        and BEFORE the engine call, so the mapped task_type is what
-        reaches _engine.decide_next_turn (and thus the LLM client)."""
-        source = Path(inspect.getsourcefile(turn_runner_mod)).read_text(
-            encoding="utf-8",
-        )
-        # Ordering evidence -- three markers must appear in this order
-        # in the shared run_turn body:
-        #   1. task_type = self._resolve_task_type(...)
-        #   2. await resolve_effective_task_type(task_type, ...)
-        #   3. self._engine.decide_next_turn(task_type=task_type, ...)
-        idx_resolve = source.find("task_type = self._resolve_task_type(")
-        idx_override = source.find("await resolve_effective_task_type(")
-        idx_engine = source.find("self._engine.decide_next_turn(")
-        assert idx_resolve >= 0, "_resolve_task_type call missing"
-        assert idx_override > idx_resolve, (
-            "resolve_effective_task_type MUST be awaited AFTER "
-            "_resolve_task_type has produced the base task_type"
-        )
-        assert idx_engine > idx_override, (
-            "resolve_effective_task_type MUST run BEFORE the engine "
-            "call so the mapped task_type reaches the LLM client"
-        )

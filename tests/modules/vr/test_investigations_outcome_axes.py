@@ -19,8 +19,6 @@ execute standalone.
 """
 from __future__ import annotations
 
-import pytest
-
 from aila.modules.vr.services.outcome_polarity import (
     derive_outcome_polarity,
     derive_verifier_verdict,
@@ -107,19 +105,3 @@ def test_polarity_precedence_sanity_via_derive_helper() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skip(
-    reason=(
-        "DB-backed narrowing for /vr/investigations requires the operator's "
-        "live Postgres (aila_test with pgvector). Pure-unit helper coverage "
-        "above still runs; the endpoint filter path is exercised end-to-end "
-        "by the frontend integration harness."
-    ),
-)
-def test_list_investigations_filters_narrow_correctly() -> None:  # pragma: no cover
-    # Placeholder for the DB-backed narrowing case: seed workspace +
-    # target + project + two investigations (one primary outcome with
-    # verifier verdict confirmed, one without any outcome), call
-    # ``list_investigations`` with each of ``has_outcomes=true``,
-    # ``primary_outcome_polarity=finding``, and ``workspace_id=...``,
-    # and assert ``meta.total`` reflects the narrowed set.
-    raise AssertionError("Guarded by pytest.mark.skip -- see docstring.")

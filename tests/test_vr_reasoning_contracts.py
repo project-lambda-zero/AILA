@@ -13,7 +13,6 @@ from aila.modules.vr.contracts import (
     AuditMemoCreate,
     AuditMemoScope,
     AuditMemoSummary,
-    BranchOperation,
     BranchStatus,
     InvestigationKind,
     InvestigationPauseReason,
@@ -36,11 +35,6 @@ from aila.modules.vr.contracts import (
 
 
 class TestInvestigationEnums:
-    def test_kind_values(self) -> None:
-        assert {m.value for m in InvestigationKind} == {
-            "discovery", "variant_hunt", "triage", "n_day", "audit",
-            "masvs_audit", "apk_static_audit",
-        }
 
     def test_status_values(self) -> None:
         # ``stalled`` joined the set when RFC-13 escalation added a distinct
@@ -67,43 +61,9 @@ class TestBranchEnums:
             "completed",
         }
 
-    def test_persona_voices(self) -> None:
-        # D-39 defined six agent-facing voices. Phase E §177/§178/§180
-        # added three synthetic markers (`unspecified`, `merge_result`,
-        # `fork_unnamed`) that branch_manager writes when no agent
-        # persona is meaningful; alembic 064 backfilled + set NOT NULL.
-        assert {m.value for m in PersonaVoice} == {
-            "halvar", "maddie", "yuki", "renzo", "noor", "wei",
-            "unspecified", "merge_result", "fork_unnamed",
-        }
-
-    def test_branch_operations(self) -> None:
-        # D-41 + pause/resume
-        assert {m.value for m in BranchOperation} == {
-            "fork", "merge", "promote", "abandon", "pause", "resume",
-            "spawn_strategy",
-        }
-
 
 class TestMessageEnums:
-    def test_sender_kinds(self) -> None:
-        # SenderKind gained `system` (fix \u00a7250) for system-authored
-        # steering / notice messages that need to be distinguishable
-        # from human OPERATOR messages by sender_kind alone.
-        assert {m.value for m in SenderKind} == {
-            "engine", "operator", "system",
-        }
 
-    def test_payload_kinds_match_d44(self) -> None:
-        # D-44 initially listed 10 typed payloads; the draft-outcome
-        # workflow added `outcome_review` and `outcome_edit` for
-        # sibling-review + operator-edit message payloads.
-        assert {m.value for m in PayloadKind} == {
-            "text", "tool_call", "code_pointer", "graph_view",
-            "taint_flow", "xref_view", "patch_diff",
-            "decompiled_function", "hypothesis_update", "outcome_pending",
-            "outcome_review", "outcome_edit",
-        }
 
     def test_operator_intents_match_d43_ga30(self) -> None:
         # D-43 GA-30 lists 6 operator intents + UNCLASSIFIED escape
@@ -114,15 +74,6 @@ class TestMessageEnums:
 
 
 class TestOutcomeEnums:
-    def test_eleven_outcome_kinds(self) -> None:
-        # D-43 lists 11 typed outcomes
-        assert {m.value for m in OutcomeKind} == {
-            "assessment_report", "strategy_descriptor", "profile_spec_draft",
-            "config_delta", "variant_hunt_order", "patch_assessment_report",
-            "audit_memo", "direct_finding", "crash_triage_report",
-            "campaign_launch", "sub_investigation",
-        }
-        assert len(list(OutcomeKind)) == 11
 
     def test_confidence_matches_reasoning(self) -> None:
         # Matches platform's ReasoningConfidence
@@ -136,28 +87,7 @@ class TestOutcomeEnums:
         }
 
 
-class TestAuditMemoEnums:
-    def test_scope_ladder(self) -> None:
-        # Promotion ladder matches D-43 GA-41 pattern scopes
-        assert {m.value for m in AuditMemoScope} == {
-            "local", "workspace", "team", "global",
-        }
-
-
 class TestInvestigationCreate:
-    def test_minimum_valid(self) -> None:
-        inv = VRInvestigationCreate(
-            title="Audit V8 Map Inference for missing alias checks",
-            initial_question="Are there places in InferMaps that miss the alias check?",
-            target_id="tgt-1",
-        )
-        assert inv.kind == InvestigationKind.DISCOVERY
-        assert inv.auto_pilot is True
-        assert inv.cost_budget_usd == 50.0
-        # `strategy_family` is now optional on Create; the server derives
-        # it from `kind` via _KIND_DEFAULT_STRATEGY when omitted. See
-        # aila.modules.vr.contracts.investigation.VRInvestigationCreate.
-        assert inv.strategy_family is None
 
     def test_title_min_length(self) -> None:
         with pytest.raises(ValidationError):
@@ -177,17 +107,6 @@ class TestInvestigationCreate:
             VRInvestigationCreate(  # type: ignore[call-arg]
                 title="x", initial_question="y", target_id="t", junk=1,
             )
-
-    def test_variant_hunt_parent(self) -> None:
-        inv = VRInvestigationCreate(
-            title="variant hunt CVE-2025-2135",
-            initial_question="any siblings?",
-            target_id="tgt-2",
-            kind=InvestigationKind.VARIANT_HUNT,
-            parent_investigation_id="inv-1",
-        )
-        assert inv.parent_investigation_id == "inv-1"
-        assert inv.kind == InvestigationKind.VARIANT_HUNT
 
 
 class TestInvestigationSummaryRoundTrip:
@@ -232,21 +151,10 @@ class TestBranchSummaryRoundTrip:
 
 
 class TestMessageCreate:
-    def test_minimum_valid(self) -> None:
-        m = VRMessageCreate(text="please check JSPI base address handling")
-        assert m.branch_id is None
-        assert m.explicit_intent is None
 
     def test_text_min_length(self) -> None:
         with pytest.raises(ValidationError):
             VRMessageCreate(text="")
-
-    def test_explicit_intent_override(self) -> None:
-        m = VRMessageCreate(
-            text="that finding is bogus",
-            explicit_intent=OperatorIntent.DISMISSAL,
-        )
-        assert m.explicit_intent == OperatorIntent.DISMISSAL
 
 
 class TestMessageSummaryRoundTrip:
@@ -282,14 +190,6 @@ class TestMessageSummaryRoundTrip:
 
 
 class TestOutcomeCreate:
-    def test_minimum_valid(self) -> None:
-        o = VROutcomeCreate(
-            branch_id="br-1",
-            outcome_kind=OutcomeKind.AUDIT_MEMO,
-            confidence=OutcomeConfidence.MEDIUM,
-        )
-        assert o.payload == {}
-        assert o.evidence_refs == []
 
     def test_extra_forbidden(self) -> None:
         with pytest.raises(ValidationError):

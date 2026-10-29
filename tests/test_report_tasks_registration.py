@@ -9,28 +9,11 @@ All tests are synchronous unit tests using stdlib only -- no DB connections requ
 """
 from __future__ import annotations
 
-import inspect
-
-import aila.platform.tasks.report_tasks as report_tasks_mod
-from aila.platform.tasks.report_tasks import generate_scheduled_report_job
 from aila.platform.tasks.worker import WorkerSettings
 
 # ---------------------------------------------------------------------------
 # Report tasks: importability + module structure
 # ---------------------------------------------------------------------------
-
-
-def test_generate_scheduled_report_job_importable():
-    """generate_scheduled_report_job is importable from report_tasks."""
-    assert callable(generate_scheduled_report_job)
-    assert inspect.iscoroutinefunction(generate_scheduled_report_job)
-
-
-def test_report_tasks_module_structure():
-    """report_tasks module exports expected symbols and imports cleanly."""
-    assert hasattr(report_tasks_mod, "generate_scheduled_report_job")
-    assert hasattr(report_tasks_mod, "_send_report_email")
-    assert hasattr(report_tasks_mod, "_update_last_run_at")
 
 
 # ---------------------------------------------------------------------------

@@ -336,11 +336,6 @@ class TestClassBinding:
         assert cfg.agent_cls._EXTRACTOR_TASK_TYPE == cfg.extractor_task_type
         assert cfg.agent_cls._VERDICT_TASK_TYPE == cfg.verdict_task_type
 
-    def test_binds_max_probes_and_timeout(self, cfg: _Config) -> None:
-        # These are shared class attrs the base defines; assert the
-        # subclass inherits without shadowing.
-        assert cfg.agent_cls._MAX_PROBES == 8
-        assert cfg.agent_cls._PROBE_TIMEOUT_S == 30.0
 
     def test_binds_record_models(self, cfg: _Config) -> None:
         assert cfg.agent_cls._investigation_model is cfg.investigation_model

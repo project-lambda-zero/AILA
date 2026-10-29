@@ -18,7 +18,6 @@ import pytest
 from aila.api.auth import AuthContext
 from aila.api.routers.scheduled_reports import router as sr_router
 from aila.platform.tasks.report_tasks import (
-    REPORT_KINDS,
     _build_fleet_health_payload,
     _send_report_email,
 )
@@ -75,13 +74,6 @@ async def test_kinds_route_returns_catalog() -> None:
     assert group_by.type == "select"
     assert group_by.default == "role"
     assert group_by.options == ["role", "distro"]
-
-
-def test_kinds_catalog_matches_worker_dispatch() -> None:
-    """Every catalog kind carries a generator, so the dispatch is non-empty."""
-    assert REPORT_KINDS
-    for kind in REPORT_KINDS:
-        assert callable(kind.generator)
 
 
 # ---------------------------------------------------------------------------

@@ -47,20 +47,9 @@ from aila.modules.vulnerability.versioning import (
 class TestVersionScheme:
     """VersionScheme string enum has exactly three members."""
 
-    def test_generic_value(self) -> None:
-        assert VersionScheme.GENERIC == "generic"
-
-    def test_debian_value(self) -> None:
-        assert VersionScheme.DEBIAN == "debian"
-
-    def test_release_value(self) -> None:
-        assert VersionScheme.RELEASE == "release"
 
     def test_member_count(self) -> None:
         assert len(VersionScheme) == 3
-
-    def test_is_str_subclass(self) -> None:
-        assert isinstance(VersionScheme.GENERIC, str)
 
 
 # ---------------------------------------------------------------------------

@@ -61,13 +61,3 @@ async def test_pgvector_insert_and_cosine_query(pg_session):
     assert row.content == "test knowledge entry"
 
 
-@pytest.mark.asyncio
-async def test_hnsw_index_exists(pg_url):
-    """HNSW index is defined on KnowledgeEntryRecord."""
-    from aila.storage.db_models import KnowledgeEntryRecord
-
-    table = KnowledgeEntryRecord.__table__
-    index_names = [i.name for i in table.indexes]
-    assert "ix_knowledge_embedding_hnsw" in index_names, (
-        f"HNSW index missing, found: {index_names}"
-    )

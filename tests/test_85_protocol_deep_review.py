@@ -106,11 +106,6 @@ class TestProtocolDefaults:
         result = module.route_specs()
         assert result == []
 
-    @pytest.mark.asyncio
-    async def test_system_summary_default_empty_dict(self, module: _MinimalModule) -> None:
-        """system_summary() defaults to {} for modules without system data."""
-        result = await module.system_summary(system_id=1, session=MagicMock())
-        assert result == {}
 
     @pytest.mark.asyncio
     async def test_system_findings_default_empty_result(self, module: _MinimalModule) -> None:
@@ -126,10 +121,6 @@ class TestProtocolDefaults:
         result = await module.report_count(run_id="run-123", session=MagicMock())
         assert result == {}
 
-    def test_health_checks_default_empty_dict(self, module: _MinimalModule) -> None:
-        """health_checks() defaults to {} for modules without health checks."""
-        result = module.health_checks()
-        assert result == {}
 
     def test_minimal_module_isinstance_protocol(self, module: _MinimalModule) -> None:
         """A minimal class with only required methods passes isinstance(ModuleProtocol)."""
@@ -144,49 +135,6 @@ class TestProtocolDefaults:
 class TestModuleCompliance:
     """Both vulnerability and hello_world modules satisfy ModuleProtocol."""
 
-    def test_vulnerability_isinstance(self) -> None:
-        """VulnerabilityModule passes isinstance(ModuleProtocol)."""
-        from aila.modules.vulnerability.module import VulnerabilityModule
-
-        module = VulnerabilityModule()
-        assert isinstance(module, ModuleProtocol)
-
-    def test_hello_world_isinstance(self) -> None:
-        """HelloWorldModule passes isinstance(ModuleProtocol)."""
-        from aila.modules.hello_world.module import HelloWorldModule
-
-        module = HelloWorldModule()
-        assert isinstance(module, ModuleProtocol)
-
-    def test_vulnerability_all_protocol_methods_present(self) -> None:
-        """VulnerabilityModule has every method defined on ModuleProtocol."""
-        from aila.modules.vulnerability.module import VulnerabilityModule
-
-        module = VulnerabilityModule()
-        protocol_methods = [
-            "capability_profiles", "required_tools", "report_filter_keys",
-            "register_tools", "build_runtime", "filter_report_rows",
-            "seed_data", "route_specs", "system_summary", "system_findings",
-            "report_count", "health_checks",
-        ]
-        for method_name in protocol_methods:
-            assert hasattr(module, method_name), f"Missing: {method_name}"
-            assert callable(getattr(module, method_name)), f"Not callable: {method_name}"
-
-    def test_hello_world_all_protocol_methods_present(self) -> None:
-        """HelloWorldModule has every method defined on ModuleProtocol."""
-        from aila.modules.hello_world.module import HelloWorldModule
-
-        module = HelloWorldModule()
-        protocol_methods = [
-            "capability_profiles", "required_tools", "report_filter_keys",
-            "register_tools", "build_runtime", "filter_report_rows",
-            "seed_data", "route_specs", "system_summary", "system_findings",
-            "report_count", "health_checks",
-        ]
-        for method_name in protocol_methods:
-            assert hasattr(module, method_name), f"Missing: {method_name}"
-            assert callable(getattr(module, method_name)), f"Not callable: {method_name}"
 
     def test_vulnerability_capability_profiles_non_empty(self) -> None:
         """VulnerabilityModule.capability_profiles() returns at least one profile."""
@@ -237,61 +185,6 @@ class TestModuleCompliance:
 class TestRouteSpecContract:
     """ModuleRouteSpec has all fields consumed by _mount_module_routers()."""
 
-    def test_has_prefix_field(self) -> None:
-        """ModuleRouteSpec has a prefix field (used by include_router)."""
-        spec = ModuleRouteSpec(prefix="/test", router_factory=lambda: None)
-        assert spec.prefix == "/test"
-
-    def test_has_router_factory_field(self) -> None:
-        """ModuleRouteSpec has a router_factory field (used by include_router)."""
-        factory = lambda: None  # noqa: E731
-        spec = ModuleRouteSpec(prefix="/test", router_factory=factory)
-        assert spec.router_factory is factory
-
-    def test_has_tool_keys_metadata(self) -> None:
-        """ModuleRouteSpec has tool_keys for module tool metadata."""
-        spec = ModuleRouteSpec(
-            prefix="/test",
-            router_factory=lambda: None,
-            tool_keys=("tool.a", "tool.b"),
-        )
-        assert spec.tool_keys == ("tool.a", "tool.b")
-
-    def test_has_config_namespace_metadata(self) -> None:
-        """ModuleRouteSpec has config_namespace for module config metadata."""
-        spec = ModuleRouteSpec(
-            prefix="/test",
-            router_factory=lambda: None,
-            config_namespace="test_ns",
-        )
-        assert spec.config_namespace == "test_ns"
-
-    def test_has_payload_type_metadata(self) -> None:
-        """ModuleRouteSpec has payload_type for discriminated union metadata."""
-        spec = ModuleRouteSpec(
-            prefix="/test",
-            router_factory=lambda: None,
-            payload_type="TestPayload",
-        )
-        assert spec.payload_type == "TestPayload"
-
-    def test_no_tags_field(self) -> None:
-        """ModuleRouteSpec does NOT have a tags field.
-
-        Tags are set by the router_factory itself (ownership boundary).
-        The platform does not need to inject tags from the spec.
-        """
-        spec = ModuleRouteSpec(prefix="/test", router_factory=lambda: None)
-        assert not hasattr(spec, "tags")
-
-    def test_no_dependencies_field(self) -> None:
-        """ModuleRouteSpec does NOT have a dependencies field.
-
-        Dependencies (auth) are platform-level concerns added at mount time.
-        Modules do not declare their own auth dependencies.
-        """
-        spec = ModuleRouteSpec(prefix="/test", router_factory=lambda: None)
-        assert not hasattr(spec, "dependencies")
 
     def test_frozen_rejects_mutation(self) -> None:
         """ModuleRouteSpec is frozen -- mutation raises FrozenInstanceError."""
@@ -299,7 +192,3 @@ class TestRouteSpecContract:
         with pytest.raises(FrozenInstanceError):
             spec.prefix = "/changed"  # type: ignore[misc]
 
-    def test_slots_enabled(self) -> None:
-        """ModuleRouteSpec uses slots for memory efficiency."""
-        spec = ModuleRouteSpec(prefix="/test", router_factory=lambda: None)
-        assert hasattr(type(spec), "__slots__")

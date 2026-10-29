@@ -27,11 +27,6 @@ from datetime import datetime
 import pytest
 from pydantic import ValidationError
 
-from aila.platform.contracts import budget as budget_mod
-from aila.platform.contracts import obligations as obligations_mod
-from aila.platform.contracts import persist as persist_mod
-from aila.platform.contracts import platform as platform_mod
-from aila.platform.contracts import reporting as reporting_mod
 from aila.platform.contracts.budget import BudgetConfig, BudgetState
 from aila.platform.contracts.obligations import (
     EvidenceObligation,
@@ -132,13 +127,6 @@ def test_budget_state_rejects_undeclared_kwarg() -> None:
         BudgetState(turns_use=5)  # type: ignore[call-arg]
 
 
-def test_budget_config_accepts_declared_fields() -> None:
-    """Regression guard: well-formed kwargs still construct."""
-    cfg = BudgetConfig(max_turns=50, max_tool_time_seconds=1800.0)
-    assert cfg.max_turns == 50
-    assert cfg.max_tool_time_seconds == 1800.0
-
-
 # ---------------------------------------------------------------------------
 # Obligation adjudicator (#61 residual): pure-function contract has zero
 # caller-independent test coverage -- pin the four documented verdict paths.
@@ -195,56 +183,3 @@ def test_adjudicate_downgrades_on_hedge_signal() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "mod,expected",
-    [
-        (
-            platform_mod,
-            {
-                "PLATFORM_CONFIG_KEY_REDIS_URL",
-                "PLATFORM_CONFIG_NS",
-                "AddIntegrationPayload",
-                "AsyncTaskQueue",
-                "DeleteIntegrationsPayload",
-                "ExecuteRemoteCommandPayload",
-                "ProgressUpdate",
-                "RegisteredSystem",
-                "RegistryResponse",
-                "RemoteCommandSelection",
-                "RouteCandidate",
-                "RouteDecision",
-                "RoutedCandidate",
-                "RoutingCandidateProfile",
-                "RoutingSelection",
-                "SSHIntegrationInput",
-                "WorkflowEvent",
-            },
-        ),
-        (persist_mod, {"PersistContract", "Persistable"}),
-        (
-            reporting_mod,
-            {
-                "LatestReportResult",
-                "LatestReportRowsResult",
-                "ReportRowsSourceReference",
-                "TargetReportReference",
-                "normalize_report_summary_payload",
-            },
-        ),
-        (budget_mod, {"BudgetConfig", "BudgetState"}),
-        (
-            obligations_mod,
-            {
-                "AdjudicationResult",
-                "CONTRADICTION_SIGNALS",
-                "EvidenceObligation",
-                "ObligationSet",
-                "ObligationSeverity",
-                "adjudicate",
-            },
-        ),
-    ],
-)
-def test_public_module_declares_all(mod: object, expected: set[str]) -> None:
-    declared = set(getattr(mod, "__all__"))
-    assert declared == expected

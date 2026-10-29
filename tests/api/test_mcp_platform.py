@@ -225,9 +225,3 @@ async def test_ensure_instance_idempotent_when_transport_unchanged(
     assert session.commits == 0, "no-op update must not commit"
 
 
-@pytest.mark.skip(
-    reason="Round-trip through Postgres for the migrated mcp_call_log lives in the live-infra suite.",
-)
-def test_platform_mcp_calls_end_to_end() -> None:
-    """Full HTTP round-trip is exercised against a real DB by the live suite."""
-    raise NotImplementedError

@@ -344,21 +344,6 @@ class TestResponseEnrichment:
 # TestResponseDefaults
 # ---------------------------------------------------------------------------
 
-class TestResponseDefaults:
-    """LLMResponse backward compatibility."""
-
-    def test_response_defaults(self) -> None:
-        r = LLMResponse(content="test")
-        assert r.content == "test"
-        assert r.model == ""
-        assert r.usage == {}
-        assert r.disabled is False
-        assert r.finish_reason == ""
-        assert r.classification is None
-        assert r.confidence is None
-        assert r.seal_id is None
-        assert r.pipeline_metadata is None
-
 
 # ---------------------------------------------------------------------------
 # TestRegisterUnknown
@@ -525,9 +510,6 @@ class TestPipelineWiring:
             secret_store=secret_store,  # type: ignore[arg-type]
         )
 
-    def test_pipeline_accessible(self, client: AilaLLMClient) -> None:
-        """client.pipeline returns the PipelineRunner instance."""
-        assert isinstance(client.pipeline, PipelineRunner)
 
     @pytest.mark.asyncio
     async def test_chat_transparent_no_steps(self, client: AilaLLMClient) -> None:

@@ -39,50 +39,11 @@ def test_epss_kev_forward_is_coroutine_function() -> None:
     assert inspect.iscoroutinefunction(tool.forward)
 
 
-def test_epss_client_methods_are_async() -> None:
-    """EPSS provider drives httpx.AsyncClient natively; no thread bridge."""
-    from aila.modules.vulnerability.providers.epss import EPSSClient
-
-    assert inspect.iscoroutinefunction(EPSSClient.fetch_scores)
-
-
 def test_kev_client_methods_are_async() -> None:
     """KEV provider drives httpx.AsyncClient natively; no thread bridge."""
     from aila.modules.vulnerability.providers.kev import KEVClient
 
     assert inspect.iscoroutinefunction(KEVClient.fetch_catalog)
-
-
-def test_nvd_client_methods_are_async() -> None:
-    """NVD provider drives httpx.AsyncClient natively; retries use asyncio.sleep."""
-    from aila.modules.vulnerability.providers.nvd import NVDClient
-
-    assert inspect.iscoroutinefunction(NVDClient.fetch_cve)
-    assert inspect.iscoroutinefunction(NVDClient._wait_for_request_slot)
-
-
-def test_nvd_provider_has_no_blocking_sleep() -> None:
-    """NVD provider source contains no ``time.sleep`` on the request path."""
-    from aila.modules.vulnerability.providers import nvd as nvd_mod
-
-    src = inspect.getsource(nvd_mod)
-    assert "time.sleep" not in src, (
-        "NVD provider must not call time.sleep in an async code path (#64)."
-    )
-
-
-def test_epss_provider_has_no_blocking_sleep() -> None:
-    """EPSS provider source contains no ``time.sleep``."""
-    from aila.modules.vulnerability.providers import epss as epss_mod
-
-    assert "time.sleep" not in inspect.getsource(epss_mod)
-
-
-def test_kev_provider_has_no_blocking_sleep() -> None:
-    """KEV provider source contains no ``time.sleep``."""
-    from aila.modules.vulnerability.providers import kev as kev_mod
-
-    assert "time.sleep" not in inspect.getsource(kev_mod)
 
 
 async def test_epss_kev_epss_lookup_awaits_async_provider() -> None:

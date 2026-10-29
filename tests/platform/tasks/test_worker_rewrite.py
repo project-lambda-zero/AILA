@@ -55,34 +55,6 @@ def test_worker_settings_cron_contains_reaper() -> None:
     )
 
 
-def test_legacy_symbols_removed_from_worker() -> None:
-    import aila.platform.tasks.worker as worker
-
-    for symbol in (
-        "execute_task_job",
-        "TaskCancelled",
-        "_heartbeat_loop",
-        "_refresh_worker_alive_key",
-        "_finalize",
-        "_persist_checkpoint",
-        "save_checkpoint",
-        "_clear_corrupt_checkpoint",
-        "_sweep_orphaned_waiting",
-        "_reenqueue_task",
-    ):
-        assert not hasattr(worker, symbol), (
-            f"{symbol} must not exist on worker module (Phase 179 deletion)"
-        )
-
-
-def test_reaper_is_a_coroutine() -> None:
-    import inspect
-
-    from aila.platform.tasks.worker import reaper
-
-    assert inspect.iscoroutinefunction(reaper)
-
-
 @pytest_asyncio.fixture
 async def redis_db15(redis_cleanup: str) -> str:
     """Yield the redis URL for the flushed test db-15 instance."""

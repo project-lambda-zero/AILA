@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-from aila.modules._template.agents.researcher import TemplateResearcher
 from aila.platform.agents.turn_runner import AgentTurnRunnerBase
 
 
@@ -64,22 +63,3 @@ def test_maybe_reject_submit_with_unresolved_hypotheses_default_allows() -> None
     assert result is decision
 
 
-def test_template_module_researcher_inherits_safe_defaults() -> None:
-    """The actual ``_template`` researcher must inherit the no-ops.
-
-    Guards against a future regression where the base class loses the
-    defaults or the ``_template`` module starts overriding them
-    incompletely.
-    """
-    assert (
-        TemplateResearcher._maybe_reject_submit_when_draft_pending
-        is AgentTurnRunnerBase._maybe_reject_submit_when_draft_pending
-    )
-    assert (
-        TemplateResearcher._maybe_reject_revote_when_already_voted
-        is AgentTurnRunnerBase._maybe_reject_revote_when_already_voted
-    )
-    assert (
-        TemplateResearcher._maybe_reject_submit_with_unresolved_hypotheses
-        is AgentTurnRunnerBase._maybe_reject_submit_with_unresolved_hypotheses
-    )

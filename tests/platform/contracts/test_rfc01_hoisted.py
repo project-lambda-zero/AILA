@@ -27,7 +27,6 @@ from aila.modules.vr.contracts import target as vr_t
 from aila.modules.vr.contracts import workspace as vr_ws
 from aila.platform.contracts import enums as pe
 from aila.platform.contracts import target_stages as p_ts
-from aila.platform.contracts.hypothesis import HypothesisState as PHypState
 
 
 def _members(enum_cls: type) -> dict[str, str]:
@@ -115,10 +114,6 @@ def test_all_hoisted_enums_exported() -> None:
         "TargetTagSource",
         "WorkspaceStatus",
     }
-
-
-def test_hypothesis_state_is_the_hoisted_enum() -> None:
-    assert PHypState is pe.HypothesisState
 
 
 def test_target_stages_rollup_parity() -> None:

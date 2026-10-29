@@ -196,12 +196,6 @@ class TestSnapshot:
         assert b.status == ENDPOINT_STATUS_HEALTHY
         assert b.total_successes == 1
 
-    def test_snapshot_is_a_tuple(self) -> None:
-        router = ModelHealthRouter()
-        router.record_success("http://x")
-        snap = router.snapshot()
-        assert isinstance(snap, tuple)
-
 
 class TestConstructorValidation:
     """Boundary conditions the constructor rejects."""

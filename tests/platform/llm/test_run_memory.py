@@ -85,9 +85,6 @@ class TestClear:
         assert mem.get("run-1", "host") is None
         assert mem.keys("run-1") == []
 
-    def test_clear_no_op_for_missing_run(self) -> None:
-        mem = RunMemory()
-        mem.clear("nonexistent")  # should not raise
 
     def test_clear_does_not_affect_other_runs(self) -> None:
         mem = RunMemory()

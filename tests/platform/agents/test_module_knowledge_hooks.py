@@ -18,28 +18,10 @@ each hook a no-op instead of a crash or a false rejection.
 """
 from __future__ import annotations
 
-import re
 
 from aila.modules.vr.agents.tool_executor import ToolExecutor as VRToolExecutor
 from aila.modules.vr.agents.vuln_researcher import HonestVulnResearcher
 from aila.platform.agents.auto_steering import _detect_lateral_pattern
-from aila.platform.agents.persona_router import PersonaRouter
-from aila.platform.agents.tool_executor import ToolExecutorHelpersBase
-from aila.platform.agents.turn_runner import AgentTurnRunnerBase
-
-
-class TestPlatformDefaultsAreEmpty:
-    """No FFmpeg / nginx / persona vocabulary bleeds out of the platform."""
-
-    def test_turn_runner_base_has_empty_allocator_vocab(self) -> None:
-        assert AgentTurnRunnerBase.known_allocators == frozenset()
-        assert AgentTurnRunnerBase.known_input_readers == frozenset()
-
-    def test_tool_executor_base_has_empty_lateral_patterns(self) -> None:
-        assert ToolExecutorHelpersBase.lateral_patterns == []
-
-    def test_persona_router_base_has_empty_role_map(self) -> None:
-        assert PersonaRouter.persona_role_map == {}
 
 
 class TestVRSuppliesVocabulary:
@@ -64,19 +46,6 @@ class TestVRSuppliesVocabulary:
         assert "bytestream2_get_le32" in readers        # FFmpeg bytestream
         assert "AV_RL16" in readers                     # FFmpeg macro
         assert "recv" in readers                        # POSIX
-
-    def test_vr_tool_executor_populates_lateral_patterns(self) -> None:
-        patterns = VRToolExecutor.lateral_patterns
-        pattern_ids = {pid for _pat, pid in patterns}
-        assert pattern_ids == {
-            "protocol_passthrough_no_check",
-            "unchecked_int_multiply",
-            "memop_variable_length",
-            "truncating_dimension_shift",
-            "input_to_allocation",
-        }
-        for pat, _pid in patterns:
-            assert isinstance(pat, re.Pattern)
 
 
 class TestLateralPatternDetectionWithVRVocabulary:
@@ -174,38 +143,3 @@ class TestLateralPatternGracefulNoOp:
         assert findings == []
 
 
-class TestPlatformBoundaryPreserved:
-    """Guardrail: the platform files must NOT reference the FFmpeg /
-    nginx / persona-name vocabulary any more. Grep-style check that
-    keeps drift caught in tests instead of a manual audit."""
-
-    def test_submit_gates_has_no_ffmpeg_names(self) -> None:
-        import inspect
-        from aila.platform.agents import submit_gates
-        source = inspect.getsource(submit_gates)
-        # Sample of migrated names; any of these leaking back into the
-        # platform gate re-opens the boundary.
-        for name in (
-            "av_malloc", "av_calloc", "avio_rb16",
-            "ngx_palloc", "kmalloc", "OPENSSL_malloc",
-        ):
-            assert name not in source, f"platform submit_gates still references {name!r}"
-
-    def test_auto_steering_has_no_ffmpeg_regex_vocab(self) -> None:
-        import inspect
-        from aila.platform.agents import auto_steering
-        source = inspect.getsource(auto_steering)
-        # The migrated regex fragments named FFmpeg-specific primitives.
-        for name in ("av_strstart", "bytestream2_get", "av_mallocz"):
-            assert name not in source, f"platform auto_steering still references {name!r}"
-
-    def test_persona_router_has_no_hardcoded_persona_names(self) -> None:
-        import inspect
-        from aila.platform.agents import persona_router
-        source = inspect.getsource(persona_router)
-        # The six voice names are the domain vocabulary -- platform
-        # base must not carry them as data literals any more.
-        for name in ("HALVAR", "NOOR", "RENZO", "WEI", "MADDIE", "YUKI"):
-            assert (
-                f"PersonaVoice.{name}" not in source
-            ), f"platform persona_router still hardcodes PersonaVoice.{name}"

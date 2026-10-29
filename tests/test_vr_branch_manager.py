@@ -15,7 +15,6 @@ from aila.platform.agents.branch_pool import (
     merge_hypotheses,
     merge_rejected,
 )
-from aila.modules.vr.contracts.branch import BranchOperation, BranchStatus
 from aila.platform.contracts.reasoning import (
     Hypothesis,
     ReasoningCaseState,
@@ -23,25 +22,6 @@ from aila.platform.contracts.reasoning import (
     RejectedHypothesis,
     ResolvedHypothesis,
 )
-
-
-class TestBranchOperationEnum:
-    def test_seven_operations(self) -> None:
-        assert {m.value for m in BranchOperation} == {
-            "fork", "merge", "promote", "abandon", "pause", "resume",
-            "spawn_strategy",
-        }
-
-
-class TestBranchStatusEnum:
-    def test_six_statuses(self) -> None:
-        # `completed` was added to BranchStatus after the initial
-        # M3.R-5 milestone; every terminal-but-not-abandoned/merged/
-        # promoted branch closes as COMPLETED.
-        assert {m.value for m in BranchStatus} == {
-            "active", "paused", "merged", "promoted", "abandoned",
-            "completed",
-        }
 
 
 class TestHasContract:

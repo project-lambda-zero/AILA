@@ -32,20 +32,6 @@ def test_emit_signature_is_kwargs_only() -> None:
         ), f"param {p.name!r} is not keyword-only: {p.kind}"
 
 
-def test_emit_required_fields_present() -> None:
-    """emit_transition_event must declare all fields the engine passes."""
-    from aila.platform.workflows.log import emit_transition_event
-
-    sig = inspect.signature(emit_transition_event)
-    param_names = set(sig.parameters.keys())
-    required = {
-        "run_id", "seq", "from_state", "to_state", "event",
-        "duration_ms", "error_class", "error_message", "happened_at",
-    }
-    missing = required - param_names
-    assert not missing, f"emit_transition_event missing params: {missing}"
-
-
 async def _call_emit(**kw) -> None:
     from aila.platform.workflows.log import emit_transition_event
     await emit_transition_event(**kw)

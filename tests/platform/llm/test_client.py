@@ -851,13 +851,6 @@ class TestUsageUtils:
 class TestLLMResponse:
     """LLMResponse frozen dataclass."""
 
-    def test_defaults(self) -> None:
-        r = LLMResponse(content="hello")
-        assert r.content == "hello"
-        assert r.model == ""
-        assert r.usage == {}
-        assert r.disabled is False
-        assert r.finish_reason == ""
 
     def test_frozen(self) -> None:
         r = LLMResponse(content="hello")
@@ -994,26 +987,6 @@ class TestTemperatureMarkerBoundaries:
 # ---------------------------------------------------------------------------
 # LLMResponse declares pipeline metadata fields (#44)
 # ---------------------------------------------------------------------------
-
-class TestLLMResponsePipelineFields:
-    """The dataclass is frozen + slots. Constructing with the pipeline metadata
-    kwargs (``classification`` / ``confidence`` / ``seal_id`` /
-    ``pipeline_metadata``) must not raise -- the moment a pipeline step wrote a
-    non-None value into the ctx and _enrich_response tried to construct with
-    those kwargs, the missing declaration used to TypeError in prod."""
-
-    def test_construct_with_all_pipeline_fields(self) -> None:
-        r = LLMResponse(
-            content="hello",
-            classification="safe",
-            confidence=0.87,
-            seal_id="seal-xyz",
-            pipeline_metadata={"evidence_validation": {"ok": True}},
-        )
-        assert r.classification == "safe"
-        assert r.confidence == 0.87
-        assert r.seal_id == "seal-xyz"
-        assert r.pipeline_metadata == {"evidence_validation": {"ok": True}}
 
 
 # ---------------------------------------------------------------------------

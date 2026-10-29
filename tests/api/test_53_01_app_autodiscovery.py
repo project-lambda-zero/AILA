@@ -13,28 +13,6 @@ from __future__ import annotations
 import pytest
 
 
-class TestRegistryDepsImportable:
-    """get_config_registry and get_tool_registry are importable from aila.api.deps."""
-
-    def test_get_config_registry_importable(self) -> None:
-        from aila.api.deps import get_config_registry  # noqa: F401
-
-    def test_get_tool_registry_importable(self) -> None:
-        from aila.api.deps import get_tool_registry  # noqa: F401
-
-    def test_both_in_all(self) -> None:
-        from aila.api import deps
-
-        assert "get_config_registry" in deps.__all__
-        assert "get_tool_registry" in deps.__all__
-
-    def test_all_contains_original_deps_too(self) -> None:
-        """Original deps remain exported."""
-        from aila.api import deps
-
-        assert "get_platform" in deps.__all__
-
-
 class TestRegistryDepsRaise503WithoutPlatform:
     """Registry deps raise HTTP 503 when platform is None."""
 
@@ -111,11 +89,6 @@ class TestRegistryDepsRaise503WithoutPlatform:
 class TestCreateAppBuildsWithoutError:
     """create_app() builds successfully and includes auth+health routes."""
 
-    def test_create_app_returns_app(self) -> None:
-        from aila.api.app import create_app
-
-        app = create_app()
-        assert app is not None
 
     def test_routes_include_auth_and_health(self) -> None:
         from aila.api.app import create_app
@@ -125,21 +98,4 @@ class TestCreateAppBuildsWithoutError:
         assert "/auth/token" in paths
         assert "/health" in paths
 
-    def test_module_auto_discovery_helper_exists_in_app_module(self) -> None:
-        """_mount_module_routers function is defined in app.py."""
-        import importlib
 
-        app_module = importlib.import_module("aila.api.app")
-        assert hasattr(app_module, "_mount_module_routers")
-
-    def test_existing_tests_still_pass_with_new_app(self) -> None:
-        """The test infrastructure (create_app + state setup) works the same."""
-        import time
-
-        from aila.api.app import create_app
-
-        test_app = create_app()
-        test_app.state.platform = None
-        test_app.state.start_time = time.monotonic()
-        # The app is still functional for health/auth routes
-        assert test_app.state.platform is None

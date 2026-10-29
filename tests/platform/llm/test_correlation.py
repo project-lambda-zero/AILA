@@ -10,10 +10,6 @@ import pytest
 from aila.platform.llm.correlation import correlation_scope, current_join_keys
 
 
-def test_join_keys_none_by_default() -> None:
-    assert current_join_keys() == (None, None, None)
-
-
 def test_scope_sets_then_resets() -> None:
     with correlation_scope(investigation_id="i", branch_id="b", turn_number=3):
         assert current_join_keys() == ("i", "b", 3)

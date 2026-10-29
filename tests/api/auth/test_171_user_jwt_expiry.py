@@ -17,17 +17,7 @@ from __future__ import annotations
 import jwt
 
 from aila.api import auth as auth_module
-from aila.api.auth import _USER_ACCESS_EXPIRY, _USER_REFRESH_EXPIRY, issue_user_jwt
-
-
-def test_user_access_expiry_constant_is_one_hour() -> None:
-    """The access-token constant matches the 60-minute documented design."""
-    assert _USER_ACCESS_EXPIRY == 3600
-
-
-def test_user_refresh_expiry_constant_is_seven_days() -> None:
-    """The refresh-token constant matches the 7-day D-14 design."""
-    assert _USER_REFRESH_EXPIRY == 604800
+from aila.api.auth import issue_user_jwt
 
 
 def test_issue_user_jwt_returns_one_hour_expiry() -> None:

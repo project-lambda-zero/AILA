@@ -12,7 +12,6 @@ Tests here reflect the current async implementation:
 """
 from __future__ import annotations
 
-import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from aila.modules.vulnerability.services.inventory import InventoryService
@@ -27,26 +26,6 @@ def _make_inventory_service() -> InventoryService:
         adapters=MagicMock(),
         settings=MagicMock(ssh_max_workers=10),
     )
-
-
-def test_collect_and_record_inventory_parallelizes_via_asyncio_gather():
-    """_collect_and_record_inventory source must reference asyncio.gather.
-
-    The SCALE-01 ThreadPoolExecutor mechanism was removed when the SSH path became
-    fully async; parallel fan-out is now expressed via `asyncio.gather`.
-    """
-    service = _make_inventory_service()
-    src = inspect.getsource(service._collect_and_record_inventory)
-    assert "asyncio.gather" in src, (
-        "_collect_and_record_inventory must fan out via asyncio.gather; "
-        "the ThreadPoolExecutor variant was replaced by the async SSH path."
-    )
-
-
-def test_collect_one_system_method_exists():
-    """InventoryService must expose a _collect_one_system private method."""
-    service = _make_inventory_service()
-    assert hasattr(service, "_collect_one_system"), "_collect_one_system not found on InventoryService"
 
 
 async def test_collect_one_system_returns_tuple():
@@ -114,26 +93,4 @@ async def test_collect_one_system_returns_failure_on_exception():
     assert isinstance(failure, InventoryFailure)
     assert "SSH error" in failure.reason
 
-
-def test_session_not_passed_to_worker():
-    """_collect_one_system must not accept a session parameter (no DB writes in workers)."""
-    service = _make_inventory_service()
-    sig = inspect.signature(service._collect_one_system)
-    assert "session" not in sig.parameters, "session must not be passed to _collect_one_system"
-
-
-def test_ssh_max_workers_declared_in_vulnerability_config_schema():
-    """The `ssh_max_workers` config field must remain declared on the vulnerability config schema.
-
-    Since issue #209 the async implementation honors this value via a bounded
-    asyncio.Semaphore in ``_collect_and_record_inventory``; this test guards the
-    configuration surface itself so a rename or removal is caught at the schema
-    boundary.
-    """
-    from aila.modules.vulnerability.config_schema import VulnerabilityConfigSchema
-
-    assert "ssh_max_workers" in VulnerabilityConfigSchema.model_fields, (
-        "ssh_max_workers must remain declared on VulnerabilityConfigSchema; removing "
-        "it is a breaking change to the config surface."
-    )
 

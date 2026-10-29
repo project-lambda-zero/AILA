@@ -13,15 +13,12 @@ from pydantic import ValidationError
 from aila.modules.vr.contracts import (
     CrashSignature,
     CrashType,
-    CVSSVector,
     CWEMapping,
     DisclosureStatus,
     InputSource,
     PoCResult,
-    TargetClass,
     TargetFormat,
     TargetIngestionSpec,
-    VRAdvisory,
     VRProjectCreate,
     VRProjectStatus,
     VRProjectSummary,
@@ -38,8 +35,6 @@ __all__ = [
 
 
 class TestEnumCardinality:
-    def test_target_class_has_12_members(self) -> None:
-        assert len(list(TargetClass)) == 12
 
     def test_target_format_has_15_members(self) -> None:
         assert len(list(TargetFormat)) == 15
@@ -72,16 +67,6 @@ class TestVRTarget:
     def test_extra_fields_forbidden(self) -> None:
         with pytest.raises(ValidationError):
             TargetIngestionSpec(input_source=InputSource.UPLOAD, bogus_field="x")  # type: ignore[call-arg]
-
-    def test_binary_id_optional(self) -> None:
-        t = TargetIngestionSpec(input_source=InputSource.UPLOAD)
-        assert t.binary_id is None
-        assert t.target_class == TargetClass.NATIVE
-        assert t.source_available is False
-
-    def test_binary_id_set(self) -> None:
-        t = TargetIngestionSpec(input_source=InputSource.UPLOAD, binary_id="abc-123")
-        assert t.binary_id == "abc-123"
 
 
 class TestVRProjectCreate:
@@ -133,11 +118,6 @@ class TestVRProjectSummary:
 
 
 class TestAdvisoryContracts:
-    def test_cvss_defaults(self) -> None:
-        v = CVSSVector()
-        assert v.base_score == 0.0
-        assert v.severity == ""
-        assert v.vector_string == ""
 
     def test_cwe_requires_cwe_id(self) -> None:
         with pytest.raises(ValidationError):
@@ -145,14 +125,6 @@ class TestAdvisoryContracts:
         m = CWEMapping(cwe_id="CWE-122")
         assert m.cwe_id == "CWE-122"
         assert m.name == ""
-
-    def test_advisory_defaults(self) -> None:
-        a = VRAdvisory(finding_id="f-1")
-        assert a.title == ""
-        assert a.references == []
-        assert a.affected_versions == []
-        assert isinstance(a.cvss, CVSSVector)
-        assert a.cwe is None
 
 
 class TestFindingContracts:

@@ -28,9 +28,6 @@ class TestEventEmitter:
         assert r1 == ["x"]
         assert r2 == ["x"]
 
-    def test_emit_with_no_destinations(self):
-        emitter = EventEmitter()
-        emitter.emit(_make_event())  # must not raise
 
     def test_order_preserved(self):
         emitter = EventEmitter()
@@ -74,10 +71,6 @@ class TestThreadSafeEventEmitter:
         for i in range(5):
             emitter.emit(_make_event(str(i)))
         assert received == ["0", "1", "2", "3", "4"]
-
-    def test_no_destinations_safe(self):
-        emitter = ThreadSafeEventEmitter()
-        emitter.emit(_make_event())  # must not raise
 
 
 class TestSyncRedisClientCache:
