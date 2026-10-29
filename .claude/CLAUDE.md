@@ -292,6 +292,12 @@ green state.
 
 ### Semantic versioning (semver 2.0.0)
 
+> HARD RULE (operator directive, 2026-10-30): stay on `0.6.x`. Every
+> release is a PATCH bump (`0.6.X`) by default. NEVER bump the MINOR or
+> MAJOR digit (NEVER go to `0.7.x` or `1.x`) without the operator saying
+> so explicitly in the current conversation. "New feature" does NOT
+> authorize a minor bump; it is still a patch until told otherwise.
+
 Current version lives in `pyproject.toml` and is mirrored across the
 workspace (see version sites below). Decide the bump from the change,
 not from habit:

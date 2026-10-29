@@ -5,7 +5,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [0.7.0] - 2026-10-30 -- reverser-belt (kuna) IDA backend adaptation
+## [0.6.1] - 2026-10-30 -- reverser-belt (kuna) IDA backend adaptation
 
 ### Added
 
