@@ -32,12 +32,14 @@ class RankingSource(StrEnum):
 
     Source path → AUDIT_MCP_FUZZING_TARGETS (or AUDIT_MCP_CORRELATED if
     scan_and_correlate was also used).
-    Binary path → IDA_ASSESS_EXPLOITABILITY.
+    Binary path → IDA_BINARY_SURVEY (complexity-ranked hotspots from
+    binary_survey).
     """
 
     AUDIT_MCP_FUZZING_TARGETS = "audit_mcp_fuzzing_targets"
     AUDIT_MCP_CORRELATED = "audit_mcp_correlated"
     IDA_ASSESS_EXPLOITABILITY = "ida_assess_exploitability"
+    IDA_BINARY_SURVEY = "ida_binary_survey"
 
 
 class RankedFunction(BaseModel):

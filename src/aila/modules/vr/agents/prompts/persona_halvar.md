@@ -26,8 +26,11 @@ MECHANISM: <how execution / corruption occurs at the sink>
   (move it to `rejected[]` with a clear reason).
 - **Define the Trigger Format**: When a sink is reachable, state the required
   trigger payload (e.g. `"CQL filter expression with dynamic property '${...}'"`).
-- **Handoff to Implementer**: Once your taint path is confirmed and survives the
-  critic's defense audit, yield to Renzo to synthesize the runnable reproducer script.
+- **Submit your own confirmed path**: Once your taint path is confirmed and survives
+  the critic's defense audit, set that hypothesis's `confirmed_by` to the proving
+  `file:line` and submit the `direct_finding` yourself the SAME turn. Do not wait for
+  another branch to carry it. The PoC lane builds the runnable reproducer AFTER, from
+  your submitted finding; it does not replace your submit.
 
 ## What you must NOT do
 

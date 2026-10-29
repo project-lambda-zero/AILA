@@ -74,6 +74,38 @@ def _list_or_empty(raw: dict[str, Any], *keys: str) -> list[Any]:
 _log = logging.getLogger(__name__)
 
 
+def _unsupported_result(
+    raw: dict[str, Any],
+    ctx: AdapterContext,
+    *,
+    alt: str = "",
+) -> AdapterResult | None:
+    """Render a kuna ``{"status":"unsupported"}`` envelope as a clear
+    TEXT observation instead of letting a specialised adapter turn it
+    into an empty success. Returns ``None`` when the response is not
+    an unsupported envelope so callers can fall through to the normal
+    success path.
+    """
+    if not isinstance(raw, dict) or raw.get("status") != "unsupported":
+        return None
+    tool = raw.get("tool") or ctx.tool_name
+    reason = raw.get("reason") or "tool not available"
+    msg = f"UNSUPPORTED under kuna backend: {reason}"
+    if alt and alt.lower() not in reason.lower():
+        msg += f" Use {alt}."
+    return AdapterResult(
+        payload_kind=PayloadKind.TEXT,
+        payload={
+            "text": msg,
+            "unsupported": True,
+            "tool": tool,
+            "reason": raw.get("reason"),
+        },
+        observables_delta={f"ida_headless.unsupported.{tool}": msg},
+        summary=msg,
+    )
+
+
 def _assert_binary_id_match(raw: dict[str, Any], ctx: AdapterContext) -> None:
     """fix §280 -- guard against cross-binary contamination.
 
@@ -162,6 +194,7 @@ def _xref_compact_line(ref: dict[str, Any]) -> str:
         ref.get("function_name")
         or ref.get("caller_function_name")
         or ref.get("caller")
+        or ref.get("name")
         or "<?>"
     )
     addr = (
@@ -171,7 +204,7 @@ def _xref_compact_line(ref: dict[str, Any]) -> str:
         or ref.get("from")
         or "?"
     )
-    kind = ref.get("xref_kind") or ref.get("type") or ""
+    kind = ref.get("xref_kind") or ref.get("type") or ref.get("kind") or ""
     suffix = f" [{kind}]" if kind else ""
     return f"  - {fn} @ {addr}{suffix}"
 
@@ -186,6 +219,8 @@ def _xref_view_result(
     obs_suffix: str,
     summary_noun: str,
 ) -> AdapterResult:
+    if (u := _unsupported_result(raw, ctx, alt="call_chain or call_graph")) is not None:
+        return u
     _assert_binary_id_match(raw, ctx)  # fix \u00a7280
     refs = _list_or_empty(raw, *list_keys)
     total = len(refs)
@@ -317,6 +352,8 @@ def _taint_result(
     obs_suffix: str,
     label: str,
 ) -> AdapterResult:
+    if (u := _unsupported_result(raw, ctx)) is not None:
+        return u
     _assert_binary_id_match(raw, ctx)  # fix §280
     paths = _list_or_empty(raw, *list_keys)
     payload: dict[str, Any] = {
@@ -353,13 +390,59 @@ def adapt_interprocedural_taint(
 
 @is_read_tool("ida_headless", "trace_dataflow")
 def adapt_trace_dataflow(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
-    """Map ``trace_dataflow`` to TAINT_FLOW payload."""
-    sink = str(ctx.args.get("sink_function") or "<sink>")
-    return _taint_result(
-        raw, ctx,
-        list_keys=("hops", "trace", "results", "paths"),
-        obs_suffix=f"trace.{sink}",
-        label=f"trace_dataflow to {sink}",
+    """Map ``trace_dataflow`` to TAINT_FLOW payload.
+
+    The reverser returns a single backward slice: an ordered list of
+    assignment hops from the sink argument toward its source, plus the
+    resolved source terms and whether a source was reached. This is one
+    path (not a list of paths), so it is rendered directly rather than
+    through the path-oriented ``_taint_result`` helper.
+    """
+    if (u := _unsupported_result(raw, ctx)) is not None:
+        return u
+    _assert_binary_id_match(raw, ctx)  # fix §280
+    sink = str(ctx.args.get("sink_function") or raw.get("sink_function") or "<sink>")
+    target = str(raw.get("target") or "<target>")
+    hops = _list_or_empty(raw, "hops", "trace")
+    sources = raw.get("source_terms") or []
+    reached = bool(raw.get("reached_source"))
+    lines: list[str] = []
+    for h in hops[:MAX_LIST_PREVIEW]:
+        if not isinstance(h, dict):
+            continue
+        lhs = h.get("lhs", "?")
+        rhs = h.get("rhs", "?")
+        ln = h.get("line")
+        loc = f"  (line {ln})" if ln is not None else ""
+        lines.append(f"  {lhs} = {rhs}{loc}")
+    if len(hops) > MAX_LIST_PREVIEW:
+        lines.append(f"  ... and {len(hops) - MAX_LIST_PREVIEW} more hop(s)")
+    body = (
+        "\n".join(lines) if lines
+        else "  (no assignment hops; sink argument is a direct source)"
+    )
+    src_txt = ", ".join(str(s) for s in sources) if sources else "unresolved"
+    obs_value = (
+        f"trace_dataflow: {target} (arg of {sink})\n"
+        f"backward slice ({len(hops)} hop(s), "
+        f"source={'reached' if reached else 'not reached'}):\n"
+        f"{body}\n"
+        f"source term(s): {src_txt}"
+    )
+    payload: dict[str, Any] = {
+        "target": target,
+        "sink_function": sink,
+        "hops": hops,
+        "source_terms": list(sources),
+        "reached_source": reached,
+        "raw": raw,
+        "source_provenance": provenance_stamp(ctx),
+    }
+    return AdapterResult(
+        payload_kind=PayloadKind.TAINT_FLOW,
+        payload=payload,
+        observables_delta={obs_key_for(ctx, f"trace.{sink}"): obs_value},
+        summary=f"trace_dataflow: {target} <- {src_txt} ({len(hops)} hop(s))",
     )
 
 
@@ -539,14 +622,36 @@ def adapt_disassemble_function(
 
 
 def adapt_get_microcode(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
-    """Map ``get_microcode`` to CODE_POINTER payload (Hex-Rays microcode)."""
+    """Map ``get_microcode`` to CODE_POINTER payload (miasm IR).
+
+    The reverser returns miasm intermediate representation, not Hex-Rays
+    microcode: a per-block list of ``{dst, src}`` assignments. Render it as
+    a readable IR listing so the CODE_POINTER body carries real content.
+    """
+    if (u := _unsupported_result(raw, ctx)) is not None:
+        return u
     fn = str(ctx.args.get("address_or_name") or "<fn>")
-    maturity = str(ctx.args.get("maturity") or "current")
+    if isinstance(raw, dict) and "ir_blocks" in raw and "text" not in raw:
+        lines: list[str] = []
+        note = raw.get("note")
+        if note:
+            lines.append(f"// {note}")
+        lines.append(
+            f"// arch={raw.get('arch', '?')} blocks={raw.get('block_count', '?')} "
+            f"ir_blocks={raw.get('ir_block_count', '?')}"
+            + ("  [truncated]" if raw.get("truncated") else "")
+        )
+        for blk in raw.get("ir_blocks", []) or []:
+            lines.append(f"{blk.get('block_address', '?')}:")
+            for asg in blk.get("assignments", []) or []:
+                lines.append(f"    {asg.get('dst', '?')} = {asg.get('src', '?')}")
+        raw = {**raw, "text": "\n".join(lines)}
     return _code_pointer_result(
         raw, ctx,
-        body_keys=("microcode", "text", "lines"),
+        body_keys=("text", "microcode", "lines"),
         obs_suffix=f"microcode.{fn}",
-        label=f"microcode of {fn} ({maturity})",
+        label=f"miasm IR of {fn}",
+        max_chars=MAX_OBS_DUMP_CHARS,
     )
 
 
@@ -558,7 +663,7 @@ def adapt_pseudocode_slice_view(
     fn = str(ctx.args.get("address_or_name") or "<fn>")
     return _code_pointer_result(
         raw, ctx,
-        body_keys=("slices", "text", "lines"),
+        body_keys=("text", "slices", "lines"),
         obs_suffix=f"slice.{fn}",
         label=f"pseudocode slices in {fn}",
         max_chars=MAX_OBS_DUMP_CHARS,

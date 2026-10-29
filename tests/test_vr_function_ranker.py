@@ -22,7 +22,7 @@ from aila.modules.vr.enrichment.services import (
     FunctionRankingDispatcher,
 )
 from aila.modules.vr.enrichment.services.function_ranker import (
-    _PARSER_SINK_APIS,
+    FunctionRankerError,
     _normalize_audit_mcp_entries,
 )
 from aila.modules.vr.services.stage_tracker import StageTrackerError
@@ -78,18 +78,8 @@ class TestRankingSourceEnum:
             "audit_mcp_fuzzing_targets",
             "audit_mcp_correlated",
             "ida_assess_exploitability",
+            "ida_binary_survey",
         }
-
-
-class TestParserSinkApiList:
-    def test_contains_expected_apis(self) -> None:
-        assert "strcpy" in _PARSER_SINK_APIS
-        assert "memcpy" in _PARSER_SINK_APIS
-        assert "sprintf" in _PARSER_SINK_APIS
-        assert "gets" in _PARSER_SINK_APIS
-
-    def test_no_duplicates(self) -> None:
-        assert len(_PARSER_SINK_APIS) == len(set(_PARSER_SINK_APIS))
 
 
 class TestAuditMcpEntryNormalization:
@@ -235,3 +225,93 @@ class TestDispatcherErrorPaths:
         d = FunctionRankingDispatcher(ida=_FakeMcp({}), audit_mcp=_FakeMcp({}))
         with pytest.raises(StageTrackerError):
             await d.rank(str(uuid.uuid4()))
+
+
+class TestRankBinaryViaBinarySurvey:
+    """The binary path ranks kuna ``binary_survey`` hotspots by cyclomatic
+    complexity. ``_rank_binary`` only calls the IDA bridge (no DB), so it is
+    exercised directly with a canned bridge.
+    """
+
+    @pytest.mark.asyncio
+    async def test_missing_binary_id_raises(self) -> None:
+        d = FunctionRankingDispatcher(ida=_FakeMcp({}), audit_mcp=_FakeMcp({}))
+        with pytest.raises(FunctionRankerError):
+            await d._rank_binary("tgt-1", {})
+
+    @pytest.mark.asyncio
+    async def test_survey_hotspots_ranked_by_complexity(self) -> None:
+        ida = _FakeMcp({
+            "binary_survey": {
+                "hotspots": [
+                    {"name": "mid", "address": "0x2000", "complexity": 8},
+                    {"name": "hot", "address": "0x1000", "complexity": 40,
+                     "callees_count": 12, "string_refs_count": 3},
+                    {"name": "cold", "address": "0x3000", "complexity": 1},
+                ],
+            },
+        })
+        d = FunctionRankingDispatcher(ida=ida, audit_mcp=_FakeMcp({}))
+        ranking = await d._rank_binary("tgt-1", {"binary_id": "b1"})
+
+        assert ranking.source is RankingSource.IDA_BINARY_SURVEY
+        assert [r.name for r in ranking.top_k] == ["hot", "mid", "cold"]
+        assert [r.rank for r in ranking.top_k] == [1, 2, 3]
+        # Most complex hotspot saturates the log-scale ceiling; scores fall off.
+        assert ranking.top_k[0].score == pytest.approx(1.0)
+        assert ranking.top_k[0].score > ranking.top_k[1].score > ranking.top_k[2].score
+        assert ranking.total_candidates == 3
+        # Secondary survey signals surface in the reasons.
+        assert "cyclomatic_complexity=40" in ranking.top_k[0].reasons
+        assert "callees=12" in ranking.top_k[0].reasons
+        assert "string_refs=3" in ranking.top_k[0].reasons
+        # Only the survey is called; no list_functions fallback.
+        assert [c[0] for c in ida.calls] == ["binary_survey"]
+
+    @pytest.mark.asyncio
+    async def test_hotspots_without_address_dropped(self) -> None:
+        ida = _FakeMcp({
+            "binary_survey": {
+                "hotspots": [
+                    {"name": "keep", "address": "0x1000", "complexity": 5},
+                    {"name": "drop_no_addr", "complexity": 99},
+                ],
+            },
+        })
+        d = FunctionRankingDispatcher(ida=ida, audit_mcp=_FakeMcp({}))
+        ranking = await d._rank_binary("tgt-1", {"binary_id": "b1"})
+        assert [r.name for r in ranking.top_k] == ["keep"]
+        assert ranking.total_candidates == 1
+
+    @pytest.mark.asyncio
+    async def test_empty_survey_falls_back_to_list_functions(self) -> None:
+        ida = _FakeMcp({
+            "binary_survey": {"hotspots": []},
+            "list_functions": {
+                "functions": [
+                    {"name": "big", "address": "0x4000", "cyclomatic_complexity": 30},
+                    {"name": "small", "address": "0x5000", "cyclomatic_complexity": 2},
+                ],
+            },
+        })
+        d = FunctionRankingDispatcher(ida=ida, audit_mcp=_FakeMcp({}))
+        ranking = await d._rank_binary("tgt-1", {"binary_id": "b1"})
+
+        assert [r.name for r in ranking.top_k] == ["big", "small"]
+        assert ranking.top_k[0].score == pytest.approx(1.0)
+        # The fallback ordered by complexity_desc was issued.
+        actions = [c[0] for c in ida.calls]
+        assert actions == ["binary_survey", "list_functions"]
+        assert ida.calls[1][1].get("order_by") == "complexity_desc"
+
+    @pytest.mark.asyncio
+    async def test_no_hotspots_anywhere_returns_empty_ranking(self) -> None:
+        ida = _FakeMcp({
+            "binary_survey": {"hotspots": []},
+            "list_functions": {"functions": []},
+        })
+        d = FunctionRankingDispatcher(ida=ida, audit_mcp=_FakeMcp({}))
+        ranking = await d._rank_binary("tgt-1", {"binary_id": "b1"})
+        assert ranking.top_k == []
+        assert ranking.total_candidates == 0
+        assert "no hotspots" in ranking.notes

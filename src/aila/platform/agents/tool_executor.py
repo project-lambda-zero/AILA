@@ -33,6 +33,7 @@ from aila.platform.agents.tool_execution import (
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.enums import SenderKind
 from aila.platform.contracts.mcp_payload import PayloadKind
+from aila.platform.llm.correlation import correlation_scope
 from aila.platform.mcp.adapters import (
     AdapterContext,
     get_adapter,
@@ -1286,9 +1287,21 @@ class ToolExecutorHelpersBase:
                 # the catalog holds >=1 enabled row matching. Otherwise the
                 # helper falls straight back to direct bridge.forward so
                 # the byte-identical happy-path guarantee holds.
-                raw = await self._dispatch_via_router(
-                    bridge, server_id, tool_name, args,
-                )
+                #
+                # #39 observability: ``execute`` runs in the phase-graph loop
+                # OUTSIDE the turn_runner LLM ``correlation_scope``, so set the
+                # ambient correlation here for the duration of the dispatch.
+                # The ``record_call`` inside ``bridge.forward`` reads the
+                # ContextVar and stamps the investigation / branch / turn
+                # join-keys; without this the call-log rows land NULL (GAP D).
+                with correlation_scope(
+                    investigation_id=investigation_id,
+                    branch_id=branch_id,
+                    turn_number=at_turn,
+                ):
+                    raw = await self._dispatch_via_router(
+                        bridge, server_id, tool_name, args,
+                    )
         except (httpx.HTTPError, OSError, RuntimeError, ValueError, TypeError) as exc:
             # fix §197 -- broadened from (OSError, TimeoutError,
             # RuntimeError). `bridge.forward` reaches into httpx
@@ -1319,7 +1332,17 @@ class ToolExecutorHelpersBase:
         # bridge let slip through.
         _status = raw.get("status")
         if _status not in _SUCCESS_STATUSES:
-            raw_err = raw.get("error") or ""
+            # Error detail is not carried in a single canonical key across
+            # servers: audit_mcp / build_call_tree use ``error``, while
+            # ida_headless ``call_chain`` (and other reverser tools) put
+            # the actionable text in ``message`` (e.g. "Function not
+            # found: sub_1800317eb"). Reading only ``error`` dropped that
+            # detail and handed the agent the opaque "unexpected status
+            # 'error'" fallback, so it reissued the same bad call until
+            # the repeat-failure breaker killed the turn at zero progress.
+            # Fall back through the known detail keys so the real reason
+            # reaches the agent and it can self-correct.
+            raw_err = raw.get("error") or raw.get("message") or raw.get("detail") or ""
             if not raw_err and _status:
                 raw_err = (
                     f"unexpected status {_status!r} (success requires "

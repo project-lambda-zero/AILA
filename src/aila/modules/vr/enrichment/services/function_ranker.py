@@ -9,9 +9,11 @@ already implement graph-aware ranking:
                    + taint reachability). Optional ``scan_and_correlate``
                    overlay when a SAST scanner is wired in.
 
-  binary target  → IDA ``find_api_call_sites`` for parser sinks, aggregated
-                   per function; top-K candidates get a deep
-                   ``assess_exploitability`` verdict for the strongest sink.
+  binary target  → IDA ``binary_survey`` hotspots (kuna-supported),
+                   ranked by cyclomatic complexity with a log-scale
+                   normalized score. Falls back to
+                   ``list_functions(order_by=complexity_desc)`` when the
+                   survey returns no hotspots.
 
 The dispatcher persists the result into
 ``vr_targets.capability_profile_json.function_ranking`` and updates
@@ -57,65 +59,6 @@ __all__ = [
 _log = logging.getLogger(__name__)
 
 
-# Parser-sink API list used to bucket IDA find_api_call_sites results
-# per function. Limited to the unambiguous high-signal APIs -- the
-# audit-mcp source path uses a richer taint analysis and doesn't need
-# this list.
-_PARSER_SINK_APIS: tuple[str, ...] = (
-    "strcpy", "strcat", "sprintf", "vsprintf", "gets",
-    "sscanf", "scanf", "fscanf", "memcpy", "memmove",
-    "wcscpy", "wcscat", "wsprintfA", "wsprintfW",
-    "lstrcpyA", "lstrcpyW", "lstrcatA", "lstrcatW",
-)
-
-# fix §231 -- per-sink "tainted argument index" lookup. The previous
-# inline `sink_argument_index=2 if sink in {'memcpy','memmove'} else 0`
-# was wrong for ~70% of the unambiguous parser-sink APIs above (e.g.
-# strcpy/strcat/sprintf all have their tainted source at a non-zero
-# index that wasn't 2 either). Source: glibc/POSIX man pages
-# (strcpy(3), strcat(3), sprintf(3), snprintf(3), memcpy(3),
-# memmove(3), system(3), execve(2), popen(3), fopen(3), gets(3),
-# recv(2), recvfrom(2), read(2), fgets(3)) and MSDN for the wide-char
-# / lstr family. ``None`` means "no specific tainted-source argument"
-# (gets() pulls from stdin, scanf() from stdin) and the deep-assess
-# call is skipped entirely for that sink. Anything not in the table
-# falls back to 0 via ``.get(sink, 0)`` -- a deliberately conservative
-# default that still lets the IDA bridge produce a verdict.
-_SINK_TAINT_ARG: dict[str, int | None] = {
-    "strcpy":   1,
-    "strcat":   1,
-    "sprintf":  2,
-    "snprintf": 2,
-    "memcpy":   1,
-    "memmove":  1,
-    "system":   0,
-    "exec":     0,
-    "execve":   0,
-    "popen":    0,
-    "fopen":    0,
-    "gets":     None,   # reads from stdin -- no tainted argument
-    "recv":     1,
-    "recvfrom": 1,
-    "read":     1,
-    "fgets":    0,
-    # Windows wide-char mirrors of the POSIX functions above (MSDN).
-    "wcscpy":    1,
-    "wcscat":    1,
-    "wsprintfA": 2,
-    "wsprintfW": 2,
-    "lstrcpyA":  1,
-    "lstrcpyW":  1,
-    "lstrcatA":  1,
-    "lstrcatW":  1,
-    # scanf family -- vsprintf/sscanf/scanf/fscanf write into varargs.
-    "vsprintf": 2,
-    "sscanf":   0,      # input string at arg 0
-    "scanf":    None,   # reads from stdin -- no tainted argument
-    "fscanf":   None,   # reads from FILE* stream -- no tainted argument
-}
-
-
-
 class McpCallable(Protocol):
     """Subset of bridge tool interface used by the dispatcher.
 
@@ -147,12 +90,10 @@ class FunctionRankingDispatcher:
         audit_mcp: McpCallable,
         *,
         top_k: int = 50,
-        deep_assess_top_n: int = 10,
     ) -> None:
         self._ida = ida
         self._audit_mcp = audit_mcp
         self._top_k = top_k
-        self._deep_assess_top_n = deep_assess_top_n
 
     async def _load(self, target_id):
         async with UnitOfWork() as uow:
@@ -328,128 +269,78 @@ class FunctionRankingDispatcher:
                 "/vr/targets/{id}/analyze or wait for auto-ingestion",
             )
 
-        # fix §230 -- parser-sink fan-out in parallel. Each
-        # find_api_call_sites takes ~30 s and we issue 5+ of them; the
-        # sequential loop blocked the binary path for 2.5+ min before
-        # the deep-assess loop even started. Bridge concurrency is
-        # safe (E12 wave-1 fixes verified that the IDA bridge handles
-        # concurrent action dispatch per binary_id).
-        bucket: dict[str, dict[str, Any]] = {}
-        sites_responses = await asyncio.gather(
-            *(
-                self._ida.forward(
-                    action="find_api_call_sites",
-                    binary_id=binary_id,
-                    api_name=api,
-                )
-                for api in _PARSER_SINK_APIS
-            ),
-            return_exceptions=True,  # one stuck API MUST NOT poison the batch
+        # Rank binaries from kuna's ``binary_survey`` hotspots (complexity
+        # sorted, pre-scored). ``find_api_call_sites`` + ``assess_exploitability``
+        # were the prior path; kuna returns unsupported for assess and
+        # emits call sites in a different shape, so the previous pipeline
+        # always produced empty rankings. Falls back to ``list_functions``
+        # ordered by cyclomatic complexity when the survey yields nothing.
+        survey = await self._ida.forward(
+            action="binary_survey",
+            binary_id=binary_id,
+            max_hotspots=max(self._top_k, 20),
         )
-        for api, sites_resp in zip(_PARSER_SINK_APIS, sites_responses, strict=True):
-            if isinstance(sites_resp, BaseException):
-                _log.warning(
-                    "_rank_binary: find_api_call_sites api=%s raised %s: %s",
-                    api, type(sites_resp).__name__, sites_resp,
-                )
-                continue
-            if not isinstance(sites_resp, dict) or sites_resp.get("status") != "ready":
-                continue
-            for site in sites_resp.get("call_sites", []) or []:
-                fn_addr = site.get("function_address") or site.get("caller_function_address")
-                fn_name = site.get("function_name") or site.get("caller_function_name") or "<unknown>"
-                if not fn_addr:
-                    continue
-                row = bucket.setdefault(fn_addr, {"name": fn_name, "hits": 0, "apis": set()})
-                row["hits"] += 1
-                row["apis"].add(api)
+        hotspots = survey.get("hotspots") if isinstance(survey, dict) else None
+        if not hotspots:
+            lf = await self._ida.forward(
+                action="list_functions",
+                binary_id=binary_id,
+                order_by="complexity_desc",
+                exclude_thunks=True,
+                exclude_libraries=True,
+                limit=max(self._top_k, 20),
+            )
+            if isinstance(lf, dict):
+                hotspots = [
+                    {
+                        "name": f.get("name"),
+                        "address": f.get("address"),
+                        "complexity": f.get("cyclomatic_complexity", 0),
+                    }
+                    for f in (lf.get("functions") or [])
+                ]
+            else:
+                hotspots = []
 
-        if not bucket:
+        hotspots = [h for h in hotspots if h.get("address")]
+
+        if not hotspots:
             return FunctionRanking(
                 target_id=target_id,
-                source=RankingSource.IDA_ASSESS_EXPLOITABILITY,
+                source=RankingSource.IDA_BINARY_SURVEY,
                 produced_at=utc_now(),
                 total_candidates=0,
                 top_k=[],
-                notes="no parser-sink callsites found in binary",
+                notes="binary_survey returned no hotspots",
             )
 
-        ordered = sorted(bucket.items(), key=lambda kv: kv[1]["hits"], reverse=True)
-        max_hits = ordered[0][1]["hits"] if ordered else 1
-
-        # fix §230 -- deep assess_exploitability fan-out in parallel.
-        # Up to _deep_assess_top_n calls × ~30 s each was a serial
-        # 5 min tail on the binary path; concurrent dispatch collapses
-        # it to the worst-case single call (~30 s).
-        deep_addresses = [addr for addr, _ in ordered[: self._deep_assess_top_n]]
-        deep_verdicts: dict[str, str] = {}
-        deep_tasks: list[tuple[str, Any]] = []  # (addr, awaitable)
-        for addr in deep_addresses:
-            row = bucket[addr]
-            sink = next(iter(row["apis"]), None)
-            if not sink:
-                continue
-            # fix §231 -- table-driven taint argument; ``None`` skips the
-            # deep-assess call for sinks with no tainted-source argument
-            # (gets/scanf/fscanf read from stdin / a FILE* stream).
-            arg_index = _SINK_TAINT_ARG.get(sink, 0)
-            if arg_index is None:
-                continue
-            deep_tasks.append((
-                addr,
-                self._ida.forward(
-                    action="assess_exploitability",
-                    binary_id=binary_id,
-                    address_or_name=addr,
-                    sink_function=sink,
-                    sink_argument_index=arg_index,
-                ),
-            ))
-        if deep_tasks:
-            verdict_responses = await asyncio.gather(
-                *(awaitable for _, awaitable in deep_tasks),
-                return_exceptions=True,
-            )
-            for (addr, _aw), verdict_resp in zip(deep_tasks, verdict_responses, strict=True):
-                if isinstance(verdict_resp, BaseException):
-                    _log.warning(
-                        "_rank_binary: assess_exploitability addr=%s raised %s: %s",
-                        addr, type(verdict_resp).__name__, verdict_resp,
-                    )
-                    continue
-                if not isinstance(verdict_resp, dict) or verdict_resp.get("status") != "ready":
-                    continue
-                verdict = verdict_resp.get("verdict") or verdict_resp.get("classification") or ""
-                if verdict:
-                    deep_verdicts[addr] = str(verdict)
+        hotspots.sort(key=lambda h: float(h.get("complexity") or 0), reverse=True)
+        max_cx = float(hotspots[0].get("complexity") or 0) or 1.0
 
         top_k: list[RankedFunction] = []
-        for rank_pos, (addr, row) in enumerate(ordered[: self._top_k], start=1):
-            # fix §232 -- log1p compression keeps high-hit functions
-            # distinguishable from low-hit ones (linear ratio collapsed
-            # 100 vs 50 to the same band as 2 vs 1, blurring the top-K
-            # signal). log1p(0) == 0 so the zero-hit branch is still 0.
-            normalized = (
-                math.log1p(row["hits"]) / math.log1p(max_hits) if max_hits else 0.0
-            )
-            reasons = [f"{row['hits']} parser-sink callsite(s): {', '.join(sorted(row['apis']))}"]
-            if addr in deep_verdicts:
-                reasons.append(f"IDA assess_exploitability verdict: {deep_verdicts[addr]}")
+        for pos, h in enumerate(hotspots[: self._top_k], start=1):
+            c = float(h.get("complexity") or 0)
+            score = min(1.0, math.log1p(c) / math.log1p(max_cx)) if max_cx > 0 else 0.0
+            reasons = [f"cyclomatic_complexity={int(c)}"]
+            if h.get("callees_count") is not None:
+                reasons.append(f"callees={h['callees_count']}")
+            if h.get("string_refs_count") is not None:
+                reasons.append(f"string_refs={h['string_refs_count']}")
             top_k.append(RankedFunction(
-                name=row["name"],
-                address=addr,
-                score=min(1.0, normalized),
-                rank=rank_pos,
+                name=str(h.get("name") or "<unknown>")[:512],
+                address=str(h.get("address") or "")[:64],
+                score=score,
+                rank=pos,
                 reasons=reasons,
             ))
 
         return FunctionRanking(
             target_id=target_id,
-            source=RankingSource.IDA_ASSESS_EXPLOITABILITY,
+            source=RankingSource.IDA_BINARY_SURVEY,
             produced_at=utc_now(),
-            total_candidates=len(bucket),
+            total_candidates=len(hotspots),
             top_k=top_k,
-            notes=f"deep assess_exploitability ran on top {len(deep_verdicts)}/{len(deep_addresses)} candidates",
+            notes=f"ranked {len(top_k)} hotspots from binary_survey by cyclomatic complexity",
         )
 
 

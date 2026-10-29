@@ -25,6 +25,7 @@ def build_http_client(
     *,
     verify: bool | str | None = None,
     proxies: str | None = None,
+    allow_endpoints: frozenset[tuple[str, int]] = frozenset(),
 ) -> httpx.Client:
     """Construct an httpx.Client configured with platform defaults.
 
@@ -42,7 +43,10 @@ def build_http_client(
     # SSRF egress policy before its socket opens (issue #42). A redirect into
     # a private/link-local address, a non-web scheme, or a disallowed port
     # raises SSRFBlockedError and aborts the chain.
-    transport = SSRFValidatingTransport(httpx.HTTPTransport(**inner_kwargs))  # type: ignore[arg-type]
+    transport = SSRFValidatingTransport(
+        httpx.HTTPTransport(**inner_kwargs),  # type: ignore[arg-type]
+        allow_endpoints=allow_endpoints,
+    )
     return httpx.Client(
         transport=transport,
         timeout=settings.request_timeout_seconds,
@@ -57,6 +61,7 @@ def build_async_http_client(
     verify: bool | str | None = None,
     proxies: str | None = None,
     timeout: float | None = None,
+    allow_endpoints: frozenset[tuple[str, int]] = frozenset(),
 ) -> httpx.AsyncClient:
     """Async counterpart of :func:`build_http_client`.
 
@@ -78,6 +83,7 @@ def build_async_http_client(
         inner_kwargs["proxy"] = proxies
     transport = SSRFValidatingAsyncTransport(
         httpx.AsyncHTTPTransport(**inner_kwargs),  # type: ignore[arg-type]
+        allow_endpoints=allow_endpoints,
     )
     return httpx.AsyncClient(
         transport=transport,

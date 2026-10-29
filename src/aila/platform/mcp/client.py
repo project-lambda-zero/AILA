@@ -691,6 +691,16 @@ class McpClient:
                 err = body.get("error")
                 if isinstance(err, str):
                     ctx["error_excerpt"] = err[:400]
+        elif status == "unsupported":
+            reason = body.get("reason")
+            if ctx is not None:
+                ctx["status"] = "error"
+                if isinstance(reason, str):
+                    ctx["error_excerpt"] = reason[:400]
+            _log.info(
+                "mcp_client %s: tool %s unsupported on backend -- %s",
+                self.server_id, action, reason if isinstance(reason, str) else "",
+            )
         elif status is None:
             # HTTP 2xx + no status field is the documented MCP
             # success shape for tools that return a bare result

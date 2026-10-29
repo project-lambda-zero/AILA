@@ -129,6 +129,14 @@ function toWidgetValue(field: FieldSpec, raw: unknown, initial: Record<string, u
       if (raw === null || raw === undefined || raw === "") return "";
       return typeof raw === "number" ? raw : String(raw);
     case "checkbox":
+      // A typeFrom bool config stores its value as a STRING ("true"/"false",
+      // and Python's str(False) yields "False"), so Boolean(raw) would be
+      // truthy for the literal string "false". Parse the string form the way
+      // the backend's _cast_value does; fall back to Boolean for real values.
+      if (typeof raw === "boolean") return raw;
+      if (typeof raw === "string") {
+        return ["true", "1", "yes", "on"].includes(raw.trim().toLowerCase());
+      }
       return Boolean(raw);
     case "tags":
       if (Array.isArray(raw)) return raw.map((v) => String(v));

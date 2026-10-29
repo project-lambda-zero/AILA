@@ -144,7 +144,13 @@ def classify_contract_error(text: str) -> str | None:
         or "unknown index" in low
         or "index not found" in low
         or "index_id not found" in low
-        or "does not exist" in low and ("path" in low or "file" in low or "apk" in low or "index" in low)
+        # ida_headless call_chain / call_graph return
+        # "Function not found: <name-or-addr>" when the agent passes a
+        # function identifier the reverser index cannot resolve -- same
+        # class as a stale path: retyping a variant keeps missing, so
+        # pivot to list_functions / build_call_tree for a canonical id.
+        or "function not found" in low
+        or "does not exist" in low and ("path" in low or "file" in low or "apk" in low or "index" in low or "function" in low)
     ):
         return "resource_not_found"
     return None

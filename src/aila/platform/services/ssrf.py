@@ -26,6 +26,7 @@ __all__ = [
     "SSRFValidatingAsyncTransport",
     "SSRFValidatingTransport",
     "check_url",
+    "endpoint_of",
 ]
 
 _BLOCKED_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
@@ -67,13 +68,45 @@ def _blocked_ip(
     return None
 
 
-def check_url(url: str) -> None:
+def endpoint_of(url: str) -> frozenset[tuple[str, int]]:
+    """Return the ``{(host, port)}`` singleton for a trusted base URL.
+
+    Internal-MCP call sites (the sample ``/upload`` and index ``/refresh``
+    fetches whose ``base_url`` is the operator-configured loopback MCP)
+    pass this to :func:`check_url` / the SSRF transports as
+    ``allow_endpoints`` so the exact trusted endpoint is exempt from the
+    port allow-list and IP block-list. Everything else, including redirect
+    targets to any other host:port, is still refused. Returns an empty set
+    when the URL has no hostname.
+    """
+    parsed = urlparse(url)
+    host = parsed.hostname
+    if host is None:
+        return frozenset()
+    scheme = (parsed.scheme or "").lower()
+    port = parsed.port or (443 if scheme == "https" else 80)
+    return frozenset({(host, port)})
+
+
+def check_url(
+    url: str,
+    *,
+    allow_endpoints: frozenset[tuple[str, int]] = frozenset(),
+) -> None:
     """Reject a URL whose scheme, port, or resolved address violates policy.
 
     Enforced on the initial URL and re-enforced on every redirect hop so an
     external ``301 Location: http://169.254.169.254/...`` (cloud IMDS) or a
     redirect to a non-web scheme/port cannot smuggle the client into an
     internal target.
+
+    ``allow_endpoints`` is a set of trusted ``(host, port)`` tuples -- the
+    operator-configured internal MCP base URLs. A URL whose host:port is in
+    that set bypasses the port allow-list and the IP block-list (a loopback
+    MCP on 127.0.0.1:18821 is the normal deployment and would otherwise be
+    refused by ``127.0.0.0/8``). The scheme check still applies, and because
+    this runs on every redirect hop, a redirect to any OTHER host:port is
+    still refused -- only the exact trusted endpoint passes.
     """
     parsed = urlparse(url)
     scheme = (parsed.scheme or "").lower()
@@ -83,6 +116,8 @@ def check_url(url: str) -> None:
     if hostname is None:
         raise SSRFBlockedError("egress blocked: URL has no hostname")
     port = parsed.port or (443 if scheme == "https" else 80)
+    if (hostname, port) in allow_endpoints:
+        return
     if port not in _ALLOWED_PORTS:
         raise SSRFBlockedError(f"egress blocked: port {port} is not allowed")
     try:
@@ -116,11 +151,16 @@ class SSRFValidatingTransport(httpx.BaseTransport):
     chain.
     """
 
-    def __init__(self, inner: httpx.BaseTransport) -> None:
+    def __init__(
+        self,
+        inner: httpx.BaseTransport,
+        allow_endpoints: frozenset[tuple[str, int]] = frozenset(),
+    ) -> None:
         self._inner = inner
+        self._allow_endpoints = allow_endpoints
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
-        check_url(str(request.url))
+        check_url(str(request.url), allow_endpoints=self._allow_endpoints)
         return self._inner.handle_request(request)
 
     def close(self) -> None:
@@ -135,11 +175,16 @@ class SSRFValidatingAsyncTransport(httpx.AsyncBaseTransport):
     async transport so each hop is validated before its socket is opened.
     """
 
-    def __init__(self, inner: httpx.AsyncBaseTransport) -> None:
+    def __init__(
+        self,
+        inner: httpx.AsyncBaseTransport,
+        allow_endpoints: frozenset[tuple[str, int]] = frozenset(),
+    ) -> None:
         self._inner = inner
+        self._allow_endpoints = allow_endpoints
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        check_url(str(request.url))
+        check_url(str(request.url), allow_endpoints=self._allow_endpoints)
         return await self._inner.handle_async_request(request)
 
     async def aclose(self) -> None:
