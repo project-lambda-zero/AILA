@@ -13,7 +13,7 @@
 import type { JSX } from "react";
 
 import { useFindingWorkflowStates } from "../../api/findingWorkflow";
-import type { ModulePageProps } from "../contract";
+import type { WindowChromeProps } from "../contract";
 import { css } from "../css";
 import { ConsoleWindow } from "../window";
 import { WorkflowStateBadge } from "./badges";
@@ -25,7 +25,7 @@ function moduleOfState(state: string): string {
 
 const MODULE_ORDER: readonly string[] = ["base", "vr", "malware", "forensics"];
 
-function AdminFindingStatesPage(props: ModulePageProps): JSX.Element {
+function AdminFindingStatesPage(props: WindowChromeProps): JSX.Element {
   const machineQ = useFindingWorkflowStates(null);
   const def = machineQ.data;
 
@@ -75,11 +75,11 @@ function AdminFindingStatesPage(props: ModulePageProps): JSX.Element {
               >
                 <header style={css("display:flex;align-items:center;gap:9px;margin-bottom:10px;")}>
                   <span style={css("width:8px;height:8px;background:var(--accent);flex:0 0 auto;")} />
-                  <span style={css("font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-primary);")}>
+                  <span style={css("font-family:var(--font-mono);font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-primary);")}>
                     {mod === "base" ? "platform base states" : mod + " module extensions"}
                   </span>
                   <span style={css("flex:1;")} />
-                  <span style={css("font-size:10px;color:var(--text-faint);")}>{grouped[mod].length + " state(s)"}</span>
+                  <span style={css("font-size:11px;color:var(--text-faint);")}>{grouped[mod].length + " state(s)"}</span>
                 </header>
                 <div style={css("display:flex;flex-direction:column;gap:8px;")}>
                   {grouped[mod].map((state) => {
@@ -92,12 +92,12 @@ function AdminFindingStatesPage(props: ModulePageProps): JSX.Element {
                         <div style={css("display:flex;align-items:center;")}>
                           <WorkflowStateBadge value={state} />
                         </div>
-                        <div style={css("display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:10.5px;color:var(--text-muted);")}>
+                        <div style={css("display:flex;align-items:center;flex-wrap:wrap;gap:6px;font-size:11px;color:var(--text-muted);")}>
                           {outs.length === 0 ? (
                             <span style={css("color:var(--text-faint);font-style:italic;")}>terminal (no outbound transitions)</span>
                           ) : (
                             <>
-                              <span style={css("color:var(--text-faint);letter-spacing:0.08em;text-transform:uppercase;font-size:9px;margin-right:2px;")}>
+                              <span style={css("color:var(--text-faint);letter-spacing:0.08em;text-transform:uppercase;font-size:11px;margin-right:2px;")}>
                                 {"\u2192"}
                               </span>
                               {outs.map((t) => (

@@ -363,10 +363,10 @@ async def test_sse_delivers_catchup_then_live_events(client_with_redis) -> None:
     _seed_task(user_id=key.id, group_id="admin", task_id="scan-sse-order-001")
 
     catchup_events = [
-        {"stage": "inventory", "message": "Collecting", "percent": "10", "timestamp": "2026-01-01T00:00:00+00:00"},
-        {"stage": "advisory", "message": "Resolving", "percent": "30", "timestamp": "2026-01-01T00:00:01+00:00"},
+        ("1-0", {"stage": "inventory", "message": "Collecting", "percent": "10", "timestamp": "2026-01-01T00:00:00+00:00"}),
+        ("2-0", {"stage": "advisory", "message": "Resolving", "percent": "30", "timestamp": "2026-01-01T00:00:01+00:00"}),
     ]
-    live_event = {"stage": "scoring", "message": "Scoring CVEs", "percent": "70", "timestamp": "2026-01-01T00:00:02+00:00"}
+    live_event = ("3-0", {"stage": "scoring", "message": "Scoring CVEs", "percent": "70", "timestamp": "2026-01-01T00:00:02+00:00"})
 
     with (
         patch("aila.api.routers.scans.pool_available", return_value=True),

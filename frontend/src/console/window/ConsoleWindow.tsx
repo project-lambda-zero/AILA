@@ -204,7 +204,7 @@ export default function ConsoleWindow(props: ConsoleWindowProps): JSX.Element | 
           alignItems: "stretch",
           background: "var(--surface-chrome)",
           borderTop: "2px solid var(--border)",
-          fontSize: 10.5,
+          fontSize: 11,
           letterSpacing: "0.1em",
           textTransform: "uppercase",
           color: "var(--text-faint)",

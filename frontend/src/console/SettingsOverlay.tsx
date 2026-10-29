@@ -18,6 +18,7 @@ export default function SettingsOverlay(props: SettingsOverlayProps) {
   const username = user?.username ?? "admin";
   const role = user?.role ?? "Admin";
   const userId = user?.id ?? "--";
+  const isGodTier = user?.role === "admin" && !user?.team_id;
 
   return (
     <div
@@ -30,7 +31,7 @@ export default function SettingsOverlay(props: SettingsOverlayProps) {
         onClick={onClose}
         title="close"
         style={css(
-          `position:absolute;top:10px;right:14px;z-index:2;width:24px;height:24px;display:flex;align-items:center;justify-content:center;background:var(--surface-chrome);border:1px solid var(--border-soft);color:var(--text-muted);font-family:var(--font-mono);font-size:12px;cursor:pointer;border-radius:3px;`,
+          `position:absolute;top:10px;right:14px;z-index:2;width:24px;height:28px;display:flex;align-items:center;justify-content:center;background:var(--surface-chrome);border:1px solid var(--border-soft);color:var(--text-muted);font-family:var(--font-mono);font-size:12px;cursor:pointer;border-radius:3px;`,
         )}
       >
         ✕
@@ -72,7 +73,7 @@ export default function SettingsOverlay(props: SettingsOverlayProps) {
             <span style={css(`flex:1;`)}></span>
             <span
               style={css(
-                `font-size:9px;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);background:color-mix(in srgb,var(--accent) 14%,transparent);padding:2px 8px;border-radius:10px;`,
+                `font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent);border:1px solid color-mix(in srgb,var(--accent) 40%,transparent);background:color-mix(in srgb,var(--accent) 14%,transparent);padding:2px 8px;border-radius:10px;`,
               )}
             >
               {role}
@@ -127,6 +128,37 @@ export default function SettingsOverlay(props: SettingsOverlayProps) {
           </div>
         </div>
 
+        {/* Administration (god-tier admins only) ----------------------------- */}
+        {isGodTier ? (
+          <>
+            <div style={css(`display:flex;align-items:center;gap:8px;color:var(--accent);font-size:13px;`)}>
+              <span>⚙</span>
+              <span style={css(`font-weight:700;`)}>Administration</span>
+            </div>
+            <div
+              style={css(
+                `border:1px solid var(--border);background:var(--surface-card);border-radius:4px;padding:14px 16px;`,
+              )}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onOpenPage?.("admin", "onboarding", "onboarding");
+                }}
+                style={css(
+                  `min-height:28px;font-family:var(--font-mono);font-size:12px;color:var(--accent);background:transparent;border:0;padding:0;cursor:pointer;text-align:left;`,
+                )}
+              >
+                open platform onboarding wizard →
+              </button>
+              <div style={css(`margin-top:6px;font-size:11px;color:var(--text-faint);`)}>
+                Review and toggle opt-in platform capabilities and their prerequisites.
+              </div>
+            </div>
+          </>
+        ) : null}
+
         {/* Appearance ------------------------------------------------------- */}
         <div
           style={css(
@@ -154,8 +186,8 @@ export default function SettingsOverlay(props: SettingsOverlayProps) {
                 : `border:1px solid var(--border-soft);background:var(--surface-sunk);border-radius:3px;overflow:hidden;cursor:pointer;`;
               const swatch = `height:60px;display:flex;align-items:flex-start;padding:8px 9px;background:${gradient};`;
               const tagStyle = selected
-                ? `font-size:8px;letter-spacing:0.06em;text-transform:uppercase;color:var(--status-ok);`
-                : `font-size:8px;letter-spacing:0.06em;text-transform:uppercase;color:transparent;`;
+                ? `font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--status-ok);`
+                : `font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:transparent;`;
               return (
                 <div
                   key={name}
@@ -168,7 +200,7 @@ export default function SettingsOverlay(props: SettingsOverlayProps) {
                   <div style={css(swatch)}>
                     <span
                       style={css(
-                        `font-family:var(--font-mono);font-size:9px;letter-spacing:0.1em;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.6);`,
+                        `font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;color:#fff;text-shadow:0 1px 3px rgba(0,0,0,0.6);`,
                       )}
                     >
                       AILA
@@ -182,14 +214,14 @@ export default function SettingsOverlay(props: SettingsOverlayProps) {
                     </div>
                     <div
                       style={css(
-                        `margin-top:3px;font-size:9.5px;color:var(--text-faint);line-height:1.35;`,
+                        `margin-top:3px;font-size:11px;color:var(--text-faint);line-height:1.35;`,
                       )}
                     >
                       {sub}
                     </div>
                     <div
                       style={css(
-                        `margin-top:5px;font-size:8px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);`,
+                        `margin-top:5px;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);`,
                       )}
                     >
                       natural mode · {mode}

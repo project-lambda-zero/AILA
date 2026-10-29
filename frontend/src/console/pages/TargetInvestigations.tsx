@@ -22,7 +22,7 @@ export interface TargetInvestigationsProps {
 
 function invRowCss(): CSSProperties {
   return css(
-    "display:flex;align-items:center;gap:8px;padding:6px 9px;border:0;border-bottom:1px solid var(--border-faint);background:transparent;color:var(--text-primary);font-family:var(--font-mono);font-size:10px;text-align:left;cursor:pointer;width:100%;",
+    "display:flex;align-items:center;gap:8px;padding:6px 9px;border:0;border-bottom:1px solid var(--border-faint);background:transparent;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;text-align:left;cursor:pointer;width:100%;",
   );
 }
 
@@ -36,23 +36,23 @@ export default function TargetInvestigations({ targetId, endpoint, onOpenXray }:
   });
 
   if (q.isLoading) {
-    return <div style={css("grid-column:1/-1;color:var(--text-faint);font-size:10px;")}>loading investigations&#8230;</div>;
+    return <div style={css("grid-column:1/-1;color:var(--text-faint);font-size:11px;")}>loading investigations&#8230;</div>;
   }
   if (q.isError) {
     return (
-      <div style={css("grid-column:1/-1;color:var(--status-warn);font-size:10px;")}>
+      <div style={css("grid-column:1/-1;color:var(--status-warn);font-size:11px;")}>
         could not load investigations &mdash; {q.error instanceof Error ? q.error.message : "request failed"}
       </div>
     );
   }
   const invs = q.data ?? [];
   if (invs.length === 0) {
-    return <div style={css("grid-column:1/-1;color:var(--text-faint);font-size:10px;")}>no investigation is running for this target.</div>;
+    return <div style={css("grid-column:1/-1;color:var(--text-faint);font-size:11px;")}>no investigation is running for this target.</div>;
   }
 
   return (
     <div style={css("grid-column:1/-1;display:flex;flex-direction:column;gap:2px;min-width:0;")}>
-      <div style={css("font-size:8px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);margin-bottom:2px;")}>
+      <div style={css("font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);margin-bottom:2px;")}>
         investigations ({invs.length})
       </div>
       {invs.map((inv) => {
@@ -62,12 +62,12 @@ export default function TargetInvestigations({ targetId, endpoint, onOpenXray }:
           <button key={inv.id} type="button" title={`open x-ray for ${inv.title}`} onClick={() => onOpenXray(inv)} style={invRowCss()}>
             <span style={css(`flex:0 0 auto;width:6px;height:6px;border-radius:1px;background:${tone};`)} />
             <span style={css("flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{inv.title}</span>
-            <span style={css("flex:0 0 auto;font-size:8px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-faint);")}>{inv.kind ?? "\u2014"}</span>
-            <span style={css("flex:0 0 auto;font-size:8px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-faint);")}>{inv.status ?? "\u2014"}</span>
+            <span style={css("flex:0 0 auto;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-faint);")}>{inv.kind ?? "\u2014"}</span>
+            <span style={css("flex:0 0 auto;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-faint);")}>{inv.status ?? "\u2014"}</span>
             {typeof inv.branch_count === "number" ? (
-              <span style={css("flex:0 0 auto;font-size:8px;color:var(--text-faint);")}>{inv.branch_count} br</span>
+              <span style={css("flex:0 0 auto;font-size:11px;color:var(--text-faint);")}>{inv.branch_count} br</span>
             ) : null}
-            <span style={css("flex:0 0 auto;font-size:10px;color:var(--text-muted);")}>{"\u25b8"}</span>
+            <span style={css("flex:0 0 auto;font-size:11px;color:var(--text-muted);")}>{"\u25b8"}</span>
           </button>
         );
       })}

@@ -76,7 +76,7 @@ async def _infinite_live_events():
     i = 0
     while True:
         i += 1
-        yield {
+        yield f"{i}-0", {
             "stage": f"s{i}",
             "message": "m",
             "percent": str(i),
@@ -152,7 +152,7 @@ class TestStreamEventsLifetimeCap:
             gen = ps.stream_events("t")
 
             first = await gen.__anext__()
-            assert first == event_data
+            assert first[1] == event_data
 
             # Next iteration re-enters the loop; elapsed >= cap so it returns.
             with pytest.raises(StopAsyncIteration):

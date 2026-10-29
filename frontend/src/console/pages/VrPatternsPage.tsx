@@ -6,7 +6,7 @@ import { apiFetch } from "../../api/client";
 import { fetchFieldOptions } from "../../api/mutations";
 import type { FieldOption } from "../../api/mutations";
 import { asRecord } from "../../api/parse";
-import type { ModulePageProps } from "../contract";
+import type { PageOpenerProps, WindowChromeProps } from "../contract";
 import { css } from "../css";
 import { StatusBadge } from "./badges";
 import { PAGE_CONFIGS } from "./configs";
@@ -14,7 +14,7 @@ import DataPage from "./DataPage";
 
 const CTL =
   "padding:4px 8px;border:1px solid var(--border-soft);border-radius:2px;background:var(--surface-sunk);color:var(--text-primary);font-family:var(--font-mono);font-size:11px;";
-const LABEL = "font-size:10px;letter-spacing:0.04em;color:var(--text-faint);text-transform:uppercase;";
+const LABEL = "font-size:11px;letter-spacing:0.04em;color:var(--text-faint);text-transform:uppercase;";
 
 /** One `/vr/patterns/applicable` result: the pattern plus its retrieval score
  * and the signals that matched it. */
@@ -102,14 +102,14 @@ function ApplicablePreview({ onClose }: { onClose: () => void }): JSX.Element {
             type="button"
             onClick={onClose}
             aria-label="close"
-            style={css("border:0;background:transparent;color:var(--text-muted);font-size:14px;cursor:pointer;")}
+            style={css("border:0;background:transparent;color:var(--text-muted);font-size:14px;cursor:pointer;min-height:28px;display:inline-flex;align-items:center;")}
           >
             {"\u2715"}
           </button>
         </div>
 
         <form onSubmit={run} style={css("display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-bottom:1px solid var(--border-soft);")}>
-          <p style={css("margin:0;font-size:10.5px;color:var(--text-muted);line-height:1.5;")}>
+          <p style={css("margin:0;font-size:11px;color:var(--text-muted);line-height:1.5;")}>
             simulate the retrieval gate an agent hits: only active patterns in the workspace/team/global scope chain are ranked and returned.
           </p>
           <div style={css("display:grid;grid-template-columns:1fr 1fr;gap:8px;")}>
@@ -174,7 +174,7 @@ function ApplicablePreview({ onClose }: { onClose: () => void }): JSX.Element {
             <button
               type="submit"
               disabled={!canRun}
-              style={css(`padding:4px 12px;border:1px solid var(--accent)66;border-radius:2px;background:transparent;color:var(--accent);font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;cursor:${canRun ? "pointer" : "not-allowed"};opacity:${canRun ? 1 : 0.5};`)}
+              style={css(`padding:4px 12px;border:1px solid var(--accent)66;border-radius:2px;background:transparent;color:var(--accent);font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;cursor:${canRun ? "pointer" : "not-allowed"};opacity:${canRun ? 1 : 0.5};`)}
             >
               {running ? "running\u2026" : "preview"}
             </button>
@@ -195,7 +195,7 @@ function ApplicablePreview({ onClose }: { onClose: () => void }): JSX.Element {
             </div>
           ) : (
             <>
-              <div style={css("font-family:var(--font-mono);font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>
+              <div style={css("font-family:var(--font-mono);font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>
                 {results.length} ranked
               </div>
               {results.map((r, i) => {
@@ -212,7 +212,7 @@ function ApplicablePreview({ onClose }: { onClose: () => void }): JSX.Element {
                       <StatusBadge value={String(p["status"] ?? "\u2014")} tone={String(p["status"] ?? "") === "active" ? "ok" : "muted"} />
                       <StatusBadge value={String(p["scope"] ?? "\u2014")} tone="muted" />
                       {r.matched_by.length > 0 ? (
-                        <span style={css("font-size:10px;color:var(--text-faint);font-family:var(--font-mono);")}>
+                        <span style={css("font-size:11px;color:var(--text-faint);font-family:var(--font-mono);")}>
                           matched by {r.matched_by.join(", ")}
                         </span>
                       ) : null}
@@ -232,7 +232,7 @@ function ApplicablePreview({ onClose }: { onClose: () => void }): JSX.Element {
  * detail + edit + delete + promote/archive actions + kind/status/scope
  * filters) plus a "preview applicable" toolbar control that opens the
  * retrieval-simulation overlay. */
-export default function VrPatternsPage(p: ModulePageProps): JSX.Element {
+export default function VrPatternsPage(p: WindowChromeProps & PageOpenerProps): JSX.Element {
   const [previewOpen, setPreviewOpen] = useState(false);
   return (
     <>
@@ -244,7 +244,7 @@ export default function VrPatternsPage(p: ModulePageProps): JSX.Element {
           <button
             type="button"
             onClick={() => setPreviewOpen(true)}
-            style={css("padding:4px 10px;border:1px solid var(--accent)66;border-radius:2px;background:transparent;color:var(--accent);font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;")}
+            style={css("min-height:28px;padding:4px 10px;border:1px solid var(--accent)66;border-radius:2px;background:transparent;color:var(--accent);font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;")}
           >
             preview applicable
           </button>

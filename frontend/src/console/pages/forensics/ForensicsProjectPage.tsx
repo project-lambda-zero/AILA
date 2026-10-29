@@ -19,37 +19,34 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 
 import { apiFetch } from "../../../api/client";
-import type { ModulePageProps } from "../../contract";
+import { parseOne, parseProjectSummary } from "../../../api/forensics";
+import type { ProjectSummary } from "../../../api/forensics";
+import type { EntityBindingProps, SectionRouteProps, WindowChromeProps } from "../../contract";
 import { css } from "../../css";
 
 import {
   CtlBtn,
-  DictPanel,
   KV,
-  Panel,
   StatusBadge,
   emptyNote,
   H,
 } from "./panels";
 import { InvestigateForm } from "./forms";
-import {
-  AnswersTab,
-  ArtifactsTab,
-  DirectivesTab,
-  EvidenceTab,
-  FindingsTab,
-  InvestigationsTab,
-  LeadsTab,
-  NetworkAnalysisTab,
-  OccurrencesTab,
-  OverviewTab,
-  RegistryAnalysisTab,
-  SolidEvidenceTab,
-  SuppressionsTab,
-  TimelineTab,
-  WriteupsTab,
-} from "./tabs";
-import type { ProjectSummary } from "./tabs";
+import { AnswersTab } from "./tabs/answers";
+import { ArtifactsTab } from "./tabs/artifacts";
+import { DirectivesTab } from "./tabs/directives";
+import { EvidenceTab } from "./tabs/evidence";
+import { FindingsTab } from "./tabs/findings";
+import { InvestigationsTab } from "./tabs/investigations";
+import { LeadsTab } from "./tabs/leads";
+import { OccurrencesTab } from "./tabs/occurrences";
+import { OverviewTab } from "./tabs/overview";
+import { DownloadBtn } from "./tabs/shared";
+import { SolidEvidenceTab } from "./tabs/solidEvidence";
+import { NetworkAnalysisTab, RegistryAnalysisTab } from "./tabs/structuredAnalysis";
+import { SuppressionsTab } from "./tabs/suppressions";
+import { TimelineTab } from "./tabs/timeline";
+import { WriteupsTab } from "./tabs/writeups";
 import { InvestigationSubView } from "./InvestigationSubView";
 import { ConsoleWindow } from "../../window";
 
@@ -89,14 +86,14 @@ interface TaskDispatch {
   status: string;
 }
 
-export default function ForensicsProjectPage(props: ModulePageProps): JSX.Element {
+export default function ForensicsProjectPage(props: WindowChromeProps & SectionRouteProps & EntityBindingProps): JSX.Element {
   const { investigationId: projectId, section, onBack, onMinimize, onNavigate, isFullscreen, onToggleFullscreen, windowId, title: windowTitle, isFocused, onFocus } = props;
 
   const { tab, invSubId } = useMemo(() => parseSection(section), [section]);
 
-  const project = useQuery<ProjectSummary>({
+  const project = useQuery({
     queryKey: ["forensics", projectId ?? "", "project"],
-    queryFn: () => apiFetch<ProjectSummary>(`/forensics/projects/${projectId}`),
+    queryFn: async () => parseOne(await apiFetch<unknown>(`/forensics/projects/${projectId}`), parseProjectSummary),
     enabled: Boolean(projectId),
     retry: false,
   });
@@ -219,7 +216,7 @@ export default function ForensicsProjectPage(props: ModulePageProps): JSX.Elemen
             type="button"
             onClick={backToTabs}
             style={css(
-              "background:transparent;border:1px solid var(--border-soft);color:var(--text-muted);font-family:var(--font-mono);font-size:9px;letter-spacing:0.08em;text-transform:uppercase;padding:2px 8px;border-radius:2px;cursor:pointer;",
+              "background:transparent;border:1px solid var(--border-soft);color:var(--text-muted);font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;padding:2px 8px;border-radius:2px;cursor:pointer;",
             )}
           >
             {"\u2039 project"}
@@ -232,12 +229,12 @@ export default function ForensicsProjectPage(props: ModulePageProps): JSX.Elemen
           </span>
           {project.data ? <StatusBadge value={project.data.status} /> : null}
           {kind ? (
-            <span style={css("font-family:var(--font-mono);font-size:9px;color:var(--text-faint);letter-spacing:0.08em;text-transform:uppercase;padding:1px 6px;border:1px solid var(--border-soft);border-radius:2px;")}>{kind}</span>
+            <span style={css("font-family:var(--font-mono);font-size:11px;color:var(--text-faint);letter-spacing:0.08em;text-transform:uppercase;padding:1px 6px;border:1px solid var(--border-soft);border-radius:2px;")}>{kind}</span>
           ) : null}
         </div>
         <span style={css("flex:1;")} />
         {project.data ? (
-          <div style={css("display:flex;gap:14px;font-family:var(--font-mono);font-size:9.5px;color:var(--text-muted);letter-spacing:0.05em;")}>
+          <div style={css("display:flex;gap:14px;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);letter-spacing:0.05em;")}>
             <Counter label="evidence" n={project.data.evidence_count} />
             <Counter label="artifacts" n={project.data.artifact_count} />
             <Counter label="leads" n={project.data.lead_count} />
@@ -270,29 +267,29 @@ export default function ForensicsProjectPage(props: ModulePageProps): JSX.Elemen
           onClick={() => setInvestigateOpen(true)}
           disabled={projectMissing}
         />
-        <CtlBtn
+        <DownloadBtn
+          path={`/forensics/projects/${projectId}/writeups.md`}
+          filename={`writeups-${(projectId ?? "").slice(0, 8)}.md`}
           label="download writeups.md"
-          tone="muted"
-          onClick={() => bearerDownload(`/forensics/projects/${projectId}/writeups.md`, `writeups-${(projectId ?? "").slice(0, 8)}.md`, (msg) => setNotice({ tone: "err", msg }))}
           disabled={projectMissing}
         />
-        <CtlBtn
+        <DownloadBtn
+          path={`/forensics/projects/${projectId}/directives.md`}
+          filename={`directives-${(projectId ?? "").slice(0, 8)}.md`}
           label="download directives.md"
-          tone="muted"
-          onClick={() => bearerDownload(`/forensics/projects/${projectId}/directives.md`, `directives-${(projectId ?? "").slice(0, 8)}.md`, (msg) => setNotice({ tone: "err", msg }))}
           disabled={projectMissing}
         />
         <span style={css("flex:1;")} />
         {fullAnalysisResult ? (
-          <span style={css("font-size:9px;color:var(--text-faint);letter-spacing:0.05em;")}>
+          <span style={css("font-size:11px;color:var(--text-faint);letter-spacing:0.05em;")}>
             last full-analysis task: {fullAnalysisResult.task_id} ({fullAnalysisResult.status})
           </span>
         ) : null}
         {notice ? (
-          <div style={css(`width:100%;display:flex;align-items:center;gap:8px;padding:4px 10px;margin-top:4px;border-radius:2px;font-size:10px;background:color-mix(in srgb,${notice.tone === "ok" ? "var(--status-ok)" : notice.tone === "err" ? "var(--status-warn)" : "var(--accent)"} 12%,transparent);border:1px solid ${notice.tone === "ok" ? "var(--status-ok)" : notice.tone === "err" ? "var(--status-warn)" : "var(--accent)"}55;color:${notice.tone === "ok" ? "var(--status-ok)" : notice.tone === "err" ? "var(--status-warn)" : "var(--accent)"};`)}>
+          <div style={css(`width:100%;display:flex;align-items:center;gap:8px;padding:4px 10px;margin-top:4px;border-radius:2px;font-size:11px;background:color-mix(in srgb,${notice.tone === "ok" ? "var(--status-ok)" : notice.tone === "err" ? "var(--status-warn)" : "var(--accent)"} 12%,transparent);border:1px solid ${notice.tone === "ok" ? "var(--status-ok)" : notice.tone === "err" ? "var(--status-warn)" : "var(--accent)"}55;color:${notice.tone === "ok" ? "var(--status-ok)" : notice.tone === "err" ? "var(--status-warn)" : "var(--accent)"};`)}>
             <span>{notice.msg}</span>
             <span style={css("flex:1;")} />
-            <button type="button" onClick={() => setNotice(null)} style={css("background:transparent;border:0;color:inherit;cursor:pointer;font-size:11px;")}>{"\u2715"}</button>
+            <button type="button" onClick={() => setNotice(null)} style={css("background:transparent;border:0;color:inherit;cursor:pointer;min-height:28px;display:inline-flex;align-items:center;font-size:11px;")}>{"\u2715"}</button>
           </div>
         ) : null}
       </div>
@@ -312,7 +309,7 @@ export default function ForensicsProjectPage(props: ModulePageProps): JSX.Elemen
               onClick={() => onNavigate(t.id)}
               disabled={projectMissing}
               style={css(
-                `background:${on ? "var(--accent)" : "transparent"};color:${on ? "var(--text-on-accent)" : projectMissing ? "var(--text-faint)" : "var(--text-muted)"};border:1px solid ${on ? "var(--accent)" : "var(--border-soft)"};border-radius:2px;font-family:var(--font-mono);font-size:9px;letter-spacing:0.08em;text-transform:uppercase;padding:3px 10px;cursor:${projectMissing ? "default" : "pointer"};white-space:nowrap;${projectMissing ? "opacity:0.5;" : ""}`,
+                `background:${on ? "var(--accent)" : "transparent"};color:${on ? "var(--text-on-accent)" : projectMissing ? "var(--text-faint)" : "var(--text-muted)"};border:1px solid ${on ? "var(--accent)" : "var(--border-soft)"};border-radius:2px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;padding:3px 10px;cursor:${projectMissing ? "default" : "pointer"};white-space:nowrap;${projectMissing ? "opacity:0.5;" : ""}`,
               )}
             >
               {t.label}
@@ -400,25 +397,6 @@ function renderTab(
   }
 }
 
-/* --- Bearer-authenticated file download (mirrors tabs.tsx) -------- */
-
-async function bearerDownload(path: string, filename: string, onError?: (msg: string) => void): Promise<void> {
-  try {
-    const text = await apiFetch<string>(path);
-    const blob = new Blob([text], { type: "text/markdown" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  } catch (e) {
-    const msg = `download failed: ${e instanceof Error ? e.message : "request failed"}`;
-    if (onError) onError(msg);
-    else console.warn(msg);
-  }
-}
-
 /* --- Readiness-check result modal --------------------------------- */
 
 function ReadinessModal({ result, onClose }: { result: ReadinessResult; onClose: () => void }): JSX.Element {
@@ -435,7 +413,7 @@ function ReadinessModal({ result, onClose }: { result: ReadinessResult; onClose:
       >
         <div
           style={css(
-            "display:flex;align-items:center;gap:10px;padding:9px 13px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-primary);",
+            "display:flex;align-items:center;gap:10px;padding:9px 13px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-primary);",
           )}
         >
           <span style={css(`width:9px;height:9px;border-radius:1px;background:${result.ready ? H.mint : H.warn};box-shadow:0 0 8px ${result.ready ? H.mint : H.warn};`)} />
@@ -461,7 +439,7 @@ function ReadinessModal({ result, onClose }: { result: ReadinessResult; onClose:
           />
         </div>
         <div style={css("padding:0 14px 12px;")}>
-          <div style={css("font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);margin-bottom:5px;")}>tool checks ({result.tools.length})</div>
+          <div style={css("font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);margin-bottom:5px;")}>tool checks ({result.tools.length})</div>
           <ToolsTable tools={result.tools} />
         </div>
       </div>
@@ -480,7 +458,7 @@ function ToolsTable({ tools }: { tools: ReadinessResult["tools"] }): JSX.Element
               <th
                 key={c}
                 style={css(
-                  "text-align:left;padding:6px 9px;background:var(--surface-chrome);border-bottom:1px solid var(--border-soft);font-size:8.5px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);white-space:nowrap;",
+                  "text-align:left;padding:6px 9px;background:var(--surface-chrome);border-bottom:1px solid var(--border-soft);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);white-space:nowrap;",
                 )}
               >
                 {c}

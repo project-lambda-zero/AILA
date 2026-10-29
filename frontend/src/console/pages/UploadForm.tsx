@@ -7,6 +7,10 @@
  *   VR file-binary kinds     POST /vr/targets  ->  POST /vr/targets/{id}/upload
  *   VR descriptor kinds      POST /vr/targets                    (JSON only)
  *   Malware every kind       POST /malware/targets/upload        (single-shot)
+ *   Malware path descriptor  POST /malware/targets               (JSON only)
+ *
+ * Malware targets pick a sample source: a file upload, or a path descriptor
+ * naming a sample the ingestion service can already read.
  *
  * The kind picker drives which body a submit builds. File kinds render a real
  * `<input type=file>` and disable submit until a file is picked; descriptor
@@ -28,10 +32,12 @@ import {
   useWorkspaces,
 } from "../../api/intake";
 import type {
+  MalwareDescriptorKey,
+  MalwareTargetCreatePayload,
   MalwareTargetKind,
   VRTargetKind,
 } from "../../api/intake";
-import type { ModulePageProps } from "../contract";
+import type { WindowChromeProps } from "../contract";
 import { css } from "../css";
 import { ConsoleWindow } from "../window";
 import { WizardShell, FieldHelp } from "../wizards";
@@ -53,7 +59,8 @@ type KindMode =
   | "vr-apk"         // POST /vr/targets/upload-apk
   | "vr-upload"      // POST /vr/targets  ->  POST /vr/targets/{id}/upload
   | "vr-descriptor"  // POST /vr/targets  (JSON only)
-  | "mal-upload";    // POST /malware/targets/upload
+  | "mal-upload"     // POST /malware/targets/upload
+  | "mal-descriptor"; // POST /malware/targets  (JSON descriptor, no file)
 
 interface KindSpec {
   key: string;
@@ -64,7 +71,32 @@ interface KindSpec {
   file?: { accept: string; hint: string };
   /** Extra scalar descriptor fields carried alongside the file / on the JSON body. */
   descriptor: DescField[];
+  /** Malware only: descriptor fields for the no-file create path, naming a
+   * sample the ingestion service can already read. */
+  pathDescriptor?: Array<DescField & { name: MalwareDescriptorKey }>;
 }
+
+/** How a malware target is supplied: a file upload, or a JSON descriptor
+ * pointing at a sample already on the ingestion host. */
+type MalwareSource = "upload" | "descriptor";
+
+const MAL_SOURCE_LABEL = {
+  upload: "upload file",
+  descriptor: "path descriptor",
+} satisfies Record<MalwareSource, string>;
+
+const IDA_PATH: DescField & { name: MalwareDescriptorKey } = {
+  name: "binary_path",
+  label: "binary path",
+  placeholder: "absolute path the IDA MCP host can read",
+  required: true,
+};
+const AUDIT_PATH: DescField & { name: MalwareDescriptorKey } = {
+  name: "sample_path",
+  label: "sample path",
+  placeholder: "absolute path the audit-mcp host can read",
+  required: true,
+};
 
 /** VR kinds, laid out in the same groups as IntakeWizard's kind grid so the
  * operator experience is consistent. */
@@ -195,14 +227,30 @@ const VR_KINDS: KindSpec[] = [
 ];
 
 const MAL_KINDS: KindSpec[] = [
-  { key: "pe_sample",       label: "pe sample",       group: "sample", mode: "mal-upload", file: { accept: ".exe,.dll,.sys", hint: "windows PE" },     descriptor: [] },
-  { key: "elf_sample",      label: "elf sample",      group: "sample", mode: "mal-upload", file: { accept: "",                hint: "linux ELF" },     descriptor: [] },
-  { key: "mach_o_sample",   label: "mach-o sample",   group: "sample", mode: "mal-upload", file: { accept: "",                hint: "macOS mach-o" },  descriptor: [] },
-  { key: "shellcode",       label: "shellcode",       group: "sample", mode: "mal-upload", file: { accept: "",                hint: "raw blob" },      descriptor: [] },
-  { key: "android_apk",     label: "android apk",     group: "sample", mode: "mal-upload", file: { accept: ".apk",            hint: "APK -> android-mcp" }, descriptor: [] },
-  { key: "dotnet_assembly", label: ".net assembly",   group: "sample", mode: "mal-upload", file: { accept: ".dll,.exe",       hint: ".dll or .exe" },  descriptor: [] },
-  { key: "script_sample",   label: "script sample",   group: "sample", mode: "mal-upload", file: { accept: "",                hint: "ps1 / py / js / vbs" }, descriptor: [] },
-  { key: "document_sample", label: "document sample", group: "sample", mode: "mal-upload", file: { accept: "",                hint: "doc / xls / pdf carrier" }, descriptor: [] },
+  { key: "pe_sample",       label: "pe sample",       group: "sample", mode: "mal-upload", file: { accept: ".exe,.dll,.sys", hint: "windows PE" },     descriptor: [], pathDescriptor: [IDA_PATH] },
+  { key: "elf_sample",      label: "elf sample",      group: "sample", mode: "mal-upload", file: { accept: "",                hint: "linux ELF" },     descriptor: [], pathDescriptor: [IDA_PATH] },
+  { key: "mach_o_sample",   label: "mach-o sample",   group: "sample", mode: "mal-upload", file: { accept: "",                hint: "macOS mach-o" },  descriptor: [], pathDescriptor: [IDA_PATH] },
+  {
+    key: "shellcode",
+    label: "shellcode",
+    group: "sample",
+    mode: "mal-upload",
+    file: { accept: "", hint: "raw blob" },
+    descriptor: [],
+    pathDescriptor: [IDA_PATH, { name: "arch", label: "arch", placeholder: "x86 / x64 / arm / arm64" }],
+  },
+  {
+    key: "android_apk",
+    label: "android apk",
+    group: "sample",
+    mode: "mal-upload",
+    file: { accept: ".apk", hint: "APK -> android-mcp" },
+    descriptor: [],
+    pathDescriptor: [{ name: "apk_path", label: "apk path", placeholder: "absolute path of the .apk on the ingestion host", required: true }],
+  },
+  { key: "dotnet_assembly", label: ".net assembly",   group: "sample", mode: "mal-upload", file: { accept: ".dll,.exe",       hint: ".dll or .exe" },  descriptor: [], pathDescriptor: [IDA_PATH] },
+  { key: "script_sample",   label: "script sample",   group: "sample", mode: "mal-upload", file: { accept: "",                hint: "ps1 / py / js / vbs" }, descriptor: [], pathDescriptor: [AUDIT_PATH] },
+  { key: "document_sample", label: "document sample", group: "sample", mode: "mal-upload", file: { accept: "",                hint: "doc / xls / pdf carrier" }, descriptor: [], pathDescriptor: [AUDIT_PATH] },
 ];
 
 const GROUPS_VR: Array<[string, string]> = [
@@ -219,7 +267,7 @@ const GROUPS_MAL: Array<[string, string]> = [["sample", "sample"]];
  * Props
  * -------------------------------------------------------------------------- */
 
-export interface UploadFormProps extends ModulePageProps {
+export interface UploadFormProps extends WindowChromeProps {
   module: "vr" | "malware";
   /** Called with the created target after a successful upload / descriptor
    * create. When omitted the window simply reports the success payload; the
@@ -234,13 +282,13 @@ export interface UploadFormProps extends ModulePageProps {
 const panelBox =
   "min-height:0;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--radius-md,3px);background:color-mix(in srgb,var(--surface-card) 84%,transparent);overflow:hidden;box-shadow:var(--bevel-raised,inset 1px 1px 0 rgba(255,255,255,0.03));";
 const panelTitle = css(
-  "flex:0 0 auto;display:flex;align-items:center;gap:10px;height:var(--panel-title-h,27px);padding:0 12px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:9.5px;text-transform:uppercase;letter-spacing:0.14em;color:var(--text-muted);",
+  "flex:0 0 auto;display:flex;align-items:center;gap:10px;height:var(--panel-title-h,27px);padding:0 12px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;text-transform:uppercase;letter-spacing:0.14em;color:var(--text-muted);",
 );
 const dot = css(
   "width:8px;height:8px;border-radius:1px;background:var(--accent);box-shadow:0 0 6px var(--accent);flex:0 0 auto;",
 );
 const labelStyle = css(
-  "font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);",
+  "font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);",
 );
 const inputStyle = css(
   "background:var(--surface-sunk);border:1px solid var(--border-soft);outline:none;padding:7px 9px;color:var(--text-primary);font-family:var(--font-mono);font-size:11.5px;border-radius:2px;",
@@ -288,7 +336,14 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
     }
   }, [workspaces.data, workspaceId]);
 
-  const spec = kinds.find((k) => k.key === kindKey) ?? kinds[0];
+  const [malSource, setMalSource] = useState<MalwareSource>("upload");
+  const baseSpec = kinds.find((k) => k.key === kindKey) ?? kinds[0];
+  // Descriptor source swaps the file input for the kind's path fields and
+  // routes the submit to POST /malware/targets.
+  const spec: KindSpec =
+    module === "malware" && malSource === "descriptor"
+      ? { ...baseSpec, mode: "mal-descriptor", file: undefined, descriptor: baseSpec.pathDescriptor ?? [] }
+      : baseSpec;
 
   const uploadApk = useUploadApkTarget();
   const createVrTarget = useCreateVrTarget();
@@ -320,7 +375,7 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
   const descriptorReady = spec.descriptor.every(
     (f) => !f.required || (descriptor[f.name] ?? "").trim() !== "",
   );
-  const wantsFile = spec.mode !== "vr-descriptor";
+  const wantsFile = spec.mode !== "vr-descriptor" && spec.mode !== "mal-descriptor";
   const canSubmit =
     !busy &&
     workspaceId.trim() !== "" &&
@@ -473,11 +528,11 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
         onDone?.({ id: t.id, display_name: t.display_name, kind: t.kind });
         return;
       }
-      // Descriptor-only malware path (URL / on-disk sample_path). Reachable
-      // only if we ever surface a descriptor-mode row in MAL_KINDS.
-      if (module === "malware") {
-        const desc: Record<string, unknown> = {};
-        for (const f of spec.descriptor) {
+      // Path-descriptor malware path: the sample already sits on the
+      // ingestion host, so only its path (and shellcode arch) is sent.
+      if (module === "malware" && spec.mode === "mal-descriptor") {
+        const desc: MalwareTargetCreatePayload["descriptor"] = {};
+        for (const f of baseSpec.pathDescriptor ?? []) {
           const v = (descriptor[f.name] ?? "").trim();
           if (v !== "") desc[f.name] = v;
         }
@@ -511,7 +566,7 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
           <div key={g}>
             <div
               style={css(
-                "font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-faint);margin-bottom:6px;",
+                "font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-faint);margin-bottom:6px;",
               )}
             >
               {gl}
@@ -525,7 +580,7 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
                     type="button"
                     onClick={(): void => onPickKind(k.key)}
                     style={css(
-                      `padding:8px 9px;text-align:left;font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.04em;color:${
+                      `padding:8px 9px;text-align:left;font-family:var(--font-mono);font-size:11px;letter-spacing:0.04em;color:${
                         on ? "var(--accent)" : "var(--text-primary)"
                       };background:${
                         on ? "color-mix(in srgb,var(--accent) 10%,transparent)" : "var(--surface-card)"
@@ -629,7 +684,7 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
           "background:var(--surface-sunk);border:1px solid var(--border-soft);padding:7px 9px;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;border-radius:2px;",
         )}
       />
-      <span style={css("font-size:10px;color:var(--text-faint);")}>
+      <span style={css("font-size:11px;color:var(--text-faint);")}>
         {spec.file?.hint ?? ""}
         {file ? ` \u00b7 ${file.name} \u00b7 ${file.size.toLocaleString()} bytes` : ""}
       </span>
@@ -654,6 +709,49 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
       ))}
     </div>
   ) : null;
+
+  const onPickSource = (s: MalwareSource): void => {
+    setMalSource(s);
+    setDescriptor({});
+    setFile(null);
+    setCreated(null);
+    setError(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const sourceBlock: ReactNode =
+    module === "malware" ? (
+      <div role="radiogroup" aria-label="sample source" style={css("display:flex;flex-direction:column;gap:6px;")}>
+        <span style={css("display:flex;align-items:center;gap:6px;")}>
+          <span style={labelStyle}>sample source</span>
+          <FieldHelp text="Upload sends the file to the malware ingest endpoint. Path descriptor creates the target from a sample already on the ingestion host: binary kinds name a path the IDA MCP can read, script and document kinds a path audit-mcp can read, APKs the .apk path." />
+        </span>
+        <div style={css("display:flex;gap:6px;")}>
+          {(["upload", "descriptor"] as const).map((s) => {
+            const on = malSource === s;
+            return (
+              <button
+                key={s}
+                type="button"
+                role="radio"
+                aria-checked={on}
+                disabled={busy}
+                onClick={(): void => onPickSource(s)}
+                style={css(
+                  `min-height:28px;padding:0 12px;font-family:var(--font-mono);font-size:11px;color:${
+                    on ? "var(--accent)" : "var(--text-primary)"
+                  };background:${
+                    on ? "color-mix(in srgb,var(--accent) 10%,transparent)" : "var(--surface-card)"
+                  };border:1px solid ${on ? "var(--accent)" : "var(--border-soft)"};border-radius:2px;cursor:pointer;`,
+                )}
+              >
+                {MAL_SOURCE_LABEL[s]}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    ) : null;
 
   const doneStyle = css(
     "padding:11px 13px;border:1px solid var(--accent);background:color-mix(in srgb,var(--accent) 7%,transparent);border-radius:3px;display:flex;flex-direction:column;gap:6px;",
@@ -693,7 +791,9 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
             ? "POST /vr/targets \u2192 POST /vr/targets/{id}/upload"
             : spec.mode === "vr-descriptor"
               ? "POST /vr/targets (descriptor only)"
-              : "single-shot POST /malware/targets/upload"}
+              : spec.mode === "mal-descriptor"
+                ? "POST /malware/targets (path descriptor)"
+                : "single-shot POST /malware/targets/upload"}
       </span>
       <span style={{ flex: 1 }} />
     </>
@@ -723,7 +823,7 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
         }}
         onFinish={(): void => void onSubmit()}
         backLabel={created ? "close" : "cancel"}
-        finishLabel={spec.mode === "vr-descriptor" ? "create target" : "upload"}
+        finishLabel={spec.mode === "vr-descriptor" || spec.mode === "mal-descriptor" ? "create target" : "upload"}
         busy={busy}
         error={error}
         onRetry={(): void => void onSubmit()}
@@ -763,6 +863,7 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
               "flex:1;min-height:0;overflow:auto;padding:14px;display:flex;flex-direction:column;gap:14px;",
             )}
           >
+            {sourceBlock}
             {basicsBlock}
             {fileBlock}
             {descriptorBlock}
@@ -771,7 +872,7 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
               <div style={doneStyle}>
                 <div
                   style={css(
-                    "font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:var(--status-ok);",
+                    "font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--status-ok);",
                   )}
                 >
                   {"target created \u00b7 ingestion enqueued"}

@@ -8,7 +8,7 @@
 
 import { useEffect, useMemo, useState, type CSSProperties, type JSX } from "react";
 
-import type { ModulePageProps } from "../contract";
+import type { WindowChromeProps } from "../contract";
 import { css } from "../css";
 import { ConsoleWindow } from "../window";
 import { WIDGET_CATALOG } from "../widgets/catalog";
@@ -19,7 +19,7 @@ const bodyStyle: CSSProperties = css(
   "position:absolute;inset:0;display:flex;flex-direction:column;background:var(--surface-page);font-family:var(--font-mono);color:var(--text-primary);overflow:hidden;",
 );
 const headerStyle: CSSProperties = css(
-  "flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-size:10.5px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-muted);",
+  "flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:8px 14px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-muted);",
 );
 const dotStyle: CSSProperties = css(
   "width:9px;height:9px;border-radius:1px;background:var(--accent);box-shadow:0 0 7px var(--accent);",
@@ -50,37 +50,37 @@ const nameTitleStyle: CSSProperties = css(
   "color:var(--text-primary);font-size:11.5px;letter-spacing:0.04em;",
 );
 const nameMetaStyle: CSSProperties = css(
-  "color:var(--text-faint);font-size:9px;letter-spacing:0.1em;text-transform:uppercase;",
+  "color:var(--text-faint);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;",
 );
 const checkStyle: CSSProperties = css(
   "width:14px;height:14px;accent-color:var(--accent);cursor:pointer;",
 );
 const arrowBtnStyle: CSSProperties = css(
-  "background:transparent;border:1px solid var(--border-soft);border-radius:2px;color:var(--text-muted);font-family:var(--font-mono);font-size:11px;cursor:pointer;width:24px;height:22px;display:inline-flex;align-items:center;justify-content:center;",
+  "background:transparent;border:1px solid var(--border-soft);border-radius:2px;color:var(--text-muted);font-family:var(--font-mono);font-size:11px;cursor:pointer;width:24px;height:28px;display:inline-flex;align-items:center;justify-content:center;",
 );
 const arrowBtnDisabled: CSSProperties = css(
-  "background:transparent;border:1px solid var(--border-faint);border-radius:2px;color:var(--text-faint);font-family:var(--font-mono);font-size:11px;cursor:not-allowed;width:24px;height:22px;display:inline-flex;align-items:center;justify-content:center;",
+  "background:transparent;border:1px solid var(--border-faint);border-radius:2px;color:var(--text-faint);font-family:var(--font-mono);font-size:11px;cursor:not-allowed;width:24px;height:28px;display:inline-flex;align-items:center;justify-content:center;",
 );
 const actionsRowStyle: CSSProperties = css(
   "display:flex;align-items:center;gap:10px;margin-top:14px;max-width:720px;",
 );
 const btnPrimary: CSSProperties = css(
-  "padding:6px 14px;border:1px solid var(--accent);border-radius:2px;background:transparent;color:var(--accent);font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.12em;text-transform:uppercase;cursor:pointer;",
+  "padding:6px 14px;border:1px solid var(--accent);border-radius:2px;background:transparent;color:var(--accent);font-family:var(--font-mono);font-size:11px;letter-spacing:0.12em;text-transform:uppercase;cursor:pointer;",
 );
 const btnPrimaryDisabled: CSSProperties = css(
-  "padding:6px 14px;border:1px solid var(--border-faint);border-radius:2px;background:transparent;color:var(--text-faint);font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.12em;text-transform:uppercase;cursor:not-allowed;",
+  "padding:6px 14px;border:1px solid var(--border-faint);border-radius:2px;background:transparent;color:var(--text-faint);font-family:var(--font-mono);font-size:11px;letter-spacing:0.12em;text-transform:uppercase;cursor:not-allowed;",
 );
 const btnGhost: CSSProperties = css(
-  "padding:6px 12px;border:1px solid var(--border-soft);border-radius:2px;background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.12em;text-transform:uppercase;cursor:pointer;",
+  "padding:6px 12px;border:1px solid var(--border-soft);border-radius:2px;background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:11px;letter-spacing:0.12em;text-transform:uppercase;cursor:pointer;",
 );
 const statusOk: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--status-ok);",
+  "font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--status-ok);",
 );
 const statusErr: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--status-signal);",
+  "font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--status-signal);",
 );
 const statusMuted: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);",
+  "font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);",
 );
 const loadingBox: CSSProperties = css(
   "flex:1;display:flex;align-items:center;justify-content:center;color:var(--text-faint);font-family:var(--font-mono);font-size:11px;letter-spacing:0.06em;",
@@ -94,7 +94,7 @@ function reindex(widgets: WidgetLayoutEntry[]): WidgetLayoutEntry[] {
   return widgets.map((w, i) => ({ ...w, order: i }));
 }
 
-export default function WidgetLayoutPage(p: ModulePageProps): JSX.Element {
+export default function WidgetLayoutPage(p: WindowChromeProps): JSX.Element {
   const { windowId, title, isFocused, onFocus, onBack, onMinimize, isFullscreen, onToggleFullscreen } = p;
   const query = useWidgetLayout();
   const save = useSaveWidgetLayout();

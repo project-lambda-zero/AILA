@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuth } from "./api/auth";
+import { useCostRoi } from "./api/cost";
 import { useInvestigations } from "./api/hooks";
+import { LiveEventsProvider } from "./api/liveEvents";
+import { usePlatformSchema } from "./api/onboarding";
 import type { BoundInvestigation, ModulePageProps } from "./console/contract";
 import type { WindowKind, WindowState } from "./console/window";
 import { shortCaseId } from "./console/ids";
@@ -12,7 +15,9 @@ import { MODULES } from "./console/nav";
 import NotificationsCenter from "./console/NotificationsCenter";
 import { resolvePage } from "./console/pages/registry";
 import SettingsOverlay from "./console/SettingsOverlay";
+import { ToastViewport } from "./console/toast";
 import ChatConsole from "./console/ChatConsole";
+import CommandPalette from "./console/CommandPalette";
 import WidgetHost from "./console/widgets/WidgetHost";
 import { ConsoleWindow } from "./console/window";
 import { resolveWizard } from "./console/wizards";
@@ -30,11 +35,32 @@ export default function App() {
   if (status !== "authed") {
     return <Login />;
   }
-  return <Console />;
+  return (
+    <LiveEventsProvider>
+      <Console />
+    </LiveEventsProvider>
+  );
 }
 
 function Console() {
   const user = useAuth((s) => s.user);
+
+  // Status-bar ROI badge (#212): last full month of LLM cost vs the
+  // human-equivalent baseline. Hidden until a run exists for the window.
+  const roiQ = useCostRoi(1);
+  const roiBadge =
+    roiQ.data && roiQ.data.run_count > 0 ? (
+      <span style={{ display: "flex", alignItems: "center", gap: 6, padding: "0 11px", borderLeft: "1px solid var(--border-soft)", textTransform: "none", letterSpacing: "0.06em" }}>
+        <span style={{ color: "var(--text-faint)" }}>roi</span>
+        <span style={{ color: "var(--status-ok)", fontWeight: 700 }}>
+          {roiQ.data.roi_percentage >= 0 ? "+" : ""}
+          {roiQ.data.roi_percentage.toFixed(0)}%
+        </span>
+        <span style={{ color: "var(--text-faint)" }}>
+          {"\u00b7"} {roiQ.data.run_count} run{roiQ.data.run_count === 1 ? "" : "s"} {"\u00b7"} ${roiQ.data.llm_cost_usd.toFixed(2)}
+        </span>
+      </span>
+    ) : null;
 
   const [mode, setMode] = useState<"basic" | "advanced">("advanced");
   const [moduleId, setModuleId] = useState("vr");
@@ -167,6 +193,17 @@ function Console() {
 
     openWindow({ kind: "page", module: moduleKey, registryKey: key, title, section, investigationId });
   };
+
+  // First-run onboarding (#246): a god-tier admin whose platform has not yet
+  // recorded onboarding_completed gets the wizard opened once per console mount.
+  const isGodTierAdmin = user?.role === "admin" && !user?.team_id;
+  const onboardingQ = usePlatformSchema(isGodTierAdmin);
+  const onboardingOpened = useRef(false);
+  useEffect(() => {
+    if (onboardingOpened.current || onboardingQ.data?.onboardingCompleted !== false) return;
+    onboardingOpened.current = true;
+    openNamedPage("admin", "onboarding", "onboarding");
+  }, [onboardingQ.data]);
 
   // Intake wizards live in the same windows[] stack as every other page, as
   // `overlay` windows keyed on "wizard:intake". Reusing WindowState means the
@@ -360,7 +397,7 @@ function Console() {
           alignItems: "stretch",
           background: "var(--surface-chrome)",
           borderBottom: "2px solid var(--border)",
-          fontSize: 10.5,
+          fontSize: 11,
           letterSpacing: "0.12em",
           textTransform: "uppercase",
           position: "relative",
@@ -384,7 +421,7 @@ function Console() {
                 border: 0,
                 borderRight: "1px solid var(--border-soft)",
                 fontFamily: "var(--font-mono)",
-                fontSize: 10.5,
+                fontSize: 11,
                 letterSpacing: "0.12em",
                 textTransform: "uppercase",
                 cursor: "pointer",
@@ -410,7 +447,7 @@ function Console() {
               border: 0,
               borderRight: "1px solid var(--border-soft)",
               fontFamily: "var(--font-mono)",
-              fontSize: 10.5,
+              fontSize: 11,
               letterSpacing: "0.12em",
               textTransform: "uppercase",
               cursor: "pointer",
@@ -549,7 +586,7 @@ function Console() {
                 overflowX: "auto",
               }}
             >
-              <span style={{ fontSize: 9, color: "var(--text-faint)", letterSpacing: "0.1em", textTransform: "uppercase", flex: "0 0 auto" }}>
+              <span style={{ fontSize: 11, color: "var(--text-faint)", letterSpacing: "0.1em", textTransform: "uppercase", flex: "0 0 auto" }}>
                 minimized
               </span>
               {minimizedWindows.map((w) => (
@@ -576,7 +613,7 @@ function Console() {
                       border: 0,
                       color: "var(--text-primary)",
                       fontFamily: "var(--font-mono)",
-                      fontSize: 10,
+                      fontSize: 11,
                       letterSpacing: "0.08em",
                       textTransform: "uppercase",
                       cursor: "pointer",
@@ -623,7 +660,7 @@ function Console() {
           alignItems: "center",
           background: "var(--surface-chrome)",
           borderTop: "2px solid var(--border)",
-          fontSize: 9.5,
+          fontSize: 11,
           letterSpacing: "0.1em",
           textTransform: "uppercase",
           color: "var(--text-faint)",
@@ -646,10 +683,13 @@ function Console() {
           {adv ? "advanced" : "basic"}
         </span>
         <div style={{ flex: 1 }} />
+        {roiBadge}
         <div style={{ display: "flex", alignItems: "center", gap: 9, padding: "0 11px", borderLeft: "1px solid var(--border-soft)", textTransform: "none", letterSpacing: "0.06em" }}>
           <span>aila.sh</span>
         </div>
       </footer>
+      <CommandPalette onNavigate={(moduleKey, section, label) => openNamedPage(moduleKey, section, label)} />
+      <ToastViewport />
     </div>
   );
 }

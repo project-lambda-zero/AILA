@@ -1,12 +1,13 @@
 {
   "name": "@aila/shell",
   "private": true,
-  "version": "0.5.56",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 3000",
     "build": "tsc --noEmit && vite build",
     "type-check": "tsc --noEmit",
+    "lint": "oxlint -c .oxlintrc.json src",
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "clean": "rm -rf dist node_modules .vite"
   },
@@ -24,6 +25,7 @@
     "@types/react": "catalog:react19",
     "@types/react-dom": "catalog:react19",
     "@vitejs/plugin-react": "catalog:vite",
+    "oxlint": "catalog:lint",
     "typescript": "catalog:",
     "vite": "catalog:vite"
   }

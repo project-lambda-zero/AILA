@@ -89,7 +89,7 @@ export const MODULES: ModuleDef[] = [
     // infra and sits at the tail. Investigations is a single entry whose row
     // activation opens the X-Ray cockpit (registry.tsx bespoke override).
     pages: [
-      ...grouped("analyze", "workspaces", "targets", "investigations"),
+      ...grouped("analyze", "workspaces", "targets", "projects", "investigations"),
       ...grouped("evidence", "observations"),
       ...grouped("knowledge", "findings", "patterns", "families", "playbooks"),
       ...grouped("module admin", "health"),
@@ -99,10 +99,15 @@ export const MODULES: ModuleDef[] = [
 
 /** Collapsible ADMIN SETTINGS categories -- verbatim from the mock adminCats. */
 export const ADMIN_CATS: { cat: string; items: string[] }[] = [
-  { cat: "access", items: ["users", "teams", "teams cross-view", "api keys", "oidc providers"] },
-  { cat: "operations", items: ["task queue", "queue depth", "dead letter", "health", "automation", "automation actions", "workflows", "scheduled reports", "mcp instances", "mcp servers", "mcp call log", "eval calibrators", "calibration proposals"] },
-  { cat: "platform", items: ["dashboard", "systems", "sessions", "specialist agents", "persona routing", "prompts", "platform corpus", "knowledge", "sandbox", "widget layout"] },
+  { cat: "access", items: ["users", "teams", "teams cross-view", "cross-team heatmap", "api keys", "oidc providers"] },
+  { cat: "operations", items: ["ops war room", "lifecycle", "eval benchmarks", "reconcile", "task queue", "queue depth", "dead letter", "health", "automation", "automation actions", "workflows", "scheduled reports", "mcp instances", "mcp servers", "mcp call log", "eval calibrators", "calibration proposals"] },
+  { cat: "platform", items: ["dashboard", "global search", "systems", "sessions", "specialist agents", "persona routing", "prompts", "prompt aliases", "platform corpus", "knowledge", "sandbox", "widget layout", "onboarding"] },
   { cat: "cost & reporting", items: ["cost"] },
   { cat: "data & config", items: ["config", "tools", "finding states"] },
-  { cat: "audit", items: ["audit logs", "llm log"] },
+  { cat: "audit", items: ["audit logs", "audit seals", "llm log"] },
 ];
+
+/** Admin rail entries restricted to god-tier admins (admin with no team, as
+ * the backend's TEAM-06 deny-default requires). LeftRail hides these for
+ * anyone else; the pages themselves also gate. */
+export const GOD_TIER_ADMIN_ITEMS: readonly string[] = ["reconcile", "cross-team heatmap"];

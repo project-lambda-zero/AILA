@@ -68,3 +68,9 @@ jobs:
       - name: Shell production build
         run: pnpm --filter @aila/shell run build
 
+      # anti-slop diagnostics are warnings during the #229 sweep; surface them
+      # without failing the job until the backlog is burned down.
+      - name: Frontend lint (oxlint + anti-slop)
+        run: pnpm --filter @aila/shell run lint
+        continue-on-error: true
+

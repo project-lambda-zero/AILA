@@ -122,7 +122,7 @@ const chipDotStyle: CSSProperties = css(
   "width:7px;height:7px;background:var(--accent);box-shadow:0 0 7px var(--accent);flex:0 0 auto;",
 );
 const chipBtnStyle: CSSProperties = css(
-  "background:transparent;border:0;color:var(--text-primary);font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px;",
+  "background:transparent;border:0;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;min-height:28px;display:inline-flex;align-items:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:180px;",
 );
 const chipCloseStyle: CSSProperties = css(
   "background:transparent;border:0;color:var(--text-muted);font-family:var(--font-mono);font-size:11px;cursor:pointer;padding:0 3px;flex:0 0 auto;",

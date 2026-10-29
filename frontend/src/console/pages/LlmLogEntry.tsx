@@ -96,10 +96,10 @@ const BUBBLE_LABEL_COLOR: Record<string, string> = {
 
 const transcriptWrap = css("display:flex;flex-direction:column;gap:6px;min-width:0;");
 const bubbleBody = css(
-  "font-family:var(--font-mono);font-size:10.5px;line-height:1.5;color:var(--text-primary);white-space:pre-wrap;word-break:break-word;",
+  "font-family:var(--font-mono);font-size:11px;line-height:1.5;color:var(--text-primary);white-space:pre-wrap;word-break:break-word;",
 );
 const monoBlock = css(
-  "margin:0;padding:6px 8px;border:1px solid var(--border-soft);border-radius:2px;background:var(--surface-sunk);font-family:var(--font-mono);font-size:10px;line-height:1.4;color:var(--text-primary);white-space:pre-wrap;word-break:break-word;max-height:100%;overflow:auto;",
+  "margin:0;padding:6px 8px;border:1px solid var(--border-soft);border-radius:2px;background:var(--surface-sunk);font-family:var(--font-mono);font-size:11px;line-height:1.4;color:var(--text-primary);white-space:pre-wrap;word-break:break-word;max-height:100%;overflow:auto;",
 );
 
 /** Full transcript view: role-labeled bubbles (system / user / assistant /
@@ -120,7 +120,7 @@ export function LlmChatTranscript({ value }: { value: unknown }): JSX.Element {
           );
           const labelColor = BUBBLE_LABEL_COLOR[r] ?? "var(--text-faint)";
           const labelStyle: CSSProperties = css(
-            `font-size:8.5px;letter-spacing:0.14em;text-transform:uppercase;color:${labelColor};`,
+            `font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:${labelColor};`,
           );
           return (
             <div key={i} style={bubbleStyle}>

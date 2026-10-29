@@ -9,19 +9,18 @@ import { css } from "../css";
 // syntax highlighting run on the main thread, so a no-op worker is enough (the
 // language worker is never exercised here).
 loader.config({ monaco });
-if (typeof window !== "undefined") {
-  const w = window as unknown as { MonacoEnvironment?: unknown };
-  if (!w.MonacoEnvironment) {
-    w.MonacoEnvironment = {
+if (typeof window !== "undefined" && !("MonacoEnvironment" in window)) {
+  Object.assign(window, {
+    MonacoEnvironment: {
       getWorker(): Worker {
         return new Worker(URL.createObjectURL(new Blob(["self.onmessage=function(){};"], { type: "text/javascript" })));
       },
-    };
-  }
+    },
+  });
 }
 
 const preStyle = css(
-  "margin:0;padding:8px 10px;font-family:var(--font-mono);font-size:10.5px;line-height:1.5;color:var(--text-primary);white-space:pre;overflow:auto;max-height:360px;",
+  "margin:0;padding:8px 10px;font-family:var(--font-mono);font-size:11px;line-height:1.5;color:var(--text-primary);white-space:pre;overflow:auto;max-height:360px;",
 );
 
 // If Monaco fails to initialise, fall back to a plain <pre> so the code stays

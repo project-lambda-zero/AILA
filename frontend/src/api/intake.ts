@@ -367,19 +367,27 @@ export function useUploadMalwareTarget(): UseMutationResult<
   });
 }
 
+/** Descriptor keys the malware ingestion stage reads for a target created
+ * without a file (malware/services/target_analysis.py): binary kinds hand
+ * `binary_path` to the IDA MCP (`arch` is recorded for shellcode), script and
+ * document kinds index `sample_path` through audit_mcp, and android_apk reads
+ * `apk_path`. Every path must already be readable by that service. */
+export type MalwareDescriptorKey = "binary_path" | "arch" | "apk_path" | "sample_path";
+
+/** Mirrors MalwareTargetCreate (malware/contracts/target.py, extra=forbid). */
 export interface MalwareTargetCreatePayload {
   workspace_id: string;
   display_name: string;
   kind: MalwareTargetKind;
-  descriptor?: Record<string, unknown>;
-  primary_language?: string | null;
+  descriptor: Partial<Record<MalwareDescriptorKey, string>>;
+  primary_language?: string;
   secondary_languages?: string[];
   tags?: string[];
 }
 
-/** POST /malware/targets -- descriptor-only path (URL download spec, on-disk
- * sample_path). Included for parity with VR's descriptor create; the upload
- * wizard's primary flow is `useUploadMalwareTarget`.
+/** POST /malware/targets -- JSON descriptor create for a sample already on
+ * the ingestion host (no file transfer). File samples go through
+ * `useUploadMalwareTarget`.
  */
 export function useCreateMalwareTarget(): UseMutationResult<
   CreatedMalwareTarget,
@@ -391,12 +399,7 @@ export function useCreateMalwareTarget(): UseMutationResult<
     mutationFn: (body) =>
       apiFetch<CreatedMalwareTarget>("/malware/targets", {
         method: "POST",
-        body: JSON.stringify({
-          descriptor: {},
-          secondary_languages: [],
-          tags: [],
-          ...body,
-        }),
+        body: JSON.stringify(body),
       }),
     onSuccess: () => {
       void qc.invalidateQueries({

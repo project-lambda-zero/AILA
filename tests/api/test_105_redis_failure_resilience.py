@@ -177,8 +177,8 @@ class TestScanSSERedisDisconnectMidStream:
         _seed_task(user_id=key.id, group_id="admin", task_id="scan-redis-dc-001")
 
         async def _disconnecting_agen():
-            yield {"stage": "init", "message": "Starting", "percent": "0", "timestamp": "t0"}
-            yield {"stage": "inventory", "message": "Collecting", "percent": "30", "timestamp": "t1"}
+            yield "1-0", {"stage": "init", "message": "Starting", "percent": "0", "timestamp": "t0"}
+            yield "2-0", {"stage": "inventory", "message": "Collecting", "percent": "30", "timestamp": "t1"}
             raise ConnectionError("Redis connection lost")
 
         # pool_available is False by default under the autouse reset fixture in
@@ -217,7 +217,7 @@ class TestScanSSERedisDisconnectMidStream:
         live_event = {"stage": "scoring", "message": "Scoring", "percent": "60", "timestamp": "t"}
 
         async def _one_live():
-            yield live_event
+            yield "1-0", live_event
 
         with (
             patch("aila.api.routers.scans.pool_available", return_value=True),
@@ -271,7 +271,7 @@ class TestTaskSSERedisDisconnectMidStream:
         _seed_task(user_id=key.id, group_id="admin", task_id="task-redis-dc-001")
 
         async def _finite_agen():
-            yield {"stage": "processing", "message": "Working", "percent": "40", "timestamp": "t0"}
+            yield "1-0", {"stage": "processing", "message": "Working", "percent": "40", "timestamp": "t0"}
             # Generator exhausts here; no infinite loop, no leaked task.
 
         # tasks.py imports ProgressStream lazily inside _sse_generator, so patch at source.
@@ -313,7 +313,7 @@ class TestTaskSSERedisDisconnectMidStream:
         live = {"stage": "done", "message": "Complete", "percent": "100", "timestamp": "t"}
 
         async def _one_live():
-            yield live
+            yield "1-0", live
 
         # tasks.py imports ProgressStream lazily inside _sse_generator, so patch at source.
         # pool_available is False by default under the autouse reset fixture in

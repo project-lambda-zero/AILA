@@ -1,20 +1,13 @@
 /**
  * Shared primitives for the forensics project-detail UI: WindowPanel chrome
  * (mirrors XRayPage's Panel), the generic Table + KV + DictPanel renderers,
- * status/verdict badges, action buttons, and typed inline form controls.
+ * status/verdict badges, and action buttons. Form controls live in
+ * ./formControls.
  *
  * Every dict-valued field surfaces through DictPanel (recursive expandable
- * key/value); NEVER as a raw JSON blob. Every numeric/enum/text/checkbox
- * form control lives here so the tab modules can compose forms without any
- * ad-hoc styling.
+ * key/value); NEVER as a raw JSON blob.
  */
-import type {
-  ChangeEvent,
-  CSSProperties,
-  JSX,
-  KeyboardEvent,
-  ReactNode,
-} from "react";
+import type { CSSProperties, JSX, ReactNode } from "react";
 import { useMemo, useState } from "react";
 
 import { css } from "../../css";
@@ -84,7 +77,7 @@ export function Panel({
         <span style={dotStyle} />
         <span style={css("color:var(--text-primary);")}>{title}</span>
         {tag ? (
-          <span style={css("font-size:9.5px;color:var(--text-faint);letter-spacing:0.08em;")}>{tag}</span>
+          <span style={css("font-size:11px;color:var(--text-faint);letter-spacing:0.08em;")}>{tag}</span>
         ) : null}
         <span style={css("flex:1;")} />
         {right}
@@ -125,7 +118,7 @@ export function CtlBtn({
       disabled={disabled}
       onClick={disabled ? undefined : onClick}
       style={css(
-        `flex:0 0 auto;font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;padding:4px 10px;height:26px;border:1px solid ${c}66;border-radius:2px;background:transparent;color:${c};cursor:${disabled ? "default" : "pointer"};${disabled ? "opacity:0.4;" : ""}`,
+        `flex:0 0 auto;font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;padding:4px 10px;height:28px;border:1px solid ${c}66;border-radius:2px;background:transparent;color:${c};cursor:${disabled ? "default" : "pointer"};${disabled ? "opacity:0.4;" : ""}`,
       )}
     >
       {label}
@@ -151,7 +144,19 @@ export function IconBtn({ label, title, onClick }: { label: string; title: strin
 
 /* --- badges ------------------------------------------------------------ */
 
-const STATUS_TONE: Record<string, string> = {
+type ForensicsStatus =
+  | "created"
+  | "ready"
+  | "analyzing"
+  | "completed"
+  | "failed"
+  | "cancelled"
+  | "pending"
+  | "running"
+  | "exhausted"
+  | "paused";
+
+const STATUS_TONE = {
   created: "var(--text-muted)",
   ready: H.mint,
   analyzing: H.amber,
@@ -162,15 +167,19 @@ const STATUS_TONE: Record<string, string> = {
   running: H.amber,
   exhausted: H.warn,
   paused: H.warn,
-};
+} satisfies Record<ForensicsStatus, string>;
+
+function isForensicsStatus(v: string): v is ForensicsStatus {
+  return Object.hasOwn(STATUS_TONE, v);
+}
 
 export function StatusBadge({ value }: { value: string | null | undefined }): JSX.Element {
   const v = (value ?? "").toLowerCase();
-  const tone = STATUS_TONE[v] ?? "var(--text-faint)";
+  const tone = isForensicsStatus(v) ? STATUS_TONE[v] : "var(--text-faint)";
   return (
     <span
       style={css(
-        `display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border:1px solid ${tone}66;border-radius:2px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:${tone};background:color-mix(in srgb,${tone} 8%,transparent);`,
+        `display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border:1px solid ${tone}66;border-radius:2px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:${tone};background:color-mix(in srgb,${tone} 8%,transparent);`,
       )}
     >
       <span style={css(`width:6px;height:6px;border-radius:50%;background:${tone};`)} />
@@ -185,7 +194,7 @@ export function VerdictBadge({ verdict }: { verdict: string | null | undefined }
   return (
     <span
       style={css(
-        `display:inline-flex;align-items:center;padding:2px 8px;border:1px solid ${tone}66;border-radius:2px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:${tone};background:color-mix(in srgb,${tone} 8%,transparent);`,
+        `display:inline-flex;align-items:center;padding:2px 8px;border:1px solid ${tone}66;border-radius:2px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:${tone};background:color-mix(in srgb,${tone} 8%,transparent);`,
       )}
     >
       {verdict ?? "\u2014"}
@@ -248,14 +257,14 @@ export function SubTable({ rows }: { rows: unknown[] }): JSX.Element {
   if (!first) return <span style={css("color:var(--text-faint);")}>{"\u2014"}</span>;
   return (
     <div style={css("overflow:auto;border:1px solid var(--border-soft);border-radius:2px;background:var(--surface-sunk);")}>
-      <table style={css("width:100%;border-collapse:collapse;font-size:10px;")}>
+      <table style={css("width:100%;border-collapse:collapse;font-size:11px;")}>
         <thead>
           <tr>
             {cols.map((c) => (
               <th
                 key={c}
                 style={css(
-                  "text-align:left;padding:5px 8px;background:var(--surface-chrome);border-bottom:1px solid var(--border-soft);font-size:8px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);white-space:nowrap;",
+                  "text-align:left;padding:5px 8px;background:var(--surface-chrome);border-bottom:1px solid var(--border-soft);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);white-space:nowrap;",
                 )}
               >
                 {c}
@@ -318,7 +327,7 @@ export function DictPanel({ data, initialOpen }: { data: Record<string, unknown>
         type="button"
         onClick={() => setOpen((v) => !v)}
         style={css(
-          `width:100%;text-align:left;display:flex;align-items:center;gap:8px;padding:5px 8px;background:var(--surface-chrome);border:0;border-bottom:${open ? "1px solid var(--border-soft)" : "0"};font-family:var(--font-mono);font-size:9px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);cursor:pointer;`,
+          `width:100%;text-align:left;display:flex;align-items:center;gap:8px;padding:5px 8px;background:var(--surface-chrome);border:0;border-bottom:${open ? "1px solid var(--border-soft)" : "0"};font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);cursor:pointer;`,
         )}
       >
         <span>{open ? "\u25be" : "\u25b8"}</span>
@@ -330,7 +339,7 @@ export function DictPanel({ data, initialOpen }: { data: Record<string, unknown>
         </span>
       </button>
       {open ? (
-        <div style={css("padding:7px 10px;display:grid;grid-template-columns:150px 1fr;gap:5px 10px;font-size:10.5px;")}>
+        <div style={css("padding:7px 10px;display:grid;grid-template-columns:150px 1fr;gap:5px 10px;font-size:11px;")}>
           {keys.map((k) => (
             <span key={k} style={{ display: "contents" }}>
               <span style={kLabel}>{k}</span>
@@ -346,13 +355,13 @@ export function DictPanel({ data, initialOpen }: { data: Record<string, unknown>
 /* --- Table primitive --------------------------------------------------- */
 
 export interface TableColumn<R> {
-  field: string;
+  field: Extract<keyof R, string>;
   label: string;
   width?: number;
   render?: (row: R) => ReactNode;
 }
 
-export function DataTable<R extends Record<string, unknown>>({
+export function DataTable<R extends object>({
   rows,
   columns,
   onSelect,
@@ -379,7 +388,7 @@ export function DataTable<R extends Record<string, unknown>>({
               <th
                 key={c.field}
                 style={css(
-                  `position:sticky;top:0;text-align:left;padding:7px 10px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-size:8.5px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);white-space:nowrap;z-index:1;${c.width ? `width:${c.width}px;` : ""}`,
+                  `position:sticky;top:0;text-align:left;padding:7px 10px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);white-space:nowrap;z-index:1;${c.width ? `width:${c.width}px;` : ""}`,
                 )}
               >
                 {c.label}
@@ -388,7 +397,7 @@ export function DataTable<R extends Record<string, unknown>>({
             {rowActions ? (
               <th
                 style={css(
-                  "position:sticky;top:0;text-align:right;padding:7px 10px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-size:8.5px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);white-space:nowrap;z-index:1;",
+                  "position:sticky;top:0;text-align:right;padding:7px 10px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);white-space:nowrap;z-index:1;",
                 )}
               >
                 actions
@@ -398,7 +407,7 @@ export function DataTable<R extends Record<string, unknown>>({
         </thead>
         <tbody>
           {rows.map((row, i) => {
-            const key = (idOf ? idOf(row) : String(row.id ?? i)) + i;
+            const key = idOf ? `${idOf(row)}:${i}` : String(i);
             const active = selected === row;
             return (
               <tr
@@ -431,301 +440,6 @@ export function DataTable<R extends Record<string, unknown>>({
           })}
         </tbody>
       </table>
-    </div>
-  );
-}
-
-/* --- typed form primitives -------------------------------------------- */
-
-const inputBase =
-  "width:100%;box-sizing:border-box;background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:2px;padding:6px 8px;font-family:var(--font-mono);font-size:11px;color:var(--text-primary);";
-
-export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }): JSX.Element {
-  return (
-    <label style={css("display:flex;flex-direction:column;gap:4px;font-family:var(--font-mono);")}>
-      <span style={css("font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-muted);")}>
-        {label}
-      </span>
-      {children}
-      {hint ? (
-        <span style={css("font-size:9px;color:var(--text-faint);letter-spacing:0.03em;")}>{hint}</span>
-      ) : null}
-    </label>
-  );
-}
-
-export function TextInput({
-  value,
-  onChange,
-  placeholder,
-  onEnter,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  onEnter?: () => void;
-}): JSX.Element {
-  return (
-    <input
-      type="text"
-      value={value}
-      placeholder={placeholder}
-      onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.value)}
-      onKeyDown={
-        onEnter
-          ? (e: KeyboardEvent<HTMLInputElement>) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                onEnter();
-              }
-            }
-          : undefined
-      }
-      style={css(inputBase)}
-    />
-  );
-}
-
-export function NumberInput({
-  value,
-  onChange,
-  min,
-  max,
-}: {
-  value: number;
-  onChange: (v: number) => void;
-  min?: number;
-  max?: number;
-}): JSX.Element {
-  return (
-    <input
-      type="number"
-      value={value}
-      min={min}
-      max={max}
-      onChange={(e: ChangeEvent<HTMLInputElement>) => {
-        const n = Number(e.target.value);
-        if (Number.isFinite(n)) onChange(n);
-      }}
-      style={css(inputBase)}
-    />
-  );
-}
-
-export function TextArea({
-  value,
-  onChange,
-  rows,
-  placeholder,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  rows?: number;
-  placeholder?: string;
-}): JSX.Element {
-  return (
-    <textarea
-      value={value}
-      rows={rows ?? 4}
-      placeholder={placeholder}
-      onChange={(e: ChangeEvent<HTMLTextAreaElement>) => onChange(e.target.value)}
-      style={css(inputBase + "resize:vertical;font-family:var(--font-mono);line-height:1.5;")}
-    />
-  );
-}
-
-export function Select<T extends string>({
-  value,
-  onChange,
-  options,
-}: {
-  value: T | "";
-  onChange: (v: T | "") => void;
-  options: { value: T | ""; label: string }[];
-}): JSX.Element {
-  return (
-    <select
-      value={value}
-      onChange={(e: ChangeEvent<HTMLSelectElement>) => onChange(e.target.value as T | "")}
-      style={css(inputBase + "cursor:pointer;")}
-    >
-      {options.map((o) => (
-        <option key={String(o.value)} value={o.value}>
-          {o.label}
-        </option>
-      ))}
-    </select>
-  );
-}
-
-export function Checkbox({
-  checked,
-  onChange,
-  label,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-  label: string;
-}): JSX.Element {
-  return (
-    <label
-      style={css(
-        "display:inline-flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:10.5px;color:var(--text-primary);cursor:pointer;",
-      )}
-    >
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-      {label}
-    </label>
-  );
-}
-
-/** Space-separated chip input. Backspace on empty removes the last chip. */
-export function ChipInput({
-  values,
-  onChange,
-  placeholder,
-}: {
-  values: string[];
-  onChange: (v: string[]) => void;
-  placeholder?: string;
-}): JSX.Element {
-  const [text, setText] = useState("");
-  const commit = (raw: string): void => {
-    const t = raw.trim();
-    if (!t) return;
-    if (values.includes(t)) return;
-    onChange([...values, t]);
-    setText("");
-  };
-  return (
-    <div
-      style={css(
-        inputBase + "display:flex;flex-wrap:wrap;gap:5px;padding:5px 6px;min-height:32px;align-items:center;",
-      )}
-    >
-      {values.map((v, i) => (
-        <span
-          key={v + i}
-          style={css(
-            "display:inline-flex;align-items:center;gap:5px;padding:1px 7px;border:1px solid var(--border-soft);border-radius:2px;font-size:9.5px;color:var(--text-primary);background:var(--surface-chrome);",
-          )}
-        >
-          {v}
-          <button
-            type="button"
-            onClick={() => onChange(values.filter((_, j) => j !== i))}
-            style={css("background:transparent;border:0;color:var(--text-faint);cursor:pointer;font-size:11px;line-height:1;")}
-          >
-            {"\u2715"}
-          </button>
-        </span>
-      ))}
-      <input
-        type="text"
-        value={text}
-        placeholder={placeholder}
-        onChange={(e: ChangeEvent<HTMLInputElement>) => setText(e.target.value)}
-        onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
-          if (e.key === "Enter" || e.key === ",") {
-            e.preventDefault();
-            commit(text);
-          } else if (e.key === "Backspace" && text === "" && values.length) {
-            onChange(values.slice(0, -1));
-          }
-        }}
-        style={css(
-          "flex:1;min-width:60px;border:0;background:transparent;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;outline:none;",
-        )}
-      />
-    </div>
-  );
-}
-
-/** Radio group across an enum. */
-export function Radio<T extends string>({
-  value,
-  onChange,
-  options,
-}: {
-  value: T;
-  onChange: (v: T) => void;
-  options: { value: T; label: string }[];
-}): JSX.Element {
-  return (
-    <div style={css("display:flex;gap:14px;font-family:var(--font-mono);font-size:11px;color:var(--text-primary);")}>
-      {options.map((o) => (
-        <label key={o.value} style={css("display:inline-flex;align-items:center;gap:6px;cursor:pointer;")}>
-          <input type="radio" checked={value === o.value} onChange={() => onChange(o.value)} />
-          {o.label}
-        </label>
-      ))}
-    </div>
-  );
-}
-
-export function FormBox({
-  title,
-  onCancel,
-  onSubmit,
-  submitLabel,
-  submitting,
-  error,
-  children,
-}: {
-  title: string;
-  onCancel: () => void;
-  onSubmit: () => void;
-  submitLabel: string;
-  submitting?: boolean;
-  error?: string | null;
-  children: ReactNode;
-}): JSX.Element {
-  return (
-    <div
-      style={css(
-        "position:absolute;inset:0;background:color-mix(in srgb,var(--surface-page) 78%,transparent);display:flex;align-items:center;justify-content:center;z-index:10;padding:32px;",
-      )}
-    >
-      <div
-        style={css(
-          "width:min(540px,100%);max-height:100%;overflow:auto;border:1px solid var(--border);border-radius:var(--radius-md,3px);background:var(--surface-card);box-shadow:0 12px 36px rgba(0,0,0,0.55);display:flex;flex-direction:column;",
-        )}
-      >
-        <div
-          style={css(
-            "display:flex;align-items:center;gap:10px;padding:9px 13px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-primary);",
-          )}
-        >
-          <span style={dotStyle} />
-          <span>{title}</span>
-          <span style={css("flex:1;")} />
-          <button
-            type="button"
-            onClick={onCancel}
-            style={css("background:transparent;border:0;color:var(--text-faint);cursor:pointer;font-size:14px;")}
-          >
-            {"\u2715"}
-          </button>
-        </div>
-        <div style={css("padding:16px 18px;display:flex;flex-direction:column;gap:14px;")}>{children}</div>
-        {error ? (
-          <div
-            style={css(
-              `margin:0 18px 10px;padding:8px 10px;border:1px solid ${H.danger}66;border-radius:2px;background:${H.danger}11;color:${H.danger};font-family:var(--font-mono);font-size:10.5px;`,
-            )}
-          >
-            {error}
-          </div>
-        ) : null}
-        <div
-          style={css(
-            "display:flex;justify-content:flex-end;gap:8px;padding:12px 18px;border-top:1px solid var(--border);background:var(--surface-chrome);",
-          )}
-        >
-          <CtlBtn label="cancel" tone="muted" onClick={onCancel} />
-          <CtlBtn label={submitting ? "submitting\u2026" : submitLabel} tone="accent" onClick={onSubmit} disabled={submitting} />
-        </div>
-      </div>
     </div>
   );
 }

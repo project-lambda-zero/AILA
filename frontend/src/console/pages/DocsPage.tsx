@@ -21,7 +21,7 @@ import type { CSSProperties, JSX } from "react";
 
 import { ApiError } from "../../api/client";
 import { useDocTopic, useDocTopics } from "../../api/docs";
-import type { ModulePageProps } from "../contract";
+import type { WindowChromeProps } from "../contract";
 import { css } from "../css";
 import { ConsoleWindow } from "../window";
 
@@ -31,7 +31,7 @@ const panelBox: CSSProperties = css(
   "min-height:0;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--radius-md,3px);background:color-mix(in srgb,var(--surface-card) 84%,transparent);overflow:hidden;",
 );
 const panelTitle: CSSProperties = css(
-  "flex:0 0 auto;display:flex;align-items:center;gap:10px;height:var(--panel-title-h,27px);padding:0 12px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:9.5px;text-transform:uppercase;letter-spacing:0.14em;color:var(--text-muted);",
+  "flex:0 0 auto;display:flex;align-items:center;gap:10px;height:var(--panel-title-h,27px);padding:0 12px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;text-transform:uppercase;letter-spacing:0.14em;color:var(--text-muted);",
 );
 const dot: CSSProperties = css(
   "width:8px;height:8px;border-radius:1px;background:var(--accent);box-shadow:0 0 6px var(--accent);flex:0 0 auto;",
@@ -61,10 +61,10 @@ function docHeadingStyle(level: number): CSSProperties {
   );
 }
 const topicBtnBase: CSSProperties = css(
-  "display:block;width:100%;text-align:left;padding:7px 12px;border:none;border-bottom:1px solid var(--border-faint);background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.04em;cursor:pointer;",
+  "display:block;width:100%;text-align:left;padding:7px 12px;border:none;border-bottom:1px solid var(--border-faint);background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:11px;letter-spacing:0.04em;cursor:pointer;",
 );
 const topicBtnActive: CSSProperties = css(
-  "display:block;width:100%;text-align:left;padding:7px 12px;border:none;border-bottom:1px solid var(--border-faint);background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent);font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.04em;cursor:pointer;",
+  "display:block;width:100%;text-align:left;padding:7px 12px;border:none;border-bottom:1px solid var(--border-faint);background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent);font-family:var(--font-mono);font-size:11px;letter-spacing:0.04em;cursor:pointer;",
 );
 
 /* ------------------------------- helpers --------------------------------- */
@@ -113,7 +113,7 @@ function renderDocBody(text: string): JSX.Element[] {
 
 /* --------------------------------- page ---------------------------------- */
 
-export default function DocsPage(props: ModulePageProps): JSX.Element {
+export default function DocsPage(props: WindowChromeProps): JSX.Element {
   const {
     windowId,
     title,
@@ -222,7 +222,7 @@ export default function DocsPage(props: ModulePageProps): JSX.Element {
           padding: "8px 14px",
           background: "var(--surface-chrome)",
           borderBottom: "1px solid var(--border)",
-          fontSize: 10.5,
+          fontSize: 11,
           letterSpacing: "0.12em",
           textTransform: "uppercase",
           color: "var(--text-muted)",

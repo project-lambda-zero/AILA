@@ -81,10 +81,16 @@ async def _async_iter(items):
     The scan SSE route consumes stream_events with ``async for``, so mocked
     return values must be async-iterable -- a plain ``iter([...])`` raises
     TypeError inside the route. Callers set ``instance.stream_events.return_value
-    = _async_iter([...])``.
+    = _async_iter([...])``. Each field dict is paired with a synthetic Redis
+    stream id, matching ``ProgressStream.stream_events``'s ``(id, fields)``.
     """
-    for item in items:
-        yield item
+    for n, item in enumerate(items, start=100):
+        yield f"{n}-0", item
+
+
+def _with_ids(items: list[dict]) -> list[tuple[str, dict]]:
+    """Pair catchup field dicts with synthetic stream ids (``catchup`` shape)."""
+    return [(f"{n}-0", item) for n, item in enumerate(items, start=1)]
 
 
 def _make_platform_stub_with_redis() -> MagicMock:
@@ -173,7 +179,7 @@ class TestScanSSECatchupBeforeScan:
                 patch("aila.api.routers.scans.ProgressStream") as mock_ps:
             instance = mock_ps.return_value
             # catchup is awaited by the route -> must be AsyncMock.
-            instance.catchup = AsyncMock(return_value=preexisting_events)
+            instance.catchup = AsyncMock(return_value=_with_ids(preexisting_events))
             # stream_events is consumed with `async for` -> must be a real async
             # generator, not iter([...]).
             instance.stream_events.return_value = _async_iter([])
@@ -243,9 +249,9 @@ class TestScanSSECompletion:
         with patch("aila.api.routers.scans.pool_available", return_value=True), \
                 patch("aila.api.routers.scans.ProgressStream") as mock_ps:
             instance = mock_ps.return_value
-            instance.catchup = AsyncMock(return_value=[
+            instance.catchup = AsyncMock(return_value=_with_ids([
                 {"stage": "done", "message": "Complete", "percent": "100", "timestamp": "t"}
-            ])
+            ]))
             instance.stream_events.return_value = _async_iter([])  # empty = done
 
             resp = await client.get(
@@ -282,7 +288,7 @@ class TestScanSSELateConnect:
         with patch("aila.api.routers.scans.pool_available", return_value=True), \
                 patch("aila.api.routers.scans.ProgressStream") as mock_ps:
             instance = mock_ps.return_value
-            instance.catchup = AsyncMock(return_value=catchup_events)
+            instance.catchup = AsyncMock(return_value=_with_ids(catchup_events))
             instance.stream_events.return_value = _async_iter([live_event])
 
             resp = await client.get(
@@ -321,12 +327,10 @@ class TestScanSSELateConnect:
         assert resp.status_code == 200
         # Verify catchup was called with default '0'.
         instance.catchup.assert_awaited_once_with("scan-late-default-001", "0")
-        # After a successful catchup the route resumes stream_events from "$"
-        # (only new events beyond what catchup already replayed) -- see
-        # src/aila/api/routers/scans.py:_sse_generator around the resume_from
-        # assignment. This prevents the duplicate-replay bug catchup returning
-        # events without stream ids would otherwise cause.
-        instance.stream_events.assert_called_once_with("scan-late-default-001", "$")
+        # The live read resumes after the newest replayed stream id; with an
+        # empty catchup that is the requested last_id itself, so no event
+        # written between catchup and XREAD is lost and none is repeated.
+        instance.stream_events.assert_called_once_with("scan-late-default-001", "0")
 
 
 class TestScanSSEDisconnectCleanup:
@@ -351,7 +355,7 @@ class TestScanSSEDisconnectCleanup:
         async def _tracking_agen():
             event = {"stage": "s", "message": "m", "percent": "10", "timestamp": "t"}
             events_yielded.append(event)
-            yield event
+            yield "1-0", event
             # Generator exhausts here -- no infinite loop
 
         with patch("aila.api.routers.scans.pool_available", return_value=True), \

@@ -1,0 +1,9 @@
+{
+  "name": "@aila/oxlint-config",
+  "private": true,
+  "version": "0.5.56",
+  "type": "module",
+  "devDependencies": {
+    "@oxlint/plugins": "catalog:lint"
+  }
+}

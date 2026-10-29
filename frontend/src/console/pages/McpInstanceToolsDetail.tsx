@@ -71,7 +71,7 @@ export function McpInstanceToolsDetail({
       ) : null}
       {body ? (
         <div style={css("display:flex;flex-direction:column;gap:6px;")}>
-          <div style={css("font-family:var(--font-mono);font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>tools ({tools.length})</div>
+          <div style={css("font-family:var(--font-mono);font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>tools ({tools.length})</div>
           <div style={css("display:flex;flex-direction:column;gap:4px;")}>
             {tools.length === 0 ? (
               <div style={css("font-family:var(--font-mono);font-size:11px;color:var(--text-faint);")}>the bridge returned no tools</div>
@@ -83,7 +83,7 @@ export function McpInstanceToolsDetail({
                   <div key={name + ":" + i} style={css("border:1px solid var(--border-soft);border-radius:2px;padding:6px 8px;display:flex;flex-direction:column;gap:2px;")}>
                     <div style={css("font-family:var(--font-mono);font-size:11px;color:var(--text-primary);")}>{name}</div>
                     {desc ? (
-                      <div style={css("font-size:10.5px;color:var(--text-muted);line-height:1.4;")}>{desc}</div>
+                      <div style={css("font-size:11px;color:var(--text-muted);line-height:1.4;")}>{desc}</div>
                     ) : null}
                   </div>
                 );

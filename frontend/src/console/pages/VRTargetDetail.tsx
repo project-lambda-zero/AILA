@@ -20,48 +20,14 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch } from "../../api/client";
+import { asRecord, readStr } from "../../api/parse";
+import { parseTargetDetail, type StageInfo, type TargetDetail } from "../../api/targetDetail";
 import type { Investigation } from "../../api/types";
 import { css } from "../css";
 import { StatusBadge } from "./badges";
 import StructuredValue from "./StructuredValue";
 import TargetInvestigations from "./TargetInvestigations";
 
-interface StageInfo {
-  state?: string;
-  attempts?: number;
-  started_at?: string | null;
-  completed_at?: string | null;
-  error?: string | null;
-  [k: string]: unknown;
-}
-
-interface TargetTagRow {
-  tag: string;
-  source?: string;
-}
-
-interface TargetDetail {
-  id: string;
-  display_name?: string;
-  kind?: string;
-  status?: string;
-  analysis_state?: string;
-  analysis_state_message?: string | null;
-  analysis_started_at?: string | null;
-  analysis_completed_at?: string | null;
-  analysis_stages?: Record<string, StageInfo> | null;
-  descriptor?: Record<string, unknown>;
-  primary_language?: string | null;
-  secondary_languages?: string[];
-  uploaded_filename?: string | null;
-  android_package_name?: string | null;
-  apk_overview?: Record<string, unknown> | null;
-  workspace_name?: string | null;
-  workspace_id?: string;
-  tags?: Array<TargetTagRow | string>;
-  created_at?: string | null;
-  updated_at?: string | null;
-}
 
 // The stages a target's kind actually runs. Mirrors the backend
 // `_applicable_stages_for` (target_analysis.py): android_apk runs the APK
@@ -75,24 +41,24 @@ const EM_DASH = "\u2014";
 
 const rootCss = css("grid-column:1/-1;display:flex;flex-direction:column;gap:10px;min-width:0;font-family:var(--font-mono);");
 const toolbarCss = css("display:flex;flex-wrap:wrap;gap:6px;align-items:center;");
-const kvGrid = css("display:grid;grid-template-columns:minmax(120px,160px) 1fr;gap:5px 12px;font-size:10.5px;align-content:start;min-width:0;");
+const kvGrid = css("display:grid;grid-template-columns:minmax(120px,160px) 1fr;gap:5px 12px;font-size:11px;align-content:start;min-width:0;");
 const kvLabel = css("color:var(--text-faint);letter-spacing:0.04em;word-break:break-word;");
 const kvVal = css("color:var(--text-primary);word-break:break-word;min-width:0;display:flex;align-items:center;gap:6px;flex-wrap:wrap;");
 const sectionBox = css("border:1px solid var(--border-soft);border-radius:3px;background:color-mix(in srgb,var(--surface-card) 84%,transparent);overflow:hidden;");
 const sectionBody = css("padding:10px 12px;display:flex;flex-direction:column;gap:10px;min-width:0;");
-const sectionTitleCss = css("font-size:9.5px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-primary);");
-const metaCss = css("font-size:8.5px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-faint);");
+const sectionTitleCss = css("font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-primary);");
+const metaCss = css("font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-faint);");
 const stageCardCss = css("border:1px solid var(--border-faint);border-radius:2px;background:var(--surface-sunk);padding:6px 9px;display:flex;flex-direction:column;gap:5px;min-width:0;");
 const stageHeadCss = css("display:flex;align-items:center;gap:8px;flex-wrap:wrap;");
-const errBoxCss = css("margin:0;padding:6px 8px;border:1px solid var(--status-err,#d64545);border-radius:2px;background:color-mix(in srgb,var(--status-err,#d64545) 8%,transparent);font-family:var(--font-mono);font-size:9.5px;line-height:1.4;color:var(--status-err,#d64545);white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;");
-const noticeOkCss = css("padding:6px 9px;border:1px solid var(--status-ok);border-radius:2px;background:color-mix(in srgb,var(--status-ok) 10%,transparent);color:var(--status-ok);font-size:10px;letter-spacing:0.02em;");
-const noticeErrCss = css("padding:6px 9px;border:1px solid var(--status-err,#d64545);border-radius:2px;background:color-mix(in srgb,var(--status-err,#d64545) 10%,transparent);color:var(--status-err,#d64545);font-size:10px;letter-spacing:0.02em;word-break:break-word;");
+const errBoxCss = css("margin:0;padding:6px 8px;border:1px solid var(--status-err,#d64545);border-radius:2px;background:color-mix(in srgb,var(--status-err,#d64545) 8%,transparent);font-family:var(--font-mono);font-size:11px;line-height:1.4;color:var(--status-err,#d64545);white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;");
+const noticeOkCss = css("padding:6px 9px;border:1px solid var(--status-ok);border-radius:2px;background:color-mix(in srgb,var(--status-ok) 10%,transparent);color:var(--status-ok);font-size:11px;letter-spacing:0.02em;");
+const noticeErrCss = css("padding:6px 9px;border:1px solid var(--status-err,#d64545);border-radius:2px;background:color-mix(in srgb,var(--status-err,#d64545) 10%,transparent);color:var(--status-err,#d64545);font-size:11px;letter-spacing:0.02em;word-break:break-word;");
 const editBoxCss = css("border:1px solid var(--accent)55;border-radius:3px;background:var(--surface-sunk);padding:11px 12px;display:flex;flex-direction:column;gap:9px;");
-const editLabelCss = css("display:flex;flex-direction:column;gap:3px;font-size:9px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);");
+const editLabelCss = css("display:flex;flex-direction:column;gap:3px;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);");
 const EDIT_INPUT = "background:var(--surface-card);border:1px solid var(--border);border-radius:2px;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;padding:5px 7px;letter-spacing:0.02em;outline:none;";
 
 const BTN_BASE =
-  "padding:4px 11px;border-radius:2px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;text-align:center;";
+  "padding:4px 11px;border-radius:2px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;text-align:center;";
 
 function btnStyle(variant: "primary" | "ghost" | "warn", disabled: boolean): CSSProperties {
   const cursor = disabled ? "default" : "cursor:pointer;";
@@ -104,14 +70,10 @@ function btnStyle(variant: "primary" | "ghost" | "warn", disabled: boolean): CSS
   return css(`${BTN_BASE}border:1px solid ${color}66;background:transparent;color:${color};${cursor}${dim}`);
 }
 
-function asRecord(v: unknown): Record<string, unknown> | null {
-  return v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
-}
-
 /** analysis_state has no entry in the shared status tone map for ready /
  * ingesting; map it here so ready reads success-green and ingesting reads
  * live rather than both collapsing to muted grey. */
-function analysisTone(state: string | undefined): "ok" | "live" | "warn" | "err" | "muted" | "info" {
+function analysisTone(state: string | null): "ok" | "live" | "warn" | "err" | "muted" | "info" {
   switch ((state ?? "").toLowerCase()) {
     case "ready":
       return "ok";
@@ -155,7 +117,7 @@ function Section({
           `display:flex;align-items:center;gap:8px;width:100%;padding:6px 10px;border:0;border-bottom:${open ? "1px solid var(--border)" : "0"};background:var(--surface-chrome);color:var(--text-primary);font-family:var(--font-mono);cursor:pointer;text-align:left;`,
         )}
       >
-        <span style={css(`flex:0 0 auto;font-size:9px;color:var(--text-muted);`)}>{open ? "\u25be" : "\u25b8"}</span>
+        <span style={css(`flex:0 0 auto;font-size:11px;color:var(--text-muted);`)}>{open ? "\u25be" : "\u25b8"}</span>
         <span style={sectionTitleCss}>{title}</span>
         <span style={css("flex:1;")} />
         {right}
@@ -186,7 +148,7 @@ export interface VRTargetDetailProps {
 }
 
 export default function VRTargetDetail({ row, onOpenXray }: VRTargetDetailProps): JSX.Element {
-  const id = String(row.id ?? "");
+  const id = readStr(row, "id") ?? "";
   const qc = useQueryClient();
 
   // Live copy: the DataPage snapshot never re-syncs, so poll the single-target
@@ -194,14 +156,14 @@ export default function VRTargetDetail({ row, onOpenXray }: VRTargetDetailProps)
   // action without a reselect.
   const live = useQuery({
     queryKey: ["vr-target-detail", id],
-    queryFn: () => apiFetch<TargetDetail>(`/vr/targets/${encodeURIComponent(id)}`),
+    queryFn: () => apiFetch<unknown>(`/vr/targets/${encodeURIComponent(id)}`),
     enabled: Boolean(id),
     retry: false,
     refetchInterval: 15000,
   });
 
   const t = useMemo<TargetDetail>(
-    () => ({ ...row, ...(live.data ?? {}) }) as unknown as TargetDetail,
+    () => parseTargetDetail({ ...row, ...asRecord(live.data) }),
     [row, live.data],
   );
 
@@ -263,15 +225,14 @@ export default function VRTargetDetail({ row, onOpenXray }: VRTargetDetailProps)
   }
 
   const stageOrder = isApk ? APK_STAGES : CORE_STAGES;
-  const stages = asRecord(t.analysis_stages) ?? {};
   const relevantStages = stageOrder
-    .map((name) => ({ name, info: asRecord(stages[name]) as StageInfo | null }))
+    .map((name) => ({ name, info: t.analysis_stages[name] ?? null }))
     .filter((s): s is { name: string; info: StageInfo } => s.info !== null);
 
-  const tags = (t.tags ?? []).map((tg) => (typeof tg === "string" ? tg : tg.tag)).filter(Boolean);
-  const secondary = (t.secondary_languages ?? []).filter(Boolean);
-  const apkOverview = asRecord(t.apk_overview);
-  const descriptor = asRecord(t.descriptor);
+  const tags = t.tags;
+  const secondary = t.secondary_languages;
+  const apkOverview = t.apk_overview;
+  const descriptor = t.descriptor;
 
   return (
     <div style={rootCss}>
@@ -379,7 +340,7 @@ export default function VRTargetDetail({ row, onOpenXray }: VRTargetDetailProps)
         </div>
 
         {t.analysis_state_message ? (
-          <pre style={failed ? errBoxCss : css("margin:0;padding:6px 8px;border:1px solid var(--border-soft);border-radius:2px;background:var(--surface-sunk);font-family:var(--font-mono);font-size:9.5px;line-height:1.4;color:var(--text-primary);white-space:pre-wrap;word-break:break-word;")}>
+          <pre style={failed ? errBoxCss : css("margin:0;padding:6px 8px;border:1px solid var(--border-soft);border-radius:2px;background:var(--surface-sunk);font-family:var(--font-mono);font-size:11px;line-height:1.4;color:var(--text-primary);white-space:pre-wrap;word-break:break-word;")}>
             {t.analysis_state_message}
           </pre>
         ) : null}
@@ -387,16 +348,16 @@ export default function VRTargetDetail({ row, onOpenXray }: VRTargetDetailProps)
         <div style={css("display:flex;flex-direction:column;gap:6px;")}>
           <div style={metaCss}>stages ({relevantStages.length})</div>
           {relevantStages.length === 0 ? (
-            <div style={css("font-size:10px;color:var(--text-faint);")}>no stage records for this target.</div>
+            <div style={css("font-size:11px;color:var(--text-faint);")}>no stage records for this target.</div>
           ) : (
             relevantStages.map(({ name, info }) => {
               const stageFailed = (info.state ?? "").toLowerCase() === "failed";
               return (
                 <div key={name} style={stageCardCss}>
                   <div style={stageHeadCss}>
-                    <span style={css("font-size:10px;letter-spacing:0.06em;color:var(--text-primary);")}>{name.replace(/_/g, " ")}</span>
+                    <span style={css("font-size:11px;letter-spacing:0.06em;color:var(--text-primary);")}>{name.replace(/_/g, " ")}</span>
                     <StatusBadge value={info.state ?? "\u2014"} />
-                    {typeof info.attempts === "number" ? <span style={metaCss}>{info.attempts} attempt{info.attempts === 1 ? "" : "s"}</span> : null}
+                    {info.attempts !== null ? <span style={metaCss}>{info.attempts} attempt{info.attempts === 1 ? "" : "s"}</span> : null}
                   </div>
                   {info.started_at || info.completed_at ? (
                     <div style={metaCss}>
@@ -429,7 +390,7 @@ export default function VRTargetDetail({ row, onOpenXray }: VRTargetDetailProps)
           {descriptor && Object.keys(descriptor).length ? (
             <StructuredValue value={descriptor} />
           ) : (
-            <span style={css("font-size:10px;color:var(--text-faint);")}>no descriptor recorded.</span>
+            <span style={css("font-size:11px;color:var(--text-faint);")}>no descriptor recorded.</span>
           )}
         </div>
       </Section>
@@ -462,11 +423,9 @@ function EditForm({
 }): JSX.Element {
   const [displayName, setDisplayName] = useState(t.display_name ?? "");
   const [primary, setPrimary] = useState(t.primary_language ?? "");
-  const [secondary, setSecondary] = useState((t.secondary_languages ?? []).join(", "));
+  const [secondary, setSecondary] = useState(t.secondary_languages.join(", "));
   const [status, setStatus] = useState((t.status ?? "active").toLowerCase());
-  const [tags, setTags] = useState(
-    (t.tags ?? []).map((tg) => (typeof tg === "string" ? tg : tg.tag)).filter(Boolean).join(", "),
-  );
+  const [tags, setTags] = useState(t.tags.join(", "));
 
   const trimmedName = displayName.trim();
   const canSubmit = trimmedName.length > 0 && !pending;
@@ -515,7 +474,7 @@ function EditForm({
         <button type="button" disabled={pending} onClick={onCancel} style={btnStyle("ghost", pending)}>
           cancel
         </button>
-        {trimmedName.length === 0 ? <span style={css("font-size:9px;color:var(--status-warn,#e6b84c);")}>name is required</span> : null}
+        {trimmedName.length === 0 ? <span style={css("font-size:11px;color:var(--status-warn,#e6b84c);")}>name is required</span> : null}
       </div>
     </div>
   );

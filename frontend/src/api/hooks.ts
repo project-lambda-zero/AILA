@@ -1,7 +1,18 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 
 import { apiFetch } from "./client";
-import type { Branch, DispatchState, Hypothesis, Investigation, LedgerRow, McpCall, Message } from "./types";
+import type {
+  Branch,
+  DispatchState,
+  Hypothesis,
+  Investigation,
+  LedgerRow,
+  McpCall,
+  Message,
+  OutcomeReview,
+  VrFinding,
+  VrOutcome,
+} from "./types";
 
 export function useInvestigations() {
   return useQuery({
@@ -14,6 +25,8 @@ export function useInvestigations() {
 export function useInvestigation(id: string | null) {
   return useQuery({
     queryKey: ["vr", "investigation", id],
+    // Live investigation state: a remount must refetch instead of serving cache.
+    staleTime: 0,
     queryFn: () => apiFetch<Investigation>(`/vr/investigations/${id}`),
     enabled: Boolean(id),
   });
@@ -22,6 +35,7 @@ export function useInvestigation(id: string | null) {
 export function useMessages(id: string | null) {
   return useQuery({
     queryKey: ["vr", "messages", id],
+    staleTime: 0,
     queryFn: () => apiFetch<Message[]>(`/vr/investigations/${id}/messages?limit=1000`),
     enabled: Boolean(id),
     refetchInterval: 8000,
@@ -31,6 +45,7 @@ export function useMessages(id: string | null) {
 export function useBranches(id: string | null) {
   return useQuery({
     queryKey: ["vr", "branches", id],
+    staleTime: 0,
     queryFn: () => apiFetch<Branch[]>(`/vr/investigations/${id}/branches`),
     enabled: Boolean(id),
   });
@@ -39,6 +54,7 @@ export function useBranches(id: string | null) {
 export function useHypotheses(id: string | null) {
   return useQuery({
     queryKey: ["vr", "hypotheses", id],
+    staleTime: 0,
     queryFn: () => apiFetch<Hypothesis[]>(`/vr/investigations/${id}/hypotheses`),
     enabled: Boolean(id),
   });
@@ -47,6 +63,7 @@ export function useHypotheses(id: string | null) {
 export function useDispatch(id: string | null) {
   return useQuery({
     queryKey: ["vr", "dispatch", id],
+    staleTime: 0,
     queryFn: () => apiFetch<DispatchState>(`/vr/investigations/${id}/dispatch`),
     enabled: Boolean(id),
     retry: false,
@@ -57,6 +74,7 @@ export function useDispatch(id: string | null) {
 export function useLedger(id: string | null) {
   return useQuery({
     queryKey: ["vr", "ledger", id],
+    staleTime: 0,
     queryFn: () => apiFetch<LedgerRow[]>(`/vr/investigations/${id}/ledger`),
     enabled: Boolean(id),
     retry: false,
@@ -67,6 +85,7 @@ export function useLedger(id: string | null) {
 export function useMcpCalls(id: string | null) {
   return useQuery({
     queryKey: ["vr", "mcp-calls", id],
+    staleTime: 0,
     queryFn: () => apiFetch<McpCall[]>(`/vr/investigations/${id}/mcp-calls`),
     enabled: Boolean(id),
     retry: false,
@@ -139,3 +158,147 @@ export function useGenerateNarrative(id: string | null) {
   });
 }
 
+
+// -- X-Ray operator actions. ---------------------------------------------------
+
+/** Branch operation request. `reason` is recorded as the branch's fork or
+ *  close reason; fork and merge carry their extra fields. */
+export type BranchOpRequest =
+  | { op: "promote" | "abandon" | "pause" | "resume"; branchId: string; reason: string }
+  | { op: "fork"; branchId: string; reason: string; persona_voice: string | null; at_turn: number | null }
+  | { op: "merge"; branchId: string; reason: string; other_branch_id: string };
+
+function invalidateBranchState(queryClient: QueryClient, id: string | null): void {
+  for (const key of ["investigation", "branches", "messages", "dispatch"]) {
+    void queryClient.invalidateQueries({ queryKey: ["vr", key, id] });
+  }
+}
+
+export function useBranchOp(id: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ op, branchId, ...body }: BranchOpRequest) =>
+      apiFetch<unknown>(`/vr/investigations/${id}/branches/${branchId}/${op}`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => invalidateBranchState(queryClient, id),
+  });
+}
+
+export interface StrategyBranchRequest {
+  strategy_family: string;
+  persona_voice: string | null;
+  rationale: string;
+  parent_branch_id: string | null;
+}
+
+export interface SpawnedStrategyBranch {
+  new_branch_id: string;
+  strategy_family: string;
+}
+
+export function useSpawnStrategyBranch(id: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: StrategyBranchRequest) =>
+      apiFetch<SpawnedStrategyBranch>(`/vr/investigations/${id}/strategy-branches`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => invalidateBranchState(queryClient, id),
+  });
+}
+
+export function useVrOutcomes(id: string | null) {
+  return useQuery({
+    queryKey: ["vr", "outcomes", id],
+    queryFn: () => apiFetch<VrOutcome[]>(`/vr/investigations/${id}/outcomes`),
+    enabled: Boolean(id),
+    refetchInterval: 10_000,
+  });
+}
+
+export function useVrOutcomeReviews(id: string | null, outcomeId: string | null) {
+  return useQuery({
+    queryKey: ["vr", "outcome-reviews", id, outcomeId],
+    queryFn: () => apiFetch<OutcomeReview[]>(`/vr/investigations/${id}/outcomes/${outcomeId}/reviews`),
+    enabled: Boolean(id && outcomeId),
+  });
+}
+
+export interface OutcomeReviewRequest {
+  outcomeId: string;
+  reviewer_branch_id: string;
+  vote: string;
+  comment: string;
+}
+
+export function useCreateVrOutcomeReview(id: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ outcomeId, ...body }: OutcomeReviewRequest) =>
+      apiFetch<OutcomeReview>(`/vr/investigations/${id}/outcomes/${outcomeId}/reviews`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: (_review, { outcomeId }) => {
+      void queryClient.invalidateQueries({ queryKey: ["vr", "outcomes", id] });
+      void queryClient.invalidateQueries({ queryKey: ["vr", "outcome-reviews", id, outcomeId] });
+      void queryClient.invalidateQueries({ queryKey: ["vr", "investigation", id] });
+    },
+  });
+}
+
+/** One finding; `poll` re-fetches every 5s while a drafted PoC is pending. */
+export function useVrFinding(findingId: string | null, poll: boolean) {
+  return useQuery({
+    queryKey: ["vr", "finding", findingId],
+    queryFn: () => apiFetch<VrFinding>(`/vr/findings/${findingId}`),
+    enabled: Boolean(findingId),
+    refetchInterval: poll ? 5000 : false,
+  });
+}
+
+export interface DraftPocQueued {
+  finding_id: string;
+  task_id: string;
+  status: string;
+}
+
+/** Queue an LLM PoC draft; the result lands on the finding's `poc` later. */
+export function useDraftPoc() {
+  return useMutation({
+    mutationFn: (findingId: string) =>
+      apiFetch<DraftPocQueued>(`/vr/findings/${findingId}/draft-poc`, { method: "POST" }),
+  });
+}
+
+export interface LedgerDecisionRequest {
+  requestId: number;
+  approver_branch_id: string;
+  approve: boolean;
+  reason: string;
+}
+
+export interface LedgerDecisionResult {
+  decision_id: number;
+  request_id: number;
+  approved: boolean;
+  ratified: boolean;
+}
+
+export function useLedgerDecision(id: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ requestId, ...body }: LedgerDecisionRequest) =>
+      apiFetch<LedgerDecisionResult>(`/vr/investigations/${id}/ledger/requests/${requestId}/decision`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["vr", "ledger", id] });
+      void queryClient.invalidateQueries({ queryKey: ["vr", "dispatch", id] });
+    },
+  });
+}

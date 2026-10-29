@@ -38,14 +38,14 @@ const headingStyle = css(
   "font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-primary);",
 );
 const stepLineStyle = css(
-  "font-size:10px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-muted);",
+  "font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-muted);",
 );
 const purposeStyle = css("font-size:11.5px;letter-spacing:0.02em;color:var(--text-faint);");
 const segRowStyle = css("display:flex;align-items:center;gap:5px;");
 const backStyleBase =
-  "padding:0 12px;height:30px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;background:transparent;border:1px solid var(--border-soft);border-radius:2px;";
+  "padding:0 12px;height:30px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;background:transparent;border:1px solid var(--border-soft);border-radius:2px;";
 const helpBtnStyle = css(
-  "width:15px;height:15px;flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border-soft);border-radius:50%;background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:9px;line-height:1;cursor:pointer;padding:0;",
+  "width:28px;height:28px;flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border-soft);border-radius:50%;background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:11px;line-height:1;cursor:pointer;padding:0;",
 );
 const helpPopStyle = css(
   "position:absolute;left:0;top:20px;z-index:5;max-width:280px;padding:8px 10px;background:var(--surface-chrome);border:1px solid var(--border);border-radius:3px;box-shadow:0 8px 24px rgba(0,0,0,0.5);color:var(--text-muted);font-family:var(--font-mono);font-size:11px;letter-spacing:0.01em;line-height:1.4;text-transform:none;white-space:normal;",
@@ -59,7 +59,7 @@ function segStyle(state: "done" | "active" | "pending"): CSSProperties {
 
 function primaryStyle(enabled: boolean): CSSProperties {
   return css(
-    `padding:0 16px;height:30px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:${
+    `padding:0 16px;height:30px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:${
       enabled ? "var(--text-on-accent)" : "var(--text-faint)"
     };background:${enabled ? "var(--accent)" : "var(--surface-card)"};border:1px solid ${
       enabled ? "var(--accent)" : "var(--border-soft)"
@@ -153,7 +153,7 @@ export function WizardShell(props: WizardShellProps): JSX.Element {
               type="button"
               onClick={onRetry}
               style={css(
-                "flex:0 0 auto;padding:0 12px;height:26px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--accent);background:transparent;border:1px solid var(--accent);border-radius:2px;cursor:pointer;",
+                "flex:0 0 auto;padding:0 12px;height:28px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--accent);background:transparent;border:1px solid var(--accent);border-radius:2px;cursor:pointer;",
               )}
             >
               retry
@@ -171,7 +171,7 @@ export function WizardShell(props: WizardShellProps): JSX.Element {
 
         {!canPrimary && issues.length > 0 ? (
           <div style={css("flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;")}>
-            <span style={css("font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--status-warn);")}>
+            <span style={css("font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--status-warn);")}>
               {issues.length === 1 ? "1 field needs attention" : `${issues.length} fields need attention`}
             </span>
             {issues.map((f, i) => (

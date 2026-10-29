@@ -8,12 +8,12 @@
  */
 import type { JSX } from "react";
 
-import type { ModulePageProps } from "../contract";
+import type { SectionRouteProps, WindowChromeProps } from "../contract";
 import { ConsoleWindow } from "../window";
 
 import SystemsSection from "./systems/SystemsPanel";
 
-export default function SystemsRegistryPage(props: ModulePageProps): JSX.Element {
+export default function SystemsRegistryPage(props: WindowChromeProps & Pick<SectionRouteProps, "section">): JSX.Element {
   const {
     section,
     windowId,
@@ -47,7 +47,7 @@ export default function SystemsRegistryPage(props: ModulePageProps): JSX.Element
           padding: "8px 14px",
           background: "var(--surface-chrome)",
           borderBottom: "1px solid var(--border)",
-          fontSize: 10.5,
+          fontSize: 11,
           letterSpacing: "0.12em",
           textTransform: "uppercase",
           color: "var(--text-muted)",

@@ -4,8 +4,16 @@ Covers create → list → get → patch → register crash → dedup → triage
 """
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
+
 import pytest
 from httpx import AsyncClient
+from sqlmodel import select
+
+from aila.modules.vr.db_models import VRFuzzCampaignRecord
+from aila.platform.uow import UnitOfWork
+from aila.storage.db_models import ManagedSystemRecord
 
 
 def _auth(token: str) -> dict[str, str]:
@@ -281,3 +289,53 @@ async def test_404_on_unknown_resource(
     ):
         resp = await async_client.get(path, headers=_auth(admin_token))
         assert resp.status_code == 404, f"{path} returned {resp.status_code}"
+
+
+@pytest.mark.asyncio
+async def test_stop_route_aborts_owned_campaign(
+    async_client: AsyncClient, admin_token: str,
+) -> None:
+    wid, tid = await _make_workspace_and_target(
+        async_client, admin_token, f"f-stop-{uuid4().hex[:8]}",
+    )
+    create = await async_client.post(
+        "/vr/fuzz/campaigns", headers=_auth(admin_token),
+        json={
+            "target_id": tid, "workspace_id": wid, "name": "c-stop",
+            "engine_id": "libfuzzer", "strategy_id": "coverage_guided",
+        },
+    )
+    assert create.status_code == 201
+    cid = create.json()["data"]["id"]
+
+    async with UnitOfWork() as uow:
+        system = ManagedSystemRecord(
+            name=f"stop-ws-{uuid4().hex[:8]}", host="10.0.0.9",
+            username="analyst", port=22,
+        )
+        uow.session.add(system)
+        await uow.session.commit()
+        await uow.session.refresh(system)
+        system_id = system.id
+        row = (await uow.session.exec(
+            select(VRFuzzCampaignRecord).where(VRFuzzCampaignRecord.id == cid),
+        )).first()
+        row.status = "running"
+        row.analysis_system_id = system_id
+        row.remote_pid = 777
+        row.remote_corpus_dir = f"~/.aila/fuzz/{cid}/corpus"
+        await uow.session.commit()
+
+    ssh = MagicMock()
+    ssh.run_command = AsyncMock(return_value="gone")
+    with patch("aila.modules.vr.services.fuzz_service.SSHService", return_value=ssh):
+        resp = await async_client.post(
+            f"/vr/fuzz/campaigns/{cid}/stop", headers=_auth(admin_token),
+        )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["status"] == "aborted"
+
+    missing = await async_client.post(
+        "/vr/fuzz/campaigns/does-not-exist/stop", headers=_auth(admin_token),
+    )
+    assert missing.status_code == 404

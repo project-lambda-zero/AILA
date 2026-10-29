@@ -56,13 +56,13 @@ export function AuditEventDetail({
       {json ? (
         <pre
           style={css(
-            "margin:0;padding:8px 10px;background:var(--surface-card);border:1px solid var(--border-soft);border-radius:2px;font-family:var(--font-mono);font-size:10.5px;line-height:1.45;white-space:pre-wrap;word-break:break-word;overflow:auto;max-height:320px;color:var(--text-primary);",
+            "margin:0;padding:8px 10px;background:var(--surface-card);border:1px solid var(--border-soft);border-radius:2px;font-family:var(--font-mono);font-size:11px;line-height:1.45;white-space:pre-wrap;word-break:break-word;overflow:auto;max-height:320px;color:var(--text-primary);",
           )}
         >
           {json}
         </pre>
       ) : (
-        <span style={css("color:var(--text-faint);font-size:10.5px;")}>no detail payload</span>
+        <span style={css("color:var(--text-faint);font-size:11px;")}>no detail payload</span>
       )}
     </div>
   );

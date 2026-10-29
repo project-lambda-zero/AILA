@@ -125,8 +125,8 @@ async def test_scan_sse_event_format_contract(test_db, admin_key_record):
     stub_platform.runtime.config_registry.get.return_value = "redis://localhost:6379"
 
     mock_events = [
-        {"stage": "inventory", "message": "Collecting packages", "percent": "25", "timestamp": "2026-04-04T00:00:00+00:00"},
-        {"stage": "scoring", "message": "Scoring CVEs", "percent": "75", "timestamp": "2026-04-04T00:00:01+00:00"},
+        ("1-0", {"stage": "inventory", "message": "Collecting packages", "percent": "25", "timestamp": "2026-04-04T00:00:00+00:00"}),
+        ("2-0", {"stage": "scoring", "message": "Scoring CVEs", "percent": "75", "timestamp": "2026-04-04T00:00:01+00:00"}),
     ]
 
     async def _empty_async_iter():

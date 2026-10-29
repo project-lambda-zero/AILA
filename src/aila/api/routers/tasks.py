@@ -436,7 +436,9 @@ async def list_task_transitions(
                         "description": (
                             "Server-Sent Events stream. Each `data:` line contains JSON "
                             "with keys: stage (str), message (str), percent (int|null), "
-                            "timestamp (str ISO-8601)."
+                            "timestamp (str ISO-8601). Progress frames also carry an "
+                            "`id:` line with their Redis stream id; pass the last one "
+                            "back as `last_id` to resume without duplicates."
                         ),
                     },
                 },
@@ -514,11 +516,16 @@ async def stream_task_events(
         try:
             stream = ProgressStream()
 
-            # Replay all events since last_id (late-connect catchup, D-17/TASK-09)
+            # Replay all events after last_id (late-connect catchup, D-17/TASK-09).
+            # Each progress frame carries its Redis stream id on an ``id:``
+            # line so a reconnecting client resumes with ``last_id`` and the
+            # live read starts after the newest replayed id (no duplicates).
+            resume_from = last_id
             try:
                 catchup_events = await stream.catchup(task_id, last_id)
-                for event in catchup_events:
-                    yield f"data: {json.dumps(event)}\n\n"
+                for event_id, event in catchup_events:
+                    yield f"id: {event_id}\ndata: {json.dumps(event)}\n\n"
+                    resume_from = event_id
             except Exception as exc:
                 _log.warning("SSE catchup failed for task %s: %s", task_id, exc)
 
@@ -529,13 +536,14 @@ async def stream_task_events(
                 return
 
             # Stream live events via ProgressStream.stream_events() async API
-            async for event in stream.stream_events(task_id, last_id):
+            async for event_id, event in stream.stream_events(task_id, resume_from):
                 # 60-4: end the generator promptly when the client hangs up
                 # so the server does not hold a Redis connection + coroutine
                 # per zombie client until the next XREAD tick (up to 30 s).
                 if await request.is_disconnected():
                     return
-                yield f"data: {json.dumps(event)}\n\n"
+                id_line = f"id: {event_id}\n" if event_id is not None else ""
+                yield f"{id_line}data: {json.dumps(event)}\n\n"
                 # After each ping, check for terminal state (OPS-02)
                 if event.get("type") == "ping":
                     terminal = await _check_terminal(task_id)

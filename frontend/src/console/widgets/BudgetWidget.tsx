@@ -20,11 +20,11 @@ const ROOT = css(
 );
 
 const LABEL = css(
-  "font-size:9px;letter-spacing:0.12em;text-transform:uppercase;" +
+  "font-size:11px;letter-spacing:0.12em;text-transform:uppercase;" +
   "color:var(--text-faint);",
 );
 
-const MUTED = css("font-size:10px;color:var(--text-muted);");
+const MUTED = css("font-size:11px;color:var(--text-muted);");
 
 function fmtUsd(v: number): string {
   return `$${v.toFixed(2)}`;

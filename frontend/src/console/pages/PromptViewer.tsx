@@ -39,11 +39,11 @@ const chip = css(
   "display:inline-flex;align-items:center;gap:5px;padding:2px 7px;background:var(--surface-subtle);border:1px solid var(--border-soft);border-radius:2px;"
 );
 
-const labelText = css("color:var(--text-faint);text-transform:uppercase;font-size:9.5px;letter-spacing:0.06em;");
+const labelText = css("color:var(--text-faint);text-transform:uppercase;font-size:11px;letter-spacing:0.06em;");
 const valueText = css("color:var(--text-primary);font-weight:500;");
 
 const btnStyle = css(
-  "padding:4px 10px;border:1px solid var(--accent);border-radius:2px;background:transparent;color:var(--accent);font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;display:inline-flex;align-items:center;gap:6px;"
+  "padding:4px 10px;border:1px solid var(--accent);border-radius:2px;background:transparent;color:var(--accent);font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;display:inline-flex;align-items:center;gap:6px;"
 );
 
 const bodyBox = css(
@@ -171,7 +171,7 @@ export function PromptBodyDetail({ body }: { body: string }): JSX.Element {
       <div style={css("display:flex;justify-content:flex-end;")}>
         <CopyButton text={body} />
       </div>
-      <pre style={css("margin:0;padding:8px 12px;background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:2px;font-family:var(--font-mono);font-size:10.5px;line-height:1.45;color:var(--text-primary);white-space:pre-wrap;word-break:break-word;max-height:360px;overflow:auto;")}>
+      <pre style={css("margin:0;padding:8px 12px;background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:2px;font-family:var(--font-mono);font-size:11px;line-height:1.45;color:var(--text-primary);white-space:pre-wrap;word-break:break-word;max-height:360px;overflow:auto;")}>
         {body}
       </pre>
     </div>

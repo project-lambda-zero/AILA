@@ -273,6 +273,14 @@ class _MergeBody(_BranchOpBody):
     other_branch_id: str = Field(min_length=1, max_length=64)
 
 
+class _LedgerDecisionBody(BaseModel):
+    """Operator vote on a ledger capability request, cast as one branch."""
+    model_config = ConfigDict(extra="forbid")
+    approver_branch_id: str = Field(min_length=1, max_length=64)
+    approve: bool
+    reason: str = Field(default="", max_length=1024)
+
+
 class _DisclosureSectionsPatch(BaseModel):
     """Operator-edited section bodies (08_FRONTEND_UX.md §1.8).
 
@@ -6544,10 +6552,21 @@ def create_vr_router() -> APIRouter:
                 except (TypeError, ValueError):
                     text = ""
             created_at = row.get("created_at")
+            # Decision rows name the request they vote on; the X-Ray oracle
+            # panel folds these into a per-request ratified/rejected state.
+            is_decision = row.get("kind") == "decision"
+            decision_target = payload.get("target") if is_decision else None
+            decision_approved = payload.get("approved") if is_decision else None
             items.append({
                 "id": row.get("id"),
                 "kind": row.get("kind"),
                 "intent": intent if isinstance(intent, str) else None,
+                "decision_target": (
+                    decision_target if isinstance(decision_target, int) else None
+                ),
+                "decision_approved": (
+                    decision_approved if isinstance(decision_approved, bool) else None
+                ),
                 "objective_key": row.get("objective_key"),
                 "author_branch_id": row.get("author_branch_id"),
                 "owner_branch_id": row.get("owner_branch_id"),
@@ -6561,6 +6580,102 @@ def create_vr_router() -> APIRouter:
             })
 
         return DataEnvelope(data=items)
+
+    @router.post(
+        "/investigations/{investigation_id}/ledger/requests/{request_id}/decision",
+        response_model=DataEnvelope[dict],
+        status_code=status.HTTP_201_CREATED,
+        summary=(
+            "Record an operator vote on a ledger request as one of the "
+            "investigation's branches. The dispatch hub applies the "
+            "request's effect on its next visit once it is ratified."
+        ),
+    )
+    @limiter.limit("30/minute")
+    async def decide_ledger_request(
+        request: Request,
+        investigation_id: str,
+        request_id: int,
+        body: _LedgerDecisionBody,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[dict]:
+        del request
+        from aila.platform.services.audit import record_audit_event
+        from aila.platform.services.ledger import LedgerPermissionError
+        from aila.platform.services.oracle import Oracle, OracleError
+
+        inv = await _load_investigation(investigation_id, auth)
+        if inv is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Investigation {investigation_id} not found.",
+            )
+        oracle = Oracle()
+        async with UnitOfWork() as uow:
+            branch = (await uow.session.exec(
+                select(VRInvestigationBranchRecord)
+                .where(VRInvestigationBranchRecord.id == body.approver_branch_id)
+                .where(
+                    VRInvestigationBranchRecord.investigation_id
+                    == investigation_id,
+                ),
+            )).first()
+            if branch is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=(
+                        f"Branch {body.approver_branch_id} not found on "
+                        f"investigation {investigation_id}."
+                    ),
+                )
+            try:
+                decision_id = await oracle.record_decision(
+                    investigation_id,
+                    request_id,
+                    body.approver_branch_id,
+                    approve=body.approve,
+                    session=uow.session,
+                )
+            except OracleError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND, detail=str(exc),
+                ) from exc
+            except LedgerPermissionError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT, detail=str(exc),
+                ) from exc
+            record_audit_event(
+                uow.session,
+                run_id=investigation_id,
+                stage="vr",
+                action=(
+                    "ledger_request_approved" if body.approve
+                    else "ledger_request_rejected"
+                ),
+                target=f"ledger_request:{request_id}",
+                user_id=auth.user_id,
+                team_id=auth.team_id,
+                details={
+                    "investigation_id": investigation_id,
+                    "request_id": request_id,
+                    "decision_id": decision_id,
+                    "approver_branch_id": body.approver_branch_id,
+                    "approved": body.approve,
+                    "reason": body.reason,
+                },
+            )
+            await uow.session.commit()
+            ratified = await oracle.is_ratified(
+                investigation_id, request_id, session=uow.session,
+            )
+
+        return DataEnvelope(data={
+            "decision_id": decision_id,
+            "request_id": request_id,
+            "approver_branch_id": body.approver_branch_id,
+            "approved": body.approve,
+            "ratified": ratified,
+        })
 
     @router.get(
         "/investigations/{investigation_id}/mcp-calls",
@@ -8026,6 +8141,50 @@ def create_vr_router() -> APIRouter:
                 task_id=handle.task_id,
             ),
         )
+
+    @router.post(
+        "/fuzz/campaigns/{campaign_id}/stop",
+        response_model=DataEnvelope[VRFuzzCampaignSummary],
+        summary=(
+            "Stop a running or paused fuzz campaign: signal the recorded "
+            "remote fuzzer PID on the analysis workstation, then mark the "
+            "campaign aborted. The status is left unchanged if the fuzzer "
+            "cannot be confirmed stopped."
+        ),
+    )
+    @limiter.limit("10/minute")
+    async def stop_fuzz_campaign(
+        request: Request,
+        campaign_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[VRFuzzCampaignSummary]:
+        from aila.modules.vr.services import FuzzCampaignService, FuzzServiceError
+
+        from .db_models import VRFuzzCampaignRecord
+        async with UnitOfWork() as uow:
+            row = (await uow.session.exec(
+                _team_filter(
+                    select(VRFuzzCampaignRecord).where(
+                        VRFuzzCampaignRecord.id == campaign_id,
+                    ),
+                    VRFuzzCampaignRecord, auth,
+                ),
+            )).first()
+            if row is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Fuzz campaign {campaign_id} not found.",
+                )
+
+        svc = FuzzCampaignService()
+        try:
+            summary = await svc.stop_campaign(campaign_id)
+        except FuzzServiceError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc),
+            ) from exc
+        return DataEnvelope(data=summary)
 
     @router.delete(
         "/fuzz/campaigns/{campaign_id}",

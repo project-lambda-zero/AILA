@@ -89,7 +89,7 @@ const ROOT = css(
 );
 
 const LABEL = css(
-  "font-size:9px;letter-spacing:0.12em;text-transform:uppercase;" +
+  "font-size:11px;letter-spacing:0.12em;text-transform:uppercase;" +
   "color:var(--text-faint);margin-bottom:4px;",
 );
 
@@ -97,7 +97,7 @@ const EMPTY = css("font-size:11px;color:var(--text-faint);padding:6px 0;");
 
 const ROW_BTN = css(
   "display:flex;align-items:center;gap:8px;padding:4px 6px;background:transparent;" +
-  "border:0;border-radius:2px;cursor:pointer;font-family:var(--font-mono);" +
+  "border:0;border-radius:2px;cursor:pointer;min-height:28px;display:inline-flex;align-items:center;font-family:var(--font-mono);" +
   "font-size:11px;color:var(--text-primary);text-align:left;width:100%;",
 );
 
@@ -201,7 +201,7 @@ export default function RecentFindingsWidget(props: WidgetProps): JSX.Element {
                 minWidth: 44,
                 padding: "1px 4px",
                 borderRadius: 2,
-                fontSize: 9,
+                fontSize: 11,
                 letterSpacing: "0.08em",
                 textTransform: "uppercase",
                 color: toneFor(row.severity),
@@ -213,7 +213,7 @@ export default function RecentFindingsWidget(props: WidgetProps): JSX.Element {
             </span>
             <span
               style={{
-                fontSize: 9,
+                fontSize: 11,
                 letterSpacing: "0.08em",
                 textTransform: "uppercase",
                 color: "var(--text-faint)",

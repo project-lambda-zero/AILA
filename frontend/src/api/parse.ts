@@ -3,43 +3,20 @@
  *
  * The console pages consume backend rows that TypeScript sees as
  * `Record<string, unknown>` (the DataPage row-callback signature) or
- * `unknown` (payload dicts inside malware/vr messages). Instead of
- * re-deriving each field with an inline `typeof` check + `as` cast at
- * every render site (the pattern flagged by anti-slop -- see #229),
- * every page parses the row ONCE at the boundary using the narrowers
- * below.
+ * `unknown` (payload dicts inside malware/vr messages). Every page parses
+ * the row ONCE at the boundary with the narrowers below instead of
+ * re-deriving each field with an inline `typeof` check and an `as` cast at
+ * every render site (the pattern flagged by anti-slop -- see #229).
  *
- * Two layers:
+ * The narrowers return `null` when a field is missing or has the wrong
+ * shape; callers apply their own default (`?? "\u2014"`, `?? 0`, `?? []`),
+ * keeping intent explicit at the call site.
  *
- * 1. Primitive narrowers (`asRecord`, `readStr`, `readNum`, `readBool`,
- *    `readArray`). Return `null` when the field is missing or the wrong
- *    shape; callers apply their own default with `?? "\u2014"` / `?? 0`
- *    / `?? []`, keeping intent explicit. These replace the ~180 inline
- *    `typeof v === "string" ? v : null` sites.
- *
- * 2. `parseRow<S>(raw, shape)` -- a shape-driven bulk narrower for the
- *    common case where a whole row is parsed into a typed record. Each
- *    shape entry is a `Reader<T>` (a `(v: unknown) => T` function); the
- *    return type is inferred from the shape so callers get a typed
- *    result without hand-writing an interface + N field reads.
- *
- * Deliberately dependency-free -- the shell adds no runtime deps lightly,
- * the row shapes are few and stable, and hand-rolled narrowers keep
- * the boundary explicit. If per-field validation messages become a
- * product requirement, swap this for zod's `object({...}).safeParse()`
- * without touching call sites (they consume the parsed value only).
- *
- * This is the shell's single canonical type-guard module; call sites
- * import `asRecord`/`isRecord` from here rather than re-defining them.
+ * Deliberately dependency-free: the row shapes are few and stable, and
+ * hand-rolled narrowers keep the boundary explicit.
  */
 
 import { ApiError } from "./client";
-
-/** Type guard: `v` is a plain object (not array, not null).
- * Canonical shell-wide guard -- do not re-define at call sites. */
-export function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null && !Array.isArray(v);
-}
 
 /** Surface a backend rejection as clean text. FastAPI's HTTPException body is
  * `{"detail": "..."}` which `apiFetch` throws verbatim as the ApiError message;
@@ -62,7 +39,10 @@ export function apiErrDetail(err: unknown): string {
 
 /** Narrow `v` to a plain object or `null`. */
 export function asRecord(v: unknown): Record<string, unknown> | null {
-  return isRecord(v) ? v : null;
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
+  // SAFETY: a non-null, non-array object is a JSON object; its member values stay `unknown`
+  // and every reader in this module narrows them before use.
+  return v as Record<string, unknown>;
 }
 
 /** Read `o[k]` when it's a string; `null` otherwise. */
@@ -77,79 +57,39 @@ export function readNum(o: Record<string, unknown>, k: string): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
-/** Read `o[k]` when it's a boolean; `null` otherwise. */
-export function readBool(o: Record<string, unknown>, k: string): boolean | null {
-  const v = o[k];
-  return typeof v === "boolean" ? v : null;
-}
-
 /** Read `o[k]` when it's an array; `null` otherwise. */
 export function readArray(o: Record<string, unknown>, k: string): unknown[] | null {
   const v = o[k];
   return Array.isArray(v) ? v : null;
 }
 
-/* --- parseRow: shape-driven bulk narrower --------------------------- */
-
-/** A field reader takes an unknown value and returns the narrowed shape. */
-export type Reader<T> = (v: unknown) => T;
-
-/** The record type inferred from a shape spec. */
-export type ShapeOf<S extends Record<string, Reader<unknown>>> = {
-  [K in keyof S]: S[K] extends Reader<infer T> ? T : never;
-};
-
-/**
- * Parse a raw JSON row against a shape spec. Missing fields feed
- * `undefined` into the reader (readers return their sentinel -- usually
- * `null` -- for missing/wrong types). If `raw` is not a plain object,
- * every reader is invoked with `undefined` so the result carries the
- * shape's defaults throughout.
- *
- * ```ts
- * const row = parseRow(raw, { name: rStr, count: rNumOr(0) });
- * // row: { name: string | null; count: number }
- * ```
- */
-export function parseRow<S extends Record<string, Reader<unknown>>>(
-  raw: unknown,
-  shape: S,
-): ShapeOf<S> {
-  const src = asRecord(raw);
-  const out: Record<string, unknown> = {};
-  for (const k in shape) {
-    out[k] = shape[k](src ? src[k] : undefined);
-  }
-  return out as ShapeOf<S>;
+/** Read `o[k]` when it's a boolean; `null` otherwise. */
+export function readBool(o: Record<string, unknown>, k: string): boolean | null {
+  const v = o[k];
+  return typeof v === "boolean" ? v : null;
 }
 
-/* --- Reader factories (shape-spec callbacks; identity matters) ------ */
+/** Read `o[k]` as an array keeping only its plain-object elements; `[]` when
+ * the field is missing or not an array. */
+export function readRecordArray(o: Record<string, unknown>, k: string): Record<string, unknown>[] {
+  const v = o[k];
+  if (!Array.isArray(v)) return [];
+  const out: Record<string, unknown>[] = [];
+  for (const el of v) {
+    const r = asRecord(el);
+    if (r) out.push(r);
+  }
+  return out;
+}
 
-/** Reader that returns the value if it's a string, else `null`. */
-export const rStr: Reader<string | null> = (v) => (typeof v === "string" ? v : null);
-
-/** Reader that returns the value if it's a finite number, else `null`. */
-export const rNum: Reader<number | null> = (v) =>
-  typeof v === "number" && Number.isFinite(v) ? v : null;
-
-/** Reader that returns the value if it's a boolean, else `null`. */
-export const rBool: Reader<boolean | null> = (v) => (typeof v === "boolean" ? v : null);
-
-/** Reader that returns the value if it's a plain object, else `null`. */
-export const rRec: Reader<Record<string, unknown> | null> = asRecord;
-
-/** Reader for an array of `inner`-typed elements; missing/wrong -> `[]`. */
-export const rArray = <T>(inner: Reader<T>): Reader<T[]> => (v) =>
-  Array.isArray(v) ? v.map(inner) : [];
-
-/** Reader that returns a string or a fallback (never `null`). */
-export const rStrOr = (fallback: string): Reader<string> => (v) =>
-  typeof v === "string" ? v : fallback;
-
-/** Reader that returns a finite number or a fallback (never `null`). */
-export const rNumOr = (fallback: number): Reader<number> => (v) =>
-  typeof v === "number" && Number.isFinite(v) ? v : fallback;
-
-/** Reader that returns a boolean or a fallback (never `null`). */
-export const rBoolOr = (fallback: boolean): Reader<boolean> => (v) =>
-  typeof v === "boolean" ? v : fallback;
+/** Read `o[k]` as an array keeping only its string elements; `[]` when the
+ * field is missing or not an array. */
+export function readStrArray(o: Record<string, unknown>, k: string): string[] {
+  const v = o[k];
+  if (!Array.isArray(v)) return [];
+  const out: string[] = [];
+  for (const el of v) {
+    if (typeof el === "string") out.push(el);
+  }
+  return out;
+}

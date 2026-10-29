@@ -5,7 +5,44 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [Unreleased]
+## [0.6.0] - 2026-10-29 -- Frontend issues #236, #229, #145, #246, #212, #213
+
+### Added
+
+- Investigation status changes are pushed live. Every committed status transition of a VR or malware investigation, including ones written by workers, is delivered on `GET /events/stream` as `investigation.status_changed` (`{module, investigation_id, status, previous_status}`) to the owning team and to god-tier admins. Open investigation lists and detail views refresh on the event, and refresh fully after the stream reconnects. Status transitions are observed through SQLAlchemy session listeners registered per record class; bulk Core updates that bypass the ORM unit of work are not observed.
+- Admin "ops war room" page (admin settings, operations): live event feed with per-type filter chips, running tasks and running VR and malware investigations that open their task queue or X-Ray window, queue depth, dead-letter count, and the live stream connection state.
+- First-run onboarding wizard (issue #246). `GET /config/platform/schema` (platform admins only) describes every platform key with its description, resolved value and source, environment overrides, allowed choices, and prerequisite state, with secrets reduced to set/unset. `PUT /config/platform/<key>` rejects enabling a gated capability whose prerequisite is unmet and validates `sandbox_backend` values. The wizard opens automatically on first admin login, groups keys by capability, infrastructure, and operational posture, and is re-openable from admin settings. Completion is recorded in the new `onboarding_completed` platform key.
+- Admin surfaces (issue #212): ML-Ops lifecycle page over `/admin/lifecycle/*` with confirm steps on canary, promote, and rollback; eval benchmark registration and run monitoring; prompt alias deploy and two-version body diff; god-tier reconcile form; audit seals viewer with verify marks and paged export download; workflow transition per-sequence drill-down with an observed state-machine diagram; global search page; a global Ctrl/Cmd+K command palette that yields to the X-Ray palettes; a cost ROI badge in the footer; and a god-tier cross-team heatmap.
+- VR operator actions in the X-Ray: branch fork, merge, promote, pause, resume, and abandon with confirm steps on destructive operations; strategy-branch spawn; outcome sibling reviews with vote tallies; draft PoC generation with polling until the draft lands; and oracle governance ratify/reject through the new `POST /vr/investigations/{id}/ledger/requests/{request_id}/decision` route, which records the decision on the ledger and writes an audit event in the same transaction.
+- Malware operator actions in the X-Ray: branch spawn, promote, and abandon; outcome reviews; and operator message acknowledgement.
+- Malware module surfaces (issue #213): a projects page (list, create, archive via delete); non-file target creation through a path-descriptor mode in the upload form; and an investigation settings section (rename, auto-pilot and favorite toggles, attach and detach secondary targets) in target detail. `MalwareProjectStatus` gained the `archived` value the delete route already wrote.
+- Fuzz surfaces: fuzz proposal accept (with engine, strategy, duration, and config overrides) and reject with reason; a campaign telemetry chart refreshing while the campaign runs; per-crash triage with verdict, reason, and notes, plus triage history; and a campaign stop action (`POST /vr/fuzz/campaigns/{id}/stop`).
+- Vulnerability module surfaces: an on-demand CVE explanation per scan run (`run_cve_explain` task, cached in the new `explain_cache_records` table, migration 142), served with a 202 while generation is pending; bulk multi-select finding transitions; per-finding evidence chains in the finding drawer; host findings and scan actions in the radar and topology views; and export feedback toasts.
+- Forensics surfaces: reasoning-graph replay with a step slider and a diff between two steps (added and removed nodes and edges from the backend diff route, changed entries computed client-side); carved-file downloads from artifact records; and authenticated, pending-aware downloads with error toasts on writeups, directives, and artifacts.
+
+### Changed
+
+- Task, scan, and forensics investigation progress streams tag every progress frame with its Redis stream id (`id:` line). A client reconnecting with `last_id` receives only the events after that id; events written between the replay and the live read are no longer dropped, and none are repeated.
+- The scan progress panels and the shell's event stream reconnect after a dropped connection with exponential backoff (1 s doubling to 30 s), honor `Retry-After` on 429 and 503, and stop on completion, 401, 403, or 404.
+- Live investigation detail queries always refetch on remount instead of serving up to 5 s of cached state.
+- Every rendered text size in the console is at least 11 px and every interactive control at least 28 px tall (810 sub-11 px text sites and about 75 sub-28 px controls raised).
+- Bespoke console pages load lazily: each page window now fetches only its own JavaScript chunk.
+- Console feedback goes through a shared toast layer mounted once in the app shell; mutations across the console show pending states and surface parsed backend error details.
+- Anti-slop linting: an oxlint configuration with vendored rules (`no-unsafe-dictionary-type`, `no-runtime-typeof`, `no-known-value-widening`, `no-unknown-parameters`, `no-unknown-returns`, `require-safety-comment-for-type-assertion`, `require-readable-spacing`) runs via `make lint-frontend` and a CI step; findings are warnings while the baseline burns down.
+
+### Fixed
+
+- Forensics data tables never rendered rows: every tab wrapped the table in `state ?? <DataTable/>` where `state` was an element, which is never null. The overview recent-artifacts panel also misread the paged artifacts response, and the finding transition control read a field the findings route does not emit.
+- Vulnerability finding transitions in the finding drawer wrote through the VR-scoped workflow record the list never reads; they now go through the bulk update route that owns the state column.
+- Chat console: the view no longer jumps to the bottom while the operator scrolls history, a failed send keeps the draft, and sending shows progress.
+- The malware project delete route 500s after archiving the row because the `archived` status was missing from the status enum.
+- Fuzz crash cards read triage fields under names the backend does not emit (`verdict`); they now use `triage_verdict`, `triage_reason`, and `triage_chain`.
+
+### Removed
+
+- The forensics `tabs.tsx` god component (1505 lines) and the other oversized console pages: DataPage, ScheduledReportWizard, AutomationWizard, IntakeWizard, SandboxPage, KnowledgePage, and both X-Ray pages are split into focused files, with the duplicated schedule picker and field styles hoisted into a shared wizard module.
+- `ModulePageProps` and `PageConfig` as monolithic prop bags: pages now receive focused prop interfaces, and page configs are composed from list, actions, detail, and create parts.
+- Dead frontend exports (`reportExportUrl`, unused parse helpers and duplicate readers) and the VR X-Ray's once-per-second clock re-render.
 
 ## [0.5.56] - 2026-10-29 -- filelock security floor
 
