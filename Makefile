@@ -1,4 +1,4 @@
-.PHONY: install dev dev-all dev-up dev-down dev-reset dev-logs dev-status teardown teardown-force backend frontend frontend-build worker worker-vuln worker-forensics worker-vr db-init migrate test test-e2e lint typecheck honesty liveness-guard build compile check security-scan audit bandit clean
+.PHONY: install dev dev-all dev-up dev-down dev-reset dev-logs dev-status teardown teardown-force backend frontend frontend-build worker worker-vuln worker-forensics worker-vr db-init migrate test test-e2e coverage lint typecheck honesty liveness-guard build compile check security-scan audit bandit clean
 
 # Cross-platform: use python for port-freeing and cleanup instead of
 # fuser/find/bash which are Linux-only.
@@ -97,6 +97,9 @@ test:
 
 test-e2e:
 	python -m pytest tests/test_e2e.py -v
+
+coverage:
+	python -m pytest tests/ --ignore=tests/test_e2e.py --ignore=tests/test_e2e_live.py --cov=src/aila --cov-report=term-missing
 
 lint:
 	python -m ruff check src/aila/

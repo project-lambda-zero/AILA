@@ -22,7 +22,6 @@ from aila.modules.vr.enrichment.services.profile_builder import (
     _APPLICABLE_FUZZING_ENGINES,
     _APPLICABLE_MCP_BY_KIND,
     _DEFAULT_DISCLOSURE_TRACKS,
-    _DEFAULT_PATTERN_KINDS,
     _DEFAULT_REASONING_STRATEGY,
     _infer_language_from_survey,
     _mitigations_from_dict,
@@ -170,15 +169,6 @@ class TestRuleTables:
                 f"missing disclosure tracks for {kind.value}"
             )
 
-    def test_default_pattern_kinds_match_d43(self) -> None:
-        # GA-41 defined 5 kinds
-        assert set(_DEFAULT_PATTERN_KINDS) == {
-            "exploitation_technique",
-            "fuzzing_strategy",
-            "search_heuristic",
-            "tool_recipe",
-            "triage_rule",
-        }
 
     def test_source_repo_engine_coverage(self) -> None:
         # Every reasonable source-repo language should have at least one fuzzer

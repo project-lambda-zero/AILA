@@ -33,7 +33,6 @@ from aila.platform.workflows import (
     WorkflowSafeMessage,
 )
 from aila.platform.workflows.log import write_entered
-from aila.platform.workflows.types import MAX_STEPS_PER_JOB
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import WorkflowStateCursor, WorkflowStateTransition
 from tests.platform.workflows.conftest import ToyServices, toy_services_factory
@@ -201,10 +200,6 @@ async def test_step_limit_exceeded_crashes_gracefully(
     assert out.get("error_class") == "WorkflowStepLimitExceeded"
 
 
-def test_max_steps_per_job_constant() -> None:
-    assert MAX_STEPS_PER_JOB == 1000
-
-
 # ---- Fix 7: exception redaction --------------------------------------------
 
 
@@ -331,29 +326,6 @@ def test_definition_id_too_long_rejected() -> None:
 
 
 # ---- Fix 4: migration server_default uses text() ---------------------------
-
-
-def test_migration_023_server_default_uses_text() -> None:
-    """Migrations 023/024 must use sa.text('now()'), not sa.func.now(),
-    for server_default. sa.func on a server_default field is formally
-    invalid and can break DDL rendering across drivers.
-
-    Parses the migration source and asserts no `server_default=sa.func`
-    appears in 023 / 024 / 025."""
-    import pathlib
-    import re
-
-    base = pathlib.Path(__file__).resolve().parents[3] / "src" / "aila" / "alembic" / "versions"
-    for name in (
-        "023_workflow_state_cursor.py",
-        "024_workflow_state_transitions.py",
-        "025_workflow_run_plan_json.py",
-    ):
-        src = (base / name).read_text()
-        # The bad pattern must NOT appear.
-        assert not re.search(r"server_default\s*=\s*sa\.func\.", src), (
-            f"{name} still uses server_default=sa.func.* -- replace with sa.text()"
-        )
 
 
 def test_migration_023_ddl_compiles_with_text_default() -> None:

@@ -20,16 +20,6 @@ from fastapi import FastAPI, HTTPException
 class TestGetPlatform:
     """Test get_platform dependency function."""
 
-    def test_returns_platform_from_app_state(self) -> None:
-        """get_platform returns whatever is stored in app.state.platform."""
-        from aila.api.deps import get_platform
-
-        sentinel = MagicMock(name="platform-sentinel")
-        request = MagicMock()
-        request.app.state.platform = sentinel
-
-        result = get_platform(request)
-        assert result is sentinel
 
     def test_returns_none_when_platform_is_none(self) -> None:
         """get_platform passes through None without raising."""
@@ -267,9 +257,6 @@ class TestMountModuleRouters:
 class TestCreateApp:
     """Test create_app factory function."""
 
-    def test_returns_fastapi_instance(self) -> None:
-        from aila.api.app import create_app
-        assert isinstance(create_app(), FastAPI)
 
     def test_core_routes_present(self) -> None:
         from aila.api.app import create_app
@@ -396,24 +383,6 @@ class TestLifespan:
     """Test lifespan context manager."""
 
     @pytest.mark.asyncio
-    async def test_sets_start_time(self, test_db, monkeypatch) -> None:
-        """Lifespan sets app.state.start_time as a float."""
-        from aila.api.app import lifespan
-
-        monkeypatch.setenv("AILA_ADMIN_PASSWORD", "test-admin-password")
-
-        application = FastAPI()
-        mock_platform = MagicMock()
-        mock_platform._ensure_initialized = AsyncMock()
-        # Shutdown path awaits `platform._runtime.runtime_model.aclose()` when
-        # it is set. Leaving `_runtime` as an auto-generated MagicMock produces
-        # a non-awaitable MagicMock at that call site; None short-circuits.
-        mock_platform._runtime = None
-        with patch("aila.api.app.AILAPlatform", return_value=mock_platform):
-            async with lifespan(application):
-                assert hasattr(application.state, "start_time")
-                assert isinstance(application.state.start_time, float)
-    @pytest.mark.asyncio
     async def test_platform_construction_failure_raises(self) -> None:
         """Platform construction failure aborts startup instead of storing None."""
         from aila.api.app import lifespan
@@ -513,23 +482,3 @@ class TestLifespan:
 # deps.py: type annotation structural checks
 # ---------------------------------------------------------------------------
 
-class TestDepsTypeAnnotations:
-    """Verify deps.py type annotations are concrete, not bare object."""
-
-    def test_config_registry_return_type_is_concrete(self) -> None:
-        """get_config_registry return annotation should be ConfigRegistry, not object."""
-        from aila.api.deps import get_config_registry
-        hints = get_config_registry.__annotations__
-        assert hints.get("return") == "ConfigRegistry", f"Expected ConfigRegistry, got {hints.get('return')}"
-
-    def test_tool_registry_return_type_is_concrete(self) -> None:
-        """get_tool_registry return annotation should be ToolRegistry, not object."""
-        from aila.api.deps import get_tool_registry
-        hints = get_tool_registry.__annotations__
-        assert hints.get("return") == "ToolRegistry", f"Expected ToolRegistry, got {hints.get('return')}"
-
-    def test_type_checking_guard_present(self) -> None:
-        """deps.py must use TYPE_CHECKING guard for registry imports."""
-        import aila.api.deps as deps_module
-        source = inspect.getsource(deps_module)
-        assert "TYPE_CHECKING" in source

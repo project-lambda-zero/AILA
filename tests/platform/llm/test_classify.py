@@ -26,7 +26,7 @@ from aila.platform.llm.classify import (
 )
 from aila.platform.llm.client import AilaLLMClient
 from aila.platform.llm.config import LLMConfigProvider, LLMRouting
-from aila.platform.llm.errors import ClassificationBlockedError, LLMError
+from aila.platform.llm.errors import ClassificationBlockedError
 from aila.platform.llm.pipeline import PipelineRunner
 
 # ---------------------------------------------------------------------------
@@ -103,14 +103,6 @@ def emitter() -> FakeEmitter:
 class TestClassificationLevel:
     """ClassificationLevel enum ordering and values."""
 
-    def test_public_is_zero(self) -> None:
-        assert ClassificationLevel.PUBLIC == 0
-
-    def test_internal_is_one(self) -> None:
-        assert ClassificationLevel.INTERNAL == 1
-
-    def test_restricted_is_two(self) -> None:
-        assert ClassificationLevel.RESTRICTED == 2
 
     def test_restricted_gt_internal(self) -> None:
         assert ClassificationLevel.RESTRICTED > ClassificationLevel.INTERNAL
@@ -542,17 +534,10 @@ class TestAuditEvent:
 class TestClassificationBlockedError:
     """ClassificationBlockedError is an LLMError subclass."""
 
-    def test_is_llm_error_subclass(self) -> None:
-        err = ClassificationBlockedError("test")
-        assert isinstance(err, LLMError)
 
     def test_not_retryable(self) -> None:
         err = ClassificationBlockedError("test")
         assert err.retryable is False
-
-    def test_message_preserved(self) -> None:
-        err = ClassificationBlockedError("blocked for reason X")
-        assert err.message == "blocked for reason X"
 
 
 # ---------------------------------------------------------------------------

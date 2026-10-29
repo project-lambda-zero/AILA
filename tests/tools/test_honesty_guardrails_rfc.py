@@ -27,7 +27,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from aila.tools.honesty_audit import HonestyAuditor, load_whitelist
+from aila.tools.honesty_audit import HonestyAuditor
 
 # ---------------------------------------------------------------------------
 # Helpers (kept local so this file can move without touching siblings).
@@ -485,20 +485,6 @@ def _find_repo_root(start: Path) -> Path:
 # ---------------------------------------------------------------------------
 # Whitelist-load smoke -- ensures the tests do not silently skip the gate.
 # ---------------------------------------------------------------------------
-
-
-def test_whitelist_loads() -> None:
-    """A trivial safety check that ``honesty_whitelist.py`` parses.
-
-    If the whitelist file were unparseable, the full-audit gate above
-    would fail with a confusing message; this test catches that up front.
-    """
-    repo_root = _find_repo_root(Path(__file__).resolve())
-    whitelist_path = repo_root / "honesty_whitelist.py"
-    entries = load_whitelist(whitelist_path)
-    # ``entries`` is a set of triples; presence of at least one is not
-    # required (an empty whitelist is legal), but the load must succeed.
-    assert isinstance(entries, set)
 
 
 class TestContentSliceTruncation:

@@ -8,7 +8,6 @@ import pytest
 
 from aila.modules.vulnerability.agents.scoring.config import ScoringPolicyConfig
 from aila.modules.vulnerability.agents.scoring.models import (
-    ScoreBreakdown,
     ScoringCandidate,
 )
 from aila.modules.vulnerability.agents.scoring.policy import (
@@ -646,13 +645,6 @@ def test_calculate_score_breakdown_score_capped_at_100():
     )
     bd = calculate_score_breakdown(candidate, signal, POLICY)
     assert bd.weighted_score == 100
-
-
-def test_calculate_score_breakdown_returns_score_breakdown_instance():
-    candidate = _candidate()
-    signal = _signal()
-    bd = calculate_score_breakdown(candidate, signal, POLICY)
-    assert isinstance(bd, ScoreBreakdown)
 
 
 def test_calculate_score_breakdown_patch_available_from_fixed_version():

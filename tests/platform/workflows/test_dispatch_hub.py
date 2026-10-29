@@ -141,10 +141,6 @@ def test_phasespec_rejects_bad_trust() -> None:
         PhaseSpec("x", trust="bogus")
 
 
-def test_phasespec_default_trust_confirmed() -> None:
-    assert PhaseSpec("x").trust == "confirmed"
-
-
 # --- build_dispatch_workflow ------------------------------------------------
 
 

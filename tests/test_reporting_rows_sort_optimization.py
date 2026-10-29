@@ -5,9 +5,6 @@ from __future__ import annotations
 class TestCriticalityRanksConstant:
     """_CRITICALITY_RANKS must be a module-level dict constant."""
 
-    def test_module_constant_exists(self):
-        from aila.modules.vulnerability.reporting.rows import _CRITICALITY_RANKS
-        assert isinstance(_CRITICALITY_RANKS, dict)
 
     def test_module_constant_values(self):
         from aila.modules.vulnerability.reporting.rows import _CRITICALITY_RANKS
@@ -18,15 +15,6 @@ class TestCriticalityRanksConstant:
             "Immediate": 3,
         }
 
-    def test_criticality_rank_uses_constant(self):
-        """criticality_rank must use _CRITICALITY_RANKS -- no inline dict construction."""
-        from aila.modules.vulnerability.reporting.rows import _CRITICALITY_RANKS, criticality_rank
-
-        # Verify function returns correct values using the constant
-        assert criticality_rank("Immediate") == _CRITICALITY_RANKS["Immediate"]
-        assert criticality_rank("High") == _CRITICALITY_RANKS["High"]
-        assert criticality_rank("Moderate") == _CRITICALITY_RANKS["Moderate"]
-        assert criticality_rank("Planned") == _CRITICALITY_RANKS["Planned"]
 
     def test_criticality_rank_immediate(self):
         from aila.modules.vulnerability.reporting.rows import criticality_rank

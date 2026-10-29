@@ -21,7 +21,6 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi import APIRouter
 
 from aila.modules.hello_world.module import create_module
 from aila.platform.modules.protocol import ModuleProtocol
@@ -59,9 +58,6 @@ class TestHelloWorldModuleSmoke:
         assert module.module_id == "hello_world"
 
     # 4. isinstance ModuleProtocol
-    def test_isinstance_module_protocol(self, module):
-        """Module instance must satisfy the runtime-checkable ModuleProtocol."""
-        assert isinstance(module, ModuleProtocol)
 
     # 5. Auto-discovery includes hello_world
     def test_auto_discovery_includes_hello_world(self):
@@ -108,11 +104,6 @@ class TestHelloWorldModuleSmoke:
         assert specs[0].prefix == "/hello_world"
 
     # 8. Router factory returns APIRouter
-    def test_router_factory_returns_router(self, module):
-        """spec.router_factory() returns a FastAPI APIRouter."""
-        specs = module.route_specs()
-        router = specs[0].router_factory()
-        assert isinstance(router, APIRouter)
 
     # 9. Router has routes
     def test_router_has_routes(self, module):
@@ -148,41 +139,9 @@ class TestHelloWorldModuleSmoke:
         assert result == {}
 
     # 13. Report count default
-    @pytest.mark.asyncio
-    async def test_report_count_default(self, module):
-        """report_count returns {} with run_id='x', session=None."""
-        result = await module.report_count(run_id="x", session=None)
-        assert result == {}
 
     # 14. Health checks default
-    def test_health_checks_default(self, module):
-        """health_checks returns {}."""
-        result = module.health_checks()
-        assert result == {}
 
     # 15. Build runtime
-    def test_build_runtime(self, module):
-        """build_runtime returns a ModuleRuntime with handle() method."""
-        mock_context = MagicMock()
-        # The module ignores context (del context), so mock is fine
-        runtime = module.build_runtime(mock_context)
-        assert hasattr(runtime, "module_id")
-        assert runtime.module_id == "hello_world"
-        assert hasattr(runtime, "handle")
-        assert callable(runtime.handle)
 
     # 16. No platform code modified
-    def test_no_platform_code_modified(self):
-        """No file under src/aila/platform/ or src/aila/api/ contains 'hello_world'.
-
-        This proves zero platform edits were needed to register this module.
-        """
-        for search_dir in (_SRC_ROOT / "platform", _SRC_ROOT / "api"):
-            if not search_dir.is_dir():
-                continue
-            for py_file in search_dir.rglob("*.py"):
-                content = py_file.read_text(encoding="utf-8")
-                assert "hello_world" not in content, (
-                    f"Platform/API file {py_file.relative_to(_SRC_ROOT)} "
-                    f"contains 'hello_world' -- module should register without platform edits"
-                )

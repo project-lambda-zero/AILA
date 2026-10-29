@@ -9,21 +9,6 @@ must not emit a completion event).
 from __future__ import annotations
 
 import ast
-import inspect
-
-
-def test_stream_generator_awaits_handle() -> None:
-    """_stream_message must await the async platform handle, not bridge it via a thread."""
-    from aila.api.routers.sessions import _stream_message
-
-    source = inspect.getsource(_stream_message)
-    assert "await platform.handle" in source, (
-        "Expected _stream_generator to await platform.handle(); the async handle "
-        "must not be called without await"
-    )
-    assert "asyncio.to_thread" not in source, (
-        "Streaming must not bridge the async handle through a worker thread"
-    )
 
 
 def test_done_sentinel_yield_not_in_finally() -> None:

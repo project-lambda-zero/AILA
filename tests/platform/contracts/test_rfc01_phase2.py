@@ -4,7 +4,7 @@ across modules).
 """
 from __future__ import annotations
 
-from sqlalchemy import Index, UniqueConstraint
+from sqlalchemy import UniqueConstraint
 
 from aila.modules.malware.db_models.investigation import MalwareInvestigationRecord
 from aila.modules.malware.db_models.investigation_target import (
@@ -59,16 +59,6 @@ def _index_cols(cls: type, name: str) -> tuple[str, ...] | None:
     return None
 
 
-def test_converted_concretes_subclass_bases() -> None:
-    assert issubclass(VRInvestigationOutcomeRecord, OutcomeRecordBase)
-    assert issubclass(VRInvestigationBranchRecord, BranchRecordBase)
-    assert issubclass(VRInvestigationOutcomeReviewRecord, OutcomeReviewRecordBase)
-    assert issubclass(VRInvestigationTargetRecord, InvestigationTargetRecordBase)
-    # RFC-04 phase 2: the consolidated platform ``McpCallLogRecord`` is the
-    # only concrete now; the per-module tables retired in migration 136.
-    assert issubclass(McpCallLogRecord, McpCallLogRecordBase)
-
-
 def test_derived_unique_constraint_names() -> None:
     assert _uq(VRInvestigationTargetRecord) == {"uq_vr_investigation_targets_investigation_target"}
     assert _uq(MalwareInvestigationTargetRecord) == {
@@ -83,31 +73,6 @@ def test_outcome_review_cascade_preserved() -> None:
     ondeletes = _fk_ondelete(VRInvestigationOutcomeReviewRecord)
     assert ondeletes
     assert all(od == "CASCADE" for _, od in ondeletes)
-
-
-def test_mcp_call_log_carries_join_keys() -> None:
-    # RFC-04 Phase 1 hoisted the #39 join-keys to McpCallLogRecordBase; the
-    # consolidated platform record carries investigation_id / branch_id /
-    # turn_number and adds ``module_scope`` for the operator-facing slice.
-    keys = {"investigation_id", "branch_id", "turn_number", "module_scope"}
-    assert keys <= set(McpCallLogRecord.model_fields)
-
-
-def test_domain_concretes_subclass_bases() -> None:
-    assert issubclass(VRWorkspaceRecord, WorkspaceRecordBase)
-    assert issubclass(MalwareWorkspaceRecord, WorkspaceRecordBase)
-    assert issubclass(VRTargetRecord, TargetRecordBase)
-    assert issubclass(MalwareTargetRecord, TargetRecordBase)
-    assert issubclass(VRTargetTagIndexRecord, TargetTagIndexBase)
-    assert issubclass(MalwareTargetTagIndexRecord, TargetTagIndexBase)
-    assert issubclass(VRInvestigationRecord, InvestigationRecordBase)
-    assert issubclass(MalwareInvestigationRecord, InvestigationRecordBase)
-    assert issubclass(VRInvestigationMessageRecord, MessageRecordBase)
-    assert issubclass(MalwareInvestigationMessageRecord, MessageRecordBase)
-    assert issubclass(VRPatternRecord, PatternRecordBase)
-    assert issubclass(MalwarePatternRecord, PatternRecordBase)
-    assert issubclass(VRProjectRecord, ProjectRecordBase)
-    assert issubclass(MalwareProjectRecord, ProjectRecordBase)
 
 
 def test_domain_derived_unique_constraint_names() -> None:

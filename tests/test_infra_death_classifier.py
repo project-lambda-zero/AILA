@@ -181,9 +181,6 @@ class TestClassifyTerminal:
 class TestRetryableInfraClasses:
     """Contract tests on the frozenset itself."""
 
-    def test_frozen_and_non_empty(self) -> None:
-        assert isinstance(RETRYABLE_INFRA_CLASSES, frozenset)
-        assert len(RETRYABLE_INFRA_CLASSES) > 0
 
     def test_contains_expected_provider_classes(self) -> None:
         for expected in (

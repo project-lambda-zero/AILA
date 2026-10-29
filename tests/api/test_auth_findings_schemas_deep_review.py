@@ -14,8 +14,6 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from aila.api.schemas import auth as auth_module
-from aila.api.schemas import findings as findings_module
 from aila.api.schemas.auth import (
     ApiKeyCreateRequest,
     ApiKeyCreateResponse,
@@ -93,10 +91,6 @@ class TestAuthSchemaRequiredFields:
         with pytest.raises(ValidationError):
             TokenRequest()  # type: ignore[call-arg]
 
-    def test_token_request_api_key_present(self) -> None:
-        """TokenRequest accepts api_key."""
-        t = TokenRequest(api_key="my-secret-key")
-        assert t.api_key == "my-secret-key"
 
     def test_refresh_request_refresh_token_required(self) -> None:
         """RefreshRequest.refresh_token is mandatory."""
@@ -109,39 +103,11 @@ class TestAuthSchemaRequiredFields:
         assert r.role == "reader"
         assert r.label == ""
 
-    def test_token_response_defaults(self) -> None:
-        """TokenResponse.token_type defaults to 'bearer'."""
-        t = TokenResponse(access_token="a", refresh_token="r", expires_in=3600)
-        assert t.token_type == "bearer"
 
     def test_refresh_response_defaults(self) -> None:
         """RefreshResponse.token_type defaults to 'bearer'."""
         r = RefreshResponse(access_token="a", expires_in=3600)
         assert r.token_type == "bearer"
-
-    def test_api_key_revoke_response_defaults(self) -> None:
-        """ApiKeyRevokeResponse.revoked defaults to True."""
-        r = ApiKeyRevokeResponse(key_id="k")
-        assert r.revoked is True
-
-    def test_api_key_list_item_revoked_at_optional(self) -> None:
-        """ApiKeyListItem.revoked_at defaults to None."""
-        item = ApiKeyListItem(
-            key_id="k", key_prefix="p", role="reader",
-            label="", created_by="cli", created_at=datetime.now(tz=UTC),
-        )
-        assert item.revoked_at is None
-
-    def test_api_key_list_item_revoked_at_set(self) -> None:
-        """ApiKeyListItem accepts a revoked_at datetime."""
-        dt = datetime(2026, 1, 15, 12, 0, 0, tzinfo=UTC)
-        item = ApiKeyListItem(
-            key_id="k", key_prefix="p", role="reader",
-            label="", created_by="cli",
-            created_at=datetime.now(tz=UTC),
-            revoked_at=dt,
-        )
-        assert item.revoked_at == dt
 
 
 # ---------------------------------------------------------------------------
@@ -246,62 +212,6 @@ class TestFindingsSchemaExtraForbid:
 class TestFindingResponseFieldMapping:
     """FindingResponse fields map correctly to LatestFindingRecord columns."""
 
-    def test_all_fields_present(self) -> None:
-        """FindingResponse declares the expected fields for the API surface.
-
-        Includes both the legacy ``kev`` bool and the materialized ``is_kev``
-        column mirror (populated by the vulnerability router from
-        LatestFindingRecord.is_kev), plus ``workflow_state`` for triage
-        (default ``"new"``, mapped from current_workflow_state).
-        """
-        field_names = set(FindingResponse.model_fields.keys())
-        expected = {
-            "id", "run_id", "cve_id", "package", "version", "host",
-            "severity", "kev", "is_kev", "score", "status",
-            "workflow_state", "created_at",
-        }
-        assert field_names == expected
-
-    def test_minimal_construction(self) -> None:
-        """Only run_id is required; all others have defaults."""
-        f = FindingResponse(run_id="run-1")
-        assert f.run_id == "run-1"
-        assert f.id is None
-        assert f.cve_id is None
-        assert f.package is None
-        assert f.version is None
-        assert f.host is None
-        assert f.severity is None
-        assert f.kev is False
-        assert f.score is None
-        assert f.status is None
-        assert f.created_at is None
-
-    def test_full_construction(self) -> None:
-        """All fields can be populated from LatestFindingRecord column values."""
-        dt = datetime(2026, 2, 20, 8, 0, 0, tzinfo=UTC)
-        f = FindingResponse(
-            id=42,
-            run_id="run-abc",
-            cve_id="CVE-2025-12345",
-            package="openssl",
-            version="3.0.15",
-            host="web-server-1",
-            severity="CRITICAL",
-            kev=True,
-            score=0.95,
-            status="open",
-            created_at=dt,
-        )
-        assert f.id == 42
-        assert f.run_id == "run-abc"
-        assert f.cve_id == "CVE-2025-12345"
-        assert f.package == "openssl"
-        assert f.severity == "CRITICAL"
-        assert f.kev is True
-        assert f.score == 0.95
-        assert f.status == "open"
-        assert f.created_at == dt
 
     def test_finding_datetime_serialization(self) -> None:
         """FindingResponse.created_at serializes to ISO 8601."""
@@ -315,46 +225,6 @@ class TestFindingResponseFieldMapping:
         f = FindingResponse(run_id="r")
         dumped = f.model_dump(mode="json")
         assert dumped["created_at"] is None
-
-    def test_field_mapping_from_db_record(self) -> None:
-        """API surface field names match documented DB-to-API mapping.
-
-        LatestFindingRecord.criticality -> FindingResponse.severity
-        LatestFindingRecord.package_name -> FindingResponse.package
-        LatestFindingRecord.fixed_version -> FindingResponse.version
-        LatestFindingRecord.system_id -> FindingResponse.run_id (proxied)
-        """
-        # Simulate the router mapping from LatestFindingRecord to FindingResponse
-        db_row_values = {
-            "id": 1,
-            "system_id": 99,
-            "cve_id": "CVE-2025-00001",
-            "package_name": "curl",
-            "fixed_version": "8.5.0",
-            "host": "db-host",
-            "criticality": "HIGH",
-            "score": 0.72,
-            "status": "open",
-            "created_at": datetime(2026, 1, 1, tzinfo=UTC),
-        }
-        # This is how the router maps it (from api_router.py)
-        f = FindingResponse(
-            id=db_row_values["id"],
-            run_id=str(db_row_values["system_id"]),
-            cve_id=db_row_values["cve_id"],
-            package=db_row_values["package_name"],
-            version=db_row_values["fixed_version"],
-            host=db_row_values["host"],
-            severity=db_row_values["criticality"],
-            kev=False,
-            score=db_row_values["score"],
-            status=db_row_values["status"],
-            created_at=db_row_values["created_at"],
-        )
-        assert f.run_id == "99"
-        assert f.package == "curl"
-        assert f.severity == "HIGH"
-        assert f.version == "8.5.0"
 
 
 # ---------------------------------------------------------------------------
@@ -411,11 +281,6 @@ class TestBulkStatusValidation:
 class TestBulkUpdateResponse:
     """BulkUpdateResponse fields and defaults."""
 
-    def test_defaults(self) -> None:
-        """BulkUpdateResponse.status defaults to 'updated'."""
-        r = BulkUpdateResponse(count=3)
-        assert r.status == "updated"
-        assert r.count == 3
 
     def test_count_required(self) -> None:
         """count field is required."""
@@ -431,20 +296,6 @@ class TestBulkUpdateResponse:
 class TestFacetsResponseExtensibility:
     """FacetsResponse supports arbitrary facet groups."""
 
-    def test_empty_facets(self) -> None:
-        """FacetsResponse defaults to empty dict."""
-        r = FacetsResponse()
-        assert r.facets == {}
-
-    def test_standard_groups(self) -> None:
-        """Standard severity/host/package groups work."""
-        r = FacetsResponse(facets={
-            "severity": {"CRITICAL": 5, "HIGH": 12},
-            "host": {"web-1": 3},
-            "package": {"openssl": 2},
-        })
-        assert r.facets["severity"]["CRITICAL"] == 5
-        assert r.facets["host"]["web-1"] == 3
 
     def test_custom_groups(self) -> None:
         """Arbitrary groups can be added without schema changes."""
@@ -479,14 +330,6 @@ class TestFindingsListResponseAlias:
         assert r.items[0].cve_id == "CVE-2025-00001"
         assert r.total == 1
 
-    def test_empty_response(self) -> None:
-        """Empty findings list is valid."""
-        r = FindingsListResponse(
-            total=0, page=1, page_size=50, pages=0, items=[],
-        )
-        assert r.total == 0
-        assert r.items == []
-        assert r.pages == 0
 
     def test_pages_auto_computed(self) -> None:
         """Pages auto-computed when pages=0 and total>0."""
@@ -502,60 +345,3 @@ class TestFindingsListResponseAlias:
 # ---------------------------------------------------------------------------
 
 
-class TestAuthExports:
-    """auth module __all__ exports match defined classes."""
-
-    def test_all_exports(self) -> None:
-        """auth.__all__ contains exactly the defined schema classes."""
-        expected = {
-            "ApiKeyCreateRequest",
-            "ApiKeyCreateResponse",
-            "ApiKeyListItem",
-            "ApiKeyListResponse",
-            "ApiKeyRevokeResponse",
-            "RefreshRequest",
-            "RefreshResponse",
-            "TokenRequest",
-            "TokenResponse",
-        }
-        assert set(auth_module.__all__) == expected
-
-    def test_no_extra_exports(self) -> None:
-        """No public classes exist that are missing from __all__."""
-        from pydantic import BaseModel
-
-        public_classes = {
-            name for name, obj in vars(auth_module).items()
-            if isinstance(obj, type) and issubclass(obj, BaseModel)
-            and not name.startswith("_") and obj.__module__ == auth_module.__name__
-        }
-        assert public_classes == set(auth_module.__all__)
-
-
-class TestFindingsExports:
-    """findings module __all__ exports match defined classes and constants."""
-
-    def test_all_exports(self) -> None:
-        """findings.__all__ contains the schema classes plus validation constants.
-
-        Covers the list/detail response shapes (FindingResponse,
-        FindingsListResponse, FindingDetailResponse), the bulk-update
-        request/response (BulkStatusUpdateRequest, BulkUpdateResponse) with
-        their allowed-value tuples (BULK_ALLOWED_STATUSES,
-        BULK_ALLOWED_WORKFLOW_STATES), the finding-level feedback endpoint
-        pair (FindingFeedbackRequest, FindingFeedbackResponse -- FIND-11),
-        and the extensible facet counts (FacetsResponse).
-        """
-        expected = {
-            "BULK_ALLOWED_STATUSES",
-            "BULK_ALLOWED_WORKFLOW_STATES",
-            "BulkStatusUpdateRequest",
-            "BulkUpdateResponse",
-            "FacetsResponse",
-            "FindingDetailResponse",
-            "FindingFeedbackRequest",
-            "FindingFeedbackResponse",
-            "FindingResponse",
-            "FindingsListResponse",
-        }
-        assert set(findings_module.__all__) == expected

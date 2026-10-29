@@ -299,10 +299,6 @@ class TestOutcomePayload:
 
 
 class TestPromptLoading:
-    async def test_audit_prompt_loads(self, test_db) -> None:
-        text = (await _load_prompt("vulnerability_research.audit")).body
-        assert "audit-only investigation" in text
-        assert "submit" in text
 
     async def test_unknown_strategy_falls_back_to_audit(self, test_db) -> None:
         text = (await _load_prompt("vulnerability_research.discovery_research")).body

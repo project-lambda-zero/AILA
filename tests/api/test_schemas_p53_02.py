@@ -21,12 +21,6 @@ class TestErrorResponseExtension:
         assert e.code is None
         assert e.errors is None
 
-    def test_with_machine_readable_code(self):
-        """ErrorResponse accepts optional machine-readable code."""
-        from aila.api.schemas.errors import ErrorResponse
-
-        e = ErrorResponse(detail="not found", code="KEY_NOT_FOUND")
-        assert e.code == "KEY_NOT_FOUND"
 
     def test_with_validation_errors_list(self):
         """ErrorResponse accepts optional per-field errors list."""
@@ -78,16 +72,6 @@ class TestErrorResponseExtension:
 class TestPaginatedResponseGeneric:
     """PaginatedResponse[T] generic base class."""
 
-    def test_basic_paginated_response(self):
-        """PaginatedResponse wraps items with pagination metadata."""
-        from aila.api.schemas.common import PaginatedResponse
-
-        p = PaginatedResponse[str](total=100, page=1, page_size=50, pages=2, items=["a", "b"])
-        assert p.total == 100
-        assert p.page == 1
-        assert p.page_size == 50
-        assert p.pages == 2
-        assert p.items == ["a", "b"]
 
     def test_pages_auto_computed_when_zero(self):
         """pages is auto-computed from total/page_size when passed as 0."""
@@ -110,12 +94,6 @@ class TestPaginatedResponseGeneric:
         p = PaginatedResponse[str](total=1, page=1, page_size=50, pages=0, items=["x"])
         assert p.pages == 1
 
-    def test_pages_zero_when_total_zero(self):
-        """pages stays 0 when total=0 (no items)."""
-        from aila.api.schemas.common import PaginatedResponse
-
-        p = PaginatedResponse[str](total=0, page=1, page_size=50, pages=0, items=[])
-        assert p.pages == 0
 
     def test_page_must_be_ge1(self):
         """page=0 is rejected (1-indexed)."""

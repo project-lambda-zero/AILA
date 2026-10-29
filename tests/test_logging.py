@@ -6,14 +6,6 @@ import json
 import logging
 
 
-def test_get_logger_returns_logger_in_aila_hierarchy():
-    from aila.logging import get_logger
-
-    logger = get_logger("aila.test_hierarchy")
-    assert isinstance(logger, logging.Logger)
-    assert logger.name == "aila.test_hierarchy"
-
-
 def test_configure_logging_sets_stream_handler_on_aila_logger():
     from aila.logging import configure_logging
 
@@ -134,9 +126,3 @@ def test_run_id_filter_standalone():
     assert record.run_id == "xyz-456"
 
 
-def test_all_exports():
-    import aila.logging as log_module
-
-    for name in ["configure_logging", "get_logger", "set_run_id", "RunIdFilter"]:
-        assert name in log_module.__all__, f"{name!r} not in __all__"
-        assert hasattr(log_module, name), f"{name!r} not exported"

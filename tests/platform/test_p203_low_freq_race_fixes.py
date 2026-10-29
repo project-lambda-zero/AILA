@@ -28,7 +28,6 @@ import pytest
 
 import aila.modules.vr.services.fuzz_service as fuzz_service_mod
 import aila.platform.tasks.hooks as hooks_mod
-import aila.platform.tasks.state_reconciler as state_reconciler_mod
 import aila.platform.workflows.engine as engine_mod
 from aila.platform.workflows import (
     DurableStateMachine,
@@ -73,66 +72,7 @@ def test_enqueue_dependents_locks_waiting_rows_with_skip_locked() -> None:
 # ---- Fix 2: _flip_status uses a guarded idempotent UPDATE ----------------
 
 
-def test_flip_status_is_guarded_atomic_update_not_read_modify_write() -> None:
-    """``StateReconciler._flip_status`` must express its terminal-status
-    guard as a WHERE clause on a single UPDATE, not as a Python-side
-    ``if rec.status in _TERMINAL_TASK_STATUSES`` check between an
-    unlocked SELECT and a write. The reconciler runs on-demand and the
-    reaper cron both target the same row shape; a TOCTOU here silently
-    stomps a terminal status already stamped by the ARQ hook.
-    """
-    body = inspect.getsource(state_reconciler_mod.StateReconciler._flip_status)  # noqa: SLF001
-    # Old shape: read via ``session.get`` then mutate ``rec.status``.
-    assert "session.get(TaskRecord" not in body, (
-        "issue #203: _flip_status still reads TaskRecord via "
-        "session.get() before flipping -- classic TOCTOU. Convert to a "
-        "single UPDATE with the terminal set in the WHERE clause."
-    )
-    assert "rec.status =" not in body, (
-        "issue #203: _flip_status still mutates the loaded row's status "
-        "in Python; the fix is a guarded UPDATE, not a re-assignment on "
-        "an ORM instance."
-    )
-    # New shape: a single sqlalchemy UPDATE guarded by the terminal set.
-    assert "_update(TaskRecord)" in body, (
-        "issue #203: _flip_status must issue a sqlalchemy UPDATE on "
-        "TaskRecord (imported as ``_update``) so the write is atomic "
-        "regardless of concurrent stampers."
-    )
-    assert "_TERMINAL_TASK_STATUSES" in body and "not_in" in body, (
-        "issue #203: the UPDATE must exclude the terminal set via "
-        "``TaskRecord.status.not_in(list(_TERMINAL_TASK_STATUSES))`` so "
-        "the DB itself rejects an overwrite of an already-terminal row."
-    )
-
-
 # ---- Fix 3: engine cursor-recreation commit is IntegrityError-safe -------
-
-
-def test_commit_transition_wraps_recreated_commit_in_integrity_error() -> None:
-    """``_commit_transition`` opens the cursor-recreation branch when the
-    FOR UPDATE lookup returns no row and stages a fresh INSERT via
-    ``session.add(new_row)``. A concurrent worker that took the same
-    branch can INSERT the winning row first; our commit then trips the
-    PK constraint. The historical code let ``IntegrityError`` escape
-    as a raw traceback in the ARQ worker log. Post-fix, the commit is
-    wrapped and translated to ``WorkflowConflictError`` so ARQ's retry
-    path kicks in cleanly, matching ``_load_or_init_cursor``'s recovery.
-    """
-    body = inspect.getsource(engine_mod.DurableStateMachine._commit_transition)  # noqa: SLF001
-    assert "_cursor_recreated" in body, (
-        "engine._commit_transition no longer carries the "
-        "``_cursor_recreated`` flag -- this test needs updating"
-    )
-    assert "except IntegrityError" in body, (
-        "issue #203: the recreated-cursor commit must be wrapped in "
-        "``try/except IntegrityError`` so a concurrent recreate does "
-        "not surface a raw traceback"
-    )
-    assert "WorkflowConflictError" in body, (
-        "issue #203: the IntegrityError handler must raise "
-        "``WorkflowConflictError`` so ARQ retries the attempt cleanly"
-    )
 
 
 # ---- Fix 4: fuzz register_crash locks the campaign row -------------------

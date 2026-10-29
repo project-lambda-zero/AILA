@@ -117,22 +117,3 @@ async def test_submit_raises_when_redis_host_unreachable(tmp_path, monkeypatch) 
             assert stuck == [], f"queued orphans leaked: {stuck}"
 
 
-def test_sync_fallback_attribute_is_gone() -> None:
-    """No _sync_fallback method on TaskQueue anymore."""
-    assert not hasattr(TaskQueue, "_sync_fallback")
-
-
-def test_sync_fallback_string_is_gone_from_tasks_source() -> None:
-    """Static audit -- the literal sync_fallback / no_redis.fallback must not
-    appear in the tasks tree anymore. The routers legitimately use
-    ``_no_redis_generator`` for SSE streams; that is a different concern.
-    """
-    import pathlib
-
-    tasks_dir = pathlib.Path(__file__).resolve().parents[3] / "src" / "aila" / "platform" / "tasks"
-    offending = []
-    for py in tasks_dir.rglob("*.py"):
-        text = py.read_text(encoding="utf-8")
-        if "_sync_fallback" in text:
-            offending.append(str(py))
-    assert not offending, f"_sync_fallback survived in: {offending}"

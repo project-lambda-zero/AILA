@@ -486,10 +486,3 @@ class TestSanitizeIntegration:
         assert "ignore previous instructions" not in payload["cve_description"].lower()
         assert "real cve description" in payload["cve_description"].lower()
 
-    def test_sanitize_importable_from_llm_package(self) -> None:
-        """sanitize_input, sanitize_output, register_injection_pattern are importable from aila.platform.llm."""
-        from aila.platform.llm import register_injection_pattern, sanitize_input, sanitize_output  # noqa: PLC0415
-
-        assert callable(sanitize_input)
-        assert callable(sanitize_output)
-        assert callable(register_injection_pattern)

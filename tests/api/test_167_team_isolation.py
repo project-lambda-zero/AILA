@@ -178,19 +178,6 @@ async def test_jwt_admin_team_id_null(admin_user):
 
 
 @pytest.mark.asyncio
-async def test_auth_context_has_team_id(team_a_user):
-    """Verify AuthContext.team_id is populated from JWT claims."""
-    auth = AuthContext(
-        user_id=team_a_user.id,
-        role=team_a_user.role,
-        auth_type="user",
-        team_id="team-a",
-    )
-    assert auth.team_id == "team-a"
-    assert auth.auth_type == "user"
-
-
-@pytest.mark.asyncio
 async def test_team_context_from_auth():
     """Verify TeamContext.from_auth produces correct is_admin flag."""
     # Non-admin user

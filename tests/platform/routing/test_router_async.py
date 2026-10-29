@@ -1,20 +1,12 @@
 """Tests for async routing in ModuleRouter (LLM-01)."""
 from __future__ import annotations
 
-import inspect
 import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from aila.platform.routing.router import ModuleRouter
-
-
-def test_route_with_model_is_async():
-    """_route_with_model must be an async def (coroutine function)."""
-    assert inspect.iscoroutinefunction(ModuleRouter._route_with_model), (
-        "_route_with_model must be async def"
-    )
 
 
 @pytest.mark.asyncio

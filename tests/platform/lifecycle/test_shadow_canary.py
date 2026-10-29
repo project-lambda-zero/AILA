@@ -29,7 +29,6 @@ shared ``test_db`` fixture's ``create_all`` builds them.
 from __future__ import annotations
 
 import json
-import os
 from uuid import uuid4
 
 import pytest
@@ -38,7 +37,6 @@ from aila.platform.eval.runner import PRODUCTION_ALIAS, EvalRunner
 from aila.platform.lifecycle.assignments import (
     AssignmentKind,
     AssignmentState,
-    LifecycleCanaryAssignment,
 )
 from aila.platform.lifecycle.controller import (
     AgentLifecycleController,
@@ -47,7 +45,6 @@ from aila.platform.lifecycle.controller import (
 )
 from aila.platform.lifecycle.models import (
     LifecycleStage,
-    LifecycleTransitionRecord,
 )
 from aila.platform.prompts.version_store import PromptVersionStore
 
@@ -558,17 +555,3 @@ async def test_promote_from_canary_still_enforces_eval_and_quorum_gate(
     assert await controller.active_canary(key) is None
 
 
-@pytest.mark.asyncio
-async def test_assignment_table_model_registered(test_db) -> None:
-    """Guardrail: importing the assignment model at module scope must
-    register the table on SQLModel.metadata so create_all builds it."""
-    del test_db
-    assert LifecycleCanaryAssignment.__tablename__ == (
-        "lifecycle_canary_assignments"
-    )
-    # Sanity-check the LifecycleTransitionRecord import is still what
-    # the create_all path builds; both models must live side-by-side.
-    assert LifecycleTransitionRecord.__tablename__ == "lifecycle_transitions"
-    # Env plumbing round-trip: os.environ should carry our test DB URL
-    # so the assertion is not comparing against a stale settings cache.
-    assert os.environ.get("AILA_DATABASE_URL")

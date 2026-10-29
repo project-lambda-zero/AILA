@@ -444,13 +444,6 @@ class TestSelectGroupFixedVersion:
         assert "1.1.0" in all_versions
         assert "1.2.0" in all_versions
 
-    @patch("aila.modules.vulnerability.reporting.rows.compare_versions", return_value=0)
-    def test_distribution_passed_from_first_finding(self, mock_cmp):
-        findings = [_finding(fixed_version="1.0.0", distribution="ubuntu")]
-        select_group_fixed_version(findings)
-        if mock_cmp.called:
-            _, kwargs = mock_cmp.call_args
-            assert kwargs.get("distribution") == "ubuntu" or True  # verify call happens
 
     @patch("aila.modules.vulnerability.reporting.rows.compare_versions", return_value=0)
     def test_empty_distribution_handled(self, mock_cmp):
@@ -599,12 +592,6 @@ class TestBuildAction:
         assert "1.0.0" in result
         assert "still marks repo version" in result
 
-    def test_advisory_current_versions_limited(self):
-        evidence = {
-            "advisory_current_versions": [f"v{i}" for i in range(10)],
-        }
-        result = build_action(None, [], evidence)
-        assert "v5" not in result or "v4" in result  # at most 5 shown
 
     def test_fixed_version_note_included(self):
         evidence = {"fixed_version_note": "Backport from upstream 3.0"}

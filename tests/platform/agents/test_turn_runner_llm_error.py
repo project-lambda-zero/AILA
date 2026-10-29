@@ -105,12 +105,3 @@ async def test_engine_llm_error_wrapped_as_module_error() -> None:
     assert isinstance(excinfo.value.__cause__, LLMError)
 
 
-def test_llm_error_is_not_a_builtin_error_subclass() -> None:
-    # Locks in why LLMError needs explicit listing in the except tuple:
-    # it is a direct Exception subclass, so the pre-fix tuple of builtin
-    # error types could never have caught it.
-    assert issubclass(LLMError, Exception)
-    assert not issubclass(
-        LLMError,
-        (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError),
-    )

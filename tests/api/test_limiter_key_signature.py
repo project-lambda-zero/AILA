@@ -182,9 +182,3 @@ def test_non_bearer_authorization_scheme_buckets_by_ip(jwt_secret: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_limiter_module_imports_cleanly() -> None:
-    import importlib
-
-    module = importlib.import_module("aila.api.limiter")
-    assert hasattr(module, "limiter")
-    assert callable(module._authenticated_user_key)

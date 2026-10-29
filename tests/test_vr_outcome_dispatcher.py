@@ -150,21 +150,6 @@ class _FakeKnowledge:
         }
 
 
-class TestKnowledgeStub:
-    @pytest.mark.asyncio
-    async def test_fake_knowledge_returns_expected_shape(self) -> None:
-        fake = _FakeKnowledge()
-        result = await fake.store(
-            namespace="vr.audit_memo.workspace.ws-1",
-            content="claim text",
-            metadata={"k": "v"},
-            dedup_key="sig",
-        )
-        assert result["entry_id"] == 42
-        assert fake.calls[0]["namespace"] == "vr.audit_memo.workspace.ws-1"
-        assert fake.calls[0]["dedup_key"] == "sig"
-
-
 # ────────────────────────────────────────────────────────────────────────────
 # Pure-handler tests using fakes (no DB) -- exercise the validation +
 # routing semantics of the 3 new dispatch kinds. The DB-bound load

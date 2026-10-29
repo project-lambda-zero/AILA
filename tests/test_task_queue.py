@@ -78,20 +78,6 @@ def _install_fake_enqueue(tq, *, ok: bool = True) -> AsyncMock:
 # ---------------------------------------------------------------------------
 
 
-class TestTaskQueueImport:
-    """TaskQueue is importable from aila.platform.tasks."""
-
-    def test_task_queue_importable_from_package(self) -> None:
-        from aila.platform.tasks import TaskQueue
-
-        assert TaskQueue is not None
-
-    def test_task_queue_importable_from_module(self) -> None:
-        from aila.platform.tasks.queue import TaskQueue
-
-        assert TaskQueue is not None
-
-
 # ---------------------------------------------------------------------------
 # TaskQueue instantiation
 # ---------------------------------------------------------------------------
@@ -100,12 +86,6 @@ class TestTaskQueueImport:
 class TestTaskQueueInit:
     """TaskQueue binds to a module_id and config_registry at init."""
 
-    def test_init_stores_module_id(self) -> None:
-        from aila.platform.tasks import TaskQueue
-
-        registry = MockRegistry()
-        tq = TaskQueue(config_registry=registry, module_id="vulnerability")
-        assert tq._module_id == "vulnerability"
 
     def test_init_stores_config_registry(self) -> None:
         from aila.platform.tasks import TaskQueue
@@ -522,15 +502,3 @@ class TestSubmit:
 # ---------------------------------------------------------------------------
 
 
-class TestPackageExports:
-    """TaskQueue is exported from aila.platform.tasks."""
-
-    def test_task_queue_in_package_all(self) -> None:
-        import aila.platform.tasks as tasks_pkg
-
-        assert "TaskQueue" in tasks_pkg.__all__
-
-    def test_task_queue_accessible_from_package(self) -> None:
-        from aila.platform.tasks import TaskQueue
-
-        assert callable(TaskQueue)

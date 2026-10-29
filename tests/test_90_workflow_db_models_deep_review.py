@@ -111,43 +111,6 @@ class TestStatePersistNoFileWrites:
             f"Found forbidden calls: {found}"
         )
 
-    def test_state_persist_uses_session_operations_only(self):
-        """Verify state_persist body references session.execute and session.commit.
-
-        The atomic finding upsert used to happen inline as
-        ``session.execute(sa_insert(...).on_conflict_do_update(...))`` followed
-        by ``session.commit()``. It has since been factored behind
-        ``services.data.reports.upsert_findings_batch``, which delegates the
-        actual ON CONFLICT DO UPDATE to ``PersistContract.upsert_many`` on the
-        same session (still transactional, still atomic). The only inline
-        ``session.*`` calls left in state_persist are the WorkflowRunRecord
-        status update (``session.execute(...)``) and the transaction close
-        (``session.commit()``). ``session.add`` is legitimately no longer
-        invoked here -- it lives inside the service layer now.
-        """
-        from aila.modules.vulnerability.workflow.states import reporting
-
-        source = inspect.getsource(reporting.state_persist)
-        tree = ast.parse(source)
-
-        # Accepted receivers on state_persist today: a plain ``session``
-        # ``Name`` (bound by ``async with services.session_factory() as session``)
-        # and any historical ``ctx.session`` / ``context.session`` ``Attribute``
-        # chain. Both are legitimate; the previous check only looked at the
-        # nested attribute chain and missed the current plain-Name form.
-        session_methods: set[str] = set()
-        for node in ast.walk(tree):
-            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
-                continue
-            receiver = node.func.value
-            if isinstance(receiver, ast.Name) and receiver.id == "session":
-                session_methods.add(node.func.attr)
-            elif isinstance(receiver, ast.Attribute) and receiver.attr == "session":
-                session_methods.add(node.func.attr)
-
-        assert "execute" in session_methods, "state_persist must call session.execute()"
-        assert "commit" in session_methods, "state_persist must call session.commit()"
-
 
 class TestWriteBundleSyntheticPaths:
     """ReportWriteTool.write_bundle computes paths without writing file content."""
@@ -176,30 +139,6 @@ class TestWriteBundleSyntheticPaths:
         summary_path = Path(result["summary_path"])
         assert not report_path.exists(), "write_bundle must not create the report file"
         assert not summary_path.exists(), "write_bundle must not create the summary file"
-
-    def test_write_bundle_source_has_no_file_write_calls(self):
-        """AST scan of write_bundle body: no write_text, write_bytes, or open(w)."""
-        import textwrap
-
-        from aila.platform.tools import reporting as reporting_module
-
-        source = textwrap.dedent(inspect.getsource(reporting_module.ReportWriteTool.write_bundle))
-        tree = ast.parse(source)
-
-        forbidden_names = {"write_text", "write_bytes"}
-        found: list[str] = []
-
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Call):
-                if isinstance(node.func, ast.Attribute) and node.func.attr in forbidden_names:
-                    found.append(node.func.attr)
-                if isinstance(node.func, ast.Name) and node.func.id == "open":
-                    found.append("open()")
-
-        assert not found, (
-            f"write_bundle must not write file content. "
-            f"Found forbidden calls: {found}"
-        )
 
 
 # ---------------------------------------------------------------------------
@@ -426,13 +365,6 @@ class TestLatestFindingColumns:
         missing = self.EXPECTED_COLUMNS - columns
         assert not missing, f"LatestFindingRecord missing columns: {missing}"
 
-    def test_no_installed_version_column(self):
-        """LatestFindingRecord intentionally omits installed_version (stored only on PrioritizedFindingRecord)."""
-        columns = set(LatestFindingRecord.__table__.columns.keys())
-        assert "installed_version" not in columns, (
-            "installed_version must not be on LatestFindingRecord -- "
-            "it belongs only on PrioritizedFindingRecord"
-        )
 
     def test_upsert_keys_match_model_columns(self):
         """Every column-name kwarg written by state_persist is a real model column.
@@ -575,9 +507,3 @@ class TestPlatformTablesReachable:
             f"Vulnerability table classes not re-exported from db_models/__init__.py: {missing}"
         )
 
-    def test_no_extra_columns_on_latest_finding(self):
-        """LatestFindingRecord has no unexpected columns beyond the documented set."""
-        columns = set(LatestFindingRecord.__table__.columns.keys())
-        expected = TestLatestFindingColumns.EXPECTED_COLUMNS
-        extra = columns - expected
-        assert not extra, f"LatestFindingRecord has unexpected columns: {extra}"

@@ -12,18 +12,6 @@ __all__: list[str] = []
 
 
 @pytest.mark.asyncio
-async def test_knowledge_record_has_tsvector_column(pg_url):
-    """KnowledgeEntryRecord has search_vector tsvector column."""
-    from aila.storage.db_models import KnowledgeEntryRecord
-
-    table = KnowledgeEntryRecord.__table__
-    col_names = [c.name for c in table.columns]
-    assert "search_vector" in col_names, (
-        f"search_vector column missing, found: {col_names}"
-    )
-
-
-@pytest.mark.asyncio
 async def test_gin_index_on_search_vector(pg_url):
     """GIN index exists on search_vector column."""
     from aila.storage.db_models import KnowledgeEntryRecord

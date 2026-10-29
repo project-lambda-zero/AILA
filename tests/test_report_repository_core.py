@@ -978,14 +978,6 @@ class TestHasTargetReports:
 
 
 class TestRegisterMaterializedQuery:
-    def test_register_and_use(self):
-        repo = ReportRepository()
-
-        async def fake_query(sess, target):
-            return [{"criticality": "High", "last_scanned_at": "2025-01-01"}]
-
-        repo.register_materialized_query(fake_query)
-        assert repo._materialized_query is fake_query
 
     def test_overwrite_previous(self):
         async def q1(s, t):

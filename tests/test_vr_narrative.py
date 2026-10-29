@@ -43,7 +43,6 @@ from aila.modules.vr.agents.narrative_agent import (
     _summarize_message_payload,
 )
 from aila.platform.agents.narrative_agent import (
-    LENGTH_DIRECTIVES,
     TONE_DIRECTIVES,
     NarrativeOptions,
     NarrativePromptContext,
@@ -101,27 +100,6 @@ _SYSTEM_PROMPT = _load_system_prompt()
 # --------------------------------------------------------------------- #
 
 
-class TestNarrativeOptions:
-    def test_defaults(self) -> None:
-        opts = NarrativeOptions()
-        assert opts.force is False
-        assert opts.tone == "blog"
-        assert opts.length == "standard"
-        assert opts.operator_focus == ""
-
-    def test_set_fields(self) -> None:
-        opts = NarrativeOptions(
-            force=True,
-            tone="academic",
-            length="long",
-            operator_focus="focus on the parse_header sink",
-        )
-        assert opts.force is True
-        assert opts.tone == "academic"
-        assert opts.length == "long"
-        assert "parse_header" in opts.operator_focus
-
-
 class TestNarrativeResponse:
     def test_minimum_valid(self) -> None:
         r = NarrativeResponse(title="A crisp headline", body="x" * 4200)
@@ -147,20 +125,6 @@ class TestNarrativeResponse:
                 title="t", body="x" * 4200, junk="x",
             )
 
-    def test_chapter_outline_round_trips(self) -> None:
-        r = NarrativeResponse(
-            title="t",
-            body="x" * 4200,
-            chapter_outline=["Intro", "The audit", "Verdict"],
-        )
-        assert r.chapter_outline == ["Intro", "The audit", "Verdict"]
-
-    def test_tone_used_echoes(self) -> None:
-        r = NarrativeResponse(
-            title="t", body="x" * 4200, tone_used="academic",
-        )
-        assert r.tone_used == "academic"
-
 
 class TestNarrativeAgentConstruction:
     def test_default_options(self) -> None:
@@ -169,15 +133,6 @@ class TestNarrativeAgentConstruction:
         assert agent.options.tone == "blog"
         assert agent.options.length == "standard"
         assert agent.options.force is False
-
-    def test_custom_options(self) -> None:
-        agent = NarrativeAgent(
-            investigation_id="inv-x",
-            options=NarrativeOptions(force=True, tone="thriller", length="long"),
-        )
-        assert agent.options.tone == "thriller"
-        assert agent.options.length == "long"
-        assert agent.options.force is True
 
 
 # --------------------------------------------------------------------- #
@@ -191,17 +146,6 @@ class TestPromptComposition:
             assert tone in TONE_DIRECTIVES
             assert len(TONE_DIRECTIVES[tone]) > 100
 
-    def test_length_directives_cover_every_length(self) -> None:
-        for length in ("short", "standard", "long"):
-            assert length in LENGTH_DIRECTIVES
-            assert "word" in LENGTH_DIRECTIVES[length].lower()
-
-    def test_system_prompt_names_vulnerability_research(self) -> None:
-        # This is a VR narrative, not a malware narrative -- the
-        # system prompt has to be domain-specific so the LLM writes
-        # vuln-research prose instead of IOC / capability enumeration.
-        assert "vulnerability-research" in _SYSTEM_PROMPT
-        assert "audit-mcp" in _SYSTEM_PROMPT
 
     def test_render_prompt_includes_focus_block_when_set(self) -> None:
         prompt = _render_narrative_prompt(

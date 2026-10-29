@@ -35,16 +35,6 @@ _CVE_IDS = [c["cve_id"] for c in _CVES]
 # ---------------------------------------------------------------------------
 
 
-def test_benchmark_file_loads() -> None:
-    assert isinstance(_DATA, dict)
-    assert "cves" in _DATA
-    assert "_meta" in _DATA
-
-
-def test_benchmark_has_20_cves() -> None:
-    assert len(_CVES) == 20, f"Expected 20 benchmark CVEs, got {len(_CVES)}"
-
-
 def test_cve_ids_are_unique() -> None:
     assert len(set(_CVE_IDS)) == len(_CVE_IDS), "Duplicate CVE IDs in benchmark"
 

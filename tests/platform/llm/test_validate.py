@@ -23,7 +23,6 @@ from aila.platform.llm.errors import LLMError
 from aila.platform.llm.validate import (
     CitationResult,
     EvidenceValidationReport,
-    EvidenceValidator,
     ValidationResult,
     _emit_validation_event,
     _merge_results,
@@ -65,25 +64,6 @@ def routing() -> LLMRouting:
 # Protocol tests
 # ---------------------------------------------------------------------------
 
-class TestEvidenceValidatorProtocol:
-    """Verify EvidenceValidator is runtime_checkable and accepts compliant classes."""
-
-    def test_protocol_is_runtime_checkable(self) -> None:
-
-        class _Good:
-            async def validate(self, content: str, ctx: dict[str, Any]) -> ValidationResult:
-                return ValidationResult(validator_name="test")
-
-        assert isinstance(_Good(), EvidenceValidator)
-
-    def test_non_compliant_class_rejected(self) -> None:
-
-        class _Bad:
-            def not_validate(self) -> None:
-                pass
-
-        assert not isinstance(_Bad(), EvidenceValidator)
-
 
 # ---------------------------------------------------------------------------
 # Dataclass tests
@@ -92,23 +72,6 @@ class TestEvidenceValidatorProtocol:
 class TestDataclasses:
     """Verify frozen dataclasses have correct fields and defaults."""
 
-    def test_citation_result_fields(self) -> None:
-
-        cr = CitationResult(
-            citation_id="CVE-2024-1234",
-            citation_type="cve_id",
-            status="valid",
-            detail="found in store",
-        )
-        assert cr.citation_id == "CVE-2024-1234"
-        assert cr.citation_type == "cve_id"
-        assert cr.status == "valid"
-        assert cr.detail == "found in store"
-
-    def test_citation_result_default_detail(self) -> None:
-
-        cr = CitationResult(citation_id="CVE-2024-1234", citation_type="cve_id", status="valid")
-        assert cr.detail == ""
 
     def test_citation_result_frozen(self) -> None:
 
@@ -116,13 +79,6 @@ class TestDataclasses:
         with pytest.raises(AttributeError):
             cr.status = "invalid"  # type: ignore[misc]
 
-    def test_validation_result_fields(self) -> None:
-
-        vr = ValidationResult(validator_name="vuln", citations=[], hallucination_count=0, overall_pass=True)
-        assert vr.validator_name == "vuln"
-        assert vr.citations == []
-        assert vr.hallucination_count == 0
-        assert vr.overall_pass is True
 
     def test_validation_result_defaults(self) -> None:
 
@@ -130,32 +86,6 @@ class TestDataclasses:
         assert vr.citations == []
         assert vr.hallucination_count == 0
         assert vr.overall_pass is True
-
-    def test_evidence_validation_report_fields(self) -> None:
-
-        report = EvidenceValidationReport(
-            citations_found=3,
-            citations_valid=2,
-            citations_hallucinated=1,
-            hallucinated_ids=["CVE-2099-9999"],
-            overall_pass=False,
-            results=[],
-        )
-        assert report.citations_found == 3
-        assert report.citations_valid == 2
-        assert report.citations_hallucinated == 1
-        assert report.hallucinated_ids == ["CVE-2099-9999"]
-        assert report.overall_pass is False
-
-    def test_evidence_validation_report_defaults(self) -> None:
-
-        report = EvidenceValidationReport()
-        assert report.citations_found == 0
-        assert report.citations_valid == 0
-        assert report.citations_hallucinated == 0
-        assert report.hallucinated_ids == []
-        assert report.overall_pass is True
-        assert report.results == []
 
 
 # ---------------------------------------------------------------------------

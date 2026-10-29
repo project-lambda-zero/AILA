@@ -14,7 +14,6 @@ from datetime import UTC
 import pytest
 from pydantic import ValidationError
 
-from aila.api.schemas import common
 from aila.api.schemas.common import APIModel, PaginatedResponse
 
 
@@ -49,10 +48,6 @@ class TestAPIModelBase:
         s = Sub(x=1, y="a")
         assert s.x == 1
         assert s.y == "a"
-
-    def test_apimodel_exports(self) -> None:
-        """common.__all__ exports exactly APIModel and PaginatedResponse."""
-        assert common.__all__ == ["APIModel", "PaginatedResponse"]
 
 
 class TestPaginatedResponseComputation:

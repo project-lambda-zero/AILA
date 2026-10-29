@@ -25,7 +25,6 @@ Contract updates
 """
 from __future__ import annotations
 
-import dataclasses
 import os
 from unittest.mock import MagicMock, patch
 
@@ -33,7 +32,6 @@ from typer.testing import CliRunner
 
 from aila.cli import app
 from aila.config import Settings
-from aila.config import __all__ as config_all
 
 runner = CliRunner()
 
@@ -45,25 +43,6 @@ runner = CliRunner()
 class TestSettingsFields:
     """Verify Settings has exactly 9 fields and each is documented."""
 
-    def test_settings_has_exactly_9_fields(self):
-        fields = dataclasses.fields(Settings)
-        field_names = [f.name for f in fields]
-        assert len(fields) == 9, f"Expected 9 fields, got {len(fields)}: {field_names}"
-
-    def test_settings_field_names(self):
-        field_names = {f.name for f in dataclasses.fields(Settings)}
-        expected = {
-            "database_url",
-            "report_dir",
-            "secret_keyring_path",
-            "secret_active_key_version",
-            "request_timeout_seconds",
-            "jwt_secret_key",
-            "api_host",
-            "api_port",
-            "oidc_cookie_secure",
-        }
-        assert field_names == expected
 
     def test_jwt_secret_key_random_default(self):
         """jwt_secret_key defaults to a random 32-byte hex string when
@@ -112,29 +91,9 @@ class TestSettingsFields:
         assert s.api_port == 8000
 
 
-class TestConfigExports:
-    """Verify config.py __all__ exports."""
-
-    def test_config_all_contains_public_names(self):
-        assert "Settings" in config_all
-        assert "get_settings" in config_all
-        assert "init_directories" in config_all
-        assert "PROJECT_ROOT" in config_all
-
-    def test_config_all_does_not_export_private(self):
-        for name in config_all:
-            assert not name.startswith("_"), f"{name} is private but exported"
-
-
 # ---------------------------------------------------------------------------
 # cli.py: __all__ exports
 # ---------------------------------------------------------------------------
-
-class TestCliExports:
-    def test_cli_all_contains_app_and_main(self):
-        from aila.cli import __all__ as cli_all
-        assert "app" in cli_all
-        assert "main" in cli_all
 
 
 # ---------------------------------------------------------------------------
@@ -323,75 +282,3 @@ class TestWorkerCommand:
 # cli.py: lazy import audit
 # ---------------------------------------------------------------------------
 
-class TestLazyImportJustification:
-    """Verify that lazy imports in cli.py are justified and no redundant
-    lazy imports remain in create-api-key."""
-
-    def test_create_api_key_no_redundant_session_scope_import(self):
-        """create-api-key should use the top-level session_scope import,
-        not re-import it lazily inside the function."""
-        import ast
-        import inspect
-
-        from aila.cli import create_api_key
-
-        source = inspect.getsource(create_api_key)
-        tree = ast.parse(source)
-
-        lazy_imports = []
-        for node in ast.walk(tree):
-            if isinstance(node, (ast.Import, ast.ImportFrom)):
-                if isinstance(node, ast.ImportFrom) and node.module:
-                    names = [alias.name for alias in node.names]
-                    lazy_imports.append((node.module, names))
-
-        # session_scope should NOT appear as a lazy import
-        for module, names in lazy_imports:
-            assert "session_scope" not in names, (
-                f"session_scope lazily imported from {module} -- "
-                "already at module top level"
-            )
-        # record_audit_event should NOT appear as a lazy import
-        for module, names in lazy_imports:
-            assert "record_audit_event" not in names, (
-                f"record_audit_event lazily imported from {module} -- "
-                "already at module top level"
-            )
-
-    def test_serve_lazy_uvicorn_justified(self):
-        """serve lazily imports uvicorn -- justified because uvicorn
-        is not needed for CLI-only commands."""
-        import ast
-        import inspect
-
-        from aila.cli import serve
-
-        source = inspect.getsource(serve)
-        tree = ast.parse(source)
-
-        has_uvicorn = False
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    if alias.name == "uvicorn":
-                        has_uvicorn = True
-        assert has_uvicorn, "serve should lazily import uvicorn"
-
-    def test_worker_lazy_arq_justified(self):
-        """worker lazily imports arq -- justified because arq
-        is not needed for non-worker CLI commands."""
-        import ast
-        import inspect
-
-        from aila.cli import worker_start
-
-        source = inspect.getsource(worker_start)
-        tree = ast.parse(source)
-
-        has_arq = False
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    if alias.name == "arq":
-                        has_arq = True
-        assert has_arq, "worker_start should lazily import arq"

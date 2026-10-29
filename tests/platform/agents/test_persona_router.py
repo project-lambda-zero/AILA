@@ -17,16 +17,10 @@ from aila.modules.malware.agents.persona_router import (
     PersonaRouter as MalwarePersonaRouter,
 )
 from aila.modules.malware.agents.persona_router import (
-    default_task_type as malware_default_task_type,
-)
-from aila.modules.malware.agents.persona_router import (
     resolve_task_type as malware_resolve,
 )
 from aila.modules.vr.agents.persona_router import (
     PersonaRouter as VRPersonaRouter,
-)
-from aila.modules.vr.agents.persona_router import (
-    default_task_type as vr_default_task_type,
 )
 from aila.modules.vr.agents.persona_router import (
     resolve_task_type as vr_resolve,
@@ -84,8 +78,6 @@ class TestPlatformBaseEmptyRoleMap:
     """The platform base ships an empty persona_role_map so a module
     with no persona vocabulary degrades gracefully (issue #136)."""
 
-    def test_base_map_is_empty(self) -> None:
-        assert PersonaRouter.persona_role_map == {}
 
     def test_persona_to_role_on_empty_map_returns_none(self) -> None:
         # Even for a real PersonaVoice, an empty map means "we don't
@@ -202,15 +194,6 @@ class TestMalwarePersonaRouter:
             == "malware_analysis.renzo"
         )
 
-    def test_persona_table_wins_over_role_table(self) -> None:
-        # The malware subclass populates persona_task_type; the base
-        # role_task_type stays empty so the persona lookup path is
-        # exercised (see PersonaRouter.resolve_task_type precedence).
-        assert MalwarePersonaRouter.persona_task_type
-        assert MalwarePersonaRouter.role_task_type == {}
-        # Malware routes per-voice so it does not carry a role map.
-        assert MalwarePersonaRouter.persona_role_map == {}
-
 
 class TestModuleLevelFacade:
     """The pre-extraction module-level names remain importable."""
@@ -223,18 +206,4 @@ class TestModuleLevelFacade:
         assert malware_resolve(PersonaVoice.HALVAR) == "malware_analysis.halvar"
         assert malware_resolve(None) == "malware_analysis.panel"
 
-    def test_vr_module_level_default_task_type(self) -> None:
-        assert vr_default_task_type() == "vulnerability_research.audit"
 
-    def test_malware_module_level_default_task_type(self) -> None:
-        assert malware_default_task_type() == "malware_analysis.panel"
-
-
-class TestPlatformBaseRequiresSubclass:
-    """The base class must not be usable without subclass configuration."""
-
-    def test_base_class_lacks_default_task_type(self) -> None:
-        # ClassVar declared without a value; the base is not directly
-        # usable, subclasses must set default_task_type.
-        with pytest.raises(AttributeError):
-            _ = PersonaRouter.default_task_type

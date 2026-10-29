@@ -5,44 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from aila.modules.vulnerability.config_schema import VulnerabilityConfigSchema
 from aila.modules.vulnerability.providers._base_client import BaseProviderClient
-
-
-class TestBaseProviderClientInit:
-    def test_sets_settings(self, mock_settings, mock_http_client):
-        with patch(
-            "aila.modules.vulnerability.providers._base_client.build_provider_http_client",
-            return_value=mock_http_client,
-        ):
-            client = BaseProviderClient(mock_settings)
-        assert client.settings is mock_settings
-
-    def test_sets_default_config(self, mock_settings, mock_http_client):
-        with patch(
-            "aila.modules.vulnerability.providers._base_client.build_provider_http_client",
-            return_value=mock_http_client,
-        ):
-            client = BaseProviderClient(mock_settings)
-        assert isinstance(client.config, VulnerabilityConfigSchema)
-
-    def test_uses_provided_config(self, mock_settings, mock_http_client):
-        config = VulnerabilityConfigSchema()
-        with patch(
-            "aila.modules.vulnerability.providers._base_client.build_provider_http_client",
-            return_value=mock_http_client,
-        ):
-            client = BaseProviderClient(mock_settings, config)
-        assert client.config is config
-
-    def test_builds_http_client(self, mock_settings, mock_http_client):
-        with patch(
-            "aila.modules.vulnerability.providers._base_client.build_provider_http_client",
-            return_value=mock_http_client,
-        ) as mock_build:
-            client = BaseProviderClient(mock_settings)
-        mock_build.assert_called_once()
-        assert client._http_client is mock_http_client
 
 
 class TestBaseProviderClientClose:

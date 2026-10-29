@@ -12,46 +12,29 @@ class TestVulnerabilityConfigSchemaVerifyTls:
     def test_nvd_verify_tls_defaults_true(self):
         assert VulnerabilityConfigSchema().nvd_verify_tls is True
 
-    def test_nvd_verify_tls_can_be_false(self):
-        assert VulnerabilityConfigSchema(nvd_verify_tls=False).nvd_verify_tls is False
 
     def test_osv_verify_tls_defaults_true(self):
         assert VulnerabilityConfigSchema().osv_verify_tls is True
 
-    def test_osv_verify_tls_can_be_false(self):
-        assert VulnerabilityConfigSchema(osv_verify_tls=False).osv_verify_tls is False
 
     def test_epss_verify_tls_defaults_true(self):
         assert VulnerabilityConfigSchema().epss_verify_tls is True
 
-    def test_epss_verify_tls_can_be_false(self):
-        assert VulnerabilityConfigSchema(epss_verify_tls=False).epss_verify_tls is False
 
     def test_kev_verify_tls_defaults_true(self):
         assert VulnerabilityConfigSchema().kev_verify_tls is True
 
-    def test_kev_verify_tls_can_be_false(self):
-        assert VulnerabilityConfigSchema(kev_verify_tls=False).kev_verify_tls is False
 
     def test_alpine_verify_tls_defaults_true(self):
         assert VulnerabilityConfigSchema().alpine_verify_tls is True
 
-    def test_alpine_verify_tls_can_be_false(self):
-        assert VulnerabilityConfigSchema(alpine_verify_tls=False).alpine_verify_tls is False
 
     def test_arch_verify_tls_defaults_true(self):
         assert VulnerabilityConfigSchema().arch_verify_tls is True
 
-    def test_arch_verify_tls_can_be_false(self):
-        assert VulnerabilityConfigSchema(arch_verify_tls=False).arch_verify_tls is False
-
 
 class TestPlatformConfigSchemaProxy:
-    def test_http_proxy_defaults_empty(self):
-        assert PlatformConfigSchema().http_proxy == ""
 
-    def test_https_proxy_defaults_empty(self):
-        assert PlatformConfigSchema().https_proxy == ""
 
     def test_http_proxy_accepts_url(self):
         assert PlatformConfigSchema(http_proxy="http://proxy:3128").http_proxy == "http://proxy:3128"

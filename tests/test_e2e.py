@@ -203,12 +203,6 @@ class TestMultiDistro:
 class TestToolCalls:
     """Tests individual tool capabilities through natural language queries."""
 
-    def test_risk_posture(self, platform, full_analysis_response):
-        """Risk posture tool must return a score between 0 and 100."""
-        resp = platform.handle("what is the current fleet risk posture score")
-        assert resp.message
-        # Score should be mentioned in the message or payload
-        assert resp.module_payload is not None or "score" in resp.message.lower()
 
     def test_service_check(self, platform):
         """Remote command runs an allowlisted command on a registered system."""
@@ -270,23 +264,6 @@ class TestDataIntegrity:
             ).all())
         assert len(events) >= 3, f"Expected 3+ audit events, got {len(events)}"
 
-    def test_materialized_findings_or_empty_scan(self, full_analysis_response):
-        """LatestFindingRecord table should have rows if the scan found vulnerabilities.
-
-        A system with all packages up-to-date may legitimately produce zero findings.
-        We verify the query executes without error -- count >= 0 is the contract.
-        """
-        from sqlmodel import select
-
-        from aila.config import get_settings
-        from aila.modules.vulnerability.db_models import LatestFindingRecord
-        from aila.platform.config import build_platform_settings
-        from aila.storage.database import session_scope
-
-        settings = build_platform_settings(get_settings())
-        with session_scope(settings) as session:
-            count = len(list(session.exec(select(LatestFindingRecord)).all()))
-        assert count >= 0  # query succeeded -- schema is correct
 
     def test_report_artifacts_on_disk(self, full_analysis_response):
         """Report file referenced in artifacts must exist on disk."""

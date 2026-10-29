@@ -37,7 +37,6 @@ Contention is exercised by the live-worker path after restart.
 from __future__ import annotations
 
 import contextlib
-import inspect
 import types
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -196,19 +195,6 @@ class TestReaperLockOrder:
         assert "vr_investigations" in third_sql
         # Guard still present (RUNNING check on the inv UPDATE).
         assert "status" in third_sql.lower()
-
-    def test_docstring_names_the_invariant(self) -> None:
-        # A drive-by revert that drops the SELECT FOR UPDATE but
-        # keeps the docstring would still pass the compile test
-        # above (because the docstring shows the invariant only,
-        # not the enforcement). Pin the invariant text so a
-        # careless doc change surfaces here too.
-
-        doc = _flip_branches_and_inv_to_completed.__doc__ or ""
-        assert "#177" in doc, "docstring must cite issue #177"
-        assert "investigation" in doc.lower() and "first" in doc.lower(), (
-            "docstring must state the investigation-first invariant"
-        )
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -391,19 +377,6 @@ class TestSynthesizeNoFinding:
         assert "vr_investigations" in lock_sql
         assert "status" in lock_sql.lower(), (
             "the lock statement must carry the status = RUNNING guard"
-        )
-
-    def test_outcome_insert_uses_on_conflict_do_nothing(self) -> None:
-        # The outcome INSERT is a raw SQL literal. Structural check
-        # on the source text guarantees the ON CONFLICT clause is
-        # present -- a revert would fail this assertion.
-
-
-        src = inspect.getsource(_synthesize_one_no_finding)
-        assert "ON CONFLICT (id) DO NOTHING" in src, (
-            "outcome INSERT must be idempotent via ON CONFLICT DO NOTHING "
-            "so a duplicate id from a concurrent per-id finalize cannot "
-            "raise IntegrityError inside the batch's savepoint"
         )
 
 

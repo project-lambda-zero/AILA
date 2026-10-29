@@ -23,7 +23,6 @@ import pytest
 
 from aila.platform.config import PlatformConfigSchema, PlatformSettings, build_platform_settings
 from aila.platform.tasks import get_task_tuning
-from aila.platform.tasks.constants import __all__ as const_all
 
 # ---------------------------------------------------------------------------
 # FILE-31: get_task_tuning behaviour (Phase 179 stub contract)
@@ -120,18 +119,6 @@ class TestConstantToSchemaMapping:
         assert isinstance(schema_value, expected_type)
         assert const_value == expected_default
 
-    def test_xread_block_ms_derived_from_heartbeat_interval(self) -> None:
-        """The SSE XREAD block timeout is derived live from
-        ``platform.heartbeat_interval_s`` (see
-        :meth:`ProgressStream.stream_events`), so no ``xread_block_ms`` key
-        is declared in the schema and no ``XREAD_BLOCK_MS`` constant remains.
-        """
-        import aila.platform.tasks.constants as constants_module
-
-        schema = PlatformConfigSchema()
-        assert not hasattr(schema, "xread_block_ms")
-        assert not hasattr(constants_module, "XREAD_BLOCK_MS")
-
 
 # ---------------------------------------------------------------------------
 # FILE-32: PlatformConfigSchema completeness for get_task_tuning callers
@@ -186,42 +173,6 @@ class TestPlatformConfigSchemaCompleteness:
 # ---------------------------------------------------------------------------
 # Package __all__ exports
 # ---------------------------------------------------------------------------
-
-
-class TestPackageExports:
-    """tasks/__init__.py exports get_task_tuning in __all__."""
-
-    def test_get_task_tuning_in_all(self) -> None:
-        from aila.platform.tasks import __all__ as task_all
-
-        assert "get_task_tuning" in task_all
-
-    def test_constants_all_exports_expected_names(self) -> None:
-        """constants.py __all__ lists all public constants."""
-        expected = {
-            # Redis key templates
-            "ARQ_QUEUE_KEY_TEMPLATE",
-            "ARQ_IN_PROGRESS_PREFIX",
-            "ARQ_JOB_PREFIX",
-            "ARQ_RETRY_PREFIX",
-            "ARQ_DEAD_LETTER_KEY_TEMPLATE",
-            "TASK_PROGRESS_KEY_TEMPLATE",
-            "SCAN_PROGRESS_KEY_TEMPLATE",
-            # Numeric tuning
-            "HEARTBEAT_INTERVAL_S",
-            "REAPER_ZOMBIE_THRESHOLD_S",
-            "REAPER_HEARTBEAT_THRESHOLD_S",
-            "ARQ_JOB_TIMEOUT_S",
-            "ARQ_KEEP_RESULT_S",
-            "ARQ_MAX_TRIES",
-            "POISON_PILL_THRESHOLD",
-            "WORKER_HEARTBEAT_UNHEALTHY_S",
-            "PROGRESS_STREAM_MAXLEN",
-            # Config registry keys
-            "CONFIG_NS_PLATFORM",
-            "CONFIG_KEY_REDIS_URL",
-        }
-        assert set(const_all) == expected
 
 
 # ---------------------------------------------------------------------------

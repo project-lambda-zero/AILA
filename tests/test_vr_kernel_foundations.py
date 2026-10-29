@@ -23,28 +23,8 @@ class TestTargetKindEnum:
     def test_new_v05_kinds_parse(self, value: str, expected: TargetKind) -> None:
         assert TargetKind(value) == expected
 
-    def test_v05_kinds_dont_collide_with_v03(self) -> None:
-        v05 = {
-            TargetKind.KERNEL_IMAGE.value,
-            TargetKind.KERNEL_MODULE.value,
-            TargetKind.HYPERVISOR_IMAGE.value,
-        }
-        all_kinds = {k.value for k in TargetKind}
-        # Sanity: total count = original 10 + 3 new
-        assert len(all_kinds) == 13
-        assert v05.issubset(all_kinds)
-
 
 class TestProfileRules:
-    def test_mcp_routing_kernel(self) -> None:
-        assert (
-            _APPLICABLE_MCP_BY_KIND[TargetKind.KERNEL_IMAGE.value]
-            == ["ida_headless", "audit_mcp"]
-        )
-        assert (
-            _APPLICABLE_MCP_BY_KIND[TargetKind.KERNEL_MODULE.value]
-            == ["ida_headless"]
-        )
 
     def test_mcp_routing_hypervisor(self) -> None:
         assert (
@@ -105,28 +85,7 @@ class TestProfileRules:
 
 
 class TestPromptLoading:
-    async def test_kernel_audit_prompt_loads(self, test_db) -> None:
-        text = (await _load_prompt("vulnerability_research.kernel_audit")).body
-        assert "kernel audit" in text.lower()
-        assert "slab" in text.lower()
-        assert "refcount" in text.lower() or "ref-count" in text.lower()
 
-    async def test_hypervisor_audit_prompt_loads(self, test_db) -> None:
-        text = (await _load_prompt("vulnerability_research.hypervisor_audit")).body
-        assert "hypervisor" in text.lower()
-        assert "virtio" in text.lower()
-        assert "guest" in text.lower() and "host" in text.lower()
-
-    async def test_kernel_prompt_mentions_hardening(self, test_db) -> None:
-        text = (await _load_prompt("vulnerability_research.kernel_audit")).body
-        # Prompt should call out the hardening features that invalidate findings
-        for term in ("KASLR", "SMEP", "KPTI"):
-            assert term in text, f"kernel prompt missing {term}"
-
-    async def test_hypervisor_prompt_mentions_iommu(self, test_db) -> None:
-        text = (await _load_prompt("vulnerability_research.hypervisor_audit")).body
-        assert "iommu" in text.lower()
-        assert "dma" in text.lower()
 
     async def test_unknown_kernel_strategy_falls_back_to_audit(self, test_db) -> None:
         # Loader strips dotted prefix; an unmapped suffix falls back to

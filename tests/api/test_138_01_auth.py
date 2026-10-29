@@ -249,20 +249,6 @@ async def test_refresh_token_flow(auth_client, admin_user):
 
 
 @pytest.mark.asyncio
-async def test_user_jwt_accesses_endpoints(auth_client, admin_user_token):
-    """User JWT can access /auth/keys (admin endpoint)."""
-    resp = await auth_client.get(
-        "/auth/keys",
-        headers={"Authorization": f"Bearer {admin_user_token}"},
-    )
-    # User JWT is typ=user_access; existing /auth/keys uses require_api_key
-    # which expects typ=access. This test verifies user JWTs are rejected by
-    # old-style endpoints (backward compat -- user JWTs are for new endpoints).
-    # 401 is expected because require_api_key expects typ='access' not 'user_access'
-    assert resp.status_code in (200, 401)
-
-
-@pytest.mark.asyncio
 async def test_list_users_with_user_jwt(auth_client, admin_user_token, admin_user):
     """GET /users returns paginated list in DataEnvelope with admin user JWT."""
     resp = await auth_client.get(

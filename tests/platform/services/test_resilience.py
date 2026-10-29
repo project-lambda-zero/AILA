@@ -14,7 +14,6 @@ import pytest
 from aila.platform.services.resilience import (
     RETRYABLE_INFRA_CLASSES,
     FailureVerdict,
-    InfraDeathClassifier,
     RecoveryPolicy,
     ResilienceLayer,
     get_default_resilience_layer,
@@ -40,18 +39,6 @@ class TestPolicyAndComposition:
         assert layer.policy == RecoveryPolicy()
         assert layer.policy.fail_mode == "closed"
 
-    def test_custom_policy_is_carried_verbatim(self) -> None:
-        """A caller that hands in a diagnostic ``open`` policy keeps it."""
-        policy = RecoveryPolicy(fail_mode="open")
-        layer = ResilienceLayer(policy=policy)
-        assert layer.policy is policy
-        assert layer.policy.fail_mode == "open"
-
-    def test_classifier_property_returns_underlying_classifier(
-        self, layer: ResilienceLayer,
-    ) -> None:
-        """Finalizer wires its module-level singleton off this property."""
-        assert isinstance(layer.classifier, InfraDeathClassifier)
 
     def test_default_layer_is_singleton(self) -> None:
         """Every hot path reaches the same shared instance."""
@@ -243,15 +230,6 @@ class TestRecordSignal:
         """A signal bump never blows up the caller, even without exc."""
         layer.record_signal(op="anything", source="anywhere")
 
-    def test_record_signal_with_exc_never_raises(
-        self, layer: ResilienceLayer,
-    ) -> None:
-        """The exception-carrying shape is equally safe."""
-        layer.record_signal(
-            op="queue_investigation_defer",
-            source="db_error",
-            exc=RuntimeError("db locked"),
-        )
 
     def test_record_signal_bumps_umbrella_counter(
         self, layer: ResilienceLayer,

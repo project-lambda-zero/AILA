@@ -20,13 +20,11 @@ from aila.api.schemas.sessions import (
     SessionCreateRequest,
     SessionMessageRequest,
     SessionMessageResponse,
-    SessionMessagesResponse,
     SessionResponse,
 )
 from aila.api.schemas.tasks import (
     ScanSubmissionRequest,
     TaskCreateRequest,
-    TaskListResponse,
     TaskResponse,
     TaskSubmitResponse,
 )
@@ -70,24 +68,6 @@ class TestSessionMessageResponseRole:
                 created_at=NOW,
             )
 
-    def test_run_id_nullable(self) -> None:
-        """run_id defaults to None and accepts a string."""
-        msg_none = SessionMessageResponse(
-            message_id="m1",
-            role="user",
-            content="hello",
-            created_at=NOW,
-        )
-        assert msg_none.run_id is None
-
-        msg_with = SessionMessageResponse(
-            message_id="m2",
-            role="assistant",
-            content="result",
-            run_id="run-abc",
-            created_at=NOW,
-        )
-        assert msg_with.run_id == "run-abc"
 
     def test_extra_fields_rejected(self) -> None:
         """extra='forbid' inherited from APIModel rejects unknown fields."""
@@ -109,15 +89,6 @@ class TestSessionMessageResponseRole:
 class TestSessionCreateRequest:
     """SessionCreateRequest field validation."""
 
-    def test_default_title(self) -> None:
-        """Title defaults to 'Untitled' when omitted."""
-        req = SessionCreateRequest()
-        assert req.title == "Untitled"
-
-    def test_custom_title(self) -> None:
-        """Custom title is preserved."""
-        req = SessionCreateRequest(title="My Session")
-        assert req.title == "My Session"
 
     def test_extra_fields_rejected(self) -> None:
         """extra='forbid' rejects unknown fields."""
@@ -147,38 +118,11 @@ class TestSessionMessageRequest:
 class TestSessionResponse:
     """SessionResponse required fields."""
 
-    def test_valid_session_response(self) -> None:
-        """All required fields accepted."""
-        resp = SessionResponse(
-            session_id="s1",
-            user_id="u1",
-            title="Test",
-            created_at=NOW,
-        )
-        assert resp.session_id == "s1"
-        assert resp.user_id == "u1"
 
     def test_missing_field_rejected(self) -> None:
         """Missing required field raises ValidationError."""
         with pytest.raises(ValidationError):
             SessionResponse(session_id="s1", user_id="u1", title="Test")
-
-
-class TestSessionMessagesResponse:
-    """SessionMessagesResponse is PaginatedResponse[SessionMessageResponse]."""
-
-    def test_paginated_wrapper(self) -> None:
-        """Items are properly paginated."""
-        items = [
-            SessionMessageResponse(
-                message_id="m1", role="user", content="hi", created_at=NOW
-            ),
-        ]
-        resp = SessionMessagesResponse(
-            total=1, page=1, page_size=50, pages=1, items=items
-        )
-        assert len(resp.items) == 1
-        assert resp.items[0].role == "user"
 
 
 # ---------------------------------------------------------------------------
@@ -308,18 +252,6 @@ class TestTaskCreateRequest:
             TaskCreateRequest(query_text="")
 
 
-class TestTaskListResponse:
-    """TaskListResponse wraps list of TaskResponse."""
-
-    def test_valid_list_response(self) -> None:
-        """TaskListResponse accepts tasks list and total."""
-        task = TaskResponse(status="queued", **TASK_KWARGS)
-        resp = TaskListResponse(tasks=[task], total=1)
-        assert resp.total == 1
-        assert len(resp.tasks) == 1
-        assert resp.tasks[0].task_id == "t1"
-
-
 # ---------------------------------------------------------------------------
 # ToolDetailResponse -- inputs JSON schema (FILE-24)
 # ---------------------------------------------------------------------------
@@ -365,17 +297,6 @@ class TestToolDetailResponseInputs:
         detail = ToolDetailResponse(**TOOL_BASE)
         assert detail.output_type == "string"
 
-    def test_extends_tool_summary(self) -> None:
-        """ToolDetailResponse inherits all ToolSummaryResponse fields."""
-        detail = ToolDetailResponse(
-            inputs={"type": "object"},
-            output_type="dict",
-            **TOOL_BASE,
-        )
-        assert detail.tool_key == "vuln.query_cves"
-        assert detail.name == "Query CVEs"
-        assert detail.description == "Search CVE database"
-        assert detail.module_id == "vulnerability"
 
     def test_extra_fields_rejected(self) -> None:
         """extra='forbid' rejects unknown fields."""
@@ -415,15 +336,6 @@ class TestToolInvokeRequestResponse:
         assert resp.error is None
         assert resp.result["cve_id"] == "CVE-2023-12345"
 
-    def test_invoke_response_error(self) -> None:
-        """Error invocation has error and null result."""
-        resp = ToolInvokeResponse(
-            tool_key="vuln.query_cves",
-            result=None,
-            error="tool not found",
-        )
-        assert resp.result is None
-        assert resp.error == "tool not found"
 
     def test_invoke_response_extra_rejected(self) -> None:
         """extra='forbid' rejects unknown fields on ToolInvokeResponse."""

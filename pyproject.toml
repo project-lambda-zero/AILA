@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aila"
-version = "0.5.54"
+version = "0.5.55"
 description = "Modular AI security platform with pluggable analysis modules."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -164,7 +164,7 @@ markers = [
     "e2e: end-to-end tests requiring live infrastructure (deselect with '-m not e2e')",
     "integration: integration tests requiring real API keys (deselect with '-m not integration')",
 ]
-addopts = "--cov=src/aila --cov-report=term-missing -m 'not e2e and not integration'"
+addopts = "-m 'not e2e and not integration'"
 pythonpath = ["src"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"

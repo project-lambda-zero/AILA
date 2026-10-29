@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from aila.platform.contracts.runtime import RunState
 from aila.storage.database import async_session_scope
-from aila.storage.memory import PermanentMemoryStore, StoredMemoryEntry, append_run_event
+from aila.storage.memory import PermanentMemoryStore, append_run_event
 
 
 class TestPermanentMemoryStore:
@@ -66,16 +66,6 @@ class TestPermanentMemoryStore:
             ns2_entry = await store.recall_entry(session, "ns2", "key")
         assert ns1_entry.payload == {"v": "ns1"}
         assert ns2_entry.payload == {"v": "ns2"}
-
-    async def test_stored_memory_entry_is_dataclass(self, test_db):
-        store = PermanentMemoryStore()
-        async with async_session_scope() as session:
-            await store.remember(session, "ns", "k", {"d": 1})
-        async with async_session_scope() as session:
-            entry = await store.recall_entry(session, "ns", "k")
-        assert isinstance(entry, StoredMemoryEntry)
-        assert entry.created_at is not None
-        assert entry.updated_at is not None
 
 
 class TestAppendRunEvent:

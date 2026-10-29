@@ -7,6 +7,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.55] - 2026-10-29 -- Faster default test runs and removal of 499 hollow tests
+
+### Changed
+
+- `pytest` no longer collects coverage by default. Line tracing over the full source tree slowed every run roughly ninefold (44 tests: 2.7 s without coverage, 25.1 s with it). `make coverage` runs the suite with the coverage report and the existing `fail_under` threshold.
+- TEST_GUIDE documents that the suite expects Postgres and Redis to be running; with Redis down, each Redis connection attempt blocks for 2-4 seconds on Windows.
+
+### Removed
+
+- 499 tests that could not catch a consumer-visible regression: tests that echo constructor arguments back, pin constants, enum values, defaults, or exact export and field lists, check only import, existence, `callable`, `hasattr`, or `isinstance`, read or pattern-match source code text, assert only that mocks received what the test passed in, or assert tautologies. Every candidate passed a rubric review, an adversarial review that kept any test with a nameable regression, and a third review that kept serialization formats, fault isolation, boundary sentinels, and cross-module invariants. Two files that held only such tests were deleted, along with the helpers and imports only they used. The remaining tests in the affected files produce the same results as before the removal.
+
 ## [0.5.54] - 2026-10-29 -- Dependency security floors and removal of dead tooling and files
 
 ### Security

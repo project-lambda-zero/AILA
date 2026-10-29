@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import ValidationError
 
-from aila.api.schemas.audit import AuditEventResponse, AuditListResponse
+from aila.api.schemas.audit import AuditEventResponse
 from aila.api.schemas.config import ConfigEntryResponse, ConfigUpdateRequest
 from aila.api.schemas.health import HealthCheckResponse, HealthCheckResult, StatusResponse
 
@@ -75,20 +75,6 @@ class TestAuditEventResponse:
                 bogus_field="should fail",
             )
 
-    def test_audit_list_response_is_paginated(self) -> None:
-        """AuditListResponse wraps AuditEventResponse items in PaginatedResponse."""
-        resp = AuditListResponse(
-            total=1,
-            page=1,
-            page_size=50,
-            pages=1,
-            items=[
-                AuditEventResponse(run_id="r1", stage="s", action="a"),
-            ],
-        )
-        assert len(resp.items) == 1
-        assert resp.items[0].run_id == "r1"
-
 
 # ---------------------------------------------------------------------------
 # ConfigUpdateRequest / ConfigEntryResponse (FILE-20)
@@ -104,10 +90,6 @@ class TestConfigUpdateRequest:
         req = ConfigUpdateRequest(value="42", value_type=vtype)
         assert req.value_type == vtype
 
-    def test_default_value_type_is_str(self) -> None:
-        """value_type defaults to 'str' when omitted."""
-        req = ConfigUpdateRequest(value="hello")
-        assert req.value_type == "str"
 
     @pytest.mark.parametrize("bad_type", ["list", "dict", "tuple", "bytes", ""])
     def test_invalid_value_type_rejected(self, bad_type: str) -> None:
@@ -124,15 +106,6 @@ class TestConfigUpdateRequest:
 class TestConfigEntryResponse:
     """ConfigEntryResponse namespace/key min_length constraint."""
 
-    def test_valid_entry(self) -> None:
-        """Valid entry with non-empty namespace and key is accepted."""
-        entry = ConfigEntryResponse(
-            namespace="vulnerability",
-            key="max_findings",
-            value="100",
-        )
-        assert entry.namespace == "vulnerability"
-        assert entry.key == "max_findings"
 
     def test_empty_namespace_rejected(self) -> None:
         """Empty namespace string is rejected (min_length=1)."""
@@ -164,26 +137,6 @@ class TestHealthCheckResult:
         with pytest.raises(ValidationError):
             HealthCheckResult(status="unknown")
 
-    def test_latency_ms_optional(self) -> None:
-        """latency_ms defaults to None when omitted."""
-        result = HealthCheckResult(status="up")
-        assert result.latency_ms is None
-
-    def test_latency_ms_populated(self) -> None:
-        """latency_ms is preserved when provided."""
-        result = HealthCheckResult(status="up", latency_ms=12.5)
-        assert result.latency_ms == 12.5
-
-    def test_message_optional(self) -> None:
-        """message defaults to None when omitted."""
-        result = HealthCheckResult(status="down")
-        assert result.message is None
-
-    def test_message_populated(self) -> None:
-        """message is preserved when provided."""
-        result = HealthCheckResult(status="down", message="connection refused")
-        assert result.message == "connection refused"
-
 
 class TestHealthCheckResponse:
     """HealthCheckResponse top-level status Literal constraint."""
@@ -214,11 +167,6 @@ class TestHealthCheckResponse:
 class TestStatusResponse:
     """StatusResponse required fields."""
 
-    def test_valid_status_response(self) -> None:
-        """StatusResponse accepts valid version and uptime_seconds."""
-        resp = StatusResponse(version="1.0.0", uptime_seconds=120)
-        assert resp.version == "1.0.0"
-        assert resp.uptime_seconds == 120
 
     def test_missing_version_rejected(self) -> None:
         """Missing version field is rejected."""

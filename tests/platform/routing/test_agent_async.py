@@ -1,20 +1,12 @@
 """Tests for async StructuredAgent.run_structured() (LLM-02)."""
 from __future__ import annotations
 
-import inspect
 import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from aila.platform.routing.agent import StructuredAgent
-
-
-def test_run_structured_is_async():
-    """run_structured must be an async def (coroutine function)."""
-    assert inspect.iscoroutinefunction(StructuredAgent.run_structured), (
-        "run_structured must be async def"
-    )
 
 
 @pytest.mark.asyncio

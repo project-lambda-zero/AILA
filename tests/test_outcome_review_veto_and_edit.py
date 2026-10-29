@@ -27,7 +27,6 @@ import pytest
 from pydantic import ValidationError
 
 from aila.modules.malware.services.outcome_review import VETO_K
-from aila.platform.contracts.mcp_payload import PayloadKind
 from aila.platform.contracts.reasoning import ReasoningTurnDecision
 from aila.platform.services.outcome_review import summarize_outcome_for_review
 
@@ -41,19 +40,6 @@ class TestVetoThreshold:
         # bug let the 1-veto rule kill a correct test-sample
         # ANALYSIS_REPORT; this test pins the new value.
         assert VETO_K == 2
-
-    def test_veto_k_documented_rationale(self) -> None:
-        # Sanity-check that the docstring on the service module
-        # mentions the rationale + the threshold value -- prevents a
-        # silent revert that drops the explanation along with the
-        # constant change.
-        from aila.modules.malware.services import outcome_review
-
-        doc = outcome_review.__doc__ or ""
-        assert "VETO_K" in doc, "module docstring must name VETO_K"
-        assert "veto" in doc.lower(), (
-            "module docstring must explain the veto semantics"
-        )
 
 
 class TestEditOutcomeAction:
@@ -111,13 +97,6 @@ class TestEditOutcomeAction:
         )
         assert d.action == "reasoning"
 
-    def test_edit_payload_kind_exists(self) -> None:
-        # ``OUTCOME_EDIT`` must be in PayloadKind so the message
-        # mapper can persist edit_outcome turns with the right
-        # discriminator. Without this entry the mapper would fall
-        # through to TEXT and lose the structured patch info.
-        assert PayloadKind.OUTCOME_EDIT == "outcome_edit"
-        assert PayloadKind.OUTCOME_EDIT in set(PayloadKind)
 
     def test_edit_outcome_id_validation_error_names_field(self) -> None:
         # Error messages from the validator are what the LLM client's
@@ -138,14 +117,6 @@ class TestEditOutcomeServiceImports:
     """``edit_outcome`` is exported from the service module so the
     researcher can import it. Sanity check the public surface."""
 
-    def test_edit_outcome_in_all(self) -> None:
-        from aila.modules.malware.services import outcome_review
-
-        assert "edit_outcome" in outcome_review.__all__
-        assert hasattr(outcome_review, "edit_outcome")
-        # EditOutcomeResult is intentionally not exported (internal
-        # return shape) but the function itself is callable.
-        assert callable(outcome_review.edit_outcome)
 
     def test_protected_keys_pinned(self) -> None:
         # Sensitive write-once keys that the agent must never patch
@@ -268,11 +239,3 @@ class TestNotReadyVoteContract:
         assert "not_ready" in _svc._VALID_VOTES
         assert _svc.VOTE_NOT_READY == "not_ready"
 
-    def test_vr_binding_re_exports_not_ready(self) -> None:
-        """The VR binding re-exports the constant so module callers
-        that historically imported ``VOTE_*`` off the binding pick up
-        the new value without touching platform imports."""
-        from aila.modules.vr.services import outcome_review as _vr
-
-        assert "VOTE_NOT_READY" in _vr.__all__
-        assert _vr.VOTE_NOT_READY == "not_ready"

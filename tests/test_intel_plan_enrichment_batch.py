@@ -11,7 +11,6 @@ Verifies:
 """
 from __future__ import annotations
 
-import inspect
 from unittest.mock import AsyncMock, MagicMock
 
 import sqlalchemy
@@ -54,15 +53,6 @@ async def test_plan_enrichment_calls_batch_not_per_id():
     calls = service.cache_tool.forward.call_args_list
     assert len(calls) == 1, f"Expected 1 call, got {len(calls)}: {calls}"
     assert calls[0].kwargs.get("action") == "cve_cache_get_batch" or calls[0].args[0] == "cve_cache_get_batch"
-
-
-def test_plan_enrichment_no_per_id_cve_cache_get_call():
-    """_plan_enrichment source must NOT contain 'cve_cache_get' outside of cve_cache_get_batch."""
-    from aila.modules.vulnerability.services.intel import IntelService
-    src = inspect.getsource(IntelService._plan_enrichment)
-    # 'cve_cache_get_batch' is acceptable, but bare 'cve_cache_get' with per-ID usage is not
-    # The simplest check: 'cve_cache_get"' (quoted, no _batch suffix) must not appear
-    assert '"cve_cache_get"' not in src, "Per-ID 'cve_cache_get' action still used in _plan_enrichment"
 
 
 async def test_plan_enrichment_fresh_cache_ids_populated():
@@ -116,22 +106,6 @@ async def test_plan_enrichment_force_refresh_all_ids_in_refresh_order():
 # ---------------------------------------------------------------------------
 # Compound index tests  (pure structural, sync)
 # ---------------------------------------------------------------------------
-
-
-def test_cacherecord_has_namespace_index():
-    """CacheRecord.__table_args__ must contain Index named 'ix_cacherecord_namespace'."""
-    from aila.modules.vulnerability.db_models import CacheRecord
-    args = CacheRecord.__table_args__
-    names = [a.name for a in args if isinstance(a, sqlalchemy.Index)]
-    assert "ix_cacherecord_namespace" in names, f"Expected ix_cacherecord_namespace in {names}"
-
-
-def test_workflowrunrecord_has_compound_index():
-    """WorkflowRunRecord.__table_args__ must contain Index named 'ix_wfr_status_completed'."""
-    from aila.storage.db_models import WorkflowRunRecord
-    args = WorkflowRunRecord.__table_args__
-    names = [a.name for a in args if isinstance(a, sqlalchemy.Index)]
-    assert "ix_wfr_status_completed" in names, f"Expected ix_wfr_status_completed in {names}"
 
 
 def test_reportartifactrecord_has_compound_index():

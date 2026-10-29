@@ -319,11 +319,7 @@ def _stub_load_reviews(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.mark.parametrize("cfg", ALL_CONFIGS, ids=[c.label for c in ALL_CONFIGS])
 class TestClassBinding:
-    def test_subclass_of_platform_base(self, cfg: _Config) -> None:
-        assert issubclass(cfg.agent_cls, SynthesisRunnerBase)
 
-    def test_task_type(self, cfg: _Config) -> None:
-        assert cfg.agent_cls._TASK_TYPE == cfg.task_type
 
     def test_branch_table(self, cfg: _Config) -> None:
         assert cfg.agent_cls._branch_table == cfg.branch_table
@@ -331,23 +327,9 @@ class TestClassBinding:
     def test_investigation_model(self, cfg: _Config) -> None:
         assert cfg.agent_cls._investigation_model is cfg.investigation_model
 
-    def test_outcome_model(self, cfg: _Config) -> None:
-        assert cfg.agent_cls._outcome_model is cfg.outcome_model
 
     def test_response_model(self, cfg: _Config) -> None:
         assert cfg.agent_cls._response_model is cfg.response_cls
-
-    def test_system_prompt_is_module_specific(self, cfg: _Config) -> None:
-        # vr's prompt mentions researcher/critic/implementer; malware's
-        # names the six-persona triad by name.
-        prompt = cfg.agent_cls._SYSTEM_PROMPT
-        assert isinstance(prompt, str) and len(prompt) > 200
-        if cfg.label == "vr":
-            assert "vulnerability-research" in prompt
-            assert "HALVAR" not in prompt
-        else:
-            assert "malware-analysis" in prompt
-            assert "HALVAR" in prompt
 
 
 # --------------------------------------------------------------------- #

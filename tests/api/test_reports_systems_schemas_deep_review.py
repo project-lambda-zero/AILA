@@ -16,7 +16,6 @@ import pytest
 from pydantic import ValidationError
 
 from aila.api.schemas import reports as reports_module
-from aila.api.schemas import systems as systems_module
 from aila.api.schemas.reports import ReportCountResponse, ReportSummaryResponse
 from aila.api.schemas.systems import (
     SystemCreateRequest,
@@ -41,10 +40,6 @@ class TestReportSummaryResponseFields:
         "severity_breakdown", "created_at", "completed_at",
     }
 
-    def test_all_dashboard_fields_present(self) -> None:
-        """No silent omissions -- every dashboard field exists on the schema."""
-        actual = set(ReportSummaryResponse.model_fields.keys())
-        assert actual == self.EXPECTED_FIELDS
 
     def test_required_fields_enforced(self) -> None:
         """run_id, query_text, module_id, and status are mandatory."""
@@ -194,31 +189,6 @@ class TestReportCountResponseModuleDelegation:
         r = ReportCountResponse(run_id="r", module_id="vulnerability")
         assert r.counts == {}
 
-    def test_vulnerability_module_shape(self) -> None:
-        """Vulnerability module returns severity breakdown + kev_count in counts."""
-        counts = {
-            "total": 42,
-            "kev_count": 0,
-            "critical": 2,
-            "high": 15,
-            "medium": 20,
-            "low": 5,
-        }
-        r = ReportCountResponse(run_id="run-1", module_id="vulnerability", counts=counts)
-        assert r.counts["critical"] == 2
-        assert r.counts["kev_count"] == 0
-        assert r.counts["total"] == 42
-
-    def test_arbitrary_module_shape(self) -> None:
-        """Future modules can return any shape in counts."""
-        counts = {
-            "compliance_passed": 95,
-            "compliance_failed": 5,
-            "categories": {"network": 3, "access": 2},
-        }
-        r = ReportCountResponse(run_id="run-2", module_id="compliance", counts=counts)
-        assert r.counts["compliance_passed"] == 95
-        assert r.counts["categories"]["network"] == 3
 
     def test_rejects_extra_field(self) -> None:
         """ReportCountResponse rejects unknown fields."""
@@ -476,41 +446,6 @@ class TestSystemResponseFieldMapping:
 class TestSystemDetailResponseExtension:
     """SystemDetailResponse extends SystemResponse with module_summaries and scan_count."""
 
-    def test_extends_system_response(self) -> None:
-        """SystemDetailResponse has all SystemResponse fields plus extras."""
-        base_fields = set(SystemResponse.model_fields.keys())
-        detail_fields = set(SystemDetailResponse.model_fields.keys())
-        assert base_fields.issubset(detail_fields)
-        assert "module_summaries" in detail_fields
-        assert "scan_count" in detail_fields
-
-    def test_defaults(self) -> None:
-        """module_summaries defaults to empty dict, scan_count to 0."""
-        r = SystemDetailResponse(id=1, name="s", host="h", username="u")
-        assert r.module_summaries == {}
-        assert r.scan_count == 0
-
-    def test_module_summaries_flexible_shape(self) -> None:
-        """module_summaries accepts arbitrary module-contributed data."""
-        summaries = {
-            "vulnerability": {
-                "total_findings": 42,
-                "critical": 5,
-                "high": 15,
-            },
-            "compliance": {
-                "score": 95,
-                "passed": True,
-            },
-        }
-        r = SystemDetailResponse(
-            id=1, name="s", host="h", username="u",
-            module_summaries=summaries,
-            scan_count=10,
-        )
-        assert r.module_summaries["vulnerability"]["total_findings"] == 42
-        assert r.module_summaries["compliance"]["score"] == 95
-        assert r.scan_count == 10
 
     def test_rejects_extra_field(self) -> None:
         """SystemDetailResponse rejects unknown fields."""
@@ -550,14 +485,6 @@ class TestSystemListResponseAlias:
         assert r.items[0].tags == []
         assert r.items[0].last_scan_at is None
 
-    def test_empty_response(self) -> None:
-        """Empty system list is valid."""
-        r = SystemListResponse(
-            total=0, page=1, page_size=50, pages=0, items=[],
-        )
-        assert r.total == 0
-        assert r.items == []
-        assert r.pages == 0
 
     def test_pages_auto_computed(self) -> None:
         """Pages auto-computed when pages=0 and total>0."""
@@ -576,25 +503,6 @@ class TestSystemListResponseAlias:
 class TestReportsExports:
     """reports module __all__ exports match defined classes."""
 
-    def test_all_exports(self) -> None:
-        """reports.__all__ contains exactly the defined schema classes.
-
-        Covers the summary/count endpoints (ReportSummaryResponse,
-        ReportCountResponse), the /reports/{run_id}/explain endpoints
-        (ExplainCachedResponse for 200, ExplainQueuedResponse for 202),
-        and the vulnerability /reports/list + /reports/detail shapes
-        (ReportSummary, ReportDetail, FindingSummary -- D-16 / D-17).
-        """
-        expected = {
-            "ExplainCachedResponse",
-            "ExplainQueuedResponse",
-            "FindingSummary",
-            "ReportCountResponse",
-            "ReportDetail",
-            "ReportSummary",
-            "ReportSummaryResponse",
-        }
-        assert set(reports_module.__all__) == expected
 
     def test_no_extra_exports(self) -> None:
         """No public classes exist that are missing from __all__."""
@@ -608,44 +516,3 @@ class TestReportsExports:
         assert public_classes == set(reports_module.__all__)
 
 
-class TestSystemsExports:
-    """systems module __all__ exports match defined classes."""
-
-    def test_all_exports(self) -> None:
-        """systems.__all__ contains exactly the expected names.
-
-        Covers the CRUD request/response schemas (SystemCreateRequest,
-        SystemUpdateRequest, SystemResponse, SystemDetailResponse), the
-        enriched list-endpoint shape (SystemEnrichedResponse,
-        SystemListResponse), CSV batch import (SystemCSVImportRequest,
-        SystemCSVImportResponse), and the per-system connectivity + scan
-        history endpoints (ConnectivityStatusResponse, ScanHistoryResponse).
-        """
-        expected = {
-            "ConnectivityStatusResponse",
-            "ScanHistoryResponse",
-            "SystemCSVImportRequest",
-            "SystemCSVImportResponse",
-            "SystemCreateRequest",
-            "SystemDetailResponse",
-            "SystemEnrichedResponse",
-            "SystemListResponse",
-            "SystemResponse",
-            "SystemUpdateRequest",
-        }
-        assert set(systems_module.__all__) == expected
-
-    def test_no_extra_public_classes(self) -> None:
-        """No public classes exist that are missing from __all__."""
-        from pydantic import BaseModel
-
-        public_classes = {
-            name for name, obj in vars(systems_module).items()
-            if isinstance(obj, type) and issubclass(obj, BaseModel)
-            and not name.startswith("_") and obj.__module__ == systems_module.__name__
-        }
-        # SystemListResponse is a type alias, not a class defined in this module
-        # so it won't appear as a type with __module__ == systems_module.__name__
-        # We check that all actual classes are exported
-        for cls_name in public_classes:
-            assert cls_name in systems_module.__all__, f"{cls_name} missing from __all__"

@@ -28,7 +28,6 @@ import threading
 
 from aila.platform.services.embedding import (
     BGEProvider,
-    EmbeddingProvider,
     MiniLMProvider,
 )
 
@@ -67,24 +66,9 @@ class _FakeEncoder:
 # ---------------------------------------------------------------------------
 
 
-def test_protocol_declares_encode_async() -> None:
-    """The EmbeddingProvider Protocol exposes an async encode_async method."""
-    assert hasattr(EmbeddingProvider, "encode_async"), (
-        "EmbeddingProvider Protocol must expose encode_async (design #64-3.1b)"
-    )
-    # The Protocol method is defined as `async def` so its function object
-    # is a coroutine function.
-    assert inspect.iscoroutinefunction(EmbeddingProvider.encode_async)
-
-
 def test_bge_provider_declares_encode_async_as_coroutine() -> None:
     """BGEProvider.encode_async is an async method (coroutine function)."""
     assert inspect.iscoroutinefunction(BGEProvider.encode_async)
-
-
-def test_minilm_provider_declares_encode_async_as_coroutine() -> None:
-    """MiniLMProvider.encode_async is an async method (coroutine function)."""
-    assert inspect.iscoroutinefunction(MiniLMProvider.encode_async)
 
 
 # ---------------------------------------------------------------------------
