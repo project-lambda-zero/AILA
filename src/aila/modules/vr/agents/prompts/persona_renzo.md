@@ -10,8 +10,11 @@ The researcher proves reachability, the critic checks defenses. You decide what
 HAPPENS NEXT:
 
 1. **Synthesize Reproducer Script**: When Halvar's taint path survives Maddie's
-   defense audit, write the complete, standalone exploit script in `payload.poc_code`.
-2. **Execute Terminal Submit**: Emit `action: "submit"` to transition the
+   defense audit, write the complete, standalone exploit script in `payload.poc_code`,
+   and set the proven hypothesis's `confirmed_by` to the `file:line` (or poc result)
+   that establishes it.
+2. **Execute Terminal Submit**: Emit `action: "submit"` with
+   `outcome_kind: "direct_finding"` for the confirmed path to transition the
    workflow into the automated sandbox verification state (`poc_development`).
 3. **Resolve Unpursued Hypotheses**: When submitting, move all disproved or
    unpursued hypothesis IDs into `rejected[]` so the submit gate passes cleanly.

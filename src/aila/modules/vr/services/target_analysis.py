@@ -1501,13 +1501,27 @@ class TargetAnalysisService:
         poll_timeout_s = await _cfg.get_float("ingestion_poll_timeout_s")
         deadline = utc_now().timestamp() + poll_timeout_s
         while utc_now().timestamp() < deadline:
-            resp = await self._ida.forward(
+            resp = (await self._ida.forward(
                 action="poll_analysis", binary_id=binary_id,
-            )
-            state = (resp or {}).get("state") or (resp or {}).get("status")
-            if state in {"READY", "INDEXED", "ready", "complete", "completed"}:
+            )) or {}
+            # reverser-belt/kuna reports a failure via an error envelope
+            # or a populated ``error`` field while state stays pre-INDEXED;
+            # fail fast rather than polling to the ingestion timeout.
+            if resp.get("status") == "error" or resp.get("error"):
+                raise TargetAnalysisError(
+                    f"ida analysis failed: "
+                    f"{resp.get('message') or resp.get('error') or resp}",
+                )
+            state = resp.get("state") or resp.get("status")
+            # Terminal = the function index is built (kuna state INDEXED,
+            # index_ready True). READY is a transient pre-index state
+            # (workspace copied, decompiler not yet run), so it must NOT
+            # count as completion or the profile builds from an empty index.
+            if resp.get("index_ready") or state in {
+                "INDEXED", "complete", "completed",
+            }:
                 return
-            if state in {"FAILED", "failed", "error"}:
+            if state in {"FAILED", "failed"}:
                 raise TargetAnalysisError(
                     f"ida analysis failed: {resp.get('error') or resp}",
                 )

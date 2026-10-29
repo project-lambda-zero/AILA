@@ -203,7 +203,10 @@ async def _upload_and_wait(ida_bridge: Any, file_path: str) -> dict[str, Any]:
             raise SetupBudgetExceededError(
                 binary_id=str(binary_id), waited_s=elapsed,
             )
-        if current.get("analysis_ready") or current.get("state") in ("READY", "INDEXED"):
+        # reverser-belt/kuna terminal is INDEXED (index_ready True). READY /
+        # analysis_ready is a transient pre-index state and must not count as
+        # done, or setup proceeds against an unbuilt function index.
+        if current.get("index_ready") or current.get("state") == "INDEXED":
             return current
         current = await ida_bridge.forward(
             action="poll_analysis", binary_id=binary_id,
@@ -231,7 +234,10 @@ async def _wait_until_ready(ida_bridge: Any, binary_id: str) -> dict[str, Any]:
         )
         if current.get("status") == "error":
             raise RuntimeError(f"poll_analysis error: {current.get('error')}")
-        if current.get("analysis_ready") or current.get("state") in ("READY", "INDEXED"):
+        # reverser-belt/kuna terminal is INDEXED (index_ready True). READY /
+        # analysis_ready is a transient pre-index state and must not count as
+        # done, or setup proceeds against an unbuilt function index.
+        if current.get("index_ready") or current.get("state") == "INDEXED":
             return current
         await asyncio.sleep(_POLL_INTERVAL_S)
 

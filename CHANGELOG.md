@@ -5,6 +5,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.7.0] - 2026-10-30 -- reverser-belt (kuna) IDA backend adaptation
+
+### Added
+
+- `endpoint_of(url)` and an `allow_endpoints` parameter on the SSRF guard (`check_url`, both validating transports) and on the HTTP client builders. A trusted loopback MCP base URL (the sample upload and index refresh fetches) is exempted by exact host:port so a 127.0.0.0/8 MCP is reachable, while redirects to any other host:port are still refused and the scheme check still applies.
+- `RankingSource.IDA_BINARY_SURVEY`: binary targets are ranked from the reverser `binary_survey` hotspots by cyclomatic complexity with a log-scale normalized score, falling back to `list_functions(order_by=complexity_desc)` when the survey returns no hotspots.
+- The IDA MCP adapter renders a reverser `{"status": "unsupported"}` envelope as a clear text observation (naming the unavailable tool and a suggested alternative) instead of letting a specialized adapter turn it into an empty success. The MCP client and the generic adapter surface the same `unsupported` status as an error with the reason excerpt.
+
+### Changed
+
+- Binary function ranking no longer uses `find_api_call_sites` plus `assess_exploitability`: the reverser returns unsupported for the deep assessment and emits call sites in a different shape, so that pipeline always produced empty rankings.
+- Target analysis and VR setup treat a built function index as the only terminal state (`index_ready` or state `INDEXED`); the transient pre-index `READY` state no longer counts as complete, so ranking and profiling do not run against an unbuilt index. Analysis polling fails fast on an error envelope instead of waiting for the ingestion timeout.
+- Tool dispatch in the phase-graph loop runs inside a `correlation_scope`, so MCP call-log rows carry the investigation, branch, and turn join-keys instead of landing null.
+- Tool error detail falls back through `error`, `message`, and `detail` so the reverser `call_chain` / `call_graph` "Function not found: <id>" text reaches the agent instead of an opaque "unexpected status 'error'", and a "function not found" result is classified as `resource_not_found` so the agent pivots to a canonical identifier instead of reissuing the failing call.
+- VR persona and system prompts: a branch that confirms a taint path submits its own `direct_finding` the same turn rather than handing off, with the PoC lane building the reproducer afterward.
+
+### Fixed
+
+- `main` was import-broken since 2026-08-30: `aila.modules.vr.api_router` imported `endpoint_of` from the SSRF service, which did not exist on the committed branch. This release lands the definition, so the module imports again.
+- A boolean platform config whose value is stored as the string `"false"` (or `"False"`) no longer renders as a checked box in the config form; the string is parsed the way the backend cast does.
+
 ## [0.6.0] - 2026-10-29 -- Frontend issues #236, #229, #145, #246, #212, #213
 
 ### Added

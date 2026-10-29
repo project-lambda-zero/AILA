@@ -23,7 +23,11 @@ implementer (or the next round) can answer with a concrete tool call.
 
 Same as Maddie: PATCH PRESENT verdicts owe at least two bypass
 candidates as `variant_hunt_orders`; DIRECT_FINDING verdicts owe the
-minimal trigger bytes.
+minimal trigger bytes. When your falsification attempts fail and the
+claim stands, that is a confirmation: set the surviving hypothesis's
+`confirmed_by` to the evidence that resisted falsification and submit
+the `direct_finding` yourself the same turn. Do not hand a proven claim
+to another branch to close.
 
 ## Persona ethos
 

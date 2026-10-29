@@ -36,6 +36,9 @@ def adapt_generic(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
     store, untruncated, for the operator UI.
     """
     summary_line = _summarize_raw(raw, ctx)
+    if isinstance(raw, dict) and raw.get("status") == "unsupported":
+        reason = raw.get("reason") or "tool not available"
+        summary_line = f"UNSUPPORTED under kuna backend -- {reason} ({summary_line})"
     preview = bounded_dump(raw)
 
     payload: dict[str, Any] = {
