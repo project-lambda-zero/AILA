@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ChangeEvent,
@@ -23,6 +24,7 @@ import type { ChatConsoleProps } from "./contract";
 import { useChatSession } from "./chatSessionStore";
 import { css } from "./css";
 import { shortCaseId } from "./ids";
+import { toast } from "./toast";
 import { primaryWizardIdForModule, wizardsForModule } from "./wizards";
 
 /*
@@ -69,7 +71,7 @@ type ChipTone = "info" | "ok" | "warn" | "acc" | "sig" | "mut";
 function chipStyle(tone: ChipTone): CSSProperties {
   const c = H[tone];
   return css(
-    `display:inline-flex;align-items:center;padding:2px 7px;font-size:9px;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap;border:1px solid ${c}66;color:${c};background:${c}14;border-radius:2px;`,
+    `display:inline-flex;align-items:center;padding:2px 7px;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;white-space:nowrap;border:1px solid ${c}66;color:${c};background:${c}14;border-radius:2px;`,
   );
 }
 
@@ -79,6 +81,9 @@ function chipStyle(tone: ChipTone): CSSProperties {
 // and the four proposal kinds (open_wizard / enqueue_scan / create_tag /
 // delete_tag). No decorative options; anything a chip suggests dante can
 // actually do.
+// Distance from the bottom (px) still counted as "following the thread".
+const BOTTOM_SLACK_PX = 40;
+
 const ADV_SUGGESTIONS: readonly string[] = [
   "what can you do?",
   "open a vr investigation on this target",
@@ -122,25 +127,25 @@ function renderRow(key: string, r: RowProps, ctx?: RowRenderCtx): JSX.Element {
     `display:flex;align-items:center;gap:8px;margin-bottom:4px;${you ? "flex-direction:row-reverse;" : ""}`,
   );
   const tagStyle = css(
-    `font-size:9px;letter-spacing:0.14em;text-transform:uppercase;font-weight:700;color:${you ? T.mut : T.acc};`,
+    `font-size:11px;letter-spacing:0.14em;text-transform:uppercase;font-weight:700;color:${you ? T.mut : T.acc};`,
   );
   const bubbleStyle = css(
     `max-width:min(680px,86%);padding:10px 13px;font-family:var(--font-sans,system-ui);font-size:13px;line-height:1.5;text-wrap:pretty;border:1px solid ${you ? "var(--border-soft)" : `${H.acc}4d`};background:${you ? "var(--surface-card)" : "color-mix(in srgb,var(--accent) 7%,var(--surface-card))"};color:${you ? T.mut : T.pri};border-radius:3px;${you ? "" : "box-shadow:0 0 22px rgba(255,95,135,0.07);"}`,
   );
   const metaStampStyle = css(
-    "color:var(--text-faint);font-size:9px;letter-spacing:0.08em;",
+    "color:var(--text-faint);font-size:11px;letter-spacing:0.08em;",
   );
   const cardStyle = css(
     `max-width:min(680px,86%);margin-top:8px;padding:9px 11px;border:1px solid ${H.info}59;background:var(--surface-sunk);border-left:2px solid ${T.info};border-radius:2px;`,
   );
   const cardBadgeStyle = css(
-    `display:inline-flex;align-items:center;padding:1px 6px;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;border:1px solid ${T.info};color:${T.info};background:${H.info}1a;border-radius:2px;`,
+    `display:inline-flex;align-items:center;padding:1px 6px;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;border:1px solid ${T.info};color:${T.info};background:${H.info}1a;border-radius:2px;`,
   );
   const cardIdStyle = css(
-    "font-size:9.5px;color:var(--text-faint);letter-spacing:0.06em;",
+    "font-size:11px;color:var(--text-faint);letter-spacing:0.06em;",
   );
   const cardConfStyle = css(
-    `font-size:9.5px;color:${T.mut};letter-spacing:0.04em;`,
+    `font-size:11px;color:${T.mut};letter-spacing:0.04em;`,
   );
   const cardBodyStyle = css(
     "margin-top:6px;font-family:var(--font-sans,system-ui);font-size:12px;line-height:1.4;color:var(--text-primary);text-wrap:pretty;",
@@ -156,7 +161,7 @@ function renderRow(key: string, r: RowProps, ctx?: RowRenderCtx): JSX.Element {
     `flex:1 1 100%;font-size:11px;line-height:1.4;color:${T.mut};margin-bottom:2px;`,
   );
   const actionBtnBase =
-    `padding:5px 11px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.06em;text-transform:uppercase;border-radius:2px;cursor:pointer;white-space:nowrap;`;
+    `padding:5px 11px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.06em;text-transform:uppercase;border-radius:2px;cursor:pointer;white-space:nowrap;`;
   const confirmBtnStyle = css(
     `${actionBtnBase}color:var(--text-on-accent);background:var(--accent);border:1px solid var(--accent);box-shadow:0 0 12px rgba(255,95,135,0.28);`,
   );
@@ -283,7 +288,11 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
   // dante proposal. Prevents double-firing a mutation from the same row.
   const [acted, setActed] = useState<Set<string>>(() => new Set<string>());
   const threadRef = useRef<HTMLDivElement | null>(null);
-  const seenLen = useRef<number | null>(null);
+  // Session|mode key whose initial scroll-to-latest has been applied.
+  const scrolledKey = useRef<string | null>(null);
+  // True while the operator's view sits at (or within BOTTOM_SLACK_PX of) the
+  // bottom of the thread.
+  const pinnedToBottom = useRef<boolean>(true);
 
   const sessionsQ = useSessions();
   const createSession = useCreateSession();
@@ -305,27 +314,30 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
   const createVocab = useCreateVocabEntry();
   const deleteVocab = useDeleteVocabEntry();
 
-  // Reset the scroll baseline when the session changes.
-  useEffect(() => {
-    seenLen.current = null;
-  }, [activeSessionId, mode]);
-
-  const totalMessageCount = sessionMessages.length;
-
-  // The design opens with the greeting at the top of the thread. On first load
-  // of a session we stay at the top; once new turns actually arrive we follow them
-  // down to the bottom.
-  useEffect(() => {
+  // Scroll policy: the first loaded page of a session (or after a mode switch)
+  // lands on the latest message. Later data updates follow the thread down only
+  // while the operator is already at the bottom, so reading older turns is never
+  // interrupted by a refetch or a new reply.
+  const scrollKey = `${activeSessionId ?? ""}|${mode}`;
+  const messagesData = sessionMessagesQ.data;
+  useLayoutEffect(() => {
     const el = threadRef.current;
     if (!el) return;
-    if (seenLen.current === null) {
-      seenLen.current = totalMessageCount;
-      el.scrollTop = 0;
+    if (scrolledKey.current !== scrollKey) {
+      if (!messagesData) return;
+      scrolledKey.current = scrollKey;
+      pinnedToBottom.current = true;
+      el.scrollTop = el.scrollHeight;
       return;
     }
-    if (totalMessageCount > seenLen.current) el.scrollTop = el.scrollHeight;
-    seenLen.current = totalMessageCount;
-  }, [totalMessageCount]);
+    if (pinnedToBottom.current) el.scrollTop = el.scrollHeight;
+  }, [scrollKey, messagesData]);
+
+  const onThreadScroll = (): void => {
+    const el = threadRef.current;
+    if (!el) return;
+    pinnedToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_SLACK_PX;
+  };
 
   const bindLabel = investigationId ? shortCaseId(moduleId, investigationId) : moduleId;
 
@@ -337,35 +349,51 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
   const suggestions = adv ? ADV_SUGGESTIONS : BASIC_SUGGESTIONS;
 
   const trimmed = draft.trim();
-  const isSending = postSessionMessage.isPending || createSession.isPending;
+  // Local flag spans the whole send (create-session then post), so the gap
+  // between the two mutations cannot admit a second send.
+  const [sending, setSending] = useState<boolean>(false);
 
-  const canSend = trimmed.length > 0 && !isSending;
+  const canSend = trimmed.length > 0 && !sending;
 
+  // The draft is cleared only after the message is accepted; a failed send
+  // leaves the text in the composer and reports the error.
   const doSend = (): void => {
     if (!canSend) return;
     const content = trimmed;
+    setSending(true);
+    const failSend = (err: unknown): void => {
+      setSending(false);
+      toast.fail("send message", err);
+    };
+    const post = (sessionId?: string): void => {
+      postSessionMessage.mutate(
+        { content, sessionId },
+        {
+          onSuccess: () => {
+            setSending(false);
+            // Keep text the operator typed while the send was in flight.
+            setDraft((current) => (current.trim() === content ? "" : current));
+          },
+          onError: failSend,
+        },
+      );
+    };
     if (!activeSessionId) {
       // Create the session, then post THIS message to it. Without the nested
-      // post the operator's first message is dropped (session made, draft
-      // cleared, nothing sent).
+      // post the operator's first message is dropped.
       createSession.mutate(
         { title: content.slice(0, 40) },
         {
           onSuccess: (newSess) => {
             setActiveSessionId(newSess.session_id);
-            setDraft("");
-            postSessionMessage.mutate({ content, sessionId: newSess.session_id });
+            post(newSess.session_id);
           },
+          onError: failSend,
         },
       );
       return;
     }
-    postSessionMessage.mutate(
-      { content },
-      {
-        onSuccess: () => setDraft(""),
-      },
-    );
+    post(undefined);
   };
 
   const markActed = (messageId?: string): void => {
@@ -447,6 +475,7 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
           setDraft("");
           setActed(new Set<string>());
         },
+        onError: (err) => toast.fail("new chat", err),
       },
     );
   };
@@ -479,7 +508,7 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
     "flex:1;min-height:0;width:100%;max-width:820px;margin:20px auto 0;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--border);border-radius:4px;background:color-mix(in srgb,var(--surface-card) 84%,transparent);box-shadow:0 0 46px rgba(255,95,135,0.09),inset 1px 1px 0 rgba(255,255,255,0.03),inset -1px -1px 0 rgba(0,0,0,0.5);backdrop-filter:blur(3px);",
   );
   const panelBarStyle = css(
-    "flex:0 0 26px;height:26px;display:flex;align-items:center;gap:9px;padding:0 10px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-size:10px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-muted);",
+    "flex:0 0 26px;height:26px;display:flex;align-items:center;gap:9px;padding:0 10px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-muted);",
   );
   const panelBarDot = css(
     "width:7px;height:7px;flex:0 0 auto;background:var(--accent);box-shadow:0 0 7px var(--accent);",
@@ -506,13 +535,13 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
     "display:flex;flex-wrap:wrap;gap:6px;margin-bottom:9px;",
   );
   const suggestionBtn = css(
-    `padding:5px 10px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.04em;color:${T.mut};background:var(--surface-card);border:1px solid var(--border-soft);border-radius:2px;cursor:pointer;white-space:nowrap;`,
+    `padding:5px 10px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.04em;color:${T.mut};background:var(--surface-card);border:1px solid var(--border-soft);border-radius:2px;cursor:pointer;white-space:nowrap;`,
   );
   const newInvBtn = css(
-    `padding:5px 10px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.04em;color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);border:1px solid ${H.acc}66;border-radius:2px;cursor:pointer;white-space:nowrap;`,
+    `padding:5px 10px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.04em;color:var(--accent);background:color-mix(in srgb,var(--accent) 12%,transparent);border:1px solid ${H.acc}66;border-radius:2px;cursor:pointer;white-space:nowrap;`,
   );
   const xrayBtnStyle = css(
-    `flex:0 0 auto;font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--accent);background:transparent;border:0;cursor:pointer;padding:0 4px;`,
+    `flex:0 0 auto;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--accent);background:transparent;border:0;cursor:pointer;min-height:28px;display:inline-flex;align-items:center;padding:0 4px;`,
   );
   const composerStyle = css(
     `display:flex;align-items:center;gap:9px;padding:6px 8px 6px 12px;background:var(--surface-card);border:1px solid ${H.acc}59;border-radius:3px;box-shadow:0 0 30px rgba(255,95,135,0.12),var(--bevel-raised,inset 1px 1px 0 rgba(255,255,255,0.03));`,
@@ -524,10 +553,10 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
     "flex:1;min-width:0;background:transparent;border:0;outline:none;color:var(--text-primary);font-family:var(--font-mono);font-size:13px;letter-spacing:0.01em;",
   );
   const modeBtnStyle = css(
-    `flex:0 0 auto;padding:0 10px;height:30px;font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.1em;text-transform:uppercase;color:${adv ? T.acc : T.mut};background:transparent;border:1px solid ${adv ? `${H.acc}66` : "var(--border-soft)"};border-radius:2px;cursor:pointer;`,
+    `flex:0 0 auto;padding:0 10px;height:30px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:${adv ? T.acc : T.mut};background:transparent;border:1px solid ${adv ? `${H.acc}66` : "var(--border-soft)"};border-radius:2px;cursor:pointer;`,
   );
   const sendBase =
-    "flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;padding:0 14px;height:30px;font-family:var(--font-mono);font-size:10px;text-transform:uppercase;color:var(--text-on-accent);background:var(--accent);border:1px solid var(--accent);border-radius:2px;cursor:pointer;box-shadow:0 0 16px rgba(255,95,135,0.3);";
+    "flex:0 0 auto;display:inline-flex;align-items:center;gap:6px;padding:0 14px;height:30px;font-family:var(--font-mono);font-size:11px;text-transform:uppercase;color:var(--text-on-accent);background:var(--accent);border:1px solid var(--accent);border-radius:2px;cursor:pointer;box-shadow:0 0 16px rgba(255,95,135,0.3);";
   const sendStyle = css(
     canSend ? sendBase : `${sendBase}opacity:0.45;cursor:not-allowed;`,
   );
@@ -563,7 +592,7 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
             borderRadius: "2px",
             color: "var(--text-muted)",
             fontFamily: "var(--font-mono)",
-            fontSize: "9px",
+            fontSize: 11,
             letterSpacing: "0.1em",
             textTransform: "uppercase",
             padding: "2px 7px",
@@ -579,7 +608,7 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
         ) : null}
       </div>
 
-      <div ref={threadRef} style={threadStyle}>
+      <div ref={threadRef} style={threadStyle} onScroll={onThreadScroll}>
         {threadContent}
       </div>
 
@@ -622,7 +651,7 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
                       )}
                     >
                       <span style={{ color: "var(--accent)", letterSpacing: "0.06em" }}>{w.label}</span>
-                      <span style={{ color: "var(--text-muted)", fontSize: 10, letterSpacing: "0.02em" }}>{w.purpose}</span>
+                      <span style={{ color: "var(--text-muted)", fontSize: 11, letterSpacing: "0.02em" }}>{w.purpose}</span>
                     </button>
                   ))}
                 </div>
@@ -660,7 +689,7 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
             disabled={!canSend}
             style={sendStyle}
           >
-            <span style={sendLabelStyle}>send</span>
+            <span style={sendLabelStyle}>{sending ? "sending..." : "send"}</span>
             <span style={sendArrowStyle}>{"\u25b8"}</span>
           </button>
         </div>

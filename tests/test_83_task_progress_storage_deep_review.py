@@ -170,10 +170,10 @@ class TestProgressStreamCatchup:
             events = await ps.catchup("task-xyz")
 
         mock_client.xrange.assert_awaited_once_with("task:task-xyz:progress", "0", "+")
-        assert len(events) == 3
-        assert events[0]["stage"] == "init"
-        assert events[1]["percent"] == "50"
-        assert events[2]["message"] == "Complete"
+        assert [event_id for event_id, _ in events] == ["1-0", "2-0", "3-0"]
+        assert events[0][1]["stage"] == "init"
+        assert events[1][1]["percent"] == "50"
+        assert events[2][1]["message"] == "Complete"
 
     async def test_catchup_returns_empty_list_when_no_events(self) -> None:
         """FILE-29: catchup() returns [] for task with no progress events."""
@@ -191,7 +191,10 @@ class TestProgressStreamCatchup:
     async def test_catchup_with_custom_last_id(self) -> None:
         """FILE-29: catchup(last_id='5-0') reads only events after ID 5-0."""
         mock_client = MagicMock()
+        # XRANGE is inclusive: the entry equal to last_id (already delivered
+        # to the client) must be dropped so a resume is duplicate-free.
         mock_client.xrange = AsyncMock(return_value=[
+            ("5-0", {"stage": "s", "message": "seen", "percent": "50", "timestamp": "t"}),
             ("6-0", {"stage": "s", "message": "m", "percent": "60", "timestamp": "t"}),
         ])
 
@@ -202,7 +205,7 @@ class TestProgressStreamCatchup:
             events = await ps.catchup("task-1", last_id="5-0")
 
         mock_client.xrange.assert_awaited_once_with("task:task-1:progress", "5-0", "+")
-        assert len(events) == 1
+        assert events == [("6-0", {"stage": "s", "message": "m", "percent": "60", "timestamp": "t"})]
 
 
 # ===========================================================================
@@ -230,7 +233,7 @@ class TestProgressStreamStreamEvents:
             gen = ps.stream_events("task-1")
 
             result = await gen.__anext__()
-            assert result == event_data
+            assert result == ("1-0", event_data)
 
             with pytest.raises(KeyboardInterrupt):
                 await gen.__anext__()
@@ -251,7 +254,7 @@ class TestProgressStreamStreamEvents:
             gen = ps.stream_events("task-1")
 
             result = await gen.__anext__()
-            assert result == {"type": "ping"}
+            assert result == (None, {"type": "ping"})
 
     async def test_stream_events_advances_current_id(self) -> None:
         """FILE-29: After receiving event '5-0', next XREAD uses '5-0' as current_id."""

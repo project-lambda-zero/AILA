@@ -68,8 +68,11 @@ async function requestJson(path: string, opts: RequestInit): Promise<unknown> {
 export async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {
   const json = await requestJson(path, opts);
   if (json && typeof json === "object" && "data" in json) {
+    // SAFETY: T is the caller's declared response type; the payload is untrusted
+    // JSON and callers narrow it at the boundary (api/parse.ts) before use.
     return json.data as T;
   }
+  // SAFETY: same contract as the envelope branch above; T is the caller's declared type.
   return json as T;
 }
 
@@ -78,5 +81,6 @@ export async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise
  * apiFetch would drop -- e.g. a `PaginatedMeta` {total, offset, limit} that
  * lives next to `data`, not inside it (DataEnvelope[list] endpoints). */
 export async function apiFetchEnvelope<T>(path: string, opts: RequestInit = {}): Promise<T> {
+  // SAFETY: T is the caller's declared envelope type; callers narrow the untrusted payload at the boundary.
   return (await requestJson(path, opts)) as T;
 }

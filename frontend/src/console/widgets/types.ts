@@ -11,14 +11,20 @@ import type { JSX } from "react";
 
 import type { WindowRect } from "../window";
 
-export type WidgetKind =
-  | "bound-case"
-  | "queue-depth"
-  | "budget"
-  | "recent-findings"
-  | "mcp-health"
-  | "dante-actions"
-  | "clock";
+/** Canonical kind order for the admin editor + missing-kind backfill, and the
+ * single source of the `WidgetKind` union. `catalog.tsx` keys its catalog by
+ * `Record<WidgetKind, ...>`, so adding a kind here forces a catalog entry. */
+export const WIDGET_KINDS = [
+  "bound-case",
+  "queue-depth",
+  "budget",
+  "recent-findings",
+  "mcp-health",
+  "dante-actions",
+  "clock",
+] as const;
+
+export type WidgetKind = (typeof WIDGET_KINDS)[number];
 
 export type WidgetSide = "left" | "right" | "top" | "bottom";
 
@@ -61,17 +67,6 @@ export interface WidgetCatalogEntry {
   defaultSize: { w: number; h: number };
   render: (props: WidgetProps) => JSX.Element;
 }
-
-/** Canonical kind order for the admin editor + missing-kind backfill. */
-export const WIDGET_KINDS: readonly WidgetKind[] = [
-  "bound-case",
-  "queue-depth",
-  "budget",
-  "recent-findings",
-  "mcp-health",
-  "dante-actions",
-  "clock",
-] as const;
 
 const SIDES: readonly WidgetSide[] = ["left", "right", "top", "bottom"] as const;
 

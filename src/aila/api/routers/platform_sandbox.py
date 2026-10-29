@@ -37,7 +37,7 @@ from aila.platform.services.sandbox import (
     SandboxSpec,
     SandboxUnavailableError,
 )
-from aila.platform.services.sandbox.service import SandboxProbe, SandboxService
+from aila.platform.services.sandbox.service import SandboxConfig, SandboxProbe, SandboxService
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import SandboxExecHistoryRecord
 
@@ -203,6 +203,53 @@ class SandboxHistoryRow(BaseModel):
     created_at: str
 
 
+def build_sandbox_status(cfg: SandboxConfig) -> SandboxStatus:
+    """Derive the config-only readiness snapshot from a resolved sandbox config.
+
+    Pure function: no I/O. Shared by ``GET /platform/sandbox/status`` and the
+    platform onboarding checks so both report the same readiness verdict.
+    """
+    backend = (cfg.backend or "none").strip().lower()
+    ssh_host = (cfg.ssh_host or "").strip()
+    checks: list[SandboxCheck] = []
+
+    backend_ok = backend in ("nsjail", "firecracker")
+    checks.append(SandboxCheck(
+        name="backend selected",
+        ok=backend_ok,
+        detail=(f"sandbox_backend={backend}" if backend_ok
+                else "sandbox_backend is 'none' -- set it to 'nsjail' or 'firecracker' to provision"),
+    ))
+    host_ok = bool(ssh_host)
+    checks.append(SandboxCheck(
+        name="ssh host configured",
+        ok=host_ok,
+        detail=(f"sandbox_ssh_host={ssh_host}" if host_ok else "sandbox_ssh_host is empty"),
+    ))
+
+    if backend == "nsjail":
+        checks.append(SandboxCheck(
+            name="nsjail binary configured",
+            ok=bool(cfg.nsjail_bin.strip()),
+            detail=f"sandbox_nsjail_bin={cfg.nsjail_bin or '(unset)'}",
+        ))
+    elif backend == "firecracker":
+        checks.append(SandboxCheck(name="firecracker binary configured", ok=bool(cfg.firecracker_bin.strip()), detail=f"sandbox_firecracker_bin={cfg.firecracker_bin or '(unset)'}"))
+        checks.append(SandboxCheck(name="jailer binary configured", ok=bool(cfg.jailer_bin.strip()), detail=f"sandbox_jailer_bin={cfg.jailer_bin or '(unset)'}"))
+        checks.append(SandboxCheck(name="rootfs path configured", ok=bool(cfg.rootfs_path.strip()), detail=f"sandbox_rootfs_path={cfg.rootfs_path or '(unset)'}"))
+        checks.append(SandboxCheck(name="kernel path configured", ok=bool(cfg.kernel_path.strip()), detail=f"sandbox_kernel_path={cfg.kernel_path or '(unset)'}"))
+
+    provisioned = backend_ok and host_ok and all(c.ok for c in checks)
+    return SandboxStatus(
+        backend=backend or "none",
+        provisioned=provisioned,
+        ssh_host=ssh_host,
+        ssh_reachable=None,
+        host_os=os.name,
+        checks=checks,
+    )
+
+
 def _to_response(result: SandboxResult) -> SandboxResultResponse:
     return SandboxResultResponse(
         backend=result.backend,
@@ -306,46 +353,7 @@ async def sandbox_status(
     del request, ctx
     service = SandboxService(build_platform_settings(get_settings()))
     cfg = await service.describe()
-
-    backend = (cfg.backend or "none").strip().lower()
-    ssh_host = (cfg.ssh_host or "").strip()
-    checks: list[SandboxCheck] = []
-
-    backend_ok = backend in ("nsjail", "firecracker")
-    checks.append(SandboxCheck(
-        name="backend selected",
-        ok=backend_ok,
-        detail=(f"sandbox_backend={backend}" if backend_ok
-                else "sandbox_backend is 'none' -- set it to 'nsjail' or 'firecracker' to provision"),
-    ))
-    host_ok = bool(ssh_host)
-    checks.append(SandboxCheck(
-        name="ssh host configured",
-        ok=host_ok,
-        detail=(f"sandbox_ssh_host={ssh_host}" if host_ok else "sandbox_ssh_host is empty"),
-    ))
-
-    if backend == "nsjail":
-        checks.append(SandboxCheck(
-            name="nsjail binary configured",
-            ok=bool(cfg.nsjail_bin.strip()),
-            detail=f"sandbox_nsjail_bin={cfg.nsjail_bin or '(unset)'}",
-        ))
-    elif backend == "firecracker":
-        checks.append(SandboxCheck(name="firecracker binary configured", ok=bool(cfg.firecracker_bin.strip()), detail=f"sandbox_firecracker_bin={cfg.firecracker_bin or '(unset)'}"))
-        checks.append(SandboxCheck(name="jailer binary configured", ok=bool(cfg.jailer_bin.strip()), detail=f"sandbox_jailer_bin={cfg.jailer_bin or '(unset)'}"))
-        checks.append(SandboxCheck(name="rootfs path configured", ok=bool(cfg.rootfs_path.strip()), detail=f"sandbox_rootfs_path={cfg.rootfs_path or '(unset)'}"))
-        checks.append(SandboxCheck(name="kernel path configured", ok=bool(cfg.kernel_path.strip()), detail=f"sandbox_kernel_path={cfg.kernel_path or '(unset)'}"))
-
-    provisioned = backend_ok and host_ok and all(c.ok for c in checks)
-    return DataEnvelope(data=SandboxStatus(
-        backend=backend or "none",
-        provisioned=provisioned,
-        ssh_host=ssh_host,
-        ssh_reachable=None,
-        host_os=os.name,
-        checks=checks,
-    ))
+    return DataEnvelope(data=build_sandbox_status(cfg))
 
 
 def _history_row(record: SandboxExecHistoryRecord) -> SandboxHistoryRow:

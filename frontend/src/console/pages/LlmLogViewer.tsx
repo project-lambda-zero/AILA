@@ -19,6 +19,7 @@ import type { JSX, ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { apiFetch } from "../../api/client";
+import { readNum, readStr } from "../../api/parse";
 import { css } from "../css";
 import { LlmChatTranscript } from "./LlmLogEntry";
 
@@ -42,20 +43,6 @@ export function useLlmLogContent(id: string | null) {
     staleTime: 30_000,
     retry: false,
   });
-}
-
-/** Read a scalar field from a row without leaking `unknown` into JSX. */
-function scalar(row: Record<string, unknown>, key: string): string {
-  const v = row[key];
-  if (v === null || v === undefined) return "\u2014";
-  if (typeof v === "string") return v === "" ? "\u2014" : v;
-  if (typeof v === "number" || typeof v === "boolean") return String(v);
-  return "\u2014";
-}
-
-function num(row: Record<string, unknown>, key: string): number | null {
-  const v = row[key];
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
 /** Format a USD cost with enough precision to read individual model calls
@@ -110,13 +97,13 @@ export function LlmLogViewer({ row }: { row: Record<string, unknown> }): JSX.Ele
 
   const chips: ReactNode = (
     <div style={chipStrip}>
-      <Chip label="model" value={scalar(rec, "model")} />
-      <Chip label="persona" value={scalar(rec, "task_type")} />
-      <Chip label="in" value={num(rec, "input_tokens")?.toLocaleString() ?? "\u2014"} />
-      <Chip label="out" value={num(rec, "output_tokens")?.toLocaleString() ?? "\u2014"} />
-      <Chip label="cost" value={formatCost(num(rec, "cost_usd"))} />
-      <Chip label="latency" value={formatMs(num(rec, "duration_ms"))} />
-      <Chip label="status" value={scalar(rec, "status")} />
+      <Chip label="model" value={readStr(rec, "model") || "\u2014"} />
+      <Chip label="persona" value={readStr(rec, "task_type") || "\u2014"} />
+      <Chip label="in" value={readNum(rec, "input_tokens")?.toLocaleString() ?? "\u2014"} />
+      <Chip label="out" value={readNum(rec, "output_tokens")?.toLocaleString() ?? "\u2014"} />
+      <Chip label="cost" value={formatCost(readNum(rec, "cost_usd"))} />
+      <Chip label="latency" value={formatMs(readNum(rec, "duration_ms"))} />
+      <Chip label="status" value={readStr(rec, "status") || "\u2014"} />
     </div>
   );
 
@@ -172,7 +159,7 @@ const chipStrip = css(
 );
 const chipWrap = css("display:inline-flex;align-items:baseline;gap:5px;min-width:0;");
 const chipLabel = css(
-  "font-family:var(--font-mono);font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);",
+  "font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);",
 );
 const chipValue = css(
   "font-family:var(--font-mono);font-size:11px;color:var(--text-primary);font-variant-numeric:tabular-nums;",
@@ -192,14 +179,14 @@ const pane = css(
   "flex:1 1 320px;min-width:280px;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--radius-md,3px);background:color-mix(in srgb,var(--surface-card) 84%,transparent);overflow:hidden;",
 );
 const paneHeader = css(
-  "flex:0 0 auto;display:flex;align-items:center;height:var(--panel-title-h,27px);padding:0 12px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:9.5px;text-transform:uppercase;letter-spacing:0.14em;color:var(--text-muted);",
+  "flex:0 0 auto;display:flex;align-items:center;height:var(--panel-title-h,27px);padding:0 12px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;text-transform:uppercase;letter-spacing:0.14em;color:var(--text-muted);",
 );
 const paneBodyBox = css("flex:1;min-height:0;overflow:auto;padding:10px 12px;");
 const bannerPreview = css(
-  "border:1px solid #ffb85f;border-radius:2px;padding:8px 10px;background:color-mix(in srgb,#ffb85f 12%,transparent);color:#ffb85f;font-family:var(--font-mono);font-size:10.5px;line-height:1.5;letter-spacing:0.02em;",
+  "border:1px solid #ffb85f;border-radius:2px;padding:8px 10px;background:color-mix(in srgb,#ffb85f 12%,transparent);color:#ffb85f;font-family:var(--font-mono);font-size:11px;line-height:1.5;letter-spacing:0.02em;",
 );
 const bannerMissing = css(
-  "border:1px solid var(--border);border-radius:2px;padding:8px 10px;background:var(--surface-sunk);color:var(--text-muted);font-family:var(--font-mono);font-size:10.5px;line-height:1.5;letter-spacing:0.02em;",
+  "border:1px solid var(--border);border-radius:2px;padding:8px 10px;background:var(--surface-sunk);color:var(--text-muted);font-family:var(--font-mono);font-size:11px;line-height:1.5;letter-spacing:0.02em;",
 );
 
 export default LlmLogViewer;

@@ -380,21 +380,20 @@ async def stream_scan_events(
             # Send initial connected event immediately so frontend knows SSE is up
             yield f"data: {json.dumps({'stage': 'stream', 'message': 'Connected', 'percent': 0})}\n\n"
 
-            # Track the newest stream id we replayed so the live stream does not
-            # re-emit those same events (previous behaviour duplicated every event).
+            # Every progress frame carries an ``id:`` line holding its Redis
+            # stream id; a reconnecting client passes the last one back as
+            # ``last_id``. The live read resumes after the newest replayed id
+            # so no event is sent twice.
             resume_from = last_id
             latest_stage = "submitted"
             try:
                 catchup_events = await stream.catchup(run_id, last_id)
-                for event in catchup_events:
-                    yield f"data: {json.dumps(event)}\n\n"
+                for event_id, event in catchup_events:
+                    yield f"id: {event_id}\ndata: {json.dumps(event)}\n\n"
+                    resume_from = event_id
                     stage = event.get("stage")
                     if stage:
                         latest_stage = stage
-                # ProgressStream.catchup returns events without their stream ids
-                # today, so use "$" to mean "only new events from here" -- avoids
-                # the duplicate replay reported by operators.
-                resume_from = "$"
             except Exception as exc:
                 _log.warning("Scan SSE catchup failed for %s: %s", run_id, exc)
 
@@ -408,7 +407,7 @@ async def stream_scan_events(
             # closes the SSE connection with a done sentinel instead of crashing the
             # response, mirroring the catchup block above.
             try:
-                async for event in stream.stream_events(run_id, resume_from):
+                async for event_id, event in stream.stream_events(run_id, resume_from):
                     # 60-4: end the generator promptly when the client hangs
                     # up so the server does not hold a Redis connection +
                     # coroutine per zombie client until the next XREAD tick
@@ -442,7 +441,7 @@ async def stream_scan_events(
                         yield f"data: {json.dumps(hb_payload)}\n\n"
                         continue
 
-                    yield f"data: {json.dumps(event)}\n\n"
+                    yield f"id: {event_id}\ndata: {json.dumps(event)}\n\n"
                     stage = event.get("stage")
                     if stage:
                         latest_stage = stage

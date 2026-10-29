@@ -17,7 +17,7 @@
 import { useState } from "react";
 import type { JSX } from "react";
 
-import type { ModulePageProps } from "../../contract";
+import type { WindowChromeProps } from "../../contract";
 import { ConsoleWindow } from "../../window";
 import CostConfigs from "./CostConfigs";
 import CostDetail from "./CostDetail";
@@ -35,7 +35,7 @@ const SEGMENT_LABEL: Record<Segment, string> = {
   configs: "configs",
 };
 
-export default function CostReportingPage(props: ModulePageProps): JSX.Element {
+export default function CostReportingPage(props: WindowChromeProps): JSX.Element {
   const { windowId, title, isFocused, onFocus, onBack, onMinimize, isFullscreen, onToggleFullscreen } = props;
 
   const [segment, setSegment] = useState<Segment>(() => {
@@ -123,7 +123,7 @@ export default function CostReportingPage(props: ModulePageProps): JSX.Element {
           padding: "8px 14px",
           background: "var(--surface-chrome)",
           borderBottom: "1px solid var(--border)",
-          fontSize: 10.5,
+          fontSize: 11,
           letterSpacing: "0.12em",
           textTransform: "uppercase",
           color: "var(--text-muted)",

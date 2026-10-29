@@ -340,6 +340,36 @@ export const CREATE_FORMS = {
       { name: "theme", label: "theme", type: "select", options: MALWARE_WORKSPACE_THEMES },
     ],
   },
+  // MalwareProjectCreate (malware/contracts/project.py): binds one existing
+  // target to an analysis workstation inside a workspace.
+  "malware:projects": {
+    title: "malware \u00b7 new project",
+    endpoint: "/malware/projects",
+    method: "POST",
+    fields: [
+      { name: "name", label: "project name", type: "text", required: true },
+      workspaceRef("/malware/workspaces"),
+      {
+        name: "target_id",
+        label: "target",
+        type: "select",
+        required: true,
+        optionsFrom: "/malware/targets",
+        optionsValueField: "id",
+        optionsLabelField: "display_name",
+      },
+      {
+        name: "analysis_system_id",
+        label: "analysis workstation",
+        type: "select",
+        required: true,
+        optionsFrom: "/systems",
+        optionsValueField: "id",
+        optionsLabelField: "name",
+      },
+      { name: "context_notes", label: "context notes", type: "textarea" },
+    ],
+  },
   "malware:patterns": {
     title: "malware \u00b7 new pattern",
     endpoint: "/malware/patterns",

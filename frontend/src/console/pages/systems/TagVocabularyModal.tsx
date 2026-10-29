@@ -78,7 +78,7 @@ export default function TagVocabularyModal(props: Props): JSX.Element {
           onClick={props.onClose}
           aria-label="close"
           style={{
-            ...css("width:24px;height:24px;display:flex;align-items:center;justify-content:center;background:transparent;border:0;color:var(--text-muted);cursor:pointer;font-size:12px;"),
+            ...css("width:24px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:0;color:var(--text-muted);cursor:pointer;font-size:12px;"),
             position: "absolute",
             top: 8,
             right: 8,
@@ -104,7 +104,7 @@ export default function TagVocabularyModal(props: Props): JSX.Element {
           error={create.isError ? "server: " + apiErrDetail(create.error) : null}
         >
           <div>
-            <div style={css("font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);margin-bottom:6px;")}>
+            <div style={css("font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);margin-bottom:6px;")}>
               vocabulary {entries.length ? "(" + entries.length + ")" : ""}
             </div>
             <div style={css("border:1px solid var(--border-soft);border-radius:4px;overflow:hidden;")}>
@@ -124,15 +124,15 @@ export default function TagVocabularyModal(props: Props): JSX.Element {
                   style={css("display:grid;grid-template-columns:150px 1fr auto;gap:10px;align-items:center;padding:7px 11px;border-bottom:1px solid var(--border-faint);")}
                 >
                   <span style={css("font-family:var(--font-mono);font-size:11px;color:var(--accent);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{v.tag_key}</span>
-                  <span style={css("font-size:10.5px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{v.description || "\u2014"}</span>
+                  <span style={css("font-size:11px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{v.description || "\u2014"}</span>
                   {v.is_system_default ? (
-                    <span style={css("font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);border:1px solid var(--border-soft);border-radius:2px;padding:2px 6px;")}>default</span>
+                    <span style={css("font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);border:1px solid var(--border-soft);border-radius:2px;padding:2px 6px;")}>default</span>
                   ) : (
                     <button
                       type="button"
                       onClick={() => del.mutate(v.tag_key)}
                       disabled={del.isPending}
-                      style={css("padding:0 8px;height:22px;font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.06em;text-transform:uppercase;color:#ff5f87;background:transparent;border:1px solid #ff5f8759;border-radius:2px;cursor:pointer;")}
+                      style={css("padding:0 8px;height:28px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:#ff5f87;background:transparent;border:1px solid #ff5f8759;border-radius:2px;cursor:pointer;")}
                     >
                       remove
                     </button>
@@ -141,16 +141,16 @@ export default function TagVocabularyModal(props: Props): JSX.Element {
               ))}
             </div>
             {del.isError ? (
-              <div style={css("margin-top:6px;font-size:10.5px;color:var(--status-warn);")}>
+              <div style={css("margin-top:6px;font-size:11px;color:var(--status-warn);")}>
                 remove failed {"\u2014"} {apiErrDetail(del.error)}
               </div>
             ) : null}
           </div>
 
           <div style={css("border-top:1px solid var(--border-soft);padding-top:12px;display:flex;flex-direction:column;gap:9px;")}>
-            <span style={css("font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>new tag key</span>
+            <span style={css("font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>new tag key</span>
             <label style={css("display:flex;flex-direction:column;gap:5px;")}>
-              <span style={css("font-size:10.5px;letter-spacing:0.06em;color:var(--text-primary);")}>tag key</span>
+              <span style={css("font-size:11px;letter-spacing:0.06em;color:var(--text-primary);")}>tag key</span>
               <input
                 type="text"
                 value={tagKey}
@@ -158,10 +158,10 @@ export default function TagVocabularyModal(props: Props): JSX.Element {
                 placeholder="lowercase alphanumeric + underscore/hyphen"
                 style={css("background:var(--surface-sunk);border:1px solid var(--border-soft);outline:none;padding:9px 11px;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;border-radius:3px;")}
               />
-              <span style={css("font-size:9.5px;color:var(--text-faint);")}>pattern ^[a-z0-9_-]+$</span>
+              <span style={css("font-size:11px;color:var(--text-faint);")}>pattern ^[a-z0-9_-]+$</span>
             </label>
             <label style={css("display:flex;flex-direction:column;gap:5px;")}>
-              <span style={css("font-size:10.5px;letter-spacing:0.06em;color:var(--text-primary);")}>description</span>
+              <span style={css("font-size:11px;letter-spacing:0.06em;color:var(--text-primary);")}>description</span>
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}

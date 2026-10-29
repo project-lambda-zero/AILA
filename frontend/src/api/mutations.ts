@@ -12,6 +12,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { QueryKey } from "@tanstack/react-query";
 
 import { apiFetch } from "./client";
+import { asRecord, readArray } from "./parse";
 
 export type MutationMethod = "POST" | "PATCH" | "PUT";
 
@@ -117,17 +118,14 @@ export async function fetchFieldOptions(spec: FieldOptionsSpec): Promise<FieldOp
   const endpoint = spec.endpoint ?? "";
   if (!endpoint) return [];
   const raw = await apiFetch<unknown>(endpoint);
-  let arr: unknown[] = [];
-  if (Array.isArray(raw)) arr = raw;
-  else if (raw && typeof raw === "object") {
-    const obj = raw as Record<string, unknown>;
-    const k = LIST_KEYS.find((name) => Array.isArray(obj[name]));
-    if (k) arr = obj[k] as unknown[];
-  }
+  const obj = asRecord(raw);
+  const listed = obj ? LIST_KEYS.map((k) => readArray(obj, k)).find((a) => a !== null) : null;
+  const arr: unknown[] = Array.isArray(raw) ? raw : (listed ?? []);
   const out: FieldOption[] = [];
   for (const row of arr) {
-    if (!row || typeof row !== "object") continue;
-    const opt = pickOption(row as Record<string, unknown>, spec.valueField, spec.labelField);
+    const rec = asRecord(row);
+    if (!rec) continue;
+    const opt = pickOption(rec, spec.valueField, spec.labelField);
     if (opt) out.push(opt);
   }
   return out;

@@ -2531,11 +2531,11 @@ def create_forensics_router() -> APIRouter:
                 latest_stage = "queued"
                 try:
                     catchup_events = await stream.catchup(task_id, last_id)
-                    for event in catchup_events:
-                        yield f"data: {json.dumps(event)}\n\n"
+                    for event_id, event in catchup_events:
+                        yield f"id: {event_id}\ndata: {json.dumps(event)}\n\n"
+                        resume_from = event_id
                         if event.get("stage"):
                             latest_stage = event["stage"]
-                    resume_from = "$"
                 except (RuntimeError, OSError, TimeoutError, ConnectionError) as exc:
                     _log.warning("Investigation SSE catchup failed for %s: %s", task_id, exc)
 
@@ -2544,7 +2544,7 @@ def create_forensics_router() -> APIRouter:
                     yield f"event: done\ndata: {json.dumps({'status': current_status})}\n\n"
                     return
 
-                async for event in stream.stream_events(task_id, resume_from):
+                async for event_id, event in stream.stream_events(task_id, resume_from):
                     if event.get("type") == "ping":
                         current_status = await _fetch_inv_status()
                         if current_status in _INV_TERMINAL:
@@ -2553,7 +2553,7 @@ def create_forensics_router() -> APIRouter:
                         yield f"data: {json.dumps({'stage': 'heartbeat', 'message': f'Investigation running (stage={latest_stage})', 'percent': None})}\n\n"
                         continue
 
-                    yield f"data: {json.dumps(event)}\n\n"
+                    yield f"id: {event_id}\ndata: {json.dumps(event)}\n\n"
                     if event.get("stage"):
                         latest_stage = event["stage"]
                     if event.get("stage") in _INV_TERMINAL:

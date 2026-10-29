@@ -8,9 +8,20 @@
 import type { JSX } from "react";
 import { useState } from "react";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch } from "../../../api/client";
+import {
+  parseAnswerCandidate,
+  parseDirective,
+  parseInvestigationSummary,
+  parseOne,
+  parseRows,
+  parseSolidEvidence,
+  parseSuppression,
+  useForensicsQuery,
+} from "../../../api/forensics";
+import type { Directive, ForensicsFinding, InvestigationSummary, SolidEvidence, Suppression } from "../../../api/forensics";
 import {
   ChipInput,
   Field,
@@ -20,7 +31,7 @@ import {
   Select,
   TextArea,
   TextInput,
-} from "./panels";
+} from "./formControls";
 
 /* --- Investigate: POST /forensics/projects/{pid}/investigate ---------- */
 
@@ -38,11 +49,14 @@ export function InvestigateForm({
   const [maxAttempts, setMaxAttempts] = useState(10);
   const [err, setErr] = useState<string | null>(null);
   const m = useMutation({
-    mutationFn: async (): Promise<{ id: string }> =>
-      apiFetch<{ id: string }>(`/forensics/projects/${projectId}/investigate`, {
-        method: "POST",
-        body: JSON.stringify({ question, max_attempts: maxAttempts }),
-      }),
+    mutationFn: async (): Promise<InvestigationSummary> =>
+      parseOne(
+        await apiFetch<unknown>(`/forensics/projects/${projectId}/investigate`, {
+          method: "POST",
+          body: JSON.stringify({ question, max_attempts: maxAttempts }),
+        }),
+        parseInvestigationSummary,
+      ),
     onSuccess: (res) => {
       void qc.invalidateQueries({ queryKey: ["forensics", projectId, "investigations"] });
       onCreated(res.id);
@@ -66,10 +80,10 @@ export function InvestigateForm({
       submitting={m.isPending}
       error={err}
     >
-      <Field label="question" hint="1\u20134000 chars. Frames the free-flow agent's investigation.">
+      <Field label="question" hint={"1\u20134000 chars. Frames the free-flow agent's investigation."}>
         <TextArea value={question} onChange={setQuestion} rows={5} placeholder="What executed on host X between 12:00 and 13:00 UTC?" />
       </Field>
-      <Field label="max attempts" hint="Turn budget for the agent. 1\u201350; default 10.">
+      <Field label="max attempts" hint={"Turn budget for the agent. 1\u201350; default 10."}>
         <NumberInput value={maxAttempts} onChange={setMaxAttempts} min={1} max={50} />
       </Field>
     </FormBox>
@@ -77,11 +91,6 @@ export function InvestigateForm({
 }
 
 /* --- Directive create: POST /projects/{pid}/directives ---------------- */
-
-interface DirectiveInvestigationOption {
-  id: string;
-  question: string;
-}
 
 export function DirectiveCreateForm({
   projectId,
@@ -99,23 +108,24 @@ export function DirectiveCreateForm({
 
   // Populate the scope select from the project's investigations so the
   // analyst can pin a directive to one run instead of the whole project.
-  const invQ = useQuery({
-    queryKey: ["forensics", projectId, "investigations"],
-    queryFn: () => apiFetch<DirectiveInvestigationOption[]>(`/forensics/projects/${projectId}/investigations`),
-    retry: false,
-  });
+  const invQ = useForensicsQuery(projectId, ["investigations"], `/forensics/projects/${projectId}/investigations`, (raw) =>
+    parseRows(raw, parseInvestigationSummary),
+  );
   const invOpts = invQ.data ?? [];
 
   const m = useMutation({
-    mutationFn: async (): Promise<unknown> => {
+    mutationFn: async (): Promise<Directive> => {
       const body: Record<string, unknown> = { text };
       if (investigationId) body.investigation_id = investigationId;
       if (strategyFamily.trim()) body.strategy_family = strategyFamily.trim();
       if (requiredArtifact.trim()) body.required_artifact = requiredArtifact.trim();
-      return apiFetch(`/forensics/projects/${projectId}/directives`, {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
+      return parseOne(
+        await apiFetch<unknown>(`/forensics/projects/${projectId}/directives`, {
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+        parseDirective,
+      );
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["forensics", projectId, "directives"] });
@@ -144,7 +154,7 @@ export function DirectiveCreateForm({
       submitting={m.isPending}
       error={err}
     >
-      <Field label="directive" hint="1\u20134000 chars. Standing rule the reasoning engine must honour.">
+      <Field label="directive" hint={"1\u20134000 chars. Standing rule the reasoning engine must honour."}>
         <TextArea value={text} onChange={setText} rows={5} placeholder="Always verify the persistence mechanism before submitting a verdict." />
       </Field>
       <Field label="scope" hint="Leave empty for project-wide. Otherwise pin to one investigation.">
@@ -172,23 +182,6 @@ export function DirectiveCreateForm({
 
 /* --- Suppress finding: POST /projects/{pid}/findings/suppress -------- */
 
-export interface FindingRow extends Record<string, unknown> {
-  fingerprint?: string;
-  artifact_type?: string | null;
-  executable?: string | null;
-  path?: string | null;
-  name?: string | null;
-  user?: string | null;
-  finding_user?: string | null;
-  /** Numeric id of the FindingRecord; used as the {finding_id} in
-   * POST /findings/{finding_id}/transition. */
-  id?: number | string | null;
-  finding_id?: number | string | null;
-  /** Latest FindingWorkflowRecord.current_state populated by the backend on
-   * every LIST row; default "new" when no record has been written yet. */
-  workflow_state?: string;
-}
-
 const REASON_PRESETS = [
   "known-good",
   "legitimate-software",
@@ -203,25 +196,23 @@ export function SuppressFindingForm({
   onClose,
 }: {
   projectId: string;
-  row: FindingRow;
+  row: ForensicsFinding;
   onClose: () => void;
 }): JSX.Element {
   const qc = useQueryClient();
-  const [artifactType, setArtifactType] = useState<string>((row.artifact_type as string) ?? "");
-  const [executable, setExecutable] = useState<string>((row.executable as string) ?? "");
-  const [path, setPath] = useState<string>((row.path as string) ?? "");
-  const [name, setName] = useState<string>((row.name as string) ?? "");
-  const [findingUser, setFindingUser] = useState<string>(
-    (row.finding_user as string) ?? (row.user as string) ?? "",
-  );
+  const [artifactType, setArtifactType] = useState<string>(row.artifact_type);
+  const [executable, setExecutable] = useState<string>(row.executable ?? "");
+  const [path, setPath] = useState<string>(row.path ?? "");
+  const [name, setName] = useState<string>(row.name ?? "");
+  const [findingUser, setFindingUser] = useState<string>(row.user ?? "");
   const [reasons, setReasons] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
-  const fingerprint = (row.fingerprint as string) ?? "";
+  const fingerprint = row.fingerprint;
 
   const m = useMutation({
-    mutationFn: async (): Promise<unknown> => {
+    mutationFn: async (): Promise<Suppression> => {
       const body: Record<string, unknown> = { fingerprint };
       if (artifactType.trim()) body.artifact_type = artifactType.trim();
       if (executable.trim()) body.executable = executable.trim();
@@ -230,10 +221,13 @@ export function SuppressFindingForm({
       if (findingUser.trim()) body.finding_user = findingUser.trim();
       if (reasons.length) body.reasons = reasons;
       if (notes.trim()) body.notes = notes.trim();
-      return apiFetch(`/forensics/projects/${projectId}/findings/suppress`, {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
+      return parseOne(
+        await apiFetch<unknown>(`/forensics/projects/${projectId}/findings/suppress`, {
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+        parseSuppression,
+      );
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["forensics", projectId, "findings"] });
@@ -264,7 +258,7 @@ export function SuppressFindingForm({
       error={err}
     >
       <Field label="fingerprint" hint="Identity hash of the finding (from row).">
-        <TextInput value={fingerprint} onChange={() => {}} placeholder="\u2014" />
+        <TextInput value={fingerprint} onChange={() => {}} placeholder={"\u2014"} />
       </Field>
       <Field label="artifact type"><TextInput value={artifactType} onChange={setArtifactType} /></Field>
       <Field label="executable"><TextInput value={executable} onChange={setExecutable} /></Field>
@@ -272,7 +266,7 @@ export function SuppressFindingForm({
       <Field label="name"><TextInput value={name} onChange={setName} /></Field>
       <Field label="finding user"><TextInput value={findingUser} onChange={setFindingUser} /></Field>
       <Field label="reasons" hint="Free-form tags. Press Enter or , to add. Presets suggested below.">
-        <ChipInput values={reasons} onChange={setReasons} placeholder="reason\u2026" />
+        <ChipInput values={reasons} onChange={setReasons} placeholder={"reason\u2026"} />
         <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 4 }}>
           {REASON_PRESETS.map((r) => (
             <button
@@ -284,7 +278,7 @@ export function SuppressFindingForm({
                 border: "1px dashed var(--border-soft)",
                 color: "var(--text-muted)",
                 fontFamily: "var(--font-mono)",
-                fontSize: 9,
+                fontSize: 11,
                 padding: "1px 6px",
                 borderRadius: 2,
                 cursor: "pointer",
@@ -295,7 +289,7 @@ export function SuppressFindingForm({
           ))}
         </div>
       </Field>
-      <Field label="notes" hint="\u2264 4000 chars.">
+      <Field label="notes" hint={"\u2264 4000 chars."}>
         <TextArea value={notes} onChange={setNotes} rows={3} />
       </Field>
     </FormBox>
@@ -303,13 +297,6 @@ export function SuppressFindingForm({
 }
 
 /* --- Tag investigation: POST /investigations/{iid}/tag --------------- */
-
-interface AnswerOption {
-  id: string;
-  question_text?: string;
-  answer_text?: string;
-  investigation_id?: string | null;
-}
 
 export function TagInvestigationForm({
   projectId,
@@ -326,21 +313,22 @@ export function TagInvestigationForm({
   const [notes, setNotes] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
-  const ansQ = useQuery({
-    queryKey: ["forensics", projectId, "answers"],
-    queryFn: () => apiFetch<AnswerOption[]>(`/forensics/projects/${projectId}/answers`),
-    retry: false,
-  });
+  const ansQ = useForensicsQuery(projectId, ["answers"], `/forensics/projects/${projectId}/answers`, (raw) =>
+    parseRows(raw, parseAnswerCandidate),
+  );
   const answers = (ansQ.data ?? []).filter((a) => !a.investigation_id || a.investigation_id === investigationId);
 
   const m = useMutation({
-    mutationFn: async (): Promise<unknown> => {
+    mutationFn: async (): Promise<SolidEvidence> => {
       const body: Record<string, unknown> = { verdict };
       if (answerId) body.answer_id = answerId;
       if (notes.trim()) body.notes = notes.trim();
-      return apiFetch(
-        `/forensics/projects/${projectId}/investigations/${investigationId}/tag`,
-        { method: "POST", body: JSON.stringify(body) },
+      return parseOne(
+        await apiFetch<unknown>(`/forensics/projects/${projectId}/investigations/${investigationId}/tag`, {
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+        parseSolidEvidence,
       );
     },
     onSuccess: () => {
@@ -386,12 +374,12 @@ export function TagInvestigationForm({
             { value: "", label: "use investigation final_answer" },
             ...answers.map((a) => ({
               value: a.id,
-              label: `${(a.question_text ?? "\u2014").slice(0, 40)} \u2192 ${(a.answer_text ?? "").slice(0, 40)}`,
+              label: `${(a.question_text || "\u2014").slice(0, 40)} \u2192 ${a.answer_text.slice(0, 40)}`,
             })),
           ]}
         />
       </Field>
-      <Field label="notes" hint="\u2264 4000 chars.">
+      <Field label="notes" hint={"\u2264 4000 chars."}>
         <TextArea value={notes} onChange={setNotes} rows={4} />
       </Field>
     </FormBox>
@@ -417,14 +405,17 @@ export function RerunForm({
   const [err, setErr] = useState<string | null>(null);
 
   const m = useMutation({
-    mutationFn: async (): Promise<unknown> => {
+    mutationFn: async (): Promise<InvestigationSummary> => {
       const body: Record<string, unknown> = {};
       if (useMax) body.max_attempts = maxAttempts;
       if (useOverride && override.trim()) body.question_override = override.trim();
-      return apiFetch(`/forensics/projects/${projectId}/investigations/${investigationId}/rerun`, {
-        method: "POST",
-        body: JSON.stringify(body),
-      });
+      return parseOne(
+        await apiFetch<unknown>(`/forensics/projects/${projectId}/investigations/${investigationId}/rerun`, {
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+        parseInvestigationSummary,
+      );
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["forensics", projectId, "investigations"] });
@@ -446,14 +437,14 @@ export function RerunForm({
       error={err}
     >
       <Field label="question override" hint="Optional. Leave off to reuse the original question.">
-        <label style={{ display: "inline-flex", gap: 8, alignItems: "center", fontFamily: "var(--font-mono)", fontSize: 10 }}>
+        <label style={{ display: "inline-flex", gap: 8, alignItems: "center", fontFamily: "var(--font-mono)", fontSize: 11 }}>
           <input type="checkbox" checked={useOverride} onChange={(e) => setUseOverride(e.target.checked)} />
           override question
         </label>
         {useOverride ? <TextArea value={override} onChange={setOverride} rows={4} /> : null}
       </Field>
       <Field label="max attempts" hint="Optional. Overrides the original attempt budget.">
-        <label style={{ display: "inline-flex", gap: 8, alignItems: "center", fontFamily: "var(--font-mono)", fontSize: 10 }}>
+        <label style={{ display: "inline-flex", gap: 8, alignItems: "center", fontFamily: "var(--font-mono)", fontSize: 11 }}>
           <input type="checkbox" checked={useMax} onChange={(e) => setUseMax(e.target.checked)} />
           override max attempts
         </label>

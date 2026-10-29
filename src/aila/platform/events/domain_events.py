@@ -6,7 +6,8 @@ full objects -- consumers query services for details.
 
 The platform owns only generic, cross-module infrastructure events
 (system lifecycle, config change, LLM call accounting, generic
-module workflow lifecycle, per-run workflow-stage announcements).
+module workflow lifecycle, per-run workflow-stage announcements,
+generic module-entity status transitions).
 Module-domain vocabulary (a scan, a finding, an investigation) is
 NOT a platform concern -- a module that needs to publish a workflow
 or entity event declares its own event in its own package. The
@@ -43,6 +44,8 @@ __all__ = [
     "ConfigChanged",
     "ConfigChangedPayload",
     "DomainEvent",
+    "EntityStatusChanged",
+    "EntityStatusChangedPayload",
     "LlmCallCompleted",
     "LlmCallCompletedPayload",
     "ModuleWorkflowCompleted",
@@ -282,5 +285,37 @@ class WorkflowStageAnnounced(DomainEvent):
     payload: WorkflowStagePayload = field(
         default_factory=lambda: WorkflowStagePayload(
             stage="", action="", key="", message="",
+        ),
+    )
+
+
+class EntityStatusChangedPayload(BaseModel):
+    """Payload for entity.status_changed events.
+
+    ``module_id`` names the owning module; ``entity_kind`` names the
+    module-scoped entity type; ``entity_id`` identifies the row. The
+    ``previous_status`` value is None when the writer did not observe the
+    prior value. Delivery scope comes from the base event's ``team_id``.
+    """
+
+    module_id: str
+    entity_kind: str
+    entity_id: str
+    previous_status: str | None = None
+    status: str
+
+
+@dataclass(frozen=True, slots=True)
+class EntityStatusChanged(DomainEvent):
+    """Emitted after a module-owned entity's status change has committed.
+
+    Published only after the owning transaction commits, so a subscriber
+    that re-reads the entity observes the new status.
+    """
+
+    event_type: str = "entity.status_changed"
+    payload: EntityStatusChangedPayload = field(
+        default_factory=lambda: EntityStatusChangedPayload(
+            module_id="", entity_kind="", entity_id="", status="",
         ),
     )

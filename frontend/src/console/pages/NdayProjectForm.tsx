@@ -25,7 +25,7 @@ import type {
 } from "../../api/intake";
 import { useCreateVrProject, useVrCves, useWorkspaces } from "../../api/intake";
 import { useSystems } from "../../api/systems";
-import type { ModulePageProps } from "../contract";
+import type { EntityBindingProps, WindowChromeProps } from "../contract";
 import { css } from "../css";
 import { ConsoleWindow } from "../window";
 
@@ -108,16 +108,16 @@ function buildSpec(
 const panelBox =
   "min-height:0;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--radius-md,3px);background:color-mix(in srgb,var(--surface-card) 84%,transparent);overflow:hidden;box-shadow:var(--bevel-raised,inset 1px 1px 0 rgba(255,255,255,0.03));";
 const panelTitle = css(
-  "flex:0 0 auto;display:flex;align-items:center;gap:10px;height:var(--panel-title-h,27px);padding:0 12px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:9.5px;text-transform:uppercase;letter-spacing:0.14em;color:var(--text-muted);",
+  "flex:0 0 auto;display:flex;align-items:center;gap:10px;height:var(--panel-title-h,27px);padding:0 12px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;text-transform:uppercase;letter-spacing:0.14em;color:var(--text-muted);",
 );
 const dot = css(
   "width:8px;height:8px;border-radius:1px;background:var(--accent);box-shadow:0 0 6px var(--accent);flex:0 0 auto;",
 );
 const sectionLabel = css(
-  "font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-faint);",
+  "font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-faint);",
 );
 const labelStyle = css(
-  "font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);",
+  "font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);",
 );
 const fieldCol = css("display:flex;flex-direction:column;gap:4px;");
 const inputStyle = css(
@@ -127,7 +127,7 @@ const selectStyle = inputStyle;
 const chipRow = css("display:grid;grid-template-columns:repeat(3,1fr);gap:6px;");
 
 function modeButton(active: boolean): string {
-  return `padding:8px 9px;text-align:left;font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.04em;color:${
+  return `padding:8px 9px;text-align:left;font-family:var(--font-mono);font-size:11px;letter-spacing:0.04em;color:${
     active ? "var(--accent)" : "var(--text-primary)"
   };background:${
     active ? "color-mix(in srgb,var(--accent) 10%,transparent)" : "var(--surface-card)"
@@ -233,7 +233,7 @@ function IngestBlock({
  * Component
  * -------------------------------------------------------------------------- */
 
-export default function NdayProjectForm(props: ModulePageProps): JSX.Element {
+export default function NdayProjectForm(props: WindowChromeProps & EntityBindingProps): JSX.Element {
   const {
     investigationId,
     onBack,
@@ -433,7 +433,7 @@ export default function NdayProjectForm(props: ModulePageProps): JSX.Element {
                   "display:flex;flex-direction:column;gap:12px;padding:14px;border:1px solid var(--status-ok);border-radius:3px;background:color-mix(in srgb,var(--status-ok) 8%,transparent);",
                 )}
               >
-                <div style={css("font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:var(--status-ok);")}>
+                <div style={css("font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--status-ok);")}>
                   {"n-day project created \u00b7 VR_NDAY_V1 started"}
                 </div>
                 <div style={css("display:grid;grid-template-columns:130px 1fr;gap:5px 12px;font-size:11.5px;")}>
@@ -723,7 +723,7 @@ export function CveReproduceDetail({
       </div>
       {val("description") ? (
         <div style={css("display:flex;flex-direction:column;gap:4px;")}>
-          <span style={css("color:var(--text-faint);font-size:9px;letter-spacing:0.12em;text-transform:uppercase;")}>
+          <span style={css("color:var(--text-faint);font-size:11px;letter-spacing:0.12em;text-transform:uppercase;")}>
             description
           </span>
           <p style={css("margin:0;font-size:11.5px;color:var(--text-primary);white-space:pre-wrap;word-break:break-word;")}>

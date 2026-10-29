@@ -23,7 +23,13 @@ from aila.api.constants import (
 )
 from aila.api.deps import get_config_registry
 from aila.api.limiter import limiter
-from aila.api.schemas.config import ConfigEntryResponse, ConfigListResponse, ConfigUpdateRequest
+from aila.api.platform_onboarding import PLATFORM_NAMESPACE, build_platform_schema, validate_platform_write
+from aila.api.schemas.config import (
+    ConfigEntryResponse,
+    ConfigListResponse,
+    ConfigUpdateRequest,
+    PlatformSchemaResponse,
+)
 from aila.platform.services.audit import record_audit_event
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import ConfigEntryRecord
@@ -137,6 +143,38 @@ async def list_namespace_config(
     )
 
 
+async def _require_platform_admin(
+    ctx: AuthContext = Depends(require_user_or_api_key),
+) -> AuthContext:
+    """Platform onboarding spans every team; god-tier administrators only."""
+    if ctx.role != ROLE_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Requires '{ROLE_ADMIN}' role; current role: '{ctx.role}'",
+        )
+    if ctx.team_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Platform onboarding is restricted to god-tier administrators.",
+        )
+    return ctx
+
+
+# Declared before the ``/{namespace}/{key}`` catch-all so it is not shadowed.
+@router.get(
+    "/platform/schema",
+    response_model=PlatformSchemaResponse,
+    summary="Onboarding view of opt-in platform keys (admin only)",
+)
+async def get_platform_schema(
+    request: Request,
+    admin: AuthContext = Depends(_require_platform_admin),
+) -> PlatformSchemaResponse:
+    """Describe each onboarding-surfaced platform key with its live resolution and prerequisite."""
+    del admin
+    return await build_platform_schema(get_config_registry(request))
+
+
 @router.get("/{namespace}/{key}", response_model=ConfigEntryResponse, summary="Get one config value")
 async def get_config_value(
     namespace: str,
@@ -181,6 +219,10 @@ async def update_config_value(
 ) -> ConfigEntryResponse:
     """Write through ConfigRegistry to ensure type validation on the new value."""
     registry = get_config_registry(request)
+    if namespace == PLATFORM_NAMESPACE:
+        rejection = await validate_platform_write(registry, key, body.value)
+        if rejection is not None:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=rejection)
 
     async def _update() -> ConfigEntryRecord | None:
         await registry.set(namespace, key, body.value)

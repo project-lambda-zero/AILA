@@ -21,14 +21,9 @@ export interface LeftRailProps {
   onOpenPage: (moduleId: string, pageId: string, label: string) => void;
 }
 
-/** A module page (Vulnerability, VR X-Ray, ...) opened from the left-rail PAGES
- * section or an investigation row. It renders as an overlay window in the
- * console's center column (keeping the menu bar, left rail and status bar), with
- * minimize / close controls supplied by the console shell. Each page carries its
- * own top nav whose `< AILA` affordance calls onBack to close the window. */
-export interface ModulePageProps {
-  section: string | null;
-  investigationId?: string | null;
+/** Window chrome the shell supplies to every page: identity, focus, and the
+ * close / minimize / fullscreen controls a page forwards to `<ConsoleWindow>`. */
+export interface WindowChromeProps {
   /** Host-assigned window id; a page spreads it into its `<ConsoleWindow id>`
    * so the shell can track z-order, focus, and the minimize dock. */
   windowId: string;
@@ -45,16 +40,38 @@ export interface ModulePageProps {
   onBack: () => void;
   /** Collapse the window to the dock, revealing the console behind it. */
   onMinimize: () => void;
-  onNavigate: (section: string) => void;
   /** True when the window covers the whole viewport. */
   isFullscreen?: boolean;
   /** Toggle between the contained window and full-viewport. */
   onToggleFullscreen?: () => void;
+}
+
+/** In-window sub-routing: the current section string and the setter that
+ * rewrites it without changing window identity. */
+export interface SectionRouteProps {
+  section: string | null;
+  onNavigate: (section: string) => void;
+}
+
+/** The selected entity a window is bound to (an investigation, project, or
+ * catalog row id), threaded from the opener. */
+export interface EntityBindingProps {
+  investigationId?: string | null;
+}
+
+/** Handoff to another registered window. */
+export interface PageOpenerProps {
   /** Open another registered window (registry key `${moduleKey}:${section}`),
    * optionally bound to a selected entity id. Used by DataPage to hand a
    * targets row off to the upload wizard or a project row to its detail. */
   onOpenPage?: (moduleKey: string, section: string, label: string, investigationId?: string | null) => void;
 }
+
+/** Everything the shell supplies to a registered page window (Vulnerability,
+ * VR X-Ray, ...), opened from the left-rail PAGES section or an investigation
+ * row. The host builds one of these per window; each page declares only the
+ * focused parts above that it reads. */
+export type ModulePageProps = WindowChromeProps & SectionRouteProps & EntityBindingProps & PageOpenerProps;
 
 export interface ChatConsoleProps {
   mode: "basic" | "advanced";

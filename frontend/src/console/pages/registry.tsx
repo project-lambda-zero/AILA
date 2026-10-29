@@ -1,35 +1,10 @@
+import { lazy, Suspense } from "react";
 import type { JSX } from "react";
 
 import type { ModulePageProps } from "../contract";
-import AdminDashboardPage from "./AdminDashboardPage";
-import AdminFindingStatesPage from "./AdminFindingStatesPage";
-import AdminPlatformCorpusPage from "./AdminPlatformCorpusPage";
-import AutomationWizard, { AutomationActionDetail } from "./AutomationWizard";
-import ScheduledReportWizard, { ScheduledReportDetail } from "./ScheduledReportWizard";
+import { css } from "../css";
 import { PAGE_CONFIGS } from "./configs";
-import CostReportingPage from "./cost/CostReportingPage";
 import DataPage from "./DataPage";
-import DocsPage from "./DocsPage";
-import ForensicsProjectPage from "./forensics/ForensicsProjectPage";
-import FuzzCampaignDetail from "./FuzzCampaignDetail";
-import KnowledgePage from "./KnowledgePage";
-import MalwareHealthPanel from "./MalwareHealthPanel";
-import MalwareTargetDetail from "./MalwareTargetDetail";
-import MalwareXRayPage from "./MalwareXRayPage";
-import { McpInstanceToolsDetail } from "./McpInstanceToolsDetail";
-import NdayProjectForm, { CveReproduceDetail } from "./NdayProjectForm";
-import PersonaModelRoutingPage from "./PersonaModelRoutingPage";
-import SandboxPage from "./SandboxPage";
-import SystemsRegistryPage from "./SystemsRegistryPage";
-import { TeamCrossDetail } from "./TeamCrossDetail";
-import UploadForm from "./UploadForm";
-import VRTargetDetail from "./VRTargetDetail";
-import VrPatternsPage from "./VrPatternsPage";
-import VulnerabilityPage from "./VulnerabilityPage";
-import WidgetLayoutPage from "./WidgetLayoutPage";
-import { WorkflowTransitionsDetail } from "./WorkflowTransitionsDetail";
-import WorkspaceTargets from "./WorkspaceTargets";
-import XRayPage from "./XRayPage";
 
 export type PageRender = (p: ModulePageProps) => JSX.Element;
 export interface PageEntry {
@@ -37,10 +12,60 @@ export interface PageEntry {
   render: PageRender;
 }
 
+// Every bespoke page is code-split: the registry is the shell's only eager
+// dependency on them, so opening a window downloads just that page's chunk.
+// Detail bodies used inside DataPage render props are lazy too; the shared
+// Suspense fallback below covers both the page and its drill-down bodies.
+const DocsPage = lazy(() => import("./DocsPage"));
+const XRayPage = lazy(() => import("./XRayPage"));
+const MalwareXRayPage = lazy(() => import("./MalwareXRayPage"));
+const MalwareHealthPanel = lazy(() => import("./MalwareHealthPanel"));
+const UploadForm = lazy(() => import("./UploadForm"));
+const NdayProjectForm = lazy(() => import("./NdayProjectForm"));
+const CveReproduceDetail = lazy(() => import("./NdayProjectForm").then((m) => ({ default: m.CveReproduceDetail })));
+const VrPatternsPage = lazy(() => import("./VrPatternsPage"));
+const ForensicsProjectPage = lazy(() => import("./forensics/ForensicsProjectPage"));
+const VulnerabilityPage = lazy(() => import("./VulnerabilityPage"));
+const AdminDashboardPage = lazy(() => import("./AdminDashboardPage"));
+const OpsWarRoom = lazy(() => import("./OpsWarRoom"));
+const SystemsRegistryPage = lazy(() => import("./SystemsRegistryPage"));
+const CostReportingPage = lazy(() => import("./cost/CostReportingPage"));
+const AdminFindingStatesPage = lazy(() => import("./AdminFindingStatesPage"));
+const AdminPlatformCorpusPage = lazy(() => import("./AdminPlatformCorpusPage"));
+const KnowledgePage = lazy(() => import("./KnowledgePage"));
+const SandboxPage = lazy(() => import("./SandboxPage"));
+const OnboardingWizard = lazy(() => import("../wizards/OnboardingWizard"));
+const WidgetLayoutPage = lazy(() => import("./WidgetLayoutPage"));
+const PersonaModelRoutingPage = lazy(() => import("./PersonaModelRoutingPage"));
+const AutomationWizard = lazy(() => import("./AutomationWizard"));
+const AutomationActionDetail = lazy(() => import("./automation/AutomationActionDetail").then((m) => ({ default: m.AutomationActionDetail })));
+const ScheduledReportWizard = lazy(() => import("./ScheduledReportWizard"));
+const ScheduledReportDetail = lazy(() => import("./scheduledReport/ScheduledReportDetail").then((m) => ({ default: m.ScheduledReportDetail })));
+const McpInstanceToolsDetail = lazy(() => import("./McpInstanceToolsDetail").then((m) => ({ default: m.McpInstanceToolsDetail })));
+const WorkflowTransitionsDetail = lazy(() => import("./WorkflowTransitionsDetail").then((m) => ({ default: m.WorkflowTransitionsDetail })));
+const TeamCrossDetail = lazy(() => import("./TeamCrossDetail").then((m) => ({ default: m.TeamCrossDetail })));
+const WorkspaceTargets = lazy(() => import("./WorkspaceTargets"));
+const VRTargetDetail = lazy(() => import("./VRTargetDetail"));
+const FuzzCampaignDetail = lazy(() => import("./FuzzCampaignDetail"));
+const MalwareTargetDetail = lazy(() => import("./MalwareTargetDetail"));
+const LifecyclePage = lazy(() => import("./admin/LifecyclePage"));
+const EvalBenchmarksPage = lazy(() => import("./admin/EvalBenchmarksPage"));
+const PromptAliasesPage = lazy(() => import("./admin/PromptAliasesPage"));
+const ReconcilePage = lazy(() => import("./admin/ReconcilePage"));
+const AuditSealsPage = lazy(() => import("./admin/AuditSealsPage"));
+const GlobalSearchPage = lazy(() => import("./admin/GlobalSearchPage"));
+const CrossTeamHeatmapPage = lazy(() => import("./admin/CrossTeamHeatmapPage"));
+
+/** Shared lazy fallback: the console's standard centered loading note
+ * (matches the DataPage empty/loading note style). */
+function PageLoading(): JSX.Element {
+  return <div style={css("flex:1;display:flex;align-items:center;justify-content:center;padding:20px;font-family:var(--font-mono);font-size:11px;color:var(--text-faint);letter-spacing:0.04em;text-align:center;")}>loading&#8230;</div>;
+}
+
 // Bespoke pages: the rich per-investigation X-Rays (VR + malware), the guided
 // target-upload wizards, the forensics project-detail window, and the designed
 // Vulnerability sub-views. Everything else is a declarative DataPage.
-const BESPOKE: Record<string, PageEntry> = {
+const BESPOKE = {
   "platform:docs": { title: "docs", render: (p) => <DocsPage {...p} /> },
   xray: { title: "x-ray", render: (p) => <XRayPage {...p} /> },
   // Registry alias so `onOpenPage("vr", "xray", ...)` (row-activate from the
@@ -94,6 +119,17 @@ const BESPOKE: Record<string, PageEntry> = {
   "vulnerability:viz": { title: "vulnerability \u00b7 data visualization", render: (p) => <VulnerabilityPage {...p} /> },
   "vulnerability:reports": { title: "vulnerability \u00b7 reports", render: (p) => <VulnerabilityPage {...p} /> },
   "admin:dashboard": { title: "admin \u00b7 dashboard", render: (p) => <AdminDashboardPage {...p} /> },
+  "admin:ops-war-room": { title: "admin \u00b7 ops war room", render: (p) => <OpsWarRoom {...p} /> },
+  // God-tier operator consoles (#212): ML-Ops lifecycle, eval benchmarks and
+  // runs, prompt alias deploy/rollback with version diff, task reconcile,
+  // audit seal viewer + export, global search, and the cross-team heatmap.
+  "admin:lifecycle": { title: "admin \u00b7 lifecycle", render: (p) => <LifecyclePage {...p} /> },
+  "admin:eval-benchmarks": { title: "admin \u00b7 eval benchmarks", render: (p) => <EvalBenchmarksPage {...p} /> },
+  "admin:prompt-aliases": { title: "admin \u00b7 prompt aliases", render: (p) => <PromptAliasesPage {...p} /> },
+  "admin:reconcile": { title: "admin \u00b7 reconcile", render: (p) => <ReconcilePage {...p} /> },
+  "admin:audit-seals": { title: "admin \u00b7 audit seals", render: (p) => <AuditSealsPage {...p} /> },
+  "admin:global-search": { title: "admin \u00b7 global search", render: (p) => <GlobalSearchPage {...p} /> },
+  "admin:cross-team-heatmap": { title: "admin \u00b7 cross-team heatmap", render: (p) => <CrossTeamHeatmapPage {...p} /> },
   // Platform-owned SSH host registry (system-registry-platform.md req 11):
   // the only systems surface, re-homed off the vulnerability module.
   "admin:systems": { title: "admin \u00b7 systems", render: (p) => <SystemsRegistryPage {...p} /> },
@@ -107,6 +143,9 @@ const BESPOKE: Record<string, PageEntry> = {
   },
   "admin:knowledge": { title: "admin \u00b7 knowledge", render: (p) => <KnowledgePage {...p} /> },
   "admin:sandbox": { title: "admin \u00b7 sandbox", render: (p) => <SandboxPage {...p} /> },
+  // First-run platform onboarding (#246): auto-opened for god-tier admins
+  // until onboarding_completed is set; re-openable from settings and here.
+  "admin:onboarding": { title: "admin \u00b7 onboarding", render: (p) => <OnboardingWizard {...p} /> },
   "admin:widget-layout": { title: "admin \u00b7 widget layout", render: (p) => <WidgetLayoutPage {...p} /> },
   "admin:persona-routing": {
     title: "admin \u00b7 persona model routing",
@@ -274,6 +313,7 @@ const BESPOKE: Record<string, PageEntry> = {
           <FuzzCampaignDetail
             campaignId={String(row.id ?? "")}
             targetId={String(row.target_id ?? "")}
+            campaignStatus={String(row.status ?? "")}
           />
         )}
       />
@@ -333,7 +373,7 @@ const BESPOKE: Record<string, PageEntry> = {
       />
     ),
   },
-};
+} satisfies Record<string, PageEntry>;
 
 const DATA: Record<string, PageEntry> = Object.fromEntries(
   Object.entries(PAGE_CONFIGS).map(([key, config]): [string, PageEntry] => [
@@ -342,7 +382,25 @@ const DATA: Record<string, PageEntry> = Object.fromEntries(
   ]),
 );
 
-export const PAGE_REGISTRY: Record<string, PageEntry> = { ...DATA, ...BESPOKE };
+/** One Suspense boundary per rendered page: bespoke pages and their lazy
+ * detail bodies share the single fallback. */
+function suspenseEntry(entry: PageEntry): PageEntry {
+  return {
+    title: entry.title,
+    render: (p: ModulePageProps) => (
+      <Suspense fallback={<PageLoading />}>
+        {entry.render(p)}
+      </Suspense>
+    ),
+  };
+}
+
+export const PAGE_REGISTRY: Record<string, PageEntry> = Object.fromEntries(
+  [...Object.entries(DATA), ...Object.entries(BESPOKE)].map(([key, entry]): [string, PageEntry] => [
+    key,
+    suspenseEntry(entry),
+  ]),
+);
 
 export function resolvePage(key: string): PageEntry | null {
   return PAGE_REGISTRY[key] ?? null;

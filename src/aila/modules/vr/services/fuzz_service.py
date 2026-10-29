@@ -20,6 +20,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import posixpath
+import shlex
 from typing import Any
 from uuid import uuid4
 
@@ -60,6 +62,7 @@ from aila.platform.config import build_platform_settings
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.enums import SenderKind
 from aila.platform.contracts.mcp_payload import PayloadKind
+from aila.platform.exceptions import AILAError
 from aila.platform.services.ssh import SSHService
 from aila.platform.uow import UnitOfWork
 from aila.storage.db_models import ManagedSystemRecord
@@ -187,6 +190,65 @@ def triage_crash(
 
 class FuzzServiceError(Exception):
     """User-facing errors (unknown campaign, FK violations)."""
+
+
+_STOPPABLE_STATUSES = frozenset({CampaignStatus.RUNNING.value, CampaignStatus.PAUSED.value})
+_STOP_CLEAN_OUTCOMES = frozenset({"gone", "reused", "stopped", "killed"})
+
+
+def _ssh_integration(system_row: ManagedSystemRecord) -> dict[str, Any]:
+    return {
+        "name": system_row.name,
+        "host": system_row.host,
+        "username": system_row.username,
+        "port": system_row.port,
+        "private_key_path": system_row.private_key_path,
+        "password_secret_id": system_row.password_secret_id,
+        "known_hosts_path": system_row.known_hosts_path,
+        "host_key_fingerprint": system_row.host_key_fingerprint,
+    }
+
+
+def _build_stop_script(pid: int, marker: str | None) -> str:
+    """Remote POSIX sh script that signals one fuzzer PID.
+
+    Echoes exactly one sentinel word:
+      gone          -- PID no longer exists
+      reused        -- PID exists but its argv lacks ``marker`` (not ours)
+      unverifiable  -- PID exists and no marker is available to prove identity
+      stopped       -- exited after SIGTERM within 10s
+      killed        -- exited after SIGKILL within 3s
+      alive         -- still running after SIGKILL
+    The marker is the campaign workdir, which fuzz_launcher places in argv
+    for every engine except V8_D8_SBX.
+    """
+    pid_q = str(int(pid))
+    lines = [
+        f"if ! kill -0 {pid_q} 2>/dev/null; then echo gone; exit 0; fi",
+    ]
+    if marker is None:
+        lines.append("echo unverifiable; exit 0")
+    else:
+        lines.append(
+            f"if ! ps -o args= -p {pid_q} 2>/dev/null | grep -F -q -- {shlex.quote(marker)}; "
+            "then echo reused; exit 0; fi",
+        )
+    lines += [
+        f"kill -TERM {pid_q} 2>/dev/null",
+        "i=0",
+        "while [ $i -lt 10 ]; do",
+        f"  kill -0 {pid_q} 2>/dev/null || {{ echo stopped; exit 0; }}",
+        "  sleep 1; i=$((i+1))",
+        "done",
+        f"kill -KILL {pid_q} 2>/dev/null",
+        "i=0",
+        "while [ $i -lt 3 ]; do",
+        f"  kill -0 {pid_q} 2>/dev/null || {{ echo killed; exit 0; }}",
+        "  sleep 1; i=$((i+1))",
+        "done",
+        "echo alive",
+    ]
+    return "\n".join(lines)
 
 
 def _campaign_record_to_summary(
@@ -1004,16 +1066,7 @@ class FuzzCampaignService:
                     f"campaign {campaign_id} references system "
                     f"#{record.analysis_system_id} which is not registered",
                 )
-            integration = {
-                "name": system_row.name,
-                "host": system_row.host,
-                "username": system_row.username,
-                "port": system_row.port,
-                "private_key_path": system_row.private_key_path,
-                "password_secret_id": system_row.password_secret_id,
-                "known_hosts_path": system_row.known_hosts_path,
-                "host_key_fingerprint": system_row.host_key_fingerprint,
-            }
+            integration = _ssh_integration(system_row)
             engine_id = FuzzEngineId(record.engine_id)
             engine_config = json.loads(record.engine_config_json or "{}")
             strategy_config = json.loads(record.strategy_config_json or "{}")
@@ -1099,6 +1152,126 @@ class FuzzCampaignService:
             "remote_crashes_dir": launch.crashes_dir,
             "description": launch.description,
         }
+
+    async def stop_campaign(self, campaign_id: str) -> VRFuzzCampaignSummary:
+        """Signal the recorded remote fuzzer PID on the analysis workstation,
+        then mark the campaign ABORTED.
+
+        The campaign status changes only when the fuzzer is confirmed gone
+        (or was never started by AILA). Every error path leaves it unchanged.
+        """
+        async with UnitOfWork() as uow:
+            record = (await uow.session.exec(
+                _select(VRFuzzCampaignRecord).where(
+                    VRFuzzCampaignRecord.id == campaign_id,
+                ),
+            )).first()
+            if record is None:
+                raise FuzzServiceError(f"campaign {campaign_id} not found")
+            if record.status not in _STOPPABLE_STATUSES:
+                raise FuzzServiceError(
+                    f"campaign {campaign_id} is not running (status={record.status})",
+                )
+            remote_pid = record.remote_pid
+            analysis_system_id = record.analysis_system_id
+            # The launcher places the campaign workdir (the parent of
+            # corpus_dir) in argv for every engine except V8_D8_SBX.
+            marker = (
+                posixpath.dirname(record.remote_corpus_dir)
+                if record.remote_corpus_dir
+                and record.engine_id != FuzzEngineId.V8_D8_SBX.value
+                else None
+            )
+            integration: dict[str, Any] | None = None
+            if remote_pid is not None and analysis_system_id is not None:
+                system_row = (await uow.session.exec(
+                    _select(ManagedSystemRecord).where(
+                        ManagedSystemRecord.id == analysis_system_id,
+                    ),
+                )).first()
+                if system_row is None:
+                    raise FuzzServiceError(
+                        f"campaign {campaign_id} references system "
+                        f"#{analysis_system_id} which is not registered; "
+                        "campaign status left unchanged",
+                    )
+                integration = _ssh_integration(system_row)
+
+        if integration is not None and remote_pid is not None:
+            outcome = await self._signal_remote_fuzzer(
+                integration, remote_pid, marker, campaign_id,
+            )
+        else:
+            outcome = "no-remote-pid"
+
+        async with UnitOfWork() as uow:
+            record = (await uow.session.exec(
+                _select(VRFuzzCampaignRecord).where(
+                    VRFuzzCampaignRecord.id == campaign_id,
+                ),
+            )).first()
+            if record is None:
+                raise FuzzServiceError(
+                    f"campaign {campaign_id} disappeared during stop",
+                )
+            now = utc_now()
+            record.status = CampaignStatus.ABORTED.value
+            if record.stopped_at is None:
+                record.stopped_at = now
+            record.updated_at = now
+            await uow.session.commit()
+            await uow.session.refresh(record)
+            summary = _campaign_record_to_summary(record)
+
+        _log.info(
+            "fuzz_campaign STOP campaign_id=%s pid=%s outcome=%s",
+            campaign_id, remote_pid, outcome,
+        )
+        return summary
+
+    async def _signal_remote_fuzzer(
+        self,
+        integration: dict[str, Any],
+        remote_pid: int,
+        marker: str | None,
+        campaign_id: str,
+    ) -> str:
+        """Run the stop script over SSH. Returns a clean outcome sentinel
+        (campaign may be marked aborted) or raises FuzzServiceError."""
+        script = _build_stop_script(remote_pid, marker)
+        ssh = SSHService(build_platform_settings(get_settings()))
+        try:
+            stdout = await ssh.run_command(
+                integration, f"sh -c {shlex.quote(script)}",
+                timeout_seconds=30.0, connect_timeout=10.0,
+            )
+        except (OSError, TimeoutError, AILAError) as exc:
+            _log.warning(
+                "fuzz_campaign STOP ssh failed campaign_id=%s pid=%s: %s",
+                campaign_id, remote_pid, exc,
+            )
+            raise FuzzServiceError(
+                f"could not signal fuzzer on workstation: {exc}; "
+                "campaign status left unchanged",
+            ) from exc
+        outcome = (stdout or "").strip()
+        if outcome in _STOP_CLEAN_OUTCOMES:
+            return outcome
+        if outcome == "alive":
+            raise FuzzServiceError(
+                f"fuzzer pid {remote_pid} is still running on the workstation; "
+                "campaign status left unchanged",
+            )
+        if outcome == "unverifiable":
+            raise FuzzServiceError(
+                f"fuzzer pid {remote_pid} is running but cannot be verified as "
+                "this campaign's process (no argv marker for this engine); "
+                "campaign status left unchanged",
+            )
+        raise FuzzServiceError(
+            f"unexpected output from workstation while stopping fuzzer "
+            f"pid {remote_pid}: {outcome!r}; campaign status left unchanged",
+        )
 
     async def patch_campaign(
         self, campaign_id: str, body: VRFuzzCampaignPatch,

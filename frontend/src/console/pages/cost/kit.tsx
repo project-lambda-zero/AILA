@@ -116,7 +116,7 @@ export const panelBox: CSSProperties = css(
   "min-height:0;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--radius-md,3px);background:color-mix(in srgb,var(--surface-card) 84%,transparent);overflow:hidden;box-shadow:var(--bevel-raised,inset 1px 1px 0 rgba(255,255,255,0.03));",
 );
 export const panelTitle: CSSProperties = css(
-  "flex:0 0 auto;display:flex;align-items:center;gap:10px;height:var(--panel-title-h,27px);padding:0 12px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:9.5px;text-transform:uppercase;letter-spacing:0.14em;color:var(--text-muted);",
+  "flex:0 0 auto;display:flex;align-items:center;gap:10px;height:var(--panel-title-h,27px);padding:0 12px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;text-transform:uppercase;letter-spacing:0.14em;color:var(--text-muted);",
 );
 export const dot: CSSProperties = css(
   "width:8px;height:8px;border-radius:1px;background:var(--accent);box-shadow:0 0 6px var(--accent);flex:0 0 auto;",
@@ -137,46 +137,46 @@ export const inputDisabled: CSSProperties = css(
   "background:var(--surface-chrome);border:1px solid var(--border-faint);border-radius:2px;color:var(--text-faint);font-family:var(--font-mono);font-size:11px;padding:6px 9px;min-width:0;outline:none;width:100%;cursor:not-allowed;",
 );
 export const btnPrimary: CSSProperties = css(
-  "padding:6px 14px;border:1px solid var(--accent);border-radius:2px;background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--accent);font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;",
+  "padding:6px 14px;border:1px solid var(--accent);border-radius:2px;background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--accent);font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;",
 );
 export const btnPrimaryDisabled: CSSProperties = css(
-  "padding:6px 14px;border:1px solid var(--border-faint);border-radius:2px;background:transparent;color:var(--text-faint);font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;cursor:not-allowed;",
+  "padding:6px 14px;border:1px solid var(--border-faint);border-radius:2px;background:transparent;color:var(--text-faint);font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;cursor:not-allowed;",
 );
 export const btnGhost: CSSProperties = css(
-  "padding:5px 11px;border:1px solid var(--border-soft);border-radius:2px;background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;",
+  "padding:5px 11px;border:1px solid var(--border-soft);border-radius:2px;background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;",
 );
 export const chipOk: CSSProperties = css(
-  "display:inline-block;padding:1px 7px;border:1px solid color-mix(in srgb,var(--status-ok) 55%,transparent);border-radius:2px;font-family:var(--font-mono);font-size:9px;line-height:1.6;letter-spacing:0.1em;text-transform:uppercase;color:var(--status-ok);background:color-mix(in srgb,var(--status-ok) 10%,transparent);",
+  "display:inline-block;padding:1px 7px;border:1px solid color-mix(in srgb,var(--status-ok) 55%,transparent);border-radius:2px;font-family:var(--font-mono);font-size:11px;line-height:1.6;letter-spacing:0.1em;text-transform:uppercase;color:var(--status-ok);background:color-mix(in srgb,var(--status-ok) 10%,transparent);",
 );
 export const chipFaint: CSSProperties = css(
-  "display:inline-block;padding:1px 7px;border:1px solid var(--border-faint);border-radius:2px;font-family:var(--font-mono);font-size:9px;line-height:1.6;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);background:transparent;",
+  "display:inline-block;padding:1px 7px;border:1px solid var(--border-faint);border-radius:2px;font-family:var(--font-mono);font-size:11px;line-height:1.6;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);background:transparent;",
 );
 export const chipWarn: CSSProperties = css(
-  `display:inline-block;padding:1px 7px;border:1px solid color-mix(in srgb,${H_WARN} 55%,transparent);border-radius:2px;font-family:var(--font-mono);font-size:9px;line-height:1.6;letter-spacing:0.1em;text-transform:uppercase;color:${H_WARN};background:color-mix(in srgb,${H_WARN} 12%,transparent);`,
+  `display:inline-block;padding:1px 7px;border:1px solid color-mix(in srgb,${H_WARN} 55%,transparent);border-radius:2px;font-family:var(--font-mono);font-size:11px;line-height:1.6;letter-spacing:0.1em;text-transform:uppercase;color:${H_WARN};background:color-mix(in srgb,${H_WARN} 12%,transparent);`,
 );
 export const label: CSSProperties = css(
-  "display:flex;flex-direction:column;gap:4px;font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);",
+  "display:flex;flex-direction:column;gap:4px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);",
 );
 export const warnText: CSSProperties = css(
-  `font-family:var(--font-mono);font-size:10.5px;color:${H_WARN};line-height:1.5;`,
+  `font-family:var(--font-mono);font-size:11px;color:${H_WARN};line-height:1.5;`,
 );
 export const okText: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:10.5px;color:var(--status-ok);",
+  "font-family:var(--font-mono);font-size:11px;color:var(--status-ok);",
 );
 
 /** Segment strip button (shell). */
 export function segButton(active: boolean): CSSProperties {
   return css(
     active
-      ? "padding:5px 14px;border:1px solid var(--accent);border-radius:2px;background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent);font-family:var(--font-mono);font-size:10px;letter-spacing:0.12em;text-transform:uppercase;cursor:pointer;"
-      : "padding:5px 14px;border:1px solid var(--border-soft);border-radius:2px;background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:10px;letter-spacing:0.12em;text-transform:uppercase;cursor:pointer;",
+      ? "padding:5px 14px;border:1px solid var(--accent);border-radius:2px;background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent);font-family:var(--font-mono);font-size:11px;letter-spacing:0.12em;text-transform:uppercase;cursor:pointer;"
+      : "padding:5px 14px;border:1px solid var(--border-soft);border-radius:2px;background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:11px;letter-spacing:0.12em;text-transform:uppercase;cursor:pointer;",
   );
 }
 
 /* --------------------------------- table --------------------------------- */
 
 export const th: CSSProperties = css(
-  "text-align:left;padding:6px 9px;font-family:var(--font-mono);font-size:9px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface-chrome);white-space:nowrap;",
+  "text-align:left;padding:6px 9px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--surface-chrome);white-space:nowrap;",
 );
 export const td: CSSProperties = css(
   "padding:6px 9px;font-family:var(--font-mono);font-size:11px;color:var(--text-primary);border-bottom:1px solid var(--border-faint);white-space:nowrap;",
@@ -188,13 +188,13 @@ const statCard: CSSProperties = css(
   "flex:1;min-width:120px;display:flex;flex-direction:column;gap:5px;padding:11px 13px;border:1px solid var(--border);border-radius:var(--radius-md,3px);background:color-mix(in srgb,var(--surface-card) 84%,transparent);",
 );
 const statLabel: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);",
+  "font-family:var(--font-mono);font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);",
 );
 const statValue: CSSProperties = css(
   "font-family:var(--font-display,var(--font-mono));font-size:22px;line-height:1.1;letter-spacing:0.01em;",
 );
 const statSub: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:9.5px;color:var(--text-muted);letter-spacing:0.03em;",
+  "font-family:var(--font-mono);font-size:11px;color:var(--text-muted);letter-spacing:0.03em;",
 );
 
 export function StatCard(props: {
@@ -289,7 +289,7 @@ export interface BreakdownItem {
 const barRowBase =
   "display:grid;grid-template-columns:minmax(90px,150px) 1fr minmax(90px,auto);gap:9px;align-items:center;width:100%;text-align:left;padding:5px 6px;border:1px solid transparent;border-radius:2px;background:transparent;";
 const barLabel: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:10.5px;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;",
+  "font-family:var(--font-mono);font-size:11px;color:var(--text-primary);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;",
 );
 const barTrack: CSSProperties = css(
   "height:9px;border-radius:2px;background:var(--surface-sunk);overflow:hidden;",
@@ -298,10 +298,10 @@ const barFill: CSSProperties = css(
   "display:block;height:100%;background:color-mix(in srgb,var(--accent) 70%,transparent);",
 );
 const barVal: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:9.5px;color:var(--text-muted);text-align:right;white-space:nowrap;",
+  "font-family:var(--font-mono);font-size:11px;color:var(--text-muted);text-align:right;white-space:nowrap;",
 );
 const footNoteStyle: CSSProperties = css(
-  "padding-top:8px;font-family:var(--font-mono);font-size:9px;color:var(--text-faint);letter-spacing:0.03em;",
+  "padding-top:8px;font-family:var(--font-mono);font-size:11px;color:var(--text-faint);letter-spacing:0.03em;",
 );
 
 function barRow(active: boolean, clickable: boolean): CSSProperties {

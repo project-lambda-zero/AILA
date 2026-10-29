@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Protocol, runtime_checkable
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..storage.registry import DynamicKeyFamily
 
@@ -209,7 +209,14 @@ class PlatformConfigSchema(BaseModel):
     llm_default_max_tokens: int = 32768
     llm_default_temperature: float = 0.0
     llm_tool_timeout_s: float = 300.0
-    llm_kill_switch: bool = False
+    llm_kill_switch: bool = Field(
+        default=False,
+        description=(
+            "Global LLM kill switch. When True the platform LLM client returns a disabled response for every "
+            "call instead of reaching a provider, and agent stages record llm_kill_switch_active and skip "
+            "their LLM step. Changes land on the next call without a worker restart."
+        ),
+    )
 
     # ENHANCEMENT #142 -- share model-health-router state across workers.
     # When True (default) AND a Redis URL is configured (see ``redis_url``
@@ -281,7 +288,14 @@ class PlatformConfigSchema(BaseModel):
     data_direction_default: str = "bidirectional"  # inbound | local_only | bidirectional
 
     # LLM Verification (Phase 174 -- LLM-SEC-01)
-    llm_pipeline_verify_default: bool = False
+    llm_pipeline_verify_default: bool = Field(
+        default=False,
+        description=(
+            "Declared default for LLM pipeline blind verification (Phase 174 -- LLM-SEC-01). Verification "
+            "itself is driven per task type by llm_pipeline_verify_threshold_* and "
+            "llm_pipeline_verify_model_*; no code path reads this key directly."
+        ),
+    )
     llm_pipeline_verify_threshold_default: float = 0.7
     llm_pipeline_verify_model_default: str = ""
 
@@ -410,7 +424,13 @@ class PlatformConfigSchema(BaseModel):
     smtp_username: str = ""
     smtp_password: str = ""
     smtp_ca_bundle_path: str = ""
-    smtp_use_implicit_tls: bool = False
+    smtp_use_implicit_tls: bool = Field(
+        default=False,
+        description=(
+            "Scheduled-report email transport. When True the report mailer connects with implicit TLS (SMTPS, "
+            "typically port 465) instead of STARTTLS on smtp_port."
+        ),
+    )
 
     # Reasoning / observable storage caps (platform-owned data structures).
     # Live under the platform namespace because ``CyberReasoningEngine`` and
@@ -506,42 +526,36 @@ class PlatformConfigSchema(BaseModel):
     # a stalled hub always emits ``hub_stalled`` -> COMPLETED.
     dispatch_replan_timeout_s: float = 1800.0
 
-    # Issue #95, Wave 2 -- curiosity-driven lateral discovery LLM gate.
-    # When True, ``aila.platform.agents.auto_steering`` runs one cheap
-    # LLM call per audit_mcp source-surfacing tool result (after the
-    # Wave-1 regex scan) that proposes additional lateral vulnerability
-    # targets in the returned body; each proposal is appended to the
-    # investigation ledger as a ``discovery`` entry with
-    # ``source="lateral_llm"``, mirroring the Wave-1 posting shape.
-    # Defaults False so the path is byte-identical to today's Wave-1-only
-    # behavior; operator flips it on via ``PUT /config/platform/
-    # vr_lateral_llm_enabled`` (env ``AILA_PLATFORM_VR_LATERAL_LLM_ENABLED``)
-    # once the corpus of Wave-1 hits has been validated and the incremental
-    # per-read LLM cost is worth paying. The model is resolved by the
-    # standard LLM routing chain under task type
-    # ``vulnerability_research.lateral_observation`` (schema-registered
-    # via ``llm_model_vulnerability_research.lateral_observation`` when
-    # an operator pins a specific model; falls back to the platform
-    # default otherwise). Wave 3 (full explorer/planner persona split)
-    # is intentionally out of scope for this flag and is tracked as a
-    # separate follow-up in issue #95.
-    vr_lateral_llm_enabled: bool = False
+    vr_lateral_llm_enabled: bool = Field(
+        default=False,
+        description=(
+            "Issue #95, Wave 2 -- curiosity-driven lateral discovery LLM gate. "
+            "When True, ``aila.platform.agents.auto_steering`` runs one cheap "
+            "LLM call per audit_mcp source-surfacing tool result (after the "
+            "Wave-1 regex scan) that proposes additional lateral vulnerability "
+            "targets in the returned body; each proposal is appended to the "
+            "investigation ledger as a ``discovery`` entry with "
+            "``source=\"lateral_llm\"``, mirroring the Wave-1 posting shape. "
+            "Defaults False so the path is byte-identical to today's Wave-1-only "
+            "behavior; operator flips it on via ``PUT /config/platform/ "
+            "vr_lateral_llm_enabled`` (env ``AILA_PLATFORM_VR_LATERAL_LLM_ENABLED``) "
+            "once the corpus of Wave-1 hits has been validated and the incremental "
+            "per-read LLM cost is worth paying. The model is resolved by the "
+            "standard LLM routing chain under task type "
+            "``vulnerability_research.lateral_observation`` (schema-registered "
+            "via ``llm_model_vulnerability_research.lateral_observation`` when "
+            "an operator pins a specific model; falls back to the platform "
+            "default otherwise). Wave 3 (full explorer/planner persona split) "
+            "is intentionally out of scope for this flag and is tracked as a "
+            "separate follow-up in issue #95."
+        ),
+    )
 
     # ------------------------------------------------------------------
     # Platform sandbox service (issue #147). See
     # ``aila.platform.services.sandbox`` for the executor implementation.
+    # ``sandbox_backend`` carries its own description below.
     #
-    # The sandbox is a platform-owned, one-VM-per-run isolation primitive
-    # every module reaches through ``SandboxService.run``. Backends run
-    # over SSH on a Linux host (Firecracker needs KVM; nsjail needs the
-    # nsjail binary). When no host is provisioned, callers see
-    # ``SandboxUnavailableError`` -- there is no local un-isolated
-    # fallback by design.
-    #
-    # sandbox_backend:
-    #   ``none``          -- no backend; every ``run`` raises Unavailable.
-    #   ``nsjail``        -- namespace + seccomp sandbox on the host.
-    #   ``firecracker``   -- microVM (KVM required); needs rootfs + kernel.
     # sandbox_ssh_host / _user / _port:
     #   SSH target for the sandbox host. Empty ``sandbox_ssh_host`` also
     #   trips Unavailable so the operator cannot forget the wiring.
@@ -620,7 +634,20 @@ class PlatformConfigSchema(BaseModel):
     training_lora_dropout: float = 0.05
     training_output_dir: str = ""
 
-    sandbox_backend: str = "none"
+    sandbox_backend: str = Field(
+        default="none",
+        description=(
+            "The sandbox is a platform-owned, one-VM-per-run isolation primitive "
+            "every module reaches through ``SandboxService.run``. Backends run "
+            "over SSH on a Linux host (Firecracker needs KVM; nsjail needs the "
+            "nsjail binary). When no host is provisioned, callers see "
+            "``SandboxUnavailableError`` -- there is no local un-isolated "
+            "fallback by design.\n\n"
+            "``none`` -- no backend; every ``run`` raises Unavailable.\n"
+            "``nsjail`` -- namespace + seccomp sandbox on the host.\n"
+            "``firecracker`` -- microVM (KVM required); needs rootfs + kernel."
+        ),
+    )
     sandbox_system_id: str = ""
     sandbox_system_name: str = ""
     sandbox_ssh_host: str = ""
@@ -651,71 +678,85 @@ class PlatformConfigSchema(BaseModel):
     # aggregate was truncated).
     routing_negative_hwm: str = ""
 
-    # Issue #161 fold-into-learner switch. When True and a
-    # ``routing_history_provider`` is bound, the pre-execution sizing
-    # seam in ``investigation_setup_base`` wraps the provider through
-    # :func:`aila.platform.routing.negative_feedback
-    # .augment_history_provider_with_hard_negatives` so
-    # :class:`RoutingLearner` sees synthetic REJECT samples derived
-    # from the ``router_hard_negative`` aggregate on top of the module's
-    # real outcome-review history. Default False so a fresh install
-    # with the retune schedule ALSO disabled is byte-identical to
-    # pre-#161 behaviour, AND an operator that enables the retune
-    # schedule to accrue the aggregate can still keep the fold OFF
-    # (accrue signal, decide separately when to consume it -- matches
-    # the propose-and-gate posture of RFC-08 calibration proposals).
-    routing_negative_feedback_enabled: bool = False
+    routing_negative_feedback_enabled: bool = Field(
+        default=False,
+        description=(
+            "Issue #161 fold-into-learner switch. When True and a "
+            "``routing_history_provider`` is bound, the pre-execution sizing "
+            "seam in ``investigation_setup_base`` wraps the provider through "
+            ":func:`aila.platform.routing.negative_feedback "
+            ".augment_history_provider_with_hard_negatives` so "
+            ":class:`RoutingLearner` sees synthetic REJECT samples derived "
+            "from the ``router_hard_negative`` aggregate on top of the module's "
+            "real outcome-review history. Default False so a fresh install "
+            "with the retune schedule ALSO disabled is byte-identical to "
+            "pre-#161 behaviour, AND an operator that enables the retune "
+            "schedule to accrue the aggregate can still keep the fold OFF "
+            "(accrue signal, decide separately when to consume it -- matches "
+            "the propose-and-gate posture of RFC-08 calibration proposals)."
+        ),
+    )
 
-    # #159 part 1 -- MCP tool-description hash pin (supply-chain guard).
-    # When True, the platform bridge refuses to serve a projected tool
-    # catalogue whose sha256 differs from the first-sight pin,
-    # raising :class:`aila.platform.mcp.tool_hash.ToolDescriptionMismatchError`
-    # to the caller (prompt builder / tool_executor.registered_tools).
-    # Default False emits a WARNING and rotates the pin so legitimate
-    # rolling upgrades ("added new tool", "reworded description") do
-    # not ground every worker until an operator intervenes. Flip to
-    # True on hardened deployments where a poisoned tool description
-    # is a higher-severity outcome than a five-minute deploy stall.
-    mcp_tool_hash_strict: bool = False
+    mcp_tool_hash_strict: bool = Field(
+        default=False,
+        description=(
+            "#159 part 1 -- MCP tool-description hash pin (supply-chain guard). "
+            "When True, the platform bridge refuses to serve a projected tool "
+            "catalogue whose sha256 differs from the first-sight pin, "
+            "raising :class:`aila.platform.mcp.tool_hash.ToolDescriptionMismatchError` "
+            "to the caller (prompt builder / tool_executor.registered_tools). "
+            "Default False emits a WARNING and rotates the pin so legitimate "
+            "rolling upgrades (\"added new tool\", \"reworded description\") do "
+            "not ground every worker until an operator intervenes. Flip to "
+            "True on hardened deployments where a poisoned tool description "
+            "is a higher-severity outcome than a five-minute deploy stall."
+        ),
+    )
 
-    # ENHANCEMENT #160 -- OpenTelemetry GenAI-conventions span emission.
-    # When True AND the ``opentelemetry`` package is installed (see the
-    # ``[otel]`` optional extra in ``pyproject.toml``), the LLM client
-    # and the workflow engine emit spans following the stabilized 2026
-    # GenAI semantic conventions (``gen_ai.operation.name``,
-    # ``gen_ai.request.model``, ``gen_ai.usage.input_tokens`` /
-    # ``output_tokens``, ``gen_ai.agent.name``, ...). Consumed by
-    # :func:`aila.platform.observability.gen_ai_span`. Default False so
-    # a base install (no extra, no exporter) is byte-identical to the
-    # pre-#160 path. Flip via ``PUT /config/platform/otel_enabled`` or
-    # ``AILA_PLATFORM_OTEL_ENABLED`` once an OTLP exporter is wired
-    # through the operator's ``opentelemetry-instrument`` bootstrap;
-    # a value flip lands on the next call without a worker restart.
-    # Cross-boundary MCP trace-context propagation
-    # (audit-mcp / ida-headless / semble stitching) is intentionally
-    # NOT gated by this flag -- issue #160 tracks that as a follow-up
-    # slice.
-    otel_enabled: bool = False
+    otel_enabled: bool = Field(
+        default=False,
+        description=(
+            "ENHANCEMENT #160 -- OpenTelemetry GenAI-conventions span emission. "
+            "When True AND the ``opentelemetry`` package is installed (see the "
+            "``[otel]`` optional extra in ``pyproject.toml``), the LLM client "
+            "and the workflow engine emit spans following the stabilized 2026 "
+            "GenAI semantic conventions (``gen_ai.operation.name``, "
+            "``gen_ai.request.model``, ``gen_ai.usage.input_tokens`` / "
+            "``output_tokens``, ``gen_ai.agent.name``, ...). Consumed by "
+            ":func:`aila.platform.observability.gen_ai_span`. Default False so "
+            "a base install (no extra, no exporter) is byte-identical to the "
+            "pre-#160 path. Flip via ``PUT /config/platform/otel_enabled`` or "
+            "``AILA_PLATFORM_OTEL_ENABLED`` once an OTLP exporter is wired "
+            "through the operator's ``opentelemetry-instrument`` bootstrap; "
+            "a value flip lands on the next call without a worker restart. "
+            "Cross-boundary MCP trace-context propagation "
+            "(audit-mcp / ida-headless / semble stitching) is intentionally "
+            "NOT gated by this flag -- issue #160 tracks that as a follow-up "
+            "slice."
+        ),
+    )
 
-    # ENHANCEMENT #154 -- LSP-guided retrieval (platform/services/lsp.py).
-    # Fronts off-the-shelf language servers (pyright + gopls today; more
-    # languages plug in by extending the LANGUAGE_SPECS registry) per
-    # indexed root and exposes ``lsp.definition`` / ``lsp.references`` /
-    # ``lsp.hover`` / ``lsp.diagnostics`` as platform tools recorded as
-    # ``lsp.*`` observations (RFC #137).
-    #
-    # ``lsp_enabled`` (default False) gates the whole subsystem. When
-    # False every tool short-circuits to a typed unavailable envelope
-    # WITHOUT spawning any server -- byte-identical to the pre-#154
-    # path. Flip via PUT /config/platform/lsp_enabled (or the env form
-    # ``AILA_PLATFORM_LSP_ENABLED``); the flip lands on the next
-    # request without a worker restart.
-    #
-    # Fail-open by construction: a missing binary (``lsp_pyright_bin``
-    # / ``lsp_gopls_bin`` unresolvable on PATH), a spawn error, or a
-    # dead child returns status='unavailable' with an empty payload
-    # and NEVER raises through the tool surface.
-    #
+    lsp_enabled: bool = Field(
+        default=False,
+        description=(
+            "ENHANCEMENT #154 -- LSP-guided retrieval (platform/services/lsp.py). "
+            "Fronts off-the-shelf language servers (pyright + gopls today; more "
+            "languages plug in by extending the LANGUAGE_SPECS registry) per "
+            "indexed root and exposes ``lsp.definition`` / ``lsp.references`` / "
+            "``lsp.hover`` / ``lsp.diagnostics`` as platform tools recorded as "
+            "``lsp.*`` observations (RFC #137).\n\n"
+            "``lsp_enabled`` (default False) gates the whole subsystem. When "
+            "False every tool short-circuits to a typed unavailable envelope "
+            "WITHOUT spawning any server -- byte-identical to the pre-#154 "
+            "path. Flip via PUT /config/platform/lsp_enabled (or the env form "
+            "``AILA_PLATFORM_LSP_ENABLED``); the flip lands on the next "
+            "request without a worker restart.\n\n"
+            "Fail-open by construction: a missing binary (``lsp_pyright_bin`` "
+            "/ ``lsp_gopls_bin`` unresolvable on PATH), a spawn error, or a "
+            "dead child returns status='unavailable' with an empty payload "
+            "and NEVER raises through the tool surface."
+        ),
+    )
     # ``lsp_request_timeout_s`` bounds a single request (definition /
     # references / hover); ``lsp_startup_timeout_s`` bounds the LSP
     # ``initialize`` handshake on first-use of a (root, language)
@@ -724,34 +765,37 @@ class PlatformConfigSchema(BaseModel):
     # ``textDocument/didOpen`` when none has arrived yet. Zero on any
     # timeout disables the request path (every call reports
     # unavailable).
-    lsp_enabled: bool = False
     lsp_pyright_bin: str = "pyright-langserver"
     lsp_gopls_bin: str = "gopls"
     lsp_request_timeout_s: float = 15.0
     lsp_startup_timeout_s: float = 30.0
     lsp_diagnostics_wait_s: float = 3.0
 
-    # ENHANCEMENT #156 -- Speculative planning / speculative actions for
-    # the tool loop. When True, at the end of every successful tool
-    # dispatch on a branch, ``aila.platform.services.speculator`` kicks
-    # off a background asyncio.Task that asks a cheap (Haiku-class)
-    # model to predict the NEXT tool_run for the same branch and
-    # pre-warms the predicted MCP call. On the following turn the tool
-    # executor calls :meth:`Speculator.claim` before dispatch; when the
-    # strong model's actual (server, tool, args) match the prediction,
-    # the pre-warmed raw dict is used byte-identically and the MCP
-    # round trip is skipped (latency win). On disagreement the
-    # pre-warmed result is discarded and the strong model's decision
-    # dispatches normally -- outputs stay LOSSLESS with respect to the
-    # non-speculative path. Safety: the speculator ONLY pre-warms
-    # tools that appear in the platform read-tool registry
-    # (:func:`aila.platform.mcp.adapters.get_read_tools`); any predicted
-    # non-read tool is refused. Default False so a base install is
-    # byte-identical to the pre-#156 path. Flip via
-    # ``PUT /config/platform/speculative_enabled`` or the
-    # ``AILA_PLATFORM_SPECULATIVE_ENABLED`` env override; a value flip
-    # lands on the next call without a worker restart.
-    #
+    speculative_enabled: bool = Field(
+        default=False,
+        description=(
+            "ENHANCEMENT #156 -- Speculative planning / speculative actions for "
+            "the tool loop. When True, at the end of every successful tool "
+            "dispatch on a branch, ``aila.platform.services.speculator`` kicks "
+            "off a background asyncio.Task that asks a cheap (Haiku-class) "
+            "model to predict the NEXT tool_run for the same branch and "
+            "pre-warms the predicted MCP call. On the following turn the tool "
+            "executor calls :meth:`Speculator.claim` before dispatch; when the "
+            "strong model's actual (server, tool, args) match the prediction, "
+            "the pre-warmed raw dict is used byte-identically and the MCP "
+            "round trip is skipped (latency win). On disagreement the "
+            "pre-warmed result is discarded and the strong model's decision "
+            "dispatches normally -- outputs stay LOSSLESS with respect to the "
+            "non-speculative path. Safety: the speculator ONLY pre-warms "
+            "tools that appear in the platform read-tool registry "
+            "(:func:`aila.platform.mcp.adapters.get_read_tools`); any predicted "
+            "non-read tool is refused. Default False so a base install is "
+            "byte-identical to the pre-#156 path. Flip via "
+            "``PUT /config/platform/speculative_enabled`` or the "
+            "``AILA_PLATFORM_SPECULATIVE_ENABLED`` env override; a value flip "
+            "lands on the next call without a worker restart."
+        ),
+    )
     # speculative_task_type:
     #   ``llm_model_<task_type>`` selects the cheap model used for the
     #   prediction call. Operators set e.g.
@@ -776,32 +820,35 @@ class PlatformConfigSchema(BaseModel):
     #   non-blocking (an unfinished pre-warm counts as a miss and the
     #   real dispatch fires). Operators willing to trade tail latency
     #   for hit rate may raise this to a small positive value.
-    speculative_enabled: bool = False
     speculative_task_type: str = "speculative_next_tool"
     speculative_history_max_messages: int = 8
     speculative_prewarm_timeout_s: float = 20.0
     speculative_slot_ttl_s: float = 120.0
     speculative_claim_wait_timeout_s: float = 0.0
 
-    # ENHANCEMENT #155 -- immutable-prefix / mutable-tail prompt layout.
-    # When True the per-turn user prompt is reordered so every
-    # investigation-stable segment (system framing, tool definitions,
-    # module capabilities, static persona, target snapshot, available-tools
-    # catalog, trailing response contract) appears BEFORE every mutable
-    # segment (operator messages, active directives, case model, CVE
-    # intel, applicable patterns, prior submissions, sibling context,
-    # retrieved knowledge). Provider prompt caches (Anthropic ~90% read
-    # discount, OpenAI 24 h retention) stay warm turn-over-turn so
-    # 50-100 turn investigations pay roughly 10% of prefill per turn
-    # instead of full price. Default True so a base install gets the
-    # cheaper prefix layout without an explicit opt-in; the resolver
-    # :func:`aila.platform.llm.prompt_layout.is_prompt_layout_enabled`
-    # treats this value as the operator kill switch (write a falsy
-    # value to disable). Flip via
-    # ``PUT /config/platform/prompt_layout_enabled`` or the env var
-    # ``AILA_PLATFORM_PROMPT_LAYOUT_ENABLED``; a value change lands on
-    # the next turn without a worker restart.
-    prompt_layout_enabled: bool = True
+    prompt_layout_enabled: bool = Field(
+        default=True,
+        description=(
+            "ENHANCEMENT #155 -- immutable-prefix / mutable-tail prompt layout. "
+            "When True the per-turn user prompt is reordered so every "
+            "investigation-stable segment (system framing, tool definitions, "
+            "module capabilities, static persona, target snapshot, available-tools "
+            "catalog, trailing response contract) appears BEFORE every mutable "
+            "segment (operator messages, active directives, case model, CVE "
+            "intel, applicable patterns, prior submissions, sibling context, "
+            "retrieved knowledge). Provider prompt caches (Anthropic ~90% read "
+            "discount, OpenAI 24 h retention) stay warm turn-over-turn so "
+            "50-100 turn investigations pay roughly 10% of prefill per turn "
+            "instead of full price. Default True so a base install gets the "
+            "cheaper prefix layout without an explicit opt-in; the resolver "
+            ":func:`aila.platform.llm.prompt_layout.is_prompt_layout_enabled` "
+            "treats this value as the operator kill switch (write a falsy "
+            "value to disable). Flip via "
+            "``PUT /config/platform/prompt_layout_enabled`` or the env var "
+            "``AILA_PLATFORM_PROMPT_LAYOUT_ENABLED``; a value change lands on "
+            "the next turn without a worker restart."
+        ),
+    )
 
     # ENHANCEMENT #155 -- investigation-scoped prompt-cache TTL in
     # seconds. Forwarded to the provider as a cache-control lifetime
@@ -824,13 +871,6 @@ class PlatformConfigSchema(BaseModel):
     # under a per-investigation row cap -- no new table, just cap-bounded
     # writes to the existing ``KnowledgeEntryRecord`` store.
     #
-    # ``context_retrieved_enabled`` gates the RETRIEVED-tier populator on
-    # every reasoning turn. When True, the turn runner queries the routed
-    # retrieval path with a live-hypothesis-derived query and injects a
-    # single consolidated RETRIEVED-tier section into the assembler. When
-    # False the populator early-returns and the assembler sees no retrieved
-    # sections.
-    #
     # ``context_retrieved_limit`` is the ``KnowledgeService.retrieve_routed``
     # ``limit`` parameter -- top-k hits per turn.
     #
@@ -843,13 +883,6 @@ class PlatformConfigSchema(BaseModel):
     # logger already use). The populator trims hits from the low-score end
     # so a runaway result set cannot dominate the budget.
     #
-    # ``context_shared_pool_enabled`` gates the per-turn contribution to
-    # the cross-branch pool. Reading from the pool is controlled by
-    # ``context_retrieved_enabled`` alone -- an operator can enable
-    # retrieval AND leave contributions off (read-only observer) OR enable
-    # contributions with retrieval off (fill the pool with no read cost)
-    # to stage the rollout.
-    #
     # ``context_shared_pool_max_entries`` is the per-investigation row cap
     # the pool enforces after every contribution. Rows past the cap are
     # deleted in ascending order of the ``relevance_at_write * temporal
@@ -861,11 +894,31 @@ class PlatformConfigSchema(BaseModel):
     # half-life applied at eviction time. Independent from
     # ``knowledge_decay_half_life_hours`` (the retrieval-time re-rank) so
     # the operator can decay eviction faster than retrieval or vice versa.
-    context_retrieved_enabled: bool = False
+    context_retrieved_enabled: bool = Field(
+        default=False,
+        description=(
+            "``context_retrieved_enabled`` gates the RETRIEVED-tier populator on "
+            "every reasoning turn. When True, the turn runner queries the routed "
+            "retrieval path with a live-hypothesis-derived query and injects a "
+            "single consolidated RETRIEVED-tier section into the assembler. When "
+            "False the populator early-returns and the assembler sees no retrieved "
+            "sections."
+        ),
+    )
     context_retrieved_limit: int = 5
     context_retrieved_min_score: float = 0.3
     context_retrieved_max_tokens: int = 4000
-    context_shared_pool_enabled: bool = False
+    context_shared_pool_enabled: bool = Field(
+        default=False,
+        description=(
+            "``context_shared_pool_enabled`` gates the per-turn contribution to "
+            "the cross-branch pool. Reading from the pool is controlled by "
+            "``context_retrieved_enabled`` alone -- an operator can enable "
+            "retrieval AND leave contributions off (read-only observer) OR enable "
+            "contributions with retrieval off (fill the pool with no read cost) "
+            "to stage the rollout."
+        ),
+    )
     context_shared_pool_max_entries: int = 200
     context_shared_pool_decay_half_life_hours: float = 24.0
 
@@ -881,143 +934,162 @@ class PlatformConfigSchema(BaseModel):
     # reason -- the compare CLI never crashes because one alt is
     # unreachable.
     #
-    # Voyage AI (``voyage-code-3``): embeddings API used as a rerank
-    # pass over the local candidate pool. Set
-    # ``retrieval_backend_voyage_api_key`` to activate; ``_model`` and
-    # ``_base_url`` default to the current public v1 endpoint + the
-    # code-specialist model.
-    #
-    # Jina AI (``jina-code-embeddings-v2``): same pattern as Voyage on
-    # the public v1 endpoint.
-    #
-    # Qwen3-Reranker (``Qwen/Qwen3-Reranker-4B`` served over a
-    # TEI-compatible HTTP endpoint): sends the local candidate pool as
-    # a rerank request. Set ``retrieval_backend_qwen_reranker_url`` to
-    # the base URL (e.g. ``https://api.siliconflow.com/v1``) and, if
-    # the endpoint requires it, ``_qwen_reranker_api_key``.
-    #
     # ``retrieval_backend_pool_multiplier`` is the fan-out on top of
     # ``k``: alt backends rerank ``k * pool_multiplier`` local
     # candidates so their top-k has room to differ from the local
     # ranking. ``retrieval_backend_http_timeout_s`` is the per-request
     # wall-clock ceiling applied to every alt-backend HTTP call.
     # ------------------------------------------------------------------
-    retrieval_backend_voyage_api_key: str = ""
+    retrieval_backend_voyage_api_key: str = Field(
+        default="",
+        description=(
+            "Voyage AI (``voyage-code-3``): embeddings API used as a rerank "
+            "pass over the local candidate pool. Set "
+            "``retrieval_backend_voyage_api_key`` to activate; ``_model`` and "
+            "``_base_url`` default to the current public v1 endpoint + the "
+            "code-specialist model."
+        ),
+    )
     retrieval_backend_voyage_model: str = "voyage-code-3"
     retrieval_backend_voyage_base_url: str = "https://api.voyageai.com/v1"
-    retrieval_backend_jina_api_key: str = ""
+    retrieval_backend_jina_api_key: str = Field(
+        default="",
+        description=(
+            "Jina AI (``jina-code-embeddings-v2``): embeddings API used as a "
+            "rerank pass over the local candidate pool on the public v1 "
+            "endpoint. Set ``retrieval_backend_jina_api_key`` to activate."
+        ),
+    )
     retrieval_backend_jina_model: str = "jina-code-embeddings-v2"
     retrieval_backend_jina_base_url: str = "https://api.jina.ai/v1"
     retrieval_backend_qwen_reranker_url: str = ""
     retrieval_backend_qwen_reranker_model: str = "Qwen/Qwen3-Reranker-4B"
-    retrieval_backend_qwen_reranker_api_key: str = ""
+    retrieval_backend_qwen_reranker_api_key: str = Field(
+        default="",
+        description=(
+            "Qwen3-Reranker (``Qwen/Qwen3-Reranker-4B`` served over a "
+            "TEI-compatible HTTP endpoint): sends the local candidate pool as "
+            "a rerank request. Set ``retrieval_backend_qwen_reranker_url`` to "
+            "the base URL (e.g. ``https://api.siliconflow.com/v1``) and, if "
+            "the endpoint requires it, ``retrieval_backend_qwen_reranker_api_key``."
+        ),
+    )
     retrieval_backend_pool_multiplier: int = 5
     retrieval_backend_http_timeout_s: float = 30.0
 
-    # Issue #95, Wave 3 -- explorer/planner decoupling in the VR loop.
-    # When True, the VR researcher's per-turn ``_refresh_retrieved_knowledge``
-    # hook also runs the wave-3 explorer/planner pass (see
-    # :mod:`aila.modules.vr.agents.explorer_planner`): the explorer reads
-    # the shared lateral-discovery ledger (Wave 1 ``lateral_observation``
-    # entries + Wave 2 ``lateral_llm`` entries) plus -- when configured
-    # -- one cheap LLM proposal routed through
-    # :func:`~aila.platform.agents.idempotent_llm.idempotent_llm_call`
-    # under task type ``vulnerability_research.explorer_planner``, ranks
-    # the resulting directions by recency and origin, and the planner
-    # folds the top pick into the next-action selection via a
-    # ``_directive.explorer_top_lead`` observable the prompt's
-    # active-directives section already renders. Default False so the
-    # VR loop is BYTE-IDENTICAL to today's behaviour (the helper
-    # early-returns before any DB read / LLM construction / observable
-    # write when the flag is off). Flip via ``PUT /config/platform/
-    # vr_explorer_enabled`` or the env var above once the incremental
-    # per-turn ledger read + optional LLM cost is worth paying; the
-    # flip lands on the next VR turn without a worker restart. A full
-    # persona-dispatch split (a distinct explorer LLM run against a
-    # separate system prompt) is out of scope for this slice and would
-    # be a follow-up RFC.
-    vr_explorer_enabled: bool = False
+    vr_explorer_enabled: bool = Field(
+        default=False,
+        description=(
+            "Issue #95, Wave 3 -- explorer/planner decoupling in the VR loop. "
+            "When True, the VR researcher's per-turn ``_refresh_retrieved_knowledge`` "
+            "hook also runs the wave-3 explorer/planner pass (see "
+            ":mod:`aila.modules.vr.agents.explorer_planner`): the explorer reads "
+            "the shared lateral-discovery ledger (Wave 1 ``lateral_observation`` "
+            "entries + Wave 2 ``lateral_llm`` entries) plus -- when configured "
+            "-- one cheap LLM proposal routed through "
+            ":func:`~aila.platform.agents.idempotent_llm.idempotent_llm_call` "
+            "under task type ``vulnerability_research.explorer_planner``, ranks "
+            "the resulting directions by recency and origin, and the planner "
+            "folds the top pick into the next-action selection via a "
+            "``_directive.explorer_top_lead`` observable the prompt's "
+            "active-directives section already renders. Default False so the "
+            "VR loop is BYTE-IDENTICAL to today's behaviour (the helper "
+            "early-returns before any DB read / LLM construction / observable "
+            "write when the flag is off). Flip via ``PUT /config/platform/ "
+            "vr_explorer_enabled`` or the env var above once the incremental "
+            "per-turn ledger read + optional LLM cost is worth paying; the "
+            "flip lands on the next VR turn without a worker restart. A full "
+            "persona-dispatch split (a distinct explorer LLM run against a "
+            "separate system prompt) is out of scope for this slice and would "
+            "be a follow-up RFC."
+        ),
+    )
 
-    # ------------------------------------------------------------------
-    # RFC #148 -- platform symbolic-execution driver
-    # (``aila.platform.services.symbolic.explore``). Concolic
-    # constraint emission on a single function under an operator-
-    # supplied precondition, feeding a ``symbolic.reached`` observation
-    # into the SAME platform observation channel (RFC #137,
-    # :func:`aila.platform.agents.observation.record_observation`) the
-    # ``fuzz.*`` kinds already use, so the hypothesis kill-criteria
-    # consume both without new plumbing. Whole-program exploration is
-    # deferred.
-    #
-    # Default False so a base install (no ``[symbolic]`` extra, no
-    # miasm) is byte-identical to the pre-#148 path -- every call to
-    # :func:`aila.platform.services.symbolic.explore` short-circuits to
-    # :attr:`ExplorationStatus.DISABLED` without importing miasm. Flip
-    # via ``PUT /config/platform/symbolic_enabled`` or
-    # ``AILA_PLATFORM_SYMBOLIC_ENABLED`` once ``pip install .[symbolic]``
-    # has landed miasm on the target host; a value flip lands on the
-    # next call without a worker restart. Miasm absence with the flag
-    # ON also degrades cleanly to :attr:`ExplorationStatus.UNAVAILABLE`
-    # rather than raising -- the driver never breaks a caller's main
-    # path on an environment defect.
-    # ------------------------------------------------------------------
-    symbolic_enabled: bool = False
+    symbolic_enabled: bool = Field(
+        default=False,
+        description=(
+            "RFC #148 -- platform symbolic-execution driver "
+            "(``aila.platform.services.symbolic.explore``). Concolic "
+            "constraint emission on a single function under an operator- "
+            "supplied precondition, feeding a ``symbolic.reached`` observation "
+            "into the SAME platform observation channel (RFC #137, "
+            ":func:`aila.platform.agents.observation.record_observation`) the "
+            "``fuzz.*`` kinds already use, so the hypothesis kill-criteria "
+            "consume both without new plumbing. Whole-program exploration is "
+            "deferred.\n\n"
+            "Default False so a base install (no ``[symbolic]`` extra, no "
+            "miasm) is byte-identical to the pre-#148 path -- every call to "
+            ":func:`aila.platform.services.symbolic.explore` short-circuits to "
+            ":attr:`ExplorationStatus.DISABLED` without importing miasm. Flip "
+            "via ``PUT /config/platform/symbolic_enabled`` or "
+            "``AILA_PLATFORM_SYMBOLIC_ENABLED`` once ``pip install .[symbolic]`` "
+            "has landed miasm on the target host; a value flip lands on the "
+            "next call without a worker restart. Miasm absence with the flag "
+            "ON also degrades cleanly to :attr:`ExplorationStatus.UNAVAILABLE` "
+            "rather than raising -- the driver never breaks a caller's main "
+            "path on an environment defect."
+        ),
+    )
 
-    # ------------------------------------------------------------------
-    # Issue #21 -- platform dynamic-execution primitive
-    # (``aila.platform.services.dynamic_execution.run_dynamic``). When
-    # False the primitive is inert: a call returns
-    # :attr:`DynamicRunStatus.DISABLED` before the sandbox is even
-    # reached and emits no ``dynamic.*`` observations. When True the
-    # primitive dispatches through the existing platform
-    # :class:`SandboxService` (RFC #147) and burns ``dynamic.run`` /
-    # ``dynamic.crash`` / ``dynamic.coverage_delta`` observations into
-    # the same workspace-scoped channel (RFC #137,
-    # :func:`aila.platform.agents.observation.record_observation`) the
-    # ``fuzz.*`` and ``symbolic.*`` kinds already use, so the reasoning
-    # loop and kill-criterion layer consume dynamic-run results with
-    # no new plumbing.
-    #
-    # Default False so a deployment with no sandbox provisioned
-    # (``sandbox_backend='none'``) is byte-identical to the pre-#21
-    # path -- every call short-circuits without touching SSH. Flip via
-    # ``PUT /config/platform/dynamic_execution_enabled`` or
-    # ``AILA_PLATFORM_DYNAMIC_EXECUTION_ENABLED`` once the operator has
-    # confirmed a sandbox backend host; the flip lands on the next call
-    # without a worker restart. Sandbox absence with the flag ON also
-    # degrades cleanly to :attr:`DynamicRunStatus.UNAVAILABLE` rather
-    # than raising -- the primitive never breaks a caller's main path
-    # on an environment defect.
-    # ------------------------------------------------------------------
-    dynamic_execution_enabled: bool = False
+    dynamic_execution_enabled: bool = Field(
+        default=False,
+        description=(
+            "Issue #21 -- platform dynamic-execution primitive "
+            "(``aila.platform.services.dynamic_execution.run_dynamic``). When "
+            "False the primitive is inert: a call returns "
+            ":attr:`DynamicRunStatus.DISABLED` before the sandbox is even "
+            "reached and emits no ``dynamic.*`` observations. When True the "
+            "primitive dispatches through the existing platform "
+            ":class:`SandboxService` (RFC #147) and burns ``dynamic.run`` / "
+            "``dynamic.crash`` / ``dynamic.coverage_delta`` observations into "
+            "the same workspace-scoped channel (RFC #137, "
+            ":func:`aila.platform.agents.observation.record_observation`) the "
+            "``fuzz.*`` and ``symbolic.*`` kinds already use, so the reasoning "
+            "loop and kill-criterion layer consume dynamic-run results with "
+            "no new plumbing.\n\n"
+            "Default False so a deployment with no sandbox provisioned "
+            "(``sandbox_backend='none'``) is byte-identical to the pre-#21 "
+            "path -- every call short-circuits without touching SSH. Flip via "
+            "``PUT /config/platform/dynamic_execution_enabled`` or "
+            "``AILA_PLATFORM_DYNAMIC_EXECUTION_ENABLED`` once the operator has "
+            "confirmed a sandbox backend host; the flip lands on the next call "
+            "without a worker restart. Sandbox absence with the flag ON also "
+            "degrades cleanly to :attr:`DynamicRunStatus.UNAVAILABLE` rather "
+            "than raising -- the primitive never breaks a caller's main path "
+            "on an environment defect."
+        ),
+    )
 
+    autopatch_enabled: bool = Field(
+        default=False,
+        description=(
+            "RFC #149 -- platform auto-patch synthesis + verifier "
+            "(``aila.platform.services.patching``). After "
+            ":class:`aila.platform.agents.claim_verifier.ClaimVerifierAgentBase` "
+            "writes a ``confirmed`` verdict onto a canonical outcome, the "
+            "emit-state chokepoint (``_maybe_trigger_patcher`` in "
+            ":mod:`aila.platform.workflows.investigation_emit_base`) enqueues "
+            "a per-module patcher task. The task calls "
+            ":meth:`PatchingService.synthesize_patch` (cheap coder LLM + "
+            "``read_lines`` / ``ast_edit`` produce a minimal unified diff), "
+            "then :meth:`PatchingService.verify_patch` (re-runs the finding's "
+            "PoC / fuzz reproducer against the patched source inside the "
+            "platform :class:`SandboxService`), and records the whole attempt "
+            "as one :class:`PlatformPatchAttemptRecord` row (migration "
+            "``130_auto_patch``).\n\n"
+            "``autopatch_enabled`` is the master switch. Default False so a "
+            "base install is byte-identical to the pre-#149 flow: no patcher "
+            "trigger fires, no ``platform_patch_attempt`` rows accumulate, "
+            "and the verifier's ``confirmed`` verdict alone drives auto-"
+            "promote as before. Flip via "
+            "``PUT /config/platform/autopatch_enabled`` or "
+            "``AILA_PLATFORM_AUTOPATCH_ENABLED`` once the operator has a "
+            "sandbox backend provisioned (``sandbox_backend`` above) AND "
+            "trusts the coder model on this deployment. A value flip lands on "
+            "the next terminal investigation without a worker restart."
+        ),
+    )
     # ------------------------------------------------------------------
-    # RFC #149 -- platform auto-patch synthesis + verifier
-    # (``aila.platform.services.patching``). After
-    # :class:`aila.platform.agents.claim_verifier.ClaimVerifierAgentBase`
-    # writes a ``confirmed`` verdict onto a canonical outcome, the
-    # emit-state chokepoint (``_maybe_trigger_patcher`` in
-    # :mod:`aila.platform.workflows.investigation_emit_base`) enqueues
-    # a per-module patcher task. The task calls
-    # :meth:`PatchingService.synthesize_patch` (cheap coder LLM +
-    # ``read_lines`` / ``ast_edit`` produce a minimal unified diff),
-    # then :meth:`PatchingService.verify_patch` (re-runs the finding's
-    # PoC / fuzz reproducer against the patched source inside the
-    # platform :class:`SandboxService`), and records the whole attempt
-    # as one :class:`PlatformPatchAttemptRecord` row (migration
-    # ``130_auto_patch``).
-    #
-    # ``autopatch_enabled`` is the master switch. Default False so a
-    # base install is byte-identical to the pre-#149 flow: no patcher
-    # trigger fires, no ``platform_patch_attempt`` rows accumulate,
-    # and the verifier's ``confirmed`` verdict alone drives auto-
-    # promote as before. Flip via
-    # ``PUT /config/platform/autopatch_enabled`` or
-    # ``AILA_PLATFORM_AUTOPATCH_ENABLED`` once the operator has a
-    # sandbox backend provisioned (``sandbox_backend`` above) AND
-    # trusts the coder model on this deployment. A value flip lands on
-    # the next terminal investigation without a worker restart.
-    #
     # ``autopatch_synth_task_type`` is the routing task_type the
     # synthesiser passes to :class:`AilaLLMClient` -- an operator can
     # pin a specific cheap coder model via
@@ -1048,39 +1120,43 @@ class PlatformConfigSchema(BaseModel):
     # every row. Setting either to 0.0 disables that half of the
     # estimate (row records 0 for that side).
     # ------------------------------------------------------------------
-    autopatch_enabled: bool = False
     autopatch_synth_task_type: str = "platform.autopatch.synthesize"
     autopatch_max_source_chars: int = 24_000
     autopatch_verify_timeout_s: float = 120.0
     autopatch_synth_cost_per_1k_prompt: float = 0.0003
     autopatch_synth_cost_per_1k_completion: float = 0.0015
 
-    # ------------------------------------------------------------------
-    # Index-readiness gate (operator-requested). When True (default), an
-    # investigation loop that binds an ``index_readiness_fn`` fires ZERO
-    # agent turns and defers (re-enqueue) until its bound audit-mcp index
-    # has BOTH the graph (trailmark) and semantic (semble) indexes ready.
-    # This stops agents flailing against a half-built index (read_function
-    # blocked, semantic_search "still building"). Set False (or
-    # ``AILA_PLATFORM_INDEX_READINESS_GATE_ENABLED=0``) to let turns fire
-    # regardless of index state. Modules that do not bind the readiness
-    # hook are unaffected either way.
-    # ------------------------------------------------------------------
-    index_readiness_gate_enabled: bool = True
+    index_readiness_gate_enabled: bool = Field(
+        default=True,
+        description=(
+            "Index-readiness gate (operator-requested). When True (default), an "
+            "investigation loop that binds an ``index_readiness_fn`` fires ZERO "
+            "agent turns and defers (re-enqueue) until its bound audit-mcp index "
+            "has BOTH the graph (trailmark) and semantic (semble) indexes ready. "
+            "This stops agents flailing against a half-built index (read_function "
+            "blocked, semantic_search \"still building\"). Set False (or "
+            "``AILA_PLATFORM_INDEX_READINESS_GATE_ENABLED=0``) to let turns fire "
+            "regardless of index state. Modules that do not bind the readiness "
+            "hook are unaffected either way."
+        ),
+    )
 
+    investigation_reconciler_periodic_enabled: bool = Field(
+        default=True,
+        description=(
+            "RFC-07 reconciliation wave -- investigation lifecycle convergence.\n\n"
+            "``investigation_reconciler_periodic_enabled`` is the master switch "
+            "for the periodic ``reconcile_investigation`` pass (L3.4). Default "
+            "True because the pass is a correctness fix (its absence lets an "
+            "investigation sit RUNNING-with-nothing-enqueued forever), not a new "
+            "capability: the sweep claims each row with the same compare-and-set "
+            "the stall/stuck sweeps use and journals every heal. Disable via "
+            "``PUT /config/platform/investigation_reconciler_periodic_enabled`` "
+            "or env ``AILA_PLATFORM_INVESTIGATION_RECONCILER_PERIODIC_ENABLED=0`` "
+            "if an operator wants to run the reconciler only on demand."
+        ),
+    )
     # ------------------------------------------------------------------
-    # RFC-07 reconciliation wave -- investigation lifecycle convergence.
-    #
-    # ``investigation_reconciler_periodic_enabled`` is the master switch
-    # for the periodic ``reconcile_investigation`` pass (L3.4). Default
-    # True because the pass is a correctness fix (its absence lets an
-    # investigation sit RUNNING-with-nothing-enqueued forever), not a new
-    # capability: the sweep claims each row with the same compare-and-set
-    # the stall/stuck sweeps use and journals every heal. Disable via
-    # ``PUT /config/platform/investigation_reconciler_periodic_enabled``
-    # or env ``AILA_PLATFORM_INVESTIGATION_RECONCILER_PERIODIC_ENABLED=0``
-    # if an operator wants to run the reconciler only on demand.
-    #
     # ``investigation_defer_ceiling_s`` bounds the per-investigation
     # backpressure defer computed by ``TaskQueue._compute_investigation_defer``
     # (L2.3 / Finding 5): the computed excess defer is clamped to this
@@ -1089,6 +1165,14 @@ class PlatformConfigSchema(BaseModel):
     # effective behavior (the cap only triggers well past the 6-task
     # in-flight allowance).
     # ------------------------------------------------------------------
-    investigation_reconciler_periodic_enabled: bool = True
     investigation_defer_ceiling_s: int = 180
+
+    onboarding_completed: bool = Field(
+        default=False,
+        description=(
+            "First-run onboarding marker. False until an administrator finishes "
+            "the platform onboarding wizard; the console opens the wizard "
+            "automatically for administrators while this is False."
+        ),
+    )
 

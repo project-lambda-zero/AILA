@@ -85,14 +85,14 @@ const familyHeader: CSSProperties = {
 };
 const familyTitle: CSSProperties = {
   fontFamily: "var(--font-mono)",
-  fontSize: 10.5,
+  fontSize: 11,
   letterSpacing: "0.14em",
   textTransform: "uppercase",
   color: "var(--text-primary)",
 };
 const familyBlurb: CSSProperties = {
   fontFamily: "var(--font-mono)",
-  fontSize: 10.5,
+  fontSize: 11,
   color: "var(--text-muted)",
   lineHeight: 1.5,
 };
@@ -126,7 +126,7 @@ const rowEnvNote: CSSProperties = {
   gridColumn: "1 / -1",
   paddingTop: 4,
   fontFamily: "var(--font-mono)",
-  fontSize: 10,
+  fontSize: 11,
   color: "var(--text-faint)",
   lineHeight: 1.5,
 };

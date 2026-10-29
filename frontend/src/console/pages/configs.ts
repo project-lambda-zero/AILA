@@ -4,7 +4,7 @@ import { css } from "../css";
 import { AuditEventDetail } from "./AuditEventDetail";
 import { SeverityBadge, StatusBadge, WorkflowStateBadge } from "./badges";
 import { formatFireTime, humanizeCron, nextRuns } from "./cronPreview";
-import type { PageAction, PageColumn, PageConfig } from "./DataPage";
+import type { PageAction, PageColumn, PageConfig } from "./data/types";
 import { LlmLogViewer } from "./LlmLogViewer";
 import { AgentPromptViewer, PromptBodyDetail, PromptFullViewer } from "./PromptViewer";
 
@@ -360,16 +360,16 @@ export const PAGE_CONFIGS = {
         label: "launch",
         method: "POST",
         endpoint: "/vr/fuzz/campaigns/{id}/launch",
-        whenStatus: ["created", "draft", "stopped", "failed"],
+        whenStatus: ["created", "aborted", "failed"],
         confirm: "Launch this fuzz campaign on its analysis system?",
       },
       {
         label: "stop",
-        method: "PATCH",
-        endpoint: "/vr/fuzz/campaigns/{id}",
-        body: { status: "stopped" },
-        whenStatus: ["running", "active", "launching"],
-        confirm: "Stop this fuzz campaign?",
+        method: "POST",
+        endpoint: "/vr/fuzz/campaigns/{id}/stop",
+        whenStatus: ["running", "paused"],
+        destructive: true,
+        confirm: "Stop this fuzz campaign? The remote fuzzer process will be signalled to exit.",
       },
     ],
   },
@@ -385,6 +385,16 @@ export const PAGE_CONFIGS = {
     endpoint: "/malware/targets",
     columns: [c("display_name", "name"), c("kind"), c("primary_language", "lang"), c("status"), c("analysis_state", "analysis"), c("uploaded_filename", "file"), c("created_at", "created")],
     filters: [{ name: "display_name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
+  },
+  // A project binds one target to an analysis workstation. DELETE archives
+  // the row (status -> archived) rather than removing it.
+  "malware:projects": {
+    title: "malware \u00b7 projects",
+    endpoint: "/malware/projects",
+    blurb: "a project binds one target to an analysis workstation; delete archives it",
+    empty: "no projects yet -- create one from an existing target",
+    columns: [c("name"), c("status"), c("target_id", "target"), c("analysis_system_id", "workstation"), c("created_at", "created")],
+    filters: [{ name: "name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
   "malware:investigations": {
     title: "malware \u00b7 investigations",
@@ -1321,6 +1331,7 @@ const DELETES: Record<string, { delete: string; idField?: string }> = {
   // malware:targets delete lives in the bespoke MalwareTargetDetail action
   // toolbar (soft-archive + state-aware siblings), so no generic header
   // delete here -- mirrors vr:targets above.
+  "malware:projects": { delete: "/malware/projects/{id}" },
   "malware:investigations": { delete: "/malware/investigations/{id}" },
   "malware:patterns": { delete: "/malware/patterns/{id}" },
   "malware:findings": { delete: "/malware/findings/{id}" },

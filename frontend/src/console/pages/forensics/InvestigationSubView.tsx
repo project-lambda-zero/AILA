@@ -6,7 +6,8 @@
  * reasoning + optional contract / hypotheses / rejected / observables /
  * provenance / expected_observation / submitted flag, plus the raw
  * command / script / stdout / stderr in code blocks. A "reasoning graphs"
- * pane shows the durable ReasoningGraphSnapshot list.
+ * pane replays the durable ReasoningGraphSnapshot list step by step and
+ * diffs two chosen steps (ReasoningGraphReplay).
  *
  * Every action hits a real endpoint; no fabricated fallbacks. Auto-refresh
  * every 5s while status is running/pending.
@@ -17,6 +18,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch } from "../../../api/client";
+import { useReasoningGraphs } from "../../../api/forensicsReasoning";
 import { css } from "../../css";
 import {
   CtlBtn,
@@ -28,6 +30,7 @@ import {
   H,
 } from "./panels";
 import { RerunForm, TagInvestigationForm } from "./forms";
+import { ReasoningGraphReplay } from "./ReasoningGraphReplay";
 
 interface AgentStep {
   id: string;
@@ -64,15 +67,6 @@ interface InvestigationDetail {
   needs_reap_reason: string | null;
 }
 
-interface ReasoningSnapshot {
-  id: string;
-  step_number: number;
-  strategy_family: string;
-  graph: unknown;
-  created_at: string | null;
-  updated_at: string | null;
-}
-
 export function InvestigationSubView({
   projectId,
   investigationId,
@@ -95,15 +89,7 @@ export function InvestigationSubView({
     },
   });
 
-  const graphs = useQuery<ReasoningSnapshot[]>({
-    queryKey: ["forensics", projectId, "investigation", investigationId, "graphs"],
-    queryFn: () =>
-      apiFetch<ReasoningSnapshot[]>(
-        `/forensics/projects/${projectId}/investigations/${investigationId}/reasoning-graphs`,
-      ),
-    enabled: Boolean(projectId && investigationId),
-    retry: false,
-  });
+  const graphs = useReasoningGraphs(projectId, investigationId);
 
   const [rerunOpen, setRerunOpen] = useState(false);
   const [tagOpen, setTagOpen] = useState(false);
@@ -150,7 +136,7 @@ export function InvestigationSubView({
       type="button"
       onClick={() => setPane(id)}
       style={css(
-        `background:${pane === id ? "var(--accent)" : "transparent"};color:${pane === id ? "var(--text-on-accent)" : "var(--text-muted)"};border:1px solid ${pane === id ? "var(--accent)" : "var(--border-soft)"};border-radius:2px;font-family:var(--font-mono);font-size:8.5px;letter-spacing:0.08em;text-transform:uppercase;padding:2px 9px;cursor:pointer;`,
+        `background:${pane === id ? "var(--accent)" : "transparent"};color:${pane === id ? "var(--text-on-accent)" : "var(--text-muted)"};border:1px solid ${pane === id ? "var(--accent)" : "var(--border-soft)"};border-radius:2px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;padding:2px 9px;cursor:pointer;`,
       )}
     >
       {label}
@@ -165,7 +151,7 @@ export function InvestigationSubView({
         tag={`#${d.id.slice(0, 12)}`}
         right={
           <>
-            <CtlBtn label="\u2190 back to tabs" tone="muted" onClick={onBackToTabs} />
+            <CtlBtn label={"\u2190 back to tabs"} tone="muted" onClick={onBackToTabs} />
           </>
         }
       >
@@ -191,7 +177,7 @@ export function InvestigationSubView({
             {d.needs_reap ? (
               <div
                 style={css(
-                  `margin:10px 0 0;padding:8px 10px;border:1px solid ${H.warn}66;border-radius:2px;background:${H.warn}11;color:${H.warn};font-family:var(--font-mono);font-size:10.5px;`,
+                  `margin:10px 0 0;padding:8px 10px;border:1px solid ${H.warn}66;border-radius:2px;background:${H.warn}11;color:${H.warn};font-family:var(--font-mono);font-size:11px;`,
                 )}
               >
                 zombie: {d.needs_reap_reason ?? "worker task settled without cleanup"}. reap to force-flip to failed.
@@ -240,43 +226,7 @@ export function InvestigationSubView({
           )}
         </Panel>
       ) : (
-        <Panel title="reasoning graph snapshots" tag={graphs.data ? `${graphs.data.length}` : ""}>
-          {graphs.isLoading ? (
-            <div style={emptyNote}>{"loading\u2026"}</div>
-          ) : graphs.isError ? (
-            <div style={emptyNote}>
-              could not load reasoning-graphs &mdash;{" "}
-              {graphs.error instanceof Error ? graphs.error.message : "request failed"}
-            </div>
-          ) : (graphs.data ?? []).length === 0 ? (
-            <div style={emptyNote}>no reasoning graphs recorded.</div>
-          ) : (
-            <div style={css("padding:10px 12px;display:flex;flex-direction:column;gap:10px;")}>
-              {(graphs.data ?? []).map((g) => (
-                <div
-                  key={g.id}
-                  style={css(
-                    "border:1px solid var(--border-soft);border-radius:2px;background:var(--surface-sunk);",
-                  )}
-                >
-                  <div
-                    style={css(
-                      "display:flex;align-items:center;gap:9px;padding:6px 10px;border-bottom:1px solid var(--border-soft);font-family:var(--font-mono);font-size:9.5px;color:var(--text-muted);",
-                    )}
-                  >
-                    <span style={css("color:var(--accent);")}>step {g.step_number}</span>
-                    <span>{g.strategy_family}</span>
-                    <span style={css("flex:1;")} />
-                    <span style={css("color:var(--text-faint);")}>{g.updated_at ?? g.created_at ?? ""}</span>
-                  </div>
-                  <div style={css("padding:8px 10px;")}>
-                    <DictPanel data={((g.graph as Record<string, unknown>) ?? {})} />
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </Panel>
+        <ReasoningGraphReplay projectId={projectId} investigationId={investigationId} />
       )}
 
       {rerunOpen ? (
@@ -303,12 +253,12 @@ function StepRow({ step, open, onToggle }: { step: AgentStep; open: boolean; onT
         type="button"
         onClick={onToggle}
         style={css(
-          "width:100%;text-align:left;display:flex;align-items:center;gap:10px;padding:7px 10px;background:var(--surface-chrome);border:0;border-bottom:1px solid var(--border-soft);color:var(--text-primary);cursor:pointer;font-family:var(--font-mono);font-size:10.5px;",
+          "width:100%;text-align:left;display:flex;align-items:center;gap:10px;padding:7px 10px;background:var(--surface-chrome);border:0;border-bottom:1px solid var(--border-soft);color:var(--text-primary);cursor:pointer;font-family:var(--font-mono);font-size:11px;",
         )}
       >
-        <span style={css("color:var(--accent);font-size:9px;letter-spacing:0.1em;text-transform:uppercase;")}>{open ? "\u25be" : "\u25b8"}</span>
-        <span style={css("color:var(--text-faint);font-size:9px;letter-spacing:0.1em;text-transform:uppercase;min-width:60px;")}>step {step.step_number}</span>
-        <span style={css("color:var(--accent);font-size:9px;letter-spacing:0.1em;text-transform:uppercase;min-width:110px;")}>{step.action}</span>
+        <span style={css("color:var(--accent);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;")}>{open ? "\u25be" : "\u25b8"}</span>
+        <span style={css("color:var(--text-faint);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;min-width:60px;")}>step {step.step_number}</span>
+        <span style={css("color:var(--accent);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;min-width:110px;")}>{step.action}</span>
         <span style={css("flex:1;min-width:0;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>
           {(step.reasoning || step.expected_observation || "").slice(0, 200)}
         </span>
@@ -365,7 +315,7 @@ function StepRow({ step, open, onToggle }: { step: AgentStep; open: boolean; onT
           {step.stdout ? <CodeSection label="stdout" body={step.stdout} /> : null}
           {step.stderr ? <CodeSection label="stderr" body={step.stderr} tone={H.danger} /> : null}
           {step.created_at ? (
-            <div style={css("font-family:var(--font-mono);font-size:9px;color:var(--text-faint);letter-spacing:0.06em;")}>{step.created_at}</div>
+            <div style={css("font-family:var(--font-mono);font-size:11px;color:var(--text-faint);letter-spacing:0.06em;")}>{step.created_at}</div>
           ) : null}
         </div>
       ) : null}
@@ -380,7 +330,7 @@ function StepSection({ label, color, children }: { label: string; color: string;
         `border-left:2px solid ${color}88;padding:2px 0 2px 10px;display:flex;flex-direction:column;gap:5px;`,
       )}
     >
-      <div style={css(`font-family:var(--font-mono);font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:${color};`)}>{label}</div>
+      <div style={css(`font-family:var(--font-mono);font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:${color};`)}>{label}</div>
       {children}
     </div>
   );
@@ -392,7 +342,7 @@ function CodeSection({ label, body, tone }: { label: string; body: string; tone?
     <StepSection label={label} color={c}>
       <pre
         style={css(
-          "margin:0;padding:8px 10px;background:var(--surface-chrome);border:1px solid var(--border-soft);border-radius:2px;font-family:var(--font-mono);font-size:10.5px;line-height:1.5;color:var(--text-primary);white-space:pre;overflow:auto;max-height:360px;",
+          "margin:0;padding:8px 10px;background:var(--surface-chrome);border:1px solid var(--border-soft);border-radius:2px;font-family:var(--font-mono);font-size:11px;line-height:1.5;color:var(--text-primary);white-space:pre;overflow:auto;max-height:360px;",
         )}
       >
         {body}
@@ -405,7 +355,7 @@ function BadgeTag({ tone, label }: { tone: string; label: string }): JSX.Element
   return (
     <span
       style={css(
-        `flex:0 0 auto;font-family:var(--font-mono);font-size:8.5px;letter-spacing:0.1em;text-transform:uppercase;padding:1px 6px;border:1px solid ${tone}66;border-radius:2px;color:${tone};`,
+        `flex:0 0 auto;font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;padding:1px 6px;border:1px solid ${tone}66;border-radius:2px;color:${tone};`,
       )}
     >
       {label}

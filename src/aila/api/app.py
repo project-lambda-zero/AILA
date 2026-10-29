@@ -370,7 +370,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             exc,
         )
 
+    # Push committed investigation status transitions (entity.status_changed,
+    # local or bridged from workers) to the owning team's /events/stream tabs.
+    from aila.api.events import (
+        install_investigation_status_forwarder,
+        uninstall_investigation_status_forwarder,
+    )
+
+    install_investigation_status_forwarder()
+
     yield
+
+    uninstall_investigation_status_forwarder()
 
     # Signal the supervisor to stop, then cancel as a backstop.
     if _automation_tick_task is not None:

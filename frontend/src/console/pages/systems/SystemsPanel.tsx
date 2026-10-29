@@ -94,7 +94,7 @@ function SystemsSection({ initialVocabOpen = false }: { initialVocabOpen?: boole
         onClick={() => setProbe(true)}
         disabled={probe || systemsQ.isFetching}
         style={css(
-          "padding:0 13px;height:28px;font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:3px;cursor:pointer;",
+          "padding:0 13px;height:28px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:3px;cursor:pointer;",
         )}
       >
         {probe || (systemsQ.isFetching && probe) ? "probing \u2026" : "refresh connectivity"}
@@ -104,7 +104,7 @@ function SystemsSection({ initialVocabOpen = false }: { initialVocabOpen?: boole
           type="button"
           onClick={() => setVocabOpen(true)}
           style={css(
-            "padding:0 13px;height:28px;font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:3px;cursor:pointer;",
+            "padding:0 13px;height:28px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:3px;cursor:pointer;",
           )}
         >
           manage tags
@@ -114,7 +114,7 @@ function SystemsSection({ initialVocabOpen = false }: { initialVocabOpen?: boole
         type="button"
         onClick={() => setFormMode("create")}
         style={css(
-          "padding:0 13px;height:28px;font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-on-accent);background:var(--accent);border:1px solid var(--accent);border-radius:3px;cursor:pointer;box-shadow:0 0 12px " + H.accent30 + ";",
+          "padding:0 13px;height:28px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-on-accent);background:var(--accent);border:1px solid var(--accent);border-radius:3px;cursor:pointer;box-shadow:0 0 12px " + H.accent30 + ";",
         )}
       >
         {"+ register system"}
@@ -129,21 +129,21 @@ function SystemsSection({ initialVocabOpen = false }: { initialVocabOpen?: boole
       <SectionTitle glyph={"\u25a4"} label="Systems Registry" right={rightAction} />
 
       <div style={css("margin-top:12px;display:flex;align-items:center;gap:8px;")}>
-        <label style={css("display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);")}>
+        <label style={css("display:flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);")}>
           <span>filter by role</span>
           <input
             type="text"
             value={roleFilter}
             onChange={(e) => setRoleFilter(e.target.value)}
             placeholder="e.g. vuln-scan"
-            style={css("background:var(--surface-sunk);border:1px solid var(--border-soft);outline:none;padding:5px 8px;color:var(--text-primary);font-family:var(--font-mono);font-size:10.5px;border-radius:2px;min-width:180px;")}
+            style={css("background:var(--surface-sunk);border:1px solid var(--border-soft);outline:none;padding:5px 8px;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;border-radius:2px;min-width:180px;")}
           />
         </label>
         {roleFilter.trim() ? (
           <button
             type="button"
             onClick={() => setRoleFilter("")}
-            style={css("padding:0 8px;height:24px;font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);background:transparent;border:1px solid var(--border-soft);border-radius:2px;cursor:pointer;")}
+            style={css("padding:0 8px;height:28px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);background:transparent;border:1px solid var(--border-soft);border-radius:2px;cursor:pointer;")}
           >
             clear
           </button>
@@ -152,7 +152,7 @@ function SystemsSection({ initialVocabOpen = false }: { initialVocabOpen?: boole
 
       <div style={css("margin-top:14px;display:flex;gap:12px;")}>
         <div style={css("flex:1;min-width:0;")}>
-          <div style={css("display:grid;grid-template-columns:" + gridCols + ";gap:10px;padding:8px 12px;background:var(--surface-sunk);border:1px solid var(--border-soft);border-bottom:0;border-radius:4px 4px 0 0;font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>
+          <div style={css("display:grid;grid-template-columns:" + gridCols + ";gap:10px;padding:8px 12px;background:var(--surface-sunk);border:1px solid var(--border-soft);border-bottom:0;border-radius:4px 4px 0 0;font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>
             <span>name</span>
             <span>host</span>
             <span>role</span>
@@ -185,21 +185,21 @@ function SystemsSection({ initialVocabOpen = false }: { initialVocabOpen?: boole
                   )}
                 >
                   <span style={css("font-size:11px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;align-self:center;")}>{s.name}</span>
-                  <span style={css("font-size:10.5px;color:var(--text-muted);font-family:var(--font-mono);align-self:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{s.host}</span>
-                  <span style={css("font-size:10px;color:" + (s.role ? "var(--text-primary)" : "var(--text-faint)") + ";font-family:var(--font-mono);align-self:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{s.role || "\u2014"}</span>
-                  <span style={css("font-size:10px;color:var(--text-muted);align-self:center;")}>{s.distro}</span>
+                  <span style={css("font-size:11px;color:var(--text-muted);font-family:var(--font-mono);align-self:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{s.host}</span>
+                  <span style={css("font-size:11px;color:" + (s.role ? "var(--text-primary)" : "var(--text-faint)") + ";font-family:var(--font-mono);align-self:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{s.role || "\u2014"}</span>
+                  <span style={css("font-size:11px;color:var(--text-muted);align-self:center;")}>{s.distro}</span>
                   <span style={css("align-self:center;display:flex;flex-direction:column;gap:2px;min-width:0;")}>
                     <span style={connChipStyle(s.connectivity_status)}>{s.connectivity_status ?? "unknown"}</span>
                     {lastChecked ? (
-                      <span style={css("font-size:9px;color:var(--text-faint);font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{lastChecked}</span>
+                      <span style={css("font-size:11px;color:var(--text-faint);font-family:var(--font-mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{lastChecked}</span>
                     ) : null}
                   </span>
-                  <span style={css("font-size:10px;color:var(--text-muted);align-self:center;")}>{(s.last_scan_at ?? "\u2014").slice(0, 10) || "\u2014"}</span>
-                  <span style={css("align-self:center;")}>{sev ? <span style={sevChipStyle(sev)}>{sev}</span> : <span style={css("font-size:10px;color:var(--text-faint);")}>{"\u2014"}</span>}</span>
+                  <span style={css("font-size:11px;color:var(--text-muted);align-self:center;")}>{(s.last_scan_at ?? "\u2014").slice(0, 10) || "\u2014"}</span>
+                  <span style={css("align-self:center;")}>{sev ? <span style={sevChipStyle(sev)}>{sev}</span> : <span style={css("font-size:11px;color:var(--text-faint);")}>{"\u2014"}</span>}</span>
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); setFormMode({ edit: s }); }}
-                    style={css("align-self:center;padding:0 8px;height:22px;font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:2px;cursor:pointer;")}
+                    style={css("align-self:center;padding:0 8px;height:28px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:2px;cursor:pointer;")}
                   >
                     edit
                   </button>
@@ -297,7 +297,7 @@ function SystemDetailPanel(props: SystemDetailPanelProps): JSX.Element {
           {"system \u00b7 " + props.row.name}
         </span>
         <span style={css("flex:1;")} />
-        <button type="button" onClick={props.onClose} style={css("width:22px;height:22px;display:flex;align-items:center;justify-content:center;background:transparent;border:0;color:var(--text-muted);cursor:pointer;")}>
+        <button type="button" onClick={props.onClose} style={css("width:22px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:0;color:var(--text-muted);cursor:pointer;")}>
           {"\u2715"}
         </button>
       </div>
@@ -320,20 +320,20 @@ function SystemDetailPanel(props: SystemDetailPanelProps): JSX.Element {
       </div>
 
       <div style={css("display:flex;gap:6px;")}>
-        <button type="button" onClick={props.onEdit} style={css("padding:0 12px;height:26px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent);background:" + H.accent1c + ";border:1px solid " + H.accent59 + ";border-radius:2px;cursor:pointer;")}>
+        <button type="button" onClick={props.onEdit} style={css("padding:0 12px;height:28px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--accent);background:" + H.accent1c + ";border:1px solid " + H.accent59 + ";border-radius:2px;cursor:pointer;")}>
           edit
         </button>
         {confirmDelete ? (
           <>
-            <button type="button" onClick={doDelete} disabled={del.isPending} style={css("padding:0 12px;height:26px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#ff5f87;background:#ff5f871c;border:1px solid #ff5f8759;border-radius:2px;cursor:pointer;")}>
+            <button type="button" onClick={doDelete} disabled={del.isPending} style={css("padding:0 12px;height:28px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#ff5f87;background:#ff5f871c;border:1px solid #ff5f8759;border-radius:2px;cursor:pointer;")}>
               {del.isPending ? "deleting \u2026" : "confirm"}
             </button>
-            <button type="button" onClick={() => setConfirmDelete(false)} style={css("padding:0 12px;height:26px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:2px;cursor:pointer;")}>
+            <button type="button" onClick={() => setConfirmDelete(false)} style={css("padding:0 12px;height:28px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-muted);background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:2px;cursor:pointer;")}>
               cancel
             </button>
           </>
         ) : (
-          <button type="button" onClick={() => setConfirmDelete(true)} style={css("padding:0 12px;height:26px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;color:#ff5f87;background:transparent;border:1px solid #ff5f8759;border-radius:2px;cursor:pointer;")}>
+          <button type="button" onClick={() => setConfirmDelete(true)} style={css("padding:0 12px;height:28px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:#ff5f87;background:transparent;border:1px solid #ff5f8759;border-radius:2px;cursor:pointer;")}>
             delete
           </button>
         )}
@@ -341,16 +341,16 @@ function SystemDetailPanel(props: SystemDetailPanelProps): JSX.Element {
 
       {canAssign ? (
         <div style={css("border-top:1px solid var(--border-soft);padding-top:9px;")}>
-          <div style={css("font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>tags</div>
+          <div style={css("font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>tags</div>
           <div style={css("margin-top:6px;display:flex;flex-wrap:wrap;gap:5px;")}>
             {tagsQ.isLoading ? (
-              <span style={css("font-size:10px;color:var(--text-faint);")}>loading {"\u2026"}</span>
+              <span style={css("font-size:11px;color:var(--text-faint);")}>loading {"\u2026"}</span>
             ) : tagsQ.isError ? (
-              <span style={css("font-size:10px;color:var(--status-warn);")}>could not load tags.</span>
+              <span style={css("font-size:11px;color:var(--status-warn);")}>could not load tags.</span>
             ) : (tagsQ.data ?? []).length === 0 ? (
-              <span style={css("font-size:10px;color:var(--text-faint);")}>no tags assigned.</span>
+              <span style={css("font-size:11px;color:var(--text-faint);")}>no tags assigned.</span>
             ) : (tagsQ.data ?? []).map((t) => (
-              <span key={t.id} style={css("display:inline-flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:10px;color:var(--accent);background:" + H.accent1c + ";border:1px solid " + H.accent59 + ";border-radius:2px;padding:2px 6px;")}>
+              <span key={t.id} style={css("display:inline-flex;align-items:center;gap:5px;font-family:var(--font-mono);font-size:11px;color:var(--accent);background:" + H.accent1c + ";border:1px solid " + H.accent59 + ";border-radius:2px;padding:2px 6px;")}>
                 {t.tag_key + (t.tag_value ? "=" + t.tag_value : "")}
                 <button
                   type="button"
@@ -369,7 +369,7 @@ function SystemDetailPanel(props: SystemDetailPanelProps): JSX.Element {
               <select
                 value={newKey}
                 onChange={(e) => { setNewKey(e.target.value); setAssignError(null); }}
-                style={css("flex:1;min-width:0;background:var(--surface-sunk);border:1px solid var(--border-soft);outline:none;padding:5px 7px;color:var(--text-primary);font-family:var(--font-mono);font-size:10px;border-radius:2px;")}
+                style={css("flex:1;min-width:0;background:var(--surface-sunk);border:1px solid var(--border-soft);outline:none;padding:5px 7px;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;border-radius:2px;")}
               >
                 <option value="">select tag key {"\u2026"}</option>
                 {(vocabQ.data ?? []).map((v) => <option key={v.id} value={v.tag_key}>{v.tag_key}</option>)}
@@ -380,7 +380,7 @@ function SystemDetailPanel(props: SystemDetailPanelProps): JSX.Element {
                 value={newKey}
                 onChange={(e) => { setNewKey(e.target.value); setAssignError(null); }}
                 placeholder="tag key"
-                style={css("flex:1;min-width:0;background:var(--surface-sunk);border:1px solid var(--border-soft);outline:none;padding:5px 7px;color:var(--text-primary);font-family:var(--font-mono);font-size:10px;border-radius:2px;")}
+                style={css("flex:1;min-width:0;background:var(--surface-sunk);border:1px solid var(--border-soft);outline:none;padding:5px 7px;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;border-radius:2px;")}
               />
             )}
             <input
@@ -388,25 +388,25 @@ function SystemDetailPanel(props: SystemDetailPanelProps): JSX.Element {
               value={newValue}
               onChange={(e) => setNewValue(e.target.value)}
               placeholder="value (optional)"
-              style={css("width:110px;background:var(--surface-sunk);border:1px solid var(--border-soft);outline:none;padding:5px 7px;color:var(--text-primary);font-family:var(--font-mono);font-size:10px;border-radius:2px;")}
+              style={css("width:110px;background:var(--surface-sunk);border:1px solid var(--border-soft);outline:none;padding:5px 7px;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;border-radius:2px;")}
             />
             <button
               type="button"
               onClick={doAssign}
               disabled={assign.isPending || newKey.trim() === ""}
-              style={css("padding:0 10px;height:26px;font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.06em;text-transform:uppercase;color:var(--accent);background:" + H.accent1c + ";border:1px solid " + H.accent59 + ";border-radius:2px;cursor:pointer;")}
+              style={css("padding:0 10px;height:28px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--accent);background:" + H.accent1c + ";border:1px solid " + H.accent59 + ";border-radius:2px;cursor:pointer;")}
             >
               {assign.isPending ? "\u2026" : "assign"}
             </button>
           </div>
           {assignError ? (
-            <div style={css("margin-top:6px;font-size:10.5px;color:var(--status-warn);display:flex;flex-wrap:wrap;align-items:center;gap:8px;")}>
+            <div style={css("margin-top:6px;font-size:11px;color:var(--status-warn);display:flex;flex-wrap:wrap;align-items:center;gap:8px;")}>
               <span>{assignError}</span>
               {isAdmin && assign422 ? (
                 <button
                   type="button"
                   onClick={props.onOpenVocabulary}
-                  style={css("padding:0 8px;height:22px;font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.06em;text-transform:uppercase;color:var(--accent);background:transparent;border:1px solid " + H.accent59 + ";border-radius:2px;cursor:pointer;")}
+                  style={css("padding:0 8px;height:28px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--accent);background:transparent;border:1px solid " + H.accent59 + ";border-radius:2px;cursor:pointer;")}
                 >
                   manage vocabulary
                 </button>
@@ -414,14 +414,14 @@ function SystemDetailPanel(props: SystemDetailPanelProps): JSX.Element {
             </div>
           ) : null}
           {delTag.isError ? (
-            <div style={css("margin-top:6px;font-size:10.5px;color:var(--status-warn);")}>remove failed {"\u2014"} {apiErrDetail(delTag.error)}</div>
+            <div style={css("margin-top:6px;font-size:11px;color:var(--status-warn);")}>remove failed {"\u2014"} {apiErrDetail(delTag.error)}</div>
           ) : null}
         </div>
       ) : null}
 
       <div style={css("border-top:1px solid var(--border-soft);padding-top:9px;")}>
-        <div style={css("font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>ssh heartbeat</div>
-        <div style={css("margin-top:6px;display:grid;grid-template-columns:88px 1fr;gap:5px 10px;font-size:10.5px;")}>
+        <div style={css("font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>ssh heartbeat</div>
+        <div style={css("margin-top:6px;display:grid;grid-template-columns:88px 1fr;gap:5px 10px;font-size:11px;")}>
           <span style={css("color:var(--text-faint);")}>connectivity</span>
           <span style={connChipStyle(connQ.data?.status ?? null)}>{connQ.data?.status ?? (connQ.isLoading ? "loading" : "unknown")}</span>
           <span style={css("color:var(--text-faint);")}>last probe</span>
@@ -446,18 +446,18 @@ function SystemDetailPanel(props: SystemDetailPanelProps): JSX.Element {
       </div>
 
       <div style={css("border-top:1px solid var(--border-soft);padding-top:9px;")}>
-        <div style={css("font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>
+        <div style={css("font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>
           recent findings {findingsQ.data ? "(" + findingsQ.data.total + ")" : ""}
         </div>
         <div style={css("margin-top:6px;display:flex;flex-direction:column;gap:3px;")}>
           {findingsQ.isLoading ? (
-            <span style={css("font-size:10px;color:var(--text-faint);")}>loading {"\u2026"}</span>
+            <span style={css("font-size:11px;color:var(--text-faint);")}>loading {"\u2026"}</span>
           ) : (findingsQ.data?.items ?? []).length === 0 ? (
-            <span style={css("font-size:10px;color:var(--text-faint);")}>no findings on this host.</span>
+            <span style={css("font-size:11px;color:var(--text-faint);")}>no findings on this host.</span>
           ) : (findingsQ.data?.items ?? []).slice(0, 6).map((f) => {
             const sev = normSev(f.severity);
             return (
-              <div key={String(f.id ?? f.cve_id)} style={css("display:grid;grid-template-columns:110px 1fr 60px;gap:6px;font-size:10px;")}>
+              <div key={String(f.id ?? f.cve_id)} style={css("display:grid;grid-template-columns:110px 1fr 60px;gap:6px;font-size:11px;")}>
                 <span style={css("color:var(--accent);font-family:var(--font-mono);")}>{f.cve_id ?? "\u2014"}</span>
                 <span style={css("color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{f.package ?? "\u2014"}</span>
                 <span>{sev ? <span style={sevChipStyle(sev)}>{sev}</span> : null}</span>
@@ -468,16 +468,16 @@ function SystemDetailPanel(props: SystemDetailPanelProps): JSX.Element {
       </div>
 
       <div style={css("border-top:1px solid var(--border-soft);padding-top:9px;")}>
-        <div style={css("font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>
+        <div style={css("font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>
           recent scans {scansQ.data ? "(" + scansQ.data.total + ")" : ""}
         </div>
         <div style={css("margin-top:6px;display:flex;flex-direction:column;gap:3px;")}>
           {scansQ.isLoading ? (
-            <span style={css("font-size:10px;color:var(--text-faint);")}>loading {"\u2026"}</span>
+            <span style={css("font-size:11px;color:var(--text-faint);")}>loading {"\u2026"}</span>
           ) : (scansQ.data?.items ?? []).length === 0 ? (
-            <span style={css("font-size:10px;color:var(--text-faint);")}>no scans against this host.</span>
+            <span style={css("font-size:11px;color:var(--text-faint);")}>no scans against this host.</span>
           ) : (scansQ.data?.items ?? []).slice(0, 5).map((sc, i) => (
-            <div key={sc.run_id ?? i} style={css("display:grid;grid-template-columns:1fr 68px;gap:6px;font-size:10px;")}>
+            <div key={sc.run_id ?? i} style={css("display:grid;grid-template-columns:1fr 68px;gap:6px;font-size:11px;")}>
               <span style={css("color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:var(--font-mono);")}>
                 {sc.run_id ?? "\u2014"}
               </span>

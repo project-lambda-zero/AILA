@@ -49,7 +49,7 @@ const gridRow: CSSProperties = { display: "flex", gap: 12, flexWrap: "wrap" };
 const gridCell: CSSProperties = { flex: "1 1 260px", minWidth: 240, display: "flex" };
 const noteLine: CSSProperties = {
   fontFamily: "var(--font-mono)",
-  fontSize: 9.5,
+  fontSize: 11,
   color: "var(--text-faint)",
   letterSpacing: "0.03em",
   padding: "6px 14px 10px",

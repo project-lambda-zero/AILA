@@ -112,7 +112,7 @@ async def test_race_redis_disconnect_sse_graceful(
 
     async def _disconnecting_agen():
         # Simulate Redis disconnect after the first live event.
-        yield {"stage": "scoring", "message": "Scoring", "percent": "50", "timestamp": "t0"}
+        yield "1-0", {"stage": "scoring", "message": "Scoring", "percent": "50", "timestamp": "t0"}
         raise ConnectionError("Redis disconnected")
 
     mock_stream_instance = MagicMock()

@@ -109,34 +109,36 @@ class ProgressStream:
                 approximate=False,
             )
 
-    async def catchup(self, task_id: str, last_id: str = "0") -> list[dict[str, str]]:
-        """Fetch all events from last_id to the end of the stream.
+    async def catchup(self, task_id: str, last_id: str = "0") -> list[tuple[str, dict[str, str]]]:
+        """Fetch every event recorded after last_id.
 
         Used by the SSE endpoint on connect to replay missed events so late
-        clients receive the full history (D-17/TASK-09).
+        clients receive the full history (D-17/TASK-09). XRANGE is inclusive,
+        so the entry whose id equals ``last_id`` (the last one the client
+        already saw) is dropped to make resume duplicate-free.
 
         Args:
             task_id: TaskRecord UUID.
-            last_id: Redis Stream ID to start reading from.
+            last_id: Redis Stream ID of the last event the client received.
                 '0' means all events from the beginning of the stream.
 
         Returns:
-            List of event dicts with keys: stage, message, percent, timestamp.
-            Empty list if no events exist yet.
+            ``(stream_id, fields)`` pairs; fields carry stage, message,
+            percent, timestamp. Empty list if no events exist yet.
         """
         key = self.stream_key(task_id)
         async with get_redis() as client:
             raw = await client.xrange(key, last_id, "+")
-            return [fields for _, fields in raw]
+            return [(event_id, fields) for event_id, fields in raw if event_id != last_id]
 
     async def stream_events(
         self,
         task_id: str,
         last_id: str = "0",
-    ) -> AsyncGenerator[dict[str, str], None]:
+    ) -> AsyncGenerator[tuple[str | None, dict[str, str]], None]:
         """Read new events from the Redis Stream.
 
-        Yields event dicts as they arrive via XREAD with a block timeout
+        Yields ``(stream_id, fields)`` pairs as they arrive via XREAD with a block timeout
         derived from ``platform.heartbeat_interval_s`` (seconds) times
         1000, so an operator PUT /config/platform/heartbeat_interval_s
         changes both the reaper heartbeat cadence and the SSE keepalive
@@ -144,17 +146,18 @@ class ProgressStream:
         ``HEARTBEAT_INTERVAL_S * 1000`` (30000 ms) when the registry is
         unavailable, matching the prior hardcoded value.
 
-        Yields a ping sentinel dict on timeout so SSE connections stay alive.
+        Yields ``(None, {"type": "ping"})`` on timeout so SSE connections
+        stay alive; a ping has no stream id.
         Intended for use inside a FastAPI StreamingResponse async generator.
 
         Args:
             task_id: TaskRecord UUID.
-            last_id: Stream ID to start reading from. Use '0' to read from
-                the beginning; use '$' to read only new events.
+            last_id: Stream ID to read after (XREAD is exclusive). Use '0'
+                to read from the beginning; use '$' to read only new events.
 
         Yields:
-            Event dicts with stage/message/percent/timestamp keys, or
-            {"type": "ping"} on heartbeat timeout (SSE keepalive).
+            ``(stream_id, fields)`` with stage/message/percent/timestamp
+            fields, or ``(None, {"type": "ping"})`` on heartbeat timeout.
         """
         # Deferred import to avoid the tasks package import cycle
         # (progress.py is imported from aila.platform.tasks.__init__).
@@ -180,6 +183,6 @@ class ProgressStream:
                 for _stream_key, events in raw_result:
                     for event_id, event_data in events:
                         current_id = event_id
-                        yield event_data
+                        yield event_id, event_data
             else:
-                yield {"type": "ping"}
+                yield None, {"type": "ping"}

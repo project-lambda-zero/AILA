@@ -224,7 +224,7 @@ export default function SystemForm(props: SystemFormProps): JSX.Element {
             >
               {confirmDelete ? (
                 <>
-                  <span style={css("font-size:10px;color:var(--status-warn);letter-spacing:0.04em;")}>
+                  <span style={css("font-size:11px;color:var(--status-warn);letter-spacing:0.04em;")}>
                     delete this system?
                   </span>
                   <span style={css("flex:1;")} />
@@ -237,7 +237,7 @@ export default function SystemForm(props: SystemFormProps): JSX.Element {
                 </>
               ) : (
                 <>
-                  <span style={css("font-size:10px;color:var(--text-faint);letter-spacing:0.04em;")}>
+                  <span style={css("font-size:11px;color:var(--text-faint);letter-spacing:0.04em;")}>
                     remove this system from the registry
                   </span>
                   <span style={css("flex:1;")} />
@@ -314,7 +314,7 @@ export default function SystemForm(props: SystemFormProps): JSX.Element {
               "border:1px dashed var(--border-soft);border-radius:3px;padding:10px 12px;display:flex;flex-direction:column;gap:9px;",
             )}
           >
-            <span style={css("font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>
+            <span style={css("font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>
               ssh secrets {isEdit ? "\u00b7 leave blank to keep existing" : ""}
             </span>
             <label style={FIELD_LABEL}>
@@ -328,7 +328,7 @@ export default function SystemForm(props: SystemFormProps): JSX.Element {
                 rows={4}
                 placeholder={isEdit ? "\u2014" : "-----BEGIN OPENSSH PRIVATE KEY-----\n\u2026\n-----END OPENSSH PRIVATE KEY-----"}
                 style={css(
-                  "resize:vertical;background:var(--surface-sunk);border:1px solid var(--border-soft);outline:none;padding:9px 11px;color:var(--text-primary);font-family:var(--font-mono);font-size:10.5px;line-height:1.4;border-radius:3px;white-space:pre;",
+                  "resize:vertical;background:var(--surface-sunk);border:1px solid var(--border-soft);outline:none;padding:9px 11px;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;line-height:1.4;border-radius:3px;white-space:pre;",
                 )}
               />
               {isEdit ? clearToggle(f.clearKey, (v) => set("clearKey", v), "clear stored key") : null}
@@ -417,7 +417,7 @@ function clearToggle(on: boolean, set: (v: boolean) => void, label: string): JSX
   return (
     <label
       style={css(
-        "display:inline-flex;align-items:center;gap:6px;margin-top:4px;font-size:10px;color:var(--text-faint);letter-spacing:0.04em;cursor:pointer;",
+        "display:inline-flex;align-items:center;gap:6px;margin-top:4px;font-size:11px;color:var(--text-faint);letter-spacing:0.04em;cursor:pointer;",
       )}
     >
       <input type="checkbox" checked={on} onChange={(e) => set(e.target.checked)} />
@@ -428,8 +428,8 @@ function clearToggle(on: boolean, set: (v: boolean) => void, label: string): JSX
 
 const FIELD_LABEL = css("display:flex;flex-direction:column;gap:5px;");
 const FIELD_LABEL_ROW = css("display:inline-flex;align-items:center;gap:6px;position:relative;");
-const FIELD_SPAN = css("font-size:10.5px;letter-spacing:0.06em;color:var(--text-primary);");
-const FIELD_SPAN_REQUIRED = css("font-size:10.5px;letter-spacing:0.06em;color:var(--text-primary);");
+const FIELD_SPAN = css("font-size:11px;letter-spacing:0.06em;color:var(--text-primary);");
+const FIELD_SPAN_REQUIRED = css("font-size:11px;letter-spacing:0.06em;color:var(--text-primary);");
 
 function inputStyle(): CSSProperties {
   return css(
@@ -439,18 +439,18 @@ function inputStyle(): CSSProperties {
 
 function btnSecondary(): CSSProperties {
   return css(
-    "padding:0 12px;height:30px;font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:3px;cursor:pointer;",
+    "padding:0 12px;height:30px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-muted);background:var(--surface-sunk);border:1px solid var(--border-soft);border-radius:3px;cursor:pointer;",
   );
 }
 
 function btnDanger(): CSSProperties {
   return css(
-    "padding:0 12px;height:30px;font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.06em;text-transform:uppercase;color:#ff5f87;background:#ff5f871c;border:1px solid #ff5f8759;border-radius:3px;cursor:pointer;",
+    "padding:0 12px;height:30px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:#ff5f87;background:#ff5f871c;border:1px solid #ff5f8759;border-radius:3px;cursor:pointer;",
   );
 }
 
 function btnGhost(): CSSProperties {
   return css(
-    "width:24px;height:24px;display:flex;align-items:center;justify-content:center;background:transparent;border:0;color:var(--text-muted);cursor:pointer;font-family:inherit;font-size:12px;",
+    "width:24px;height:28px;display:flex;align-items:center;justify-content:center;background:transparent;border:0;color:var(--text-muted);cursor:pointer;font-family:inherit;font-size:12px;",
   );
 }

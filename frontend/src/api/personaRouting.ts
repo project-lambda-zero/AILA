@@ -21,6 +21,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { UseMutationResult, UseQueryResult } from "@tanstack/react-query";
 
 import { apiFetch } from "./client";
+import { asRecord, readStr } from "./parse";
 
 /** Subset of the backend `ConfigEntryResponse` the editor reads. */
 export interface PersonaRoutingConfig {
@@ -77,16 +78,16 @@ export function parsePersonaMap(
   } catch {
     return {};
   }
-  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-  const entries = Object.entries(parsed as Record<string, unknown>);
-  if (entries.length === 0) return {};
+  const top = asRecord(parsed);
+  if (!top) return {};
+  const keys = Object.keys(top);
+  if (keys.length === 0) return {};
 
   // Legacy flat shape: every top-level value is a string.
-  const allStrings = entries.every(([, v]) => typeof v === "string");
-  if (allStrings) {
+  if (keys.every((k) => readStr(top, k) !== null)) {
     const flat: Record<string, string> = {};
-    for (const [persona, rawValue] of entries) {
-      const value = typeof rawValue === "string" ? rawValue.trim() : "";
+    for (const persona of keys) {
+      const value = (readStr(top, persona) ?? "").trim();
       if (value !== "") flat[persona] = value;
     }
     return Object.keys(flat).length === 0 ? {} : { __global__: flat };
@@ -94,11 +95,12 @@ export function parsePersonaMap(
 
   // Nested shape: top-level values are objects (module_id -> bucket).
   const out: Record<string, Record<string, string>> = {};
-  for (const [moduleId, inner] of entries) {
-    if (inner === null || typeof inner !== "object" || Array.isArray(inner)) continue;
+  for (const moduleId of keys) {
+    const inner = asRecord(top[moduleId]);
+    if (!inner) continue;
     const bucket: Record<string, string> = {};
-    for (const [persona, rawValue] of Object.entries(inner as Record<string, unknown>)) {
-      const value = typeof rawValue === "string" ? rawValue.trim() : "";
+    for (const persona of Object.keys(inner)) {
+      const value = (readStr(inner, persona) ?? "").trim();
       if (value !== "") bucket[persona] = value;
     }
     if (Object.keys(bucket).length > 0) out[moduleId] = bucket;
@@ -146,7 +148,7 @@ export function useUpdatePersonaRouting(): UseMutationResult<
       for (const [moduleId, inner] of Object.entries(nested)) {
         const bucket: Record<string, string> = {};
         for (const [persona, rawValue] of Object.entries(inner)) {
-          const value = typeof rawValue === "string" ? rawValue.trim() : "";
+          const value = rawValue.trim();
           if (value !== "") bucket[persona] = value;
         }
         if (Object.keys(bucket).length > 0) cleaned[moduleId] = bucket;

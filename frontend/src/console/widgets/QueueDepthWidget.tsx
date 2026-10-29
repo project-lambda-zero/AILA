@@ -36,7 +36,7 @@ const ROOT = css(
 );
 
 const LABEL = css(
-  "font-size:9px;letter-spacing:0.12em;text-transform:uppercase;" +
+  "font-size:11px;letter-spacing:0.12em;text-transform:uppercase;" +
   "color:var(--text-faint);margin-bottom:4px;",
 );
 

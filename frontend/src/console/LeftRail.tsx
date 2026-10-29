@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useState } from "react";
 import type { MouseEvent, ReactElement } from "react";
 
+import { useAuth } from "../api/auth";
 import { useForensicsProjects } from "../api/forensicsRail";
 import type { RailRow } from "../api/forensicsRail";
 import { useInvestigations } from "../api/hooks";
@@ -8,7 +9,9 @@ import { useMalwareInvestigations } from "../api/malwareHooks";
 import type { LeftRailProps } from "./contract";
 import { css } from "./css";
 import { shortCaseId } from "./ids";
-import { ADMIN_CATS, MODULES } from "./nav";
+import { ADMIN_CATS, GOD_TIER_ADMIN_ITEMS, MODULES } from "./nav";
+
+const GOD_TIER_ONLY: Record<string, true> = Object.fromEntries(GOD_TIER_ADMIN_ITEMS.map((label) => [label, true]));
 
 /** Literal accent hex, mirrors --accent (#ff5f87). Needed where the mock
  * concatenates an alpha suffix onto the color (T.acc+"66"), which var()
@@ -28,6 +31,9 @@ function toneForStatus(status: string | undefined | null): string {
 }
 
 export default function LeftRail(props: LeftRailProps): ReactElement {
+  // God-tier entries (reconcile, cross-team heatmap) are hidden from
+  // team-scoped admins; the backend refuses them anyway (TEAM-06).
+  const godTier = useAuth((s) => s.user?.role === "admin" && !s.user?.team_id);
   const {
     moduleId,
     onSelectModule,
@@ -118,7 +124,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
       >
         <span
           style={css(
-            `font-family:var(--font-display);font-weight:400;font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
+            `font-family:var(--font-display);font-weight:400;font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
           )}
         >
           module
@@ -133,7 +139,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
             `width:7px;height:7px;flex:0 0 auto;background:${on ? "var(--accent)" : "var(--text-faint)"};${on ? "box-shadow:0 0 7px var(--accent);" : ""}`,
           );
           const style = css(
-            `display:flex;align-items:center;gap:8px;padding:7px 11px;border:0;border-left:2px solid ${on ? "var(--accent)" : "transparent"};background:${on ? "color-mix(in srgb,var(--accent) 8%,transparent)" : "transparent"};color:${on ? "var(--text-primary)" : "var(--text-muted)"};font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.06em;text-align:left;cursor:pointer;width:100%;`,
+            `display:flex;align-items:center;gap:8px;padding:7px 11px;border:0;border-left:2px solid ${on ? "var(--accent)" : "transparent"};background:${on ? "color-mix(in srgb,var(--accent) 8%,transparent)" : "transparent"};color:${on ? "var(--text-primary)" : "var(--text-muted)"};font-family:var(--font-mono);font-size:11px;letter-spacing:0.06em;text-align:left;cursor:pointer;width:100%;`,
           );
           return (
             <button key={m.id} type="button" onClick={() => onSelectModule(m.id)} style={style}>
@@ -155,10 +161,10 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
             type="button"
             onClick={onTogglePages}
             style={css(
-              `display:flex;align-items:center;gap:7px;width:100%;padding:10px 11px 6px;background:transparent;border:0;cursor:pointer;font-family:var(--font-display);font-weight:400;font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
+              `display:flex;align-items:center;gap:7px;width:100%;padding:10px 11px 6px;background:transparent;border:0;cursor:pointer;font-family:var(--font-display);font-weight:400;font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
             )}
           >
-            <span style={css(`color:var(--accent);font-size:8px;`)}>{pagesOpen ? "\u25bc" : "\u25b6"}</span>
+            <span style={css(`color:var(--accent);font-size:11px;`)}>{pagesOpen ? "\u25bc" : "\u25b6"}</span>
             pages
           </button>
           <div
@@ -176,14 +182,14 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
               const prevGroup = i > 0 ? activeModule.pages[i - 1]?.group : undefined;
               const showGroup = p.group != null && p.group !== prevGroup;
               const style = css(
-                `display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:2px;font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.03em;color:${enabled ? "var(--text-muted)" : "var(--text-faint)"};text-align:left;text-decoration:none;border:1px solid transparent;background:var(--surface-card);cursor:${enabled ? "pointer" : "default"};opacity:${enabled ? "1" : "0.55"};`,
+                `display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:2px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.03em;color:${enabled ? "var(--text-muted)" : "var(--text-faint)"};text-align:left;text-decoration:none;border:1px solid transparent;background:var(--surface-card);cursor:${enabled ? "pointer" : "default"};opacity:${enabled ? "1" : "0.55"};`,
               );
               return (
                 <Fragment key={p.id}>
                   {showGroup ? (
                     <div
                       style={css(
-                        `padding:${i === 0 ? "0" : "7px"} 8px 3px;font-family:var(--font-mono);font-weight:400;font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-muted);`,
+                        `padding:${i === 0 ? "0" : "7px"} 8px 3px;font-family:var(--font-mono);font-weight:400;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-muted);`,
                       )}
                     >
                       {p.group}
@@ -224,7 +230,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
       >
         <span
           style={css(
-            `font-family:var(--font-display);font-weight:400;font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
+            `font-family:var(--font-display);font-weight:400;font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
           )}
         >
           {activeModule.noun}
@@ -233,7 +239,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
         <span
           onClick={() => onOpenIntake()}
           style={css(
-            `border:1px solid var(--border);padding:0 5px;font-size:12px;color:var(--accent);cursor:pointer;`,
+            `min-height:28px;display:inline-flex;align-items:center;border:1px solid var(--border);padding:0 5px;font-size:12px;color:var(--accent);cursor:pointer;`,
           )}
         >
           +
@@ -249,7 +255,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
         {source.isLoading ? (
           <div
             style={css(
-              `padding:8px;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);letter-spacing:0.04em;`,
+              `padding:8px;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);letter-spacing:0.04em;`,
             )}
           >
             loading...
@@ -257,7 +263,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
         ) : source.isError ? (
           <div
             style={css(
-              `padding:8px;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);letter-spacing:0.04em;`,
+              `padding:8px;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);letter-spacing:0.04em;`,
             )}
           >
             unavailable
@@ -265,7 +271,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
         ) : rows.length === 0 ? (
           <div
             style={css(
-              `padding:8px;font-family:var(--font-mono);font-size:10px;color:var(--text-faint);letter-spacing:0.04em;`,
+              `padding:8px;font-family:var(--font-mono);font-size:11px;color:var(--text-faint);letter-spacing:0.04em;`,
             )}
           >
             {emptyLabel}
@@ -290,10 +296,10 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
               `width:7px;height:7px;flex:0 0 auto;border-radius:1px;background:${tone};`,
             );
             const pinStyle = css(
-              `flex:0 0 auto;font-size:8px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;padding:0 3px;border:1px solid ${isPinned ? ACCENT_HEX_A66 : "transparent"};color:${isPinned ? "var(--accent)" : "var(--text-faint)"};border-radius:2px;`,
+              `flex:0 0 auto;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;cursor:pointer;padding:0 3px;border:1px solid ${isPinned ? ACCENT_HEX_A66 : "transparent"};color:${isPinned ? "var(--accent)" : "var(--text-faint)"};border-radius:2px;`,
             );
             const stateStyle = css(
-              `font-size:8.5px;letter-spacing:0.08em;text-transform:uppercase;color:${tone};`,
+              `font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:${tone};`,
             );
             return (
               <div
@@ -312,13 +318,13 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
                   <span style={dot} />
                   <span
                     style={css(
-                      `font-size:10.5px;color:var(--text-primary);letter-spacing:0.04em;white-space:nowrap;`,
+                      `font-size:11px;color:var(--text-primary);letter-spacing:0.04em;white-space:nowrap;`,
                     )}
                   >
                     {shortCaseId(activeModule.id, inv.id)}
                   </span>
                   {isActive ? (
-                    <span style={css("font-size:8px;padding:0 3px;background:var(--accent);color:var(--text-on-accent);border-radius:2px;letter-spacing:0.06em;text-transform:uppercase;")}>bound</span>
+                    <span style={css("font-size:11px;padding:0 3px;background:var(--accent);color:var(--text-on-accent);border-radius:2px;letter-spacing:0.06em;text-transform:uppercase;")}>bound</span>
                   ) : null}
                   <span style={css(`flex:1;`)} />
                   <span
@@ -338,7 +344,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
                 </div>
                 <div
                   style={css(
-                    `margin-top:3px;font-size:9.5px;color:var(--text-faint);letter-spacing:0.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`,
+                    `margin-top:3px;font-size:11px;color:var(--text-faint);letter-spacing:0.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`,
                   )}
                 >
                   {inv.title}
@@ -359,10 +365,10 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
             onToggleAdmin();
           }}
           style={css(
-            `display:flex;align-items:center;gap:7px;width:100%;padding:9px 11px;background:var(--surface-chrome);border:0;border-top:1px solid var(--border-soft);cursor:pointer;font-family:var(--font-display);font-weight:400;font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
+            `display:flex;align-items:center;gap:7px;width:100%;padding:9px 11px;background:var(--surface-chrome);border:0;border-top:1px solid var(--border-soft);cursor:pointer;font-family:var(--font-display);font-weight:400;font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-muted);`,
           )}
         >
-          <span style={css(`color:var(--accent);font-size:8px;`)}>{adminOpen ? "\u25bc" : "\u25b6"}</span>
+          <span style={css(`color:var(--accent);font-size:11px;`)}>{adminOpen ? "\u25bc" : "\u25b6"}</span>
           admin settings
         </button>
         <div
@@ -381,10 +387,10 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
                     setAdminCatOpen((prev) => ({ ...prev, [g.cat]: !prev[g.cat] }))
                   }
                   style={css(
-                    `display:flex;align-items:center;gap:6px;width:100%;padding:7px 9px 3px;background:transparent;border:0;cursor:pointer;font-family:var(--font-display);font-weight:400;font-size:8px;letter-spacing:0.18em;text-transform:uppercase;color:var(--accent);text-align:left;`,
+                    `display:flex;align-items:center;gap:6px;width:100%;padding:7px 9px 3px;background:transparent;border:0;cursor:pointer;font-family:var(--font-display);font-weight:400;font-size:11px;letter-spacing:0.18em;text-transform:uppercase;color:var(--accent);text-align:left;`,
                   )}
                 >
-                  <span style={css(`font-size:8px;`)}>{catExpanded ? "\u25bc" : "\u25b6"}</span>
+                  <span style={css(`font-size:11px;`)}>{catExpanded ? "\u25bc" : "\u25b6"}</span>
                   {g.cat}
                 </button>
                 <div
@@ -392,13 +398,15 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
                     `flex-direction:column;gap:2px;padding-bottom:3px;display:${catExpanded ? "flex" : "none"};`,
                   )}
                 >
-                  {g.items.map((label) => (
+                  {g.items
+                    .filter((label) => godTier || !GOD_TIER_ONLY[label])
+                    .map((label) => (
                     <button
                       key={`${g.cat}:${label}`}
                       type="button"
                       onClick={() => onOpenPage("admin", label.replace(/\s+/g, "-"), label)}
                       style={css(
-                        `display:flex;align-items:center;gap:8px;padding:5px 8px;border:0;border-radius:2px;background:var(--surface-card);font-family:var(--font-mono);font-size:10.5px;letter-spacing:0.03em;color:var(--text-muted);cursor:pointer;text-align:left;`,
+                        `display:flex;align-items:center;gap:8px;padding:5px 8px;border:0;border-radius:2px;background:var(--surface-card);font-family:var(--font-mono);font-size:11px;letter-spacing:0.03em;color:var(--text-muted);cursor:pointer;text-align:left;`,
                       )}
                     >
                       <span
@@ -419,7 +427,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
         type="button"
         onClick={onOpenSettings}
         style={css(
-          `display:flex;align-items:center;gap:7px;width:100%;flex:0 0 auto;padding:9px 11px;border:0;border-top:1px solid var(--border-soft);background:var(--surface-chrome);color:var(--text-muted);font-family:var(--font-display);font-weight:400;font-size:9px;letter-spacing:0.16em;text-transform:uppercase;cursor:pointer;`,
+          `display:flex;align-items:center;gap:7px;width:100%;flex:0 0 auto;padding:9px 11px;border:0;border-top:1px solid var(--border-soft);background:var(--surface-chrome);color:var(--text-muted);font-family:var(--font-display);font-weight:400;font-size:11px;letter-spacing:0.16em;text-transform:uppercase;cursor:pointer;`,
         )}
       >
         <span style={css(`color:var(--accent);`)}>{"\u2699"}</span>

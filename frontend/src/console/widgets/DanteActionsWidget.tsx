@@ -53,7 +53,7 @@ export default function DanteActionsWidget(_props: WidgetProps): JSX.Element {
     "flex:1;min-height:0;display:flex;flex-direction:column;overflow:auto;padding:10px 12px;background:var(--surface-card);font-family:var(--font-mono);color:var(--text-primary);",
   );
   const labelStyle = css(
-    "flex:0 0 auto;font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-muted);padding-bottom:8px;border-bottom:1px solid var(--border-faint);margin-bottom:8px;",
+    "flex:0 0 auto;font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-muted);padding-bottom:8px;border-bottom:1px solid var(--border-faint);margin-bottom:8px;",
   );
   const messageStyle = css(
     "font-size:11px;color:var(--text-muted);letter-spacing:0.02em;padding:6px 2px;",
@@ -67,10 +67,10 @@ export default function DanteActionsWidget(_props: WidgetProps): JSX.Element {
     "flex:1;min-width:0;font-size:11px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;",
   );
   const summaryStyle = css(
-    "font-size:10px;color:var(--text-muted);letter-spacing:0.02em;line-height:1.35;",
+    "font-size:11px;color:var(--text-muted);letter-spacing:0.02em;line-height:1.35;",
   );
   const footerStyle = css(
-    "flex:0 0 auto;font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);padding-top:8px;margin-top:8px;border-top:1px solid var(--border-faint);",
+    "flex:0 0 auto;font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);padding-top:8px;margin-top:8px;border-top:1px solid var(--border-faint);",
   );
 
   const TONE_BY_KIND: Record<DanteAction["kind"], string> = {
@@ -90,7 +90,7 @@ export default function DanteActionsWidget(_props: WidgetProps): JSX.Element {
   function pillStyle(kind: DanteAction["kind"]) {
     const tone = TONE_BY_KIND[kind];
     return css(
-      `flex:0 0 auto;font-size:9px;letter-spacing:0.1em;text-transform:uppercase;padding:2px 6px;border:1px solid ${tone};color:${tone};border-radius:2px;`,
+      `flex:0 0 auto;font-size:11px;letter-spacing:0.1em;text-transform:uppercase;padding:2px 6px;border:1px solid ${tone};color:${tone};border-radius:2px;`,
     );
   }
 

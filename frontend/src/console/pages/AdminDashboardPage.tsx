@@ -17,7 +17,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { CSSProperties, JSX } from "react";
 
 import { ApiError, apiFetchEnvelope } from "../../api/client";
-import type { ModulePageProps } from "../contract";
+import type { WindowChromeProps } from "../contract";
 import { css } from "../css";
 import { ConsoleWindow } from "../window";
 import StructuredValue from "./StructuredValue";
@@ -64,7 +64,7 @@ const SEV: { key: keyof FleetStats; label: string; color: string }[] = [
 const scroll: CSSProperties = css("flex:1;min-height:0;overflow:auto;");
 const body: CSSProperties = css("display:flex;flex-direction:column;gap:16px;padding:14px 16px;");
 const sectionTitle: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-faint);",
+  "font-family:var(--font-mono);font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-faint);",
 );
 const cardGrid: CSSProperties = css(
   "display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px;",
@@ -73,13 +73,13 @@ const card: CSSProperties = css(
   "display:flex;flex-direction:column;gap:5px;padding:12px 14px;border:1px solid var(--border-soft);border-radius:3px;background:color-mix(in srgb,var(--surface-card) 84%,transparent);min-width:0;",
 );
 const cardLabel: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:8.5px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);",
+  "font-family:var(--font-mono);font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);",
 );
 const bigNumber: CSSProperties = css(
   "font-family:var(--font-display);font-size:30px;line-height:1;color:var(--text-primary);font-variant-numeric:tabular-nums;",
 );
 const caption: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:9px;line-height:1.5;color:var(--text-faint);",
+  "font-family:var(--font-mono);font-size:11px;line-height:1.5;color:var(--text-faint);",
 );
 const panel: CSSProperties = css(
   "display:flex;flex-direction:column;gap:10px;padding:12px 14px;border:1px solid var(--border-soft);border-radius:3px;background:color-mix(in srgb,var(--surface-card) 84%,transparent);",
@@ -89,7 +89,7 @@ const barTrack: CSSProperties = css(
 );
 const legendRow: CSSProperties = css("display:flex;flex-wrap:wrap;gap:14px;");
 const legendItem: CSSProperties = css(
-  "display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:10px;color:var(--text-muted);",
+  "display:inline-flex;align-items:center;gap:6px;font-family:var(--font-mono);font-size:11px;color:var(--text-muted);",
 );
 const swatch: CSSProperties = css("width:9px;height:9px;border-radius:1px;flex:0 0 auto;");
 const legendCount: CSSProperties = css("color:var(--text-primary);font-variant-numeric:tabular-nums;");
@@ -97,19 +97,19 @@ const moduleGrid: CSSProperties = css(
   "display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:10px;",
 );
 const moduleGroupTitle: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-muted);",
+  "font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-muted);",
 );
 const providerCardTitle: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:9px;letter-spacing:0.06em;color:var(--text-faint);margin-bottom:6px;word-break:break-word;",
+  "font-family:var(--font-mono);font-size:11px;letter-spacing:0.06em;color:var(--text-faint);margin-bottom:6px;word-break:break-word;",
 );
 const emptyNote: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:10.5px;color:var(--text-faint);letter-spacing:0.03em;",
+  "font-family:var(--font-mono);font-size:11px;color:var(--text-faint);letter-spacing:0.03em;",
 );
 const footerLine: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:9px;line-height:1.6;color:var(--text-faint);letter-spacing:0.03em;border-top:1px solid var(--border-faint);padding-top:10px;",
+  "font-family:var(--font-mono);font-size:11px;line-height:1.6;color:var(--text-faint);letter-spacing:0.03em;border-top:1px solid var(--border-faint);padding-top:10px;",
 );
 const refreshBtn: CSSProperties = css(
-  "padding:4px 11px;border:1px solid var(--border-soft);border-radius:2px;background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:9px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;",
+  "padding:4px 11px;border:1px solid var(--border-soft);border-radius:2px;background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;",
 );
 const stateNote: CSSProperties = css(
   "flex:1;display:flex;align-items:center;justify-content:center;padding:24px;font-family:var(--font-mono);font-size:11px;color:var(--text-faint);letter-spacing:0.04em;text-align:center;",
@@ -228,7 +228,7 @@ function ModuleContributions({ moduleData }: { moduleData: Record<string, unknow
 
 /* --------------------------------- page ---------------------------------- */
 
-export default function AdminDashboardPage(props: ModulePageProps): JSX.Element {
+export default function AdminDashboardPage(props: WindowChromeProps): JSX.Element {
   const { windowId, title, isFocused, onFocus, onBack, onMinimize, isFullscreen, onToggleFullscreen } = props;
   const q = useQuery({
     queryKey: ["admin", "dashboard"],
@@ -310,7 +310,7 @@ export default function AdminDashboardPage(props: ModulePageProps): JSX.Element 
               <span style={cardLabel}>risk score</span>
               <span style={{ ...bigNumber, color: riskColor(data.risk_score) }}>{data.risk_score}</span>
               <span style={caption}>weighted from severity distribution</span>
-              <span style={css("font-family:var(--font-mono);font-size:8.5px;color:var(--text-faint);word-break:break-word;")}>
+              <span style={css("font-family:var(--font-mono);font-size:11px;color:var(--text-faint);word-break:break-word;")}>
                 {riskArith}
               </span>
             </div>
@@ -356,7 +356,7 @@ export default function AdminDashboardPage(props: ModulePageProps): JSX.Element 
           padding: "8px 14px",
           background: "var(--surface-chrome)",
           borderBottom: "1px solid var(--border)",
-          fontSize: 10.5,
+          fontSize: 11,
           letterSpacing: "0.12em",
           textTransform: "uppercase",
           color: "var(--text-muted)",

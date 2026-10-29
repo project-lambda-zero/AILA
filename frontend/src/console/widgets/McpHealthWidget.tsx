@@ -29,14 +29,14 @@ const ROOT = css(
 );
 
 const LABEL = css(
-  "font-size:9px;letter-spacing:0.12em;text-transform:uppercase;" +
+  "font-size:11px;letter-spacing:0.12em;text-transform:uppercase;" +
   "color:var(--text-faint);margin-bottom:4px;",
 );
 
 const EMPTY = css("font-size:11px;color:var(--text-faint);padding:6px 0;");
 
 const PILL = css(
-  "padding:1px 5px;border-radius:2px;font-size:9px;letter-spacing:0.08em;" +
+  "padding:1px 5px;border-radius:2px;font-size:11px;letter-spacing:0.08em;" +
   "text-transform:uppercase;border:1px solid currentColor;",
 );
 
@@ -111,12 +111,12 @@ export default function McpHealthWidget(_props: WidgetProps): JSX.Element {
                 {`${row.tool_count} tools`}
               </span>
             </div>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "var(--text-faint)", fontSize: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, color: "var(--text-faint)", fontSize: 11 }}>
               <span>{row.module_scope}</span>
               <span style={{ fontVariantNumeric: "tabular-nums" }}>{fmtWhen(row.last_probed_at)}</span>
             </div>
             {!ok && row.error ? (
-              <div style={{ color: "var(--text-muted)", fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              <div style={{ color: "var(--text-muted)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {row.error.length > 120 ? `${row.error.slice(0, 117)}...` : row.error}
               </div>
             ) : null}

@@ -36,7 +36,7 @@ export interface WorkspaceTargetsProps {
 
 function targetRowCss(active: boolean): CSSProperties {
   return css(
-    `display:flex;align-items:center;gap:8px;padding:6px 9px;border:0;border-bottom:1px solid var(--border-faint);background:${active ? "var(--surface-hover)" : "transparent"};color:var(--text-primary);font-family:var(--font-mono);font-size:10px;text-align:left;cursor:pointer;width:100%;`,
+    `display:flex;align-items:center;gap:8px;padding:6px 9px;border:0;border-bottom:1px solid var(--border-faint);background:${active ? "var(--surface-hover)" : "transparent"};color:var(--text-primary);font-family:var(--font-mono);font-size:11px;text-align:left;cursor:pointer;width:100%;`,
   );
 }
 
@@ -58,23 +58,23 @@ export default function WorkspaceTargets({ workspaceId, targetsEndpoint, investi
   });
 
   if (q.isLoading) {
-    return <div style={css("grid-column:1/-1;color:var(--text-faint);font-size:10px;")}>loading targets&#8230;</div>;
+    return <div style={css("grid-column:1/-1;color:var(--text-faint);font-size:11px;")}>loading targets&#8230;</div>;
   }
   if (q.isError) {
     return (
-      <div style={css("grid-column:1/-1;color:var(--status-warn);font-size:10px;")}>
+      <div style={css("grid-column:1/-1;color:var(--status-warn);font-size:11px;")}>
         could not load targets &mdash; {q.error instanceof Error ? q.error.message : "request failed"}
       </div>
     );
   }
   const targets = q.data ?? [];
   if (targets.length === 0) {
-    return <div style={css("grid-column:1/-1;color:var(--text-faint);font-size:10px;")}>no targets in this workspace.</div>;
+    return <div style={css("grid-column:1/-1;color:var(--text-faint);font-size:11px;")}>no targets in this workspace.</div>;
   }
 
   return (
     <div style={css("grid-column:1/-1;display:flex;flex-direction:column;gap:2px;min-width:0;")}>
-      <div style={css("font-size:8px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);margin-bottom:2px;")}>
+      <div style={css("font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);margin-bottom:2px;")}>
         targets ({targets.length})
       </div>
       {targets.map((t) => {
@@ -91,9 +91,9 @@ export default function WorkspaceTargets({ workspaceId, targetsEndpoint, investi
             >
               <span style={css(`flex:0 0 auto;width:6px;height:6px;border-radius:1px;background:${toneFor(t)};`)} />
               <span style={css("flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{label}</span>
-              <span style={css("flex:0 0 auto;font-size:8px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-faint);")}>{t.kind ?? "\u2014"}</span>
-              <span style={css("flex:0 0 auto;font-size:8px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-faint);")}>{t.analysis_state ?? t.status ?? "\u2014"}</span>
-              <span style={css("flex:0 0 auto;font-size:10px;color:var(--text-muted);")}>{active ? "\u25be" : "\u25b8"}</span>
+              <span style={css("flex:0 0 auto;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-faint);")}>{t.kind ?? "\u2014"}</span>
+              <span style={css("flex:0 0 auto;font-size:11px;letter-spacing:0.06em;text-transform:uppercase;color:var(--text-faint);")}>{t.analysis_state ?? t.status ?? "\u2014"}</span>
+              <span style={css("flex:0 0 auto;font-size:11px;color:var(--text-muted);")}>{active ? "\u25be" : "\u25b8"}</span>
             </button>
             {active ? (
               <div style={css("display:grid;padding:4px 0 6px 15px;")}>

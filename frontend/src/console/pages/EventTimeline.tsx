@@ -55,16 +55,16 @@ export function EventTimeline({
 
   return (
     <div style={css("display:flex;flex-direction:column;gap:5px;padding-top:8px;border-top:1px solid var(--border-faint);")}>
-      <div style={css("font-size:8.5px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>activity</div>
+      <div style={css("font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>activity</div>
       {events.map((ev, i) => (
         <div
           key={`${ev.created_at ?? ""}-${ev.stage ?? ""}-${i}`}
-          style={css("display:flex;align-items:center;gap:8px;padding:4px 6px;border:1px solid var(--border-faint);border-radius:2px;background:var(--surface-sunk);font-size:9.5px;")}
+          style={css("display:flex;align-items:center;gap:8px;padding:4px 6px;border:1px solid var(--border-faint);border-radius:2px;background:var(--surface-sunk);font-size:11px;")}
         >
           <span style={css("color:var(--text-faint);white-space:nowrap;font-variant-numeric:tabular-nums;")}>
             {typeof ev.created_at === "string" ? ev.created_at.replace("T", " ").slice(0, 19) : ""}
           </span>
-          <span style={css("color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;font-size:8.5px;")}>{ev.stage ?? ""}</span>
+          <span style={css("color:var(--text-muted);text-transform:uppercase;letter-spacing:0.06em;font-size:11px;")}>{ev.stage ?? ""}</span>
           <span style={css("color:var(--text-primary);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;")}>
             {ev.action ?? ev.target ?? ""}
           </span>
@@ -76,4 +76,4 @@ export function EventTimeline({
   );
 }
 
-const evNote = css("padding:6px 4px;font-size:9.5px;color:var(--text-faint);");
+const evNote = css("padding:6px 4px;font-size:11px;color:var(--text-faint);");

@@ -20,7 +20,7 @@ const ROOT = css(
 );
 
 const LABEL = css(
-  "font-size:9px;letter-spacing:0.12em;text-transform:uppercase;" +
+  "font-size:11px;letter-spacing:0.12em;text-transform:uppercase;" +
   "color:var(--text-faint);",
 );
 
@@ -103,7 +103,7 @@ export default function BoundCaseWidget(props: WidgetProps): JSX.Element {
               borderRadius: "2px",
               color: "var(--text-faint)",
               fontFamily: "var(--font-mono)",
-              fontSize: "8.5px",
+              fontSize: 11,
               letterSpacing: "0.08em",
               textTransform: "uppercase",
               padding: "1px 5px",

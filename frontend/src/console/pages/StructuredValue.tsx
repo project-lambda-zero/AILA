@@ -14,6 +14,7 @@
  */
 import type { JSX } from "react";
 
+import { asRecord } from "../../api/parse";
 import { css } from "../css";
 
 const MAX_DEPTH = 4;
@@ -23,21 +24,21 @@ const CODE_LOOK_MAX = 4000;
 
 const emDash = css("color:var(--text-faint);");
 const monoBlock = css(
-  "margin:0;padding:6px 8px;border:1px solid var(--border-soft);border-radius:2px;background:var(--surface-sunk);font-family:var(--font-mono);font-size:10px;line-height:1.4;color:var(--text-primary);white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto;",
+  "margin:0;padding:6px 8px;border:1px solid var(--border-soft);border-radius:2px;background:var(--surface-sunk);font-family:var(--font-mono);font-size:11px;line-height:1.4;color:var(--text-primary);white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto;",
 );
 const chip = css(
-  "display:inline-block;padding:1px 6px;border:1px solid var(--border-soft);border-radius:2px;font-size:9.5px;line-height:1.5;color:var(--text-primary);background:var(--surface-sunk);word-break:break-word;",
+  "display:inline-block;padding:1px 6px;border:1px solid var(--border-soft);border-radius:2px;font-size:11px;line-height:1.5;color:var(--text-primary);background:var(--surface-sunk);word-break:break-word;",
 );
 const chipRow = css("display:inline-flex;flex-wrap:wrap;gap:4px;max-width:100%;");
 const boolYes = css(
-  "display:inline-block;padding:0 6px;border:1px solid var(--status-ok);border-radius:2px;font-size:9.5px;line-height:1.5;letter-spacing:0.08em;text-transform:uppercase;color:var(--status-ok);background:transparent;",
+  "display:inline-block;padding:0 6px;border:1px solid var(--status-ok);border-radius:2px;font-size:11px;line-height:1.5;letter-spacing:0.08em;text-transform:uppercase;color:var(--status-ok);background:transparent;",
 );
 const boolNo = css(
-  "display:inline-block;padding:0 6px;border:1px solid var(--border-soft);border-radius:2px;font-size:9.5px;line-height:1.5;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);background:transparent;",
+  "display:inline-block;padding:0 6px;border:1px solid var(--border-soft);border-radius:2px;font-size:11px;line-height:1.5;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);background:transparent;",
 );
 const numberStyle = css("color:var(--text-primary);font-variant-numeric:tabular-nums;");
 const kvGrid = css(
-  "display:grid;grid-template-columns:minmax(120px,150px) 1fr;gap:4px 10px;font-size:10.5px;align-content:start;min-width:0;",
+  "display:grid;grid-template-columns:minmax(120px,150px) 1fr;gap:4px 10px;font-size:11px;align-content:start;min-width:0;",
 );
 const nestedBlock = css(
   "padding:6px 8px;border-left:1px solid var(--border-soft);background:color-mix(in srgb,var(--surface-sunk) 60%,transparent);border-radius:0 2px 2px 0;min-width:0;",
@@ -47,15 +48,15 @@ const kvVal = css("color:var(--text-primary);word-break:break-word;min-width:0;"
 const tableWrap = css(
   "border:1px solid var(--border-soft);border-radius:2px;background:var(--surface-sunk);overflow:auto;max-width:100%;",
 );
-const tableEl = css("width:100%;border-collapse:collapse;font-size:10px;");
+const tableEl = css("width:100%;border-collapse:collapse;font-size:11px;");
 const thStyle = css(
-  "text-align:left;padding:4px 7px;background:var(--surface-chrome);border-bottom:1px solid var(--border-soft);font-size:8px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);white-space:nowrap;",
+  "text-align:left;padding:4px 7px;background:var(--surface-chrome);border-bottom:1px solid var(--border-soft);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);white-space:nowrap;",
 );
 const tdStyle = css(
   "padding:4px 7px;border-bottom:1px solid var(--border-faint);color:var(--text-primary);vertical-align:top;max-width:280px;word-break:break-word;",
 );
 const captionStyle = css(
-  "padding:3px 7px;font-size:8.5px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);background:var(--surface-chrome);border-top:1px solid var(--border-faint);",
+  "padding:3px 7px;font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);background:var(--surface-chrome);border-top:1px solid var(--border-faint);",
 );
 
 // Union of keys across the first N object rows, capped so a heterogeneous
@@ -137,11 +138,9 @@ export function StructuredValue({
     const rows: Record<string, unknown>[] = [];
     let nonObject = 0;
     for (const x of value) {
-      if (typeof x === "object" && x !== null && !Array.isArray(x)) {
-        rows.push(x as Record<string, unknown>);
-      } else {
-        nonObject += 1;
-      }
+      const rec = asRecord(x);
+      if (rec) rows.push(rec);
+      else nonObject += 1;
     }
     if (rows.length === 0) {
       // Mixed array with no object rows and no all-primitive path taken:
@@ -196,7 +195,7 @@ export function StructuredValue({
 
   // Plain object: recurse into a key/value grid. Nested levels get a subtle
   // left-border block so hierarchy is visible without heavy chrome.
-  const entries = Object.entries(value as Record<string, unknown>);
+  const entries = Object.entries(asRecord(value) ?? {});
   if (entries.length === 0) return <span style={emDash}>{"\u2014"}</span>;
   const inner = (
     <div style={kvGrid}>

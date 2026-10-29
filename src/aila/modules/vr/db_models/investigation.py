@@ -24,6 +24,7 @@ from sqlalchemy import Index, text
 from sqlmodel import Field
 
 from aila.platform.contracts.investigation_base import InvestigationRecordBase
+from aila.platform.events.entity_status import track_status_changes
 
 __all__ = ["VRInvestigationRecord"]
 
@@ -55,3 +56,9 @@ class VRInvestigationRecord(InvestigationRecordBase, table=True):
             postgresql_where=text("is_favorite = true"),
         ),
     )
+
+
+# Every committed status transition is announced as an
+# ``entity.status_changed`` domain event (worker writes reach the API
+# process via the Redis bridge) and pushed to the team's SSE streams.
+track_status_changes(VRInvestigationRecord, module_id="vr", entity_kind="investigation")

@@ -48,11 +48,11 @@ export function TeamCrossDetail({ row }: { row: Record<string, unknown> }): JSX.
   });
 
   if (q.isLoading) {
-    return <div style={css(SPAN + "color:var(--text-faint);font-size:10px;font-family:var(--font-mono);")}>loading team detail{"\u2026"}</div>;
+    return <div style={css(SPAN + "color:var(--text-faint);font-size:11px;font-family:var(--font-mono);")}>loading team detail{"\u2026"}</div>;
   }
   if (q.error) {
     return (
-      <div style={css(SPAN + "color:var(--status-warn);font-size:10px;font-family:var(--font-mono);")}>
+      <div style={css(SPAN + "color:var(--status-warn);font-size:11px;font-family:var(--font-mono);")}>
         could not load team {"\u2014"} {(q.error as Error).message}
       </div>
     );
@@ -60,7 +60,7 @@ export function TeamCrossDetail({ row }: { row: Record<string, unknown> }): JSX.
   const team = q.data?.team;
   const members = q.data?.members ?? [];
   if (!team) {
-    return <div style={css(SPAN + "color:var(--text-faint);font-size:10px;font-family:var(--font-mono);")}>no detail for this team.</div>;
+    return <div style={css(SPAN + "color:var(--text-faint);font-size:11px;font-family:var(--font-mono);")}>no detail for this team.</div>;
   }
 
   return (
@@ -80,7 +80,7 @@ export function TeamCrossDetail({ row }: { row: Record<string, unknown> }): JSX.
         <span style={css("color:var(--text-primary);font-family:var(--font-mono);")}>{team.updated_at}</span>
       </div>
       <div style={css("display:flex;flex-direction:column;gap:6px;")}>
-        <div style={css("font-family:var(--font-mono);font-size:9px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>members ({members.length})</div>
+        <div style={css("font-family:var(--font-mono);font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);")}>members ({members.length})</div>
         <div style={css("display:flex;flex-direction:column;gap:4px;")}>
           {members.length === 0 ? (
             <div style={css("font-family:var(--font-mono);font-size:11px;color:var(--text-faint);")}>no members on this team</div>
@@ -89,9 +89,9 @@ export function TeamCrossDetail({ row }: { row: Record<string, unknown> }): JSX.
               <div key={m.id} style={css("border:1px solid var(--border-soft);border-radius:2px;padding:6px 8px;display:flex;align-items:center;gap:8px;min-width:0;")}>
                 <span style={css("flex:1;min-width:0;font-family:var(--font-mono);font-size:11px;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{m.username}</span>
                 {m.email ? (
-                  <span style={css("flex:0 1 auto;min-width:0;font-size:10.5px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{m.email}</span>
+                  <span style={css("flex:0 1 auto;min-width:0;font-size:11px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}>{m.email}</span>
                 ) : null}
-                <span style={css("flex:0 0 auto;font-family:var(--font-mono);font-size:9px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);border:1px solid var(--border-soft);border-radius:2px;padding:1px 6px;")}>{m.role}</span>
+                <span style={css("flex:0 0 auto;font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);border:1px solid var(--border-soft);border-radius:2px;padding:1px 6px;")}>{m.role}</span>
               </div>
             ))
           )}

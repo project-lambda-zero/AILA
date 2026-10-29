@@ -19,7 +19,7 @@ const inputStyle: CSSProperties = {
 };
 
 const labelStyle: CSSProperties = {
-  fontSize: 10,
+  fontSize: 11,
   textTransform: "uppercase",
   letterSpacing: "0.1em",
   color: "var(--text-muted)",
@@ -79,7 +79,7 @@ export default function Login() {
             AILA
           </span>
         </div>
-        <div style={{ fontSize: 10, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--text-faint)" }}>
+        <div style={{ fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase", color: "var(--text-faint)" }}>
           ai lab assistant -- console
         </div>
         <label style={labelStyle}>

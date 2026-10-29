@@ -4,7 +4,8 @@ Streams platform events to authenticated users via Server-Sent Events.
 
 One persistent connection per user. Pings every 15 seconds.
 Max connection lifetime: 5 minutes (client auto-reconnects via the frontend
-``useSSE`` hook with exponential back-off).
+``useSseStream`` hook in ``frontend/src/api/sse.ts`` with exponential
+back-off; the single consumer is the shell's LiveEventsProvider).
 
 Per D-04: endpoint is at ``/events/stream``.
 Per D-17: rate-limited to 10 connection attempts per user per minute.

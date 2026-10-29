@@ -104,6 +104,9 @@ coverage:
 lint:
 	python -m ruff check src/aila/
 
+lint-frontend:
+	pnpm --filter @aila/shell run lint
+
 typecheck:
 	pnpm -r run type-check
 

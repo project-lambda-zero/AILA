@@ -20,7 +20,7 @@ import type { CSSProperties, JSX } from "react";
 import { useEffect, useMemo, useState } from "react";
 
 import { ApiError, apiFetch, apiFetchEnvelope } from "../../api/client";
-import type { ModulePageProps } from "../contract";
+import type { WindowChromeProps } from "../contract";
 import { css } from "../css";
 import { MODULES } from "../nav";
 import { ConsoleWindow } from "../window";
@@ -67,7 +67,7 @@ const POLL_INTERVAL_MS = 2000;
 const scroll: CSSProperties = css("flex:1;min-height:0;overflow:auto;");
 const body: CSSProperties = css("display:flex;flex-direction:column;gap:16px;padding:14px 16px;");
 const sectionTitle: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:9px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-faint);",
+  "font-family:var(--font-mono);font-size:11px;letter-spacing:0.16em;text-transform:uppercase;color:var(--text-faint);",
 );
 const prose: CSSProperties = css(
   "font-family:var(--font-sans);font-size:11px;line-height:1.6;color:var(--text-muted);max-width:78ch;",
@@ -79,13 +79,13 @@ const card: CSSProperties = css(
   "display:flex;flex-direction:column;gap:5px;padding:12px 14px;border:1px solid var(--border-soft);border-radius:3px;background:color-mix(in srgb,var(--surface-card) 84%,transparent);min-width:0;",
 );
 const cardLabel: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:8.5px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);",
+  "font-family:var(--font-mono);font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-faint);",
 );
 const bigNumber: CSSProperties = css(
   "font-family:var(--font-display);font-size:30px;line-height:1;color:var(--text-primary);font-variant-numeric:tabular-nums;",
 );
 const caption: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:9px;line-height:1.5;color:var(--text-faint);",
+  "font-family:var(--font-mono);font-size:11px;line-height:1.5;color:var(--text-faint);",
 );
 const panel: CSSProperties = css(
   "display:flex;flex-direction:column;gap:10px;padding:12px 14px;border:1px solid var(--border-soft);border-radius:3px;background:color-mix(in srgb,var(--surface-card) 84%,transparent);",
@@ -94,16 +94,16 @@ const wizardPanel: CSSProperties = css(
   "display:flex;flex-direction:column;gap:12px;padding:14px 16px;border:1px solid var(--accent);border-radius:3px;background:color-mix(in srgb,var(--surface-card) 92%,transparent);",
 );
 const kvGrid: CSSProperties = css(
-  "display:grid;grid-template-columns:minmax(140px,180px) 1fr;gap:5px 14px;font-family:var(--font-mono);font-size:10px;align-content:start;",
+  "display:grid;grid-template-columns:minmax(140px,180px) 1fr;gap:5px 14px;font-family:var(--font-mono);font-size:11px;align-content:start;",
 );
 const kvLabel: CSSProperties = css("color:var(--text-faint);letter-spacing:0.04em;");
 const kvVal: CSSProperties = css("color:var(--text-primary);word-break:break-word;font-variant-numeric:tabular-nums;");
 const tableWrap: CSSProperties = css(
   "border:1px solid var(--border-soft);border-radius:2px;background:var(--surface-sunk);overflow:auto;max-width:520px;",
 );
-const tableEl: CSSProperties = css("width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:10px;");
+const tableEl: CSSProperties = css("width:100%;border-collapse:collapse;font-family:var(--font-mono);font-size:11px;");
 const thStyle: CSSProperties = css(
-  "text-align:left;padding:4px 9px;background:var(--surface-chrome);border-bottom:1px solid var(--border-soft);font-size:8px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);white-space:nowrap;",
+  "text-align:left;padding:4px 9px;background:var(--surface-chrome);border-bottom:1px solid var(--border-soft);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);white-space:nowrap;",
 );
 const tdStyle: CSSProperties = css(
   "padding:4px 9px;border-bottom:1px solid var(--border-faint);color:var(--text-primary);vertical-align:top;",
@@ -113,25 +113,25 @@ const tdNum: CSSProperties = css(
 );
 const chipRow: CSSProperties = css("display:flex;flex-wrap:wrap;gap:6px;");
 const chip: CSSProperties = css(
-  "display:inline-block;padding:2px 8px;border:1px solid var(--border-soft);border-radius:2px;font-family:var(--font-mono);font-size:9.5px;line-height:1.5;color:var(--text-primary);background:var(--surface-sunk);",
+  "display:inline-block;padding:2px 8px;border:1px solid var(--border-soft);border-radius:2px;font-family:var(--font-mono);font-size:11px;line-height:1.5;color:var(--text-primary);background:var(--surface-sunk);",
 );
 const chipBtn: CSSProperties = css(
-  "padding:3px 10px;border:1px solid var(--border-soft);border-radius:2px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.04em;color:var(--text-muted);background:transparent;cursor:pointer;",
+  "padding:3px 10px;border:1px solid var(--border-soft);border-radius:2px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.04em;color:var(--text-muted);background:transparent;cursor:pointer;",
 );
 const chipBtnOn: CSSProperties = css(
-  "padding:3px 10px;border:1px solid var(--accent);border-radius:2px;font-family:var(--font-mono);font-size:10px;letter-spacing:0.04em;color:var(--text-on-accent);background:var(--accent);cursor:pointer;",
+  "padding:3px 10px;border:1px solid var(--accent);border-radius:2px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.04em;color:var(--text-on-accent);background:var(--accent);cursor:pointer;",
 );
 const textInput: CSSProperties = css(
   "padding:5px 8px;border:1px solid var(--border-soft);border-radius:2px;background:var(--surface-sunk);color:var(--text-primary);font-family:var(--font-mono);font-size:11px;min-width:180px;",
 );
 const btnPrimary: CSSProperties = css(
-  "padding:5px 14px;border:1px solid var(--accent);border-radius:2px;background:var(--accent);color:var(--text-on-accent);font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;",
+  "padding:5px 14px;border:1px solid var(--accent);border-radius:2px;background:var(--accent);color:var(--text-on-accent);font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;",
 );
 const btnGhost: CSSProperties = css(
-  "padding:5px 12px;border:1px solid var(--border-soft);border-radius:2px;background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;",
+  "padding:5px 12px;border:1px solid var(--border-soft);border-radius:2px;background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;",
 );
 const refreshBtn: CSSProperties = css(
-  "padding:4px 11px;border:1px solid var(--border-soft);border-radius:2px;background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:9px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;",
+  "padding:4px 11px;border:1px solid var(--border-soft);border-radius:2px;background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;",
 );
 const stateNote: CSSProperties = css(
   "flex:1;display:flex;align-items:center;justify-content:center;padding:24px;font-family:var(--font-mono);font-size:11px;color:var(--text-faint);letter-spacing:0.04em;text-align:center;",
@@ -140,18 +140,18 @@ const detailNote: CSSProperties = css(
   "font-family:var(--font-mono);font-size:11px;line-height:1.5;color:var(--text-muted);",
 );
 const errorNote: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:10.5px;line-height:1.5;color:var(--status-warn);white-space:pre-wrap;word-break:break-word;",
+  "font-family:var(--font-mono);font-size:11px;line-height:1.5;color:var(--status-warn);white-space:pre-wrap;word-break:break-word;",
 );
 const runningNote: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:10.5px;color:var(--text-primary);letter-spacing:0.04em;",
+  "font-family:var(--font-mono);font-size:11px;color:var(--text-primary);letter-spacing:0.04em;",
 );
 const stepLabel: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:9px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);",
+  "font-family:var(--font-mono);font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);",
 );
 const rowBetween: CSSProperties = css("display:flex;align-items:center;justify-content:space-between;gap:10px;");
 const rowGap: CSSProperties = css("display:flex;align-items:center;gap:10px;flex-wrap:wrap;");
 const footerLine: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:9px;line-height:1.6;color:var(--text-faint);letter-spacing:0.03em;border-top:1px solid var(--border-faint);padding-top:10px;",
+  "font-family:var(--font-mono);font-size:11px;line-height:1.6;color:var(--text-faint);letter-spacing:0.03em;border-top:1px solid var(--border-faint);padding-top:10px;",
 );
 
 /* ------------------------------ helpers ---------------------------------- */
@@ -244,7 +244,7 @@ function ModuleBreakdown({ breakdown }: { breakdown: Record<string, number> }): 
 
 /* --------------------------------- page ---------------------------------- */
 
-export default function AdminPlatformCorpusPage(props: ModulePageProps): JSX.Element {
+export default function AdminPlatformCorpusPage(props: WindowChromeProps): JSX.Element {
   const { windowId, title, isFocused, onFocus, onBack, onMinimize, isFullscreen, onToggleFullscreen } = props;
   const qc = useQueryClient();
 
@@ -585,7 +585,7 @@ export default function AdminPlatformCorpusPage(props: ModulePageProps): JSX.Ele
           padding: "8px 14px",
           background: "var(--surface-chrome)",
           borderBottom: "1px solid var(--border)",
-          fontSize: 10.5,
+          fontSize: 11,
           letterSpacing: "0.12em",
           textTransform: "uppercase",
           color: "var(--text-muted)",

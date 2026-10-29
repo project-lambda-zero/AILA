@@ -60,7 +60,7 @@ const rowActBtn: CSSProperties = {
   borderRadius: 2,
   color: "var(--text-primary)",
   fontFamily: "var(--font-mono)",
-  fontSize: 9,
+  fontSize: 11,
   letterSpacing: "0.06em",
   textTransform: "uppercase",
   padding: "2px 6px",
@@ -81,7 +81,7 @@ const rowDelBtn: CSSProperties = {
 
 function CenterMessage({ text, tone }: { text: string; tone?: string }) {
   return (
-    <div style={{ padding: "26px 14px", textAlign: "center", fontSize: 10.5, color: tone ?? "var(--text-faint)" }}>{text}</div>
+    <div style={{ padding: "26px 14px", textAlign: "center", fontSize: 11, color: tone ?? "var(--text-faint)" }}>{text}</div>
   );
 }
 
@@ -99,18 +99,18 @@ function NotificationRow({ n, onRead, onDelete }: { n: Notification; onRead: (id
       <span aria-hidden="true" style={{ flex: "0 0 3px", background: k.tone }} />
       <div style={{ flex: 1, minWidth: 0, padding: "8px 10px" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 8.5, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: k.tone }}>{k.label}</span>
+          <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: k.tone }}>{k.label}</span>
           <div style={{ flex: 1 }} />
-          <span style={{ fontSize: 9, color: "var(--text-faint)" }} title={n.created_at}>{relAge(n.created_at)}</span>
+          <span style={{ fontSize: 11, color: "var(--text-faint)" }} title={n.created_at}>{relAge(n.created_at)}</span>
         </div>
         <div style={{ fontSize: 11.5, fontWeight: 600, marginTop: 3, wordBreak: "break-word" }}>{n.title}</div>
         {n.body ? (
-          <div style={{ fontSize: 10.5, color: "var(--text-muted)", marginTop: 2, wordBreak: "break-word", whiteSpace: "pre-wrap" }}>{n.body}</div>
+          <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2, wordBreak: "break-word", whiteSpace: "pre-wrap" }}>{n.body}</div>
         ) : null}
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 5 }}>
-          {n.source_module ? <span style={{ fontSize: 9, color: "var(--text-faint)" }}>{n.source_module}</span> : null}
+          {n.source_module ? <span style={{ fontSize: 11, color: "var(--text-faint)" }}>{n.source_module}</span> : null}
           {n.source_entity_id ? (
-            <span style={{ fontSize: 9, color: "var(--text-faint)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }} title={n.source_entity_id}>
+            <span style={{ fontSize: 11, color: "var(--text-faint)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 180 }} title={n.source_entity_id}>
               {n.source_entity_id}
             </span>
           ) : null}
@@ -192,7 +192,7 @@ export default function NotificationsCenter() {
               justifyContent: "center",
               background: "var(--accent)",
               color: "var(--text-on-accent)",
-              fontSize: 8.5,
+              fontSize: 11,
               fontWeight: 700,
               borderRadius: 8,
               lineHeight: 1,
@@ -242,7 +242,7 @@ export default function NotificationsCenter() {
                   borderRadius: 2,
                   color: unreadCount === 0 ? "var(--text-faint)" : "var(--text-primary)",
                   fontFamily: "var(--font-mono)",
-                  fontSize: 9,
+                  fontSize: 11,
                   letterSpacing: "0.06em",
                   textTransform: "uppercase",
                   padding: "3px 7px",
@@ -276,7 +276,7 @@ export default function NotificationsCenter() {
                     border: 0,
                     borderBottom: tab === t ? "2px solid var(--accent)" : "2px solid transparent",
                     fontFamily: "var(--font-mono)",
-                    fontSize: 10,
+                    fontSize: 11,
                     letterSpacing: "0.1em",
                     textTransform: "uppercase",
                     cursor: "pointer",

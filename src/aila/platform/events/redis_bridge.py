@@ -61,6 +61,8 @@ from .domain_events import (
     ConfigChanged,
     ConfigChangedPayload,
     DomainEvent,
+    EntityStatusChanged,
+    EntityStatusChangedPayload,
     LlmCallCompleted,
     LlmCallCompletedPayload,
     ModuleWorkflowCompleted,
@@ -143,6 +145,9 @@ _EVENT_TYPE_REGISTRY: dict[str, tuple[type[DomainEvent], type[Any]]] = {
     ),
     "workflow.stage.announced": (
         WorkflowStageAnnounced, WorkflowStagePayload,
+    ),
+    "entity.status_changed": (
+        EntityStatusChanged, EntityStatusChangedPayload,
     ),
 }
 

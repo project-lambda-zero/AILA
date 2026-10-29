@@ -50,7 +50,7 @@ const filterFoot = css(
   "display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding-top:10px;",
 );
 const filterNote = css(
-  "font-family:var(--font-mono);font-size:9.5px;color:var(--text-faint);letter-spacing:0.03em;",
+  "font-family:var(--font-mono);font-size:11px;color:var(--text-faint);letter-spacing:0.03em;",
 );
 const table = css(
   "width:100%;border-collapse:separate;border-spacing:0;",
@@ -60,13 +60,13 @@ const rowActive = css(
   "background:color-mix(in srgb,var(--accent) 12%,transparent);",
 );
 const runCell = css(
-  "font-family:var(--font-mono);font-size:10.5px;color:var(--text-muted);max-width:180px;overflow:hidden;text-overflow:ellipsis;",
+  "font-family:var(--font-mono);font-size:11px;color:var(--text-muted);max-width:180px;overflow:hidden;text-overflow:ellipsis;",
 );
 const pagerBar = css(
   "display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 12px;border-top:1px solid var(--border);background:var(--surface-chrome);",
 );
 const pagerText = css(
-  "font-family:var(--font-mono);font-size:10px;color:var(--text-muted);letter-spacing:0.04em;",
+  "font-family:var(--font-mono);font-size:11px;color:var(--text-muted);letter-spacing:0.04em;",
 );
 const sidePanel = css(
   `flex:0 0 ${SIDE_PANEL_WIDTH}px;max-width:${SIDE_PANEL_WIDTH}px;`,
@@ -78,22 +78,22 @@ const sideKV = css(
   "display:flex;justify-content:space-between;gap:12px;font-family:var(--font-mono);font-size:11px;color:var(--text-primary);padding:4px 0;border-bottom:1px solid var(--border-faint);",
 );
 const sideKVKey = css(
-  "color:var(--text-faint);text-transform:uppercase;letter-spacing:0.08em;font-size:9.5px;",
+  "color:var(--text-faint);text-transform:uppercase;letter-spacing:0.08em;font-size:11px;",
 );
 const modelList = css(
   "display:flex;flex-direction:column;gap:6px;margin-top:10px;",
 );
 const modelRow = css(
-  "display:grid;grid-template-columns:1fr auto auto auto;gap:8px;align-items:center;font-family:var(--font-mono);font-size:10.5px;color:var(--text-primary);padding:5px 7px;border:1px solid var(--border-faint);border-radius:2px;",
+  "display:grid;grid-template-columns:1fr auto auto auto;gap:8px;align-items:center;font-family:var(--font-mono);font-size:11px;color:var(--text-primary);padding:5px 7px;border:1px solid var(--border-faint);border-radius:2px;",
 );
 const modelName = css(
   "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;",
 );
 const modelMeta = css(
-  "font-family:var(--font-mono);font-size:9.5px;color:var(--text-muted);white-space:nowrap;",
+  "font-family:var(--font-mono);font-size:11px;color:var(--text-muted);white-space:nowrap;",
 );
 const closeBtn = css(
-  "padding:3px 8px;border:1px solid var(--border-soft);border-radius:2px;background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;",
+  "padding:3px 8px;border:1px solid var(--border-soft);border-radius:2px;background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;",
 );
 
 interface ModuleDiscovery {

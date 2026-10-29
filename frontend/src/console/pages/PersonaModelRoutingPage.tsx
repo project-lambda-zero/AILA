@@ -29,7 +29,7 @@ import {
   useUpdatePersonaRouting,
 } from "../../api/personaRouting";
 import type { PersonaRegistryModule } from "../../api/personaRouting";
-import type { ModulePageProps } from "../contract";
+import type { WindowChromeProps } from "../contract";
 import { css } from "../css";
 import { ConsoleWindow } from "../window";
 
@@ -45,7 +45,7 @@ const panelBox: CSSProperties = css(
   "min-height:0;display:flex;flex-direction:column;border:1px solid var(--border);border-radius:var(--radius-md,3px);background:color-mix(in srgb,var(--surface-card) 84%,transparent);overflow:hidden;box-shadow:var(--bevel-raised,inset 1px 1px 0 rgba(255,255,255,0.03));",
 );
 const panelTitle: CSSProperties = css(
-  "flex:0 0 auto;display:flex;align-items:center;gap:10px;height:var(--panel-title-h,27px);padding:0 12px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:9.5px;text-transform:uppercase;letter-spacing:0.14em;color:var(--text-muted);",
+  "flex:0 0 auto;display:flex;align-items:center;gap:10px;height:var(--panel-title-h,27px);padding:0 12px;background:var(--surface-chrome);border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;text-transform:uppercase;letter-spacing:0.14em;color:var(--text-muted);",
 );
 const dot: CSSProperties = css(
   "width:8px;height:8px;border-radius:1px;background:var(--accent);box-shadow:0 0 6px var(--accent);flex:0 0 auto;",
@@ -63,22 +63,22 @@ const inputDisabled: CSSProperties = css(
   "background:var(--surface-chrome);border:1px solid var(--border-faint);border-radius:2px;color:var(--text-faint);font-family:var(--font-mono);font-size:11px;padding:6px 9px;min-width:0;outline:none;width:100%;cursor:not-allowed;",
 );
 const btnPrimary: CSSProperties = css(
-  "padding:6px 14px;border:1px solid var(--accent);border-radius:2px;background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--accent);font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;",
+  "padding:6px 14px;border:1px solid var(--accent);border-radius:2px;background:color-mix(in srgb,var(--accent) 10%,transparent);color:var(--accent);font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;",
 );
 const btnPrimaryDisabled: CSSProperties = css(
-  "padding:6px 14px;border:1px solid var(--border-faint);border-radius:2px;background:transparent;color:var(--text-faint);font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;cursor:not-allowed;",
+  "padding:6px 14px;border:1px solid var(--border-faint);border-radius:2px;background:transparent;color:var(--text-faint);font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;cursor:not-allowed;",
 );
 const btnGhost: CSSProperties = css(
-  "padding:5px 11px;border:1px solid var(--border-soft);border-radius:2px;background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:10px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;",
+  "padding:5px 11px;border:1px solid var(--border-soft);border-radius:2px;background:transparent;color:var(--text-muted);font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;cursor:pointer;",
 );
 const chipOk: CSSProperties = css(
-  "display:inline-block;padding:1px 7px;border:1px solid color-mix(in srgb,var(--status-ok) 55%,transparent);border-radius:2px;font-family:var(--font-mono);font-size:9px;line-height:1.6;letter-spacing:0.1em;text-transform:uppercase;color:var(--status-ok);background:color-mix(in srgb,var(--status-ok) 10%,transparent);",
+  "display:inline-block;padding:1px 7px;border:1px solid color-mix(in srgb,var(--status-ok) 55%,transparent);border-radius:2px;font-family:var(--font-mono);font-size:11px;line-height:1.6;letter-spacing:0.1em;text-transform:uppercase;color:var(--status-ok);background:color-mix(in srgb,var(--status-ok) 10%,transparent);",
 );
 const chipFaint: CSSProperties = css(
-  "display:inline-block;padding:1px 7px;border:1px solid var(--border-faint);border-radius:2px;font-family:var(--font-mono);font-size:9px;line-height:1.6;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);background:transparent;",
+  "display:inline-block;padding:1px 7px;border:1px solid var(--border-faint);border-radius:2px;font-family:var(--font-mono);font-size:11px;line-height:1.6;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);background:transparent;",
 );
 const chipWarn: CSSProperties = css(
-  `display:inline-block;padding:1px 7px;border:1px solid color-mix(in srgb,${H_WARN} 55%,transparent);border-radius:2px;font-family:var(--font-mono);font-size:9px;line-height:1.6;letter-spacing:0.1em;text-transform:uppercase;color:${H_WARN};background:color-mix(in srgb,${H_WARN} 12%,transparent);`,
+  `display:inline-block;padding:1px 7px;border:1px solid color-mix(in srgb,${H_WARN} 55%,transparent);border-radius:2px;font-family:var(--font-mono);font-size:11px;line-height:1.6;letter-spacing:0.1em;text-transform:uppercase;color:${H_WARN};background:color-mix(in srgb,${H_WARN} 12%,transparent);`,
 );
 const emptyNote: CSSProperties = css(
   "flex:1;display:flex;align-items:center;justify-content:center;padding:20px;font-family:var(--font-mono);font-size:11px;color:var(--text-faint);letter-spacing:0.04em;text-align:center;",
@@ -90,7 +90,7 @@ const moduleTitle: CSSProperties = css(
   "font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-primary);",
 );
 const moduleId: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:9.5px;letter-spacing:0.06em;color:var(--text-faint);",
+  "font-family:var(--font-mono);font-size:11px;letter-spacing:0.06em;color:var(--text-faint);",
 );
 const moduleEmpty: CSSProperties = css(
   "padding:8px 0;font-family:var(--font-mono);font-size:11px;color:var(--text-faint);letter-spacing:0.03em;",
@@ -102,7 +102,7 @@ const personaName: CSSProperties = css(
   "font-family:var(--font-mono);font-size:12px;color:var(--text-primary);letter-spacing:0.04em;",
 );
 const roleTag: CSSProperties = css(
-  "font-family:var(--font-mono);font-size:8.5px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);",
+  "font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-faint);",
 );
 
 /* ------------------------------ helpers ---------------------------------- */
@@ -302,7 +302,7 @@ function RoutingEditor(): JSX.Element {
           {envOverride ? (
             <div style={css("display:flex;align-items:center;gap:8px;")}>
               <span style={chipWarn}>env override</span>
-              <span style={css("font-family:var(--font-mono);font-size:10px;color:var(--text-faint);")}>
+              <span style={css("font-family:var(--font-mono);font-size:11px;color:var(--text-faint);")}>
                 {cfg.data?.env_key} is set; the live value comes from the environment and edits
                 here will not take effect until it is unset.
               </span>
@@ -353,7 +353,7 @@ function RoutingEditor(): JSX.Element {
             ))
           )}
 
-          <p style={css("font-family:var(--font-mono);font-size:10px;line-height:1.6;color:var(--text-faint);")}>
+          <p style={css("font-family:var(--font-mono);font-size:11px;line-height:1.6;color:var(--text-faint);")}>
             A model_role is a task_type the LLM client resolves through{" "}
             <code style={css("color:var(--text-muted);")}>llm_model_&#123;role&#125;</code>. Wire
             the underlying model for each role on the Config page (namespace{" "}
@@ -362,12 +362,12 @@ function RoutingEditor(): JSX.Element {
           </p>
 
           {mut.isError ? (
-            <div style={css(`font-family:var(--font-mono);font-size:10.5px;color:${H_WARN};line-height:1.5;`)}>
+            <div style={css(`font-family:var(--font-mono);font-size:11px;color:${H_WARN};line-height:1.5;`)}>
               write failed &mdash; {apiErrMessage(mut.error)}
             </div>
           ) : null}
           {mut.isSuccess && !dirty ? (
-            <div style={css("font-family:var(--font-mono);font-size:10.5px;color:var(--status-ok);")}>
+            <div style={css("font-family:var(--font-mono);font-size:11px;color:var(--status-ok);")}>
               saved &middot; {mappedCount > 0 ? `${mappedCount} persona override(s) live` : "routing off"}
             </div>
           ) : null}
@@ -385,7 +385,7 @@ function RoutingEditor(): JSX.Element {
               reset
             </button>
             <span style={css("flex:1;")} />
-            <span style={css("font-family:var(--font-mono);font-size:9px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);")}>
+            <span style={css("font-family:var(--font-mono);font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);")}>
               PUT /config/platform/persona_model_role_map
             </span>
           </div>
@@ -397,7 +397,7 @@ function RoutingEditor(): JSX.Element {
 
 /* --------------------------------- page ---------------------------------- */
 
-export default function PersonaModelRoutingPage(props: ModulePageProps): JSX.Element {
+export default function PersonaModelRoutingPage(props: WindowChromeProps): JSX.Element {
   const { windowId, title, isFocused, onFocus, onBack, onMinimize, isFullscreen, onToggleFullscreen } = props;
 
   const statusStrip = (
@@ -453,7 +453,7 @@ export default function PersonaModelRoutingPage(props: ModulePageProps): JSX.Ele
           padding: "8px 14px",
           background: "var(--surface-chrome)",
           borderBottom: "1px solid var(--border)",
-          fontSize: 10.5,
+          fontSize: 11,
           letterSpacing: "0.12em",
           textTransform: "uppercase",
           color: "var(--text-muted)",
