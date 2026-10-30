@@ -26,6 +26,7 @@ __all__ = [
     "IDA_HEADLESS_TOOLS",
     "KNOWN_TOOLS",
     "LANGUAGE_UNRELIABLE_TOOLS",
+    "REA_TOOLS",
     "canonical_tool_id",
     "canonicalize_tool_id",
     "tools_for_language",
@@ -373,6 +374,41 @@ DYNAMIC_TOOLS: frozenset[str] = frozenset({
 })
 
 
+# REA (morluto/rea) -- the first external MCP-native server. Static
+# fallback catalog so the adapter registry resolves ``rea.<tool>``
+# before any live ``tools/list`` has been fetched; the runtime bridge
+# catalog (``register_bridge_tools``) is authoritative once the server
+# has spoken. Coverage: the read-only analysis surface the VR/malware
+# agents dispatch (native RE + comparisons); JS/Electron, runtime
+# observation, and packet-capture families land with their consumers.
+REA_TOOLS: frozenset[str] = frozenset({
+    "open_binary",
+    "list_procedures",
+    "search_procedures",
+    "procedure_address",
+    "procedure_callers",
+    "procedure_callees",
+    "resolve_containing_procedure",
+    "get_call_graph",
+    "trace_call_path",
+    "build_call_path",
+    "analyze_function",
+    "compare_functions",
+    "match_native_functions",
+    "list_strings",
+    "search_strings",
+    "list_names",
+    "inspect_analysis_view",
+    "get_evidence_bundle",
+    "export_evidence_bundle",
+    "inspect_artifact",
+    "compare_artifacts",
+    "trace_feature",
+    "list_analysis_settings",
+    "set_analysis_option",
+})
+
+
 # Indexed by server_id used by the bridge dispatch.
 KNOWN_TOOLS: dict[str, frozenset[str]] = {
     "ida_headless": IDA_HEADLESS_TOOLS,
@@ -382,6 +418,7 @@ KNOWN_TOOLS: dict[str, frozenset[str]] = {
     "poc_runner": POC_RUNNER_TOOLS,
     "symbolic": SYMBOLIC_TOOLS,
     "dynamic": DYNAMIC_TOOLS,
+    "rea": REA_TOOLS,
 }
 
 

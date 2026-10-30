@@ -72,6 +72,13 @@ from .known_tools import (
     KNOWN_TOOLS,
     canonicalize_tool_id,
 )
+from .rea import (
+    adapt_rea_analyze_function,
+    adapt_rea_call_graph,
+    adapt_rea_compare_functions,
+    adapt_rea_open_binary,
+    adapt_rea_trace_call_path,
+)
 
 __all__ = [
     "get_adapter",
@@ -150,6 +157,13 @@ _SPECIALIZED: dict[tuple[str, str], AdapterFn] = {
     # coverage_delta``) the kill-criteria evaluator scans.
     ("symbolic", "explore"): adapt_symbolic_explore,
     ("dynamic", "run_dynamic"): adapt_dynamic_run,
+    # REA (morluto/rea) -- first MCP-native server. Evidence records map
+    # onto the same payload kinds the ida adapters established.
+    ("rea", "analyze_function"): adapt_rea_analyze_function,
+    ("rea", "get_call_graph"): adapt_rea_call_graph,
+    ("rea", "trace_call_path"): adapt_rea_trace_call_path,
+    ("rea", "compare_functions"): adapt_rea_compare_functions,
+    ("rea", "open_binary"): adapt_rea_open_binary,
 }
 
 # fix §200 -- generic-adapter-backed read tools registered explicitly.
