@@ -71,6 +71,8 @@ class McpBridgeTool(Tool):
         middleware: McpMiddleware,
         module_id: str,
         recorder: Any | None = None,
+        transport: str | None = None,
+        command: tuple[str, ...] | None = None,
     ) -> None:
         self._mw = middleware
         self.module_id = module_id
@@ -88,6 +90,8 @@ class McpBridgeTool(Tool):
             timeout=middleware.default_timeout,
             recorder=recorder,
             persistent_pool=middleware.persistent_pool,
+            transport=transport,
+            command=command,
         )
 
     @property

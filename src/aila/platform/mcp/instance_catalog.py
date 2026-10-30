@@ -60,6 +60,7 @@ __all__ = [
     "McpInstanceCatalog",
     "McpServerInstance",
     "TRANSPORT_HTTP",
+    "TRANSPORT_MCP_HTTP",
     "TRANSPORT_STDIO",
     "decode_capability_tags",
     "encode_capability_tags",
@@ -68,8 +69,20 @@ __all__ = [
 _log = logging.getLogger(__name__)
 
 TRANSPORT_HTTP: str = "http"
+TRANSPORT_MCP_HTTP: str = "mcp-http"
 TRANSPORT_STDIO: str = "stdio"
-_ALLOWED_TRANSPORTS: frozenset[str] = frozenset({TRANSPORT_HTTP, TRANSPORT_STDIO})
+# ``http`` is the legacy bridge contract (``GET /tools`` +
+# ``POST /tools/<action>``) spoken by the in-repo audit-mcp /
+# ida-headless / android-mcp servers. ``mcp-http`` and ``stdio`` are the
+# real Model Context Protocol transports implemented by
+# :mod:`aila.platform.mcp.mcp_session` -- streamable-HTTP JSON-RPC and
+# stdio JSON-RPC respectively -- for external servers such as REA
+# (morluto/rea). ``stdio`` rows resolve their spawn command from the
+# static :class:`~aila.platform.mcp.server_specs.ServerSpec`, not from
+# the catalog row.
+_ALLOWED_TRANSPORTS: frozenset[str] = frozenset(
+    {TRANSPORT_HTTP, TRANSPORT_MCP_HTTP, TRANSPORT_STDIO},
+)
 
 
 class McpApprovalState(StrEnum):

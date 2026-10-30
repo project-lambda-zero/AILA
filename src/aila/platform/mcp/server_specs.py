@@ -22,6 +22,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from aila.platform.mcp.instance_catalog import TRANSPORT_HTTP, TRANSPORT_MCP_HTTP
+
 __all__ = ["ServerSpec", "SERVER_SPECS", "spec_for"]
 
 
@@ -34,6 +36,9 @@ class ServerSpec:
     ``bridge.name`` see the pre-Tier-C value. ``default_timeout`` is the
     fallback per-call HTTP timeout in seconds; a middleware MAY narrow or
     widen it from its own env var (e.g. ``IDA_HEADLESS_TIMEOUT``).
+    ``transport`` selects the wire protocol: ``"http"`` (the legacy
+    bridge contract), ``"mcp-http"`` (streamable-HTTP MCP JSON-RPC), or
+    ``"stdio"`` (MCP stdio JSON-RPC; ``command`` is the spawn argv).
     """
 
     server_id: str
@@ -43,6 +48,8 @@ class ServerSpec:
     default_url: str
     default_timeout: float
     persistent_pool: bool
+    transport: str = TRANSPORT_HTTP
+    command: tuple[str, ...] = ()
 
 
 SERVER_SPECS: dict[str, ServerSpec] = {
@@ -81,6 +88,25 @@ SERVER_SPECS: dict[str, ServerSpec] = {
         default_url="http://127.0.0.1:18823",
         default_timeout=1800.0,
         persistent_pool=True,
+    ),
+    # REA (morluto/rea, npm ``rea-agents``) -- the first external,
+    # MCP-native server. Replaces ida_headless for binary reverse
+    # engineering across Ghidra/IDA/Hopper/Kuna providers. Launched by
+    # start.sh as ``rea mcp --http --port 18824`` (or per-catalog-row
+    # endpoints for extra instances -- REA serves ONE client / ONE
+    # active target per process, so one catalog row per concurrent
+    # target). The 900 s default timeout covers the cold-Ghidra first
+    # query (observed 400-600 s on a constrained host); repeat queries
+    # answer in milliseconds.
+    "rea": ServerSpec(
+        server_id="rea",
+        tool_name="rea_bridge",
+        env_var="REA_MCP_URL",
+        config_key="rea_mcp_url",
+        default_url="http://127.0.0.1:18824",
+        default_timeout=900.0,
+        persistent_pool=True,
+        transport=TRANSPORT_MCP_HTTP,
     ),
 }
 

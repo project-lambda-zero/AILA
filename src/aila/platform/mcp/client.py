@@ -39,6 +39,7 @@ audit rows to the catalog row on this key.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -52,9 +53,19 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from aila.platform.llm.sanitize import sanitize_input
 from aila.platform.mcp.instance_catalog import (
+    TRANSPORT_HTTP,
+    TRANSPORT_MCP_HTTP,
+    TRANSPORT_STDIO,
     McpInstanceCatalog,
     McpServerInstance,
     decode_capability_tags,
+)
+from aila.platform.mcp.mcp_session import (
+    McpHttpError,
+    McpHttpSession,
+    McpSession,
+    McpStdioError,
+    McpStdioSession,
 )
 from aila.platform.observability.otel import (
     GEN_AI_OPERATION_EXECUTE_TOOL,
@@ -101,6 +112,7 @@ class ResolvedInstance:
     capability_tags: tuple[str, ...] = field(default_factory=tuple)
     name: str | None = None
     module_scope: str | None = None
+    transport: str | None = None
 
 
 class EmptyPoolError(RuntimeError):
@@ -277,6 +289,7 @@ async def resolve_instance(
                 capability_tags=tuple(decode_capability_tags(row.capability_tags)),
                 name=row.name,
                 module_scope=row.module_scope,
+                transport=row.transport,
             )
     return ResolvedInstance(
         url=default_url.rstrip("/"),
@@ -389,6 +402,8 @@ class McpClient:
             Callable[..., AbstractAsyncContextManager[dict[str, Any]]] | None
         ) = None,
         persistent_pool: bool = False,
+        transport: str | None = None,
+        command: tuple[str, ...] | None = None,
     ) -> None:
         self.server_id = server_id
         self._fixed_base_url: str | None = (
@@ -405,15 +420,68 @@ class McpClient:
         # the pre-Tier-C ida/audit bridges.
         self._persistent_pool = persistent_pool
         self._http: httpx.AsyncClient | None = None
+        # Wire protocol. ``None`` defers the choice to the resolved
+        # instance (a catalog row may carry its own transport), falling
+        # back to the legacy bridge contract. ``mcp-http`` / ``stdio``
+        # run the real Model Context Protocol through
+        # :mod:`aila.platform.mcp.mcp_session`; ``command`` is the
+        # spawn argv for the stdio transport.
+        self._transport = transport
+        self._command = command
+        self._mcp: McpSession | None = None
+
+    async def _effective_transport(self) -> str:
+        """Return the wire protocol for the next call.
+
+        Explicit construction-time value wins (static spec); a
+        catalog-sourced resolution may override it per row; the default
+        is the legacy bridge contract.
+        """
+        if self._transport is not None:
+            return self._transport
+        resolved = await self.resolve()
+        return resolved.transport or TRANSPORT_HTTP
+
+    async def _mcp_session(self) -> McpSession:
+        """Return the cached native-MCP session, creating it on first use."""
+        if self._mcp is None:
+            transport = await self._effective_transport()
+            if transport == TRANSPORT_MCP_HTTP:
+                resolved = await self.resolve()
+                headers: dict[str, str] = {}
+                inject_trace_context(headers)
+                self._mcp = McpHttpSession(
+                    resolved.url,
+                    client_name="aila",
+                    client_version="1.0",
+                    headers=headers or None,
+                )
+            elif transport == TRANSPORT_STDIO:
+                command = self._command or ()
+                self._mcp = McpStdioSession(command)
+            else:
+                raise RuntimeError(
+                    f"McpClient({self.server_id}): transport {transport!r} "
+                    "has no native MCP session",
+                )
+        return self._mcp
+
+    def _drop_mcp_session(self) -> None:
+        """Reset the cached session so the next call re-handshakes."""
+        self._mcp = None
 
     def invalidate_base_url(self) -> None:
         """Drop the cached resolution so the next call re-runs ``resolver``.
 
         Optional escape hatch for operators who PATCH the catalog row
         or the ConfigRegistry key mid-run -- the bridge instance still
-        picks up the new value without a worker restart.
+        picks up the new value without a worker restart. Also drops the
+        native-MCP session: for ``mcp-http`` the session is bound to the
+        old URL (and the server's session table), so a re-resolved base
+        URL must re-handshake.
         """
         self._resolved = None
+        self._drop_mcp_session()
 
     def invalidate_spec_cache(self) -> None:
         """Drop the cached tool catalogue so the next list re-fetches.
@@ -466,16 +534,36 @@ class McpClient:
         return (await self.resolve()).instance_id
 
     async def list_tool_specs(self) -> list[dict[str, Any]]:
-        """Fetch ``GET /tools`` once per client and cache the parsed catalog.
+        """Fetch the tool catalogue once per client and cache it.
 
-        Returns a list of :func:`compact_tool_spec` outputs. Fetch
-        failures (connect / timeout / non-JSON) cache an empty list
+        Legacy ``http`` transport: ``GET /tools``. Native MCP
+        transports (``mcp-http`` / ``stdio``): one ``tools/list``
+        JSON-RPC call. Both paths return :func:`compact_tool_spec`
+        outputs -- the projection already speaks MCP's ``tools/list``
+        entry shape.
+
+        Fetch failures (connect / timeout / non-JSON) cache an empty list
         so the caller sees a name-only listing rather than repeated
         stalls; the bridge subclass MAY override this method to add
         per-server schema-fetch hops (android-mcp fans schema URLs
         per tool because ``/tools`` returns only names).
         """
         if self._spec_cache is not None:
+            return self._spec_cache
+        if await self._effective_transport() != TRANSPORT_HTTP:
+            try:
+                session = await self._mcp_session()
+                raw_tools = await session.list_tools(timeout=self._timeout)
+            except (McpHttpError, McpStdioError, httpx.HTTPError) as exc:
+                _log.warning(
+                    "mcp_client %s: MCP catalog fetch failed (%s) -- caching empty",
+                    self.server_id, exc,
+                )
+                self._spec_cache = []
+                return []
+            self._spec_cache = [
+                compact_tool_spec(t) for t in raw_tools if isinstance(t, dict)
+            ]
             return self._spec_cache
         resolved = await self.resolve()
         url = f"{resolved.url}/tools"
@@ -569,10 +657,13 @@ class McpClient:
             return await client.post(url, json=payload, headers=headers)
 
     async def aclose(self) -> None:
-        """Close the pool client if one was opened. No-op otherwise."""
+        """Close the pool client and native-MCP session if opened."""
         if self._http is not None and not self._http.is_closed:
             await self._http.aclose()
         self._http = None
+        if self._mcp is not None:
+            await self._mcp.aclose()
+            self._mcp = None
 
     async def post(
         self,
@@ -629,8 +720,13 @@ class McpClient:
     ) -> dict[str, Any]:
         """Inner body of :meth:`post` -- kept separate so the outer span
         wrapper reads cleanly. Semantics are byte-identical to the
-        pre-#160 dispatch.
+        pre-#160 dispatch for the legacy transport; native MCP
+        transports delegate to :meth:`_post_mcp_impl`.
         """
+        if await self._effective_transport() != TRANSPORT_HTTP:
+            return await self._post_mcp_impl(
+                action, payload, timeout=timeout, ctx=ctx, span=span,
+            )
         resolved = await self.resolve()
         base = resolved.url
         url = f"{base}/tools/{action}"
@@ -725,6 +821,116 @@ class McpClient:
                 ctx["status"] = "error"
         return body
 
+    async def _post_mcp_impl(
+        self,
+        action: str,
+        payload: dict[str, Any],
+        *,
+        timeout: float | None,
+        ctx: dict[str, Any] | None,
+        span: Any,
+    ) -> dict[str, Any]:
+        """Dispatch one ``tools/call`` over a native MCP transport.
+
+        Maps the MCP result onto the legacy bridge envelope so every
+        downstream consumer (middleware, adapters, tool_executor) keeps
+        one shape:
+
+        * ``isError: true`` -> ``{"status": "error", "error": <text>}``.
+          REA returns its canonical error diagnostic as JSON text;
+          it is passed through verbatim so auto-steering and the agent
+          see the server's own remediation.
+        * success -> the first text content item parsed as JSON. A dict
+          body passes through with ``status: "ready"`` injected when
+          absent (same convention as the legacy no-status branch);
+          non-JSON text wraps as ``{"status": "ready", "result": text}``.
+        * ``structuredContent`` (when present) is attached under
+          ``_mcp_structured`` so adapters can reach the typed Evidence
+          record without re-parsing the text projection.
+        """
+        resolved = await self.resolve()
+        base = resolved.url
+        span.set_attribute("aila.mcp.instance_source", resolved.source)
+        if resolved.instance_id is not None:
+            span.set_attribute("aila.mcp.instance_id", resolved.instance_id)
+        effective_timeout = timeout if timeout is not None else self._timeout
+        session = await self._mcp_session()
+        try:
+            result = await session.call_tool(
+                action, payload, timeout=effective_timeout,
+            )
+        except (McpHttpError, McpStdioError, httpx.HTTPError) as exc:
+            message = str(exc)
+            if ctx is not None:
+                ctx["status"] = "error"
+                ctx["error_excerpt"] = message[:400]
+            if "timeout" in message.lower():
+                error = (
+                    f"Timeout ({effective_timeout}s) calling "
+                    f"{self.server_id}.{action}: {message}"
+                )
+            else:
+                error = f"Cannot reach {self.server_id} at {base}: {message}"
+            return {"status": "error", "error": error}
+        if result.get("isError"):
+            error_text = self._mcp_text_content(result)
+            if error_text is None and isinstance(
+                result.get("structuredContent"), (dict, list),
+            ):
+                try:
+                    error_text = json.dumps(result["structuredContent"])[:2000]
+                except (TypeError, ValueError):
+                    error_text = None
+            if error_text is None:
+                error_text = f"{self.server_id}.{action} returned isError"
+            if ctx is not None:
+                ctx["status"] = "error"
+                ctx["error_excerpt"] = error_text[:400]
+            return {"status": "error", "error": error_text}
+        structured = result.get("structuredContent")
+        text = self._mcp_text_content(result)
+        body: dict[str, Any]
+        parsed: Any = None
+        if text:
+            try:
+                parsed = json.loads(text)
+            except ValueError:
+                parsed = None
+        if isinstance(parsed, dict):
+            body = parsed
+            if "status" not in body:
+                body["status"] = "ready"
+        elif parsed is not None:
+            body = {"status": "ready", "result": parsed}
+        elif text:
+            body = {"status": "ready", "result": text}
+        else:
+            body = {"status": "ready", "result": None}
+        if structured is not None:
+            body["_mcp_structured"] = structured
+        if ctx is not None:
+            ctx["status"] = "ready" if body.get("status") == "ready" else str(
+                body.get("status"),
+            )
+        return body
+
+    @staticmethod
+    def _mcp_text_content(result: dict[str, Any]) -> str | None:
+        """Return the concatenated text content items of a ``tools/call`` result."""
+        content = result.get("content")
+        if not isinstance(content, list):
+            return None
+        parts = [
+            item.get("text")
+            for item in content
+            if isinstance(item, dict)
+            and item.get("type") == "text"
+            and isinstance(item.get("text"), str)
+        ]
+        if not parts:
+            return None
+        return "\n".join(parts)
+
     async def call_tool(
         self,
         action: str,
@@ -743,8 +949,26 @@ class McpClient:
             return await self.post(action, payload, timeout=timeout, ctx=ctx)
 
     async def health(self) -> dict[str, Any]:
-        """Best-effort ``GET /health`` for the operator's readiness UI."""
+        """Best-effort readiness probe for the operator's readiness UI.
+
+        Legacy ``http`` transport: ``GET /health``. Native MCP
+        transports: a ``tools/list`` round-trip (no cheaper spec-level
+        ping exists in the protocol). Failure returns the uniform
+        ``{"status": "error", "error": "Unreachable: ..."}`` envelope --
+        the ``Unreachable:`` prefix keeps the infra classifier and
+        failover routing aligned with the legacy probe.
+        """
         resolved = await self.resolve()
+        if await self._effective_transport() != TRANSPORT_HTTP:
+            try:
+                session = await self._mcp_session()
+                tools = await session.list_tools(timeout=10.0)
+            except (McpHttpError, McpStdioError, httpx.HTTPError) as exc:
+                return {
+                    "status": "error",
+                    "error": f"Unreachable: {resolved.url}: {exc}",
+                }
+            return {"status": "ready", "tools": len(tools)}
         url = f"{resolved.url}/health"
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:

@@ -103,4 +103,5 @@ def make_bridge(
     middleware = load_middleware(spec, module_id=module_id)
     return McpBridgeTool(
         middleware=middleware, module_id=module_id, recorder=recorder,
+        transport=spec.transport, command=spec.command or None,
     )

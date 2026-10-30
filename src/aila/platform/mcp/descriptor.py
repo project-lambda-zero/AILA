@@ -13,9 +13,12 @@ module by name (per RFC-05):
 * ``capability_tags`` -- what the server ADVERTISES it can do (``(
   "source_audit", "graph")``). Modules resolve MCP servers by
   capability, never by module name; the tag is the join key.
-* ``transport`` -- ``"http"`` or ``"stdio"``. All three current bridges
-  are HTTP; the stdio branch is reserved for future MCP-SDK stdio
-  processes and does not run today.
+* ``transport`` -- ``"http"`` (the legacy bridge contract spoken by
+  audit-mcp / ida-headless / android-mcp), ``"mcp-http"`` (streamable-
+  HTTP MCP JSON-RPC), or ``"stdio"`` (MCP stdio JSON-RPC against
+  ``command``). The two MCP transports are implemented by
+  :mod:`aila.platform.mcp.mcp_session` and are what external servers
+  such as REA (morluto/rea) plug into.
 * ``env_var`` / ``config_key`` / ``default_url`` -- the four-tier
   resolver inputs (``env`` > ``config`` > ``catalog`` > ``default``).
 * ``description`` -- optional operator-facing prose surfaced in the
