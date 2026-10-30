@@ -14,18 +14,29 @@ This module implements both wire transports behind one small surface:
   server. Performs the ``initialize`` handshake lazily on first use,
   retains the ``Mcp-Session-Id`` the server returns, replays it on every
   subsequent request, and sends ``notifications/initialized`` once after
-  the handshake, per the MCP transport spec. REA (morluto/rea) documents
-  exactly this behaviour, including the session-replacement rule: a new
-  ``initialize`` evicts the previous session, so ONE session object maps
-  to ONE logical client and concurrent callers must serialize on
-  :meth:`request` (the REA HTTP runtime serves one client at a time and
-  admits at most eight concurrent dispatches).
+  the handshake, per the MCP transport spec. A stateful server MAY
+  replace our session when another client initializes (REA does exactly
+  that: the newest ``initialize`` wins); a request refused with HTTP
+  404/400 while we hold a session id re-handshakes once and retries.
 * :class:`McpStdioSession` -- spawns ``command`` as a subprocess and
   exchanges newline-delimited JSON-RPC messages on stdin/stdout per the
   MCP stdio transport. One reader task owns stdout and demuxes responses
-  by JSON-RPC id; notifications (messages without an id) are dropped
-  after optional progress logging. The child is terminated on
-  :meth:`aclose`.
+  by JSON-RPC id. The stdout line limit is raised to 16 MiB because MCP
+  servers deliver a whole result as one JSON line (REA budgets results
+  up to its 10 MiB stdio receive buffer; asyncio's 64 KiB default would
+  raise on the first large dossier). When the child exits, every pending
+  request fails immediately and the next request respawns the child.
+  The child's stderr is inherited so server logs land in the host
+  process log.
+
+Sessions are SHARED per event loop through :func:`shared_session`: a
+stdio server costs one child process (REA + a Ghidra JVM), and a
+stateful HTTP server serves one client at a time, so every bridge in a
+process that targets the same endpoint MUST reuse one session rather
+than spawning / handshaking its own. Each session also carries a
+``state`` dict and an ``affinity`` condition for server-specific middleware
+that must make several requests atomically (REA: ensure the active
+target, then analyze it).
 
 Both transports return raw JSON-RPC result payloads; the caller
 (:class:`aila.platform.mcp.client.McpClient`) maps them onto the legacy
@@ -37,7 +48,8 @@ import asyncio
 import json
 import logging
 import uuid
-from collections.abc import Sequence
+import weakref
+from collections.abc import Callable, Sequence
 from typing import Any
 
 import httpx
@@ -49,23 +61,30 @@ __all__ = [
     "McpSession",
     "McpStdioError",
     "McpStdioSession",
+    "close_shared_sessions",
+    "shared_session",
 ]
 
 _log = logging.getLogger(__name__)
 
-# MCP protocol revision negotiated at initialize. The streamable-HTTP
-# transport spec versions the protocol independently of the SDK; the
-# 2025-06-18 revision is the current LTS negotiation token. Servers on
-# an older revision answer with their own version and the session
-# continues on the server's token (captured at handshake).
+# MCP protocol revision negotiated at initialize. Servers on an older
+# revision answer with their own version and the session continues on
+# the server's token (captured at handshake).
 MCP_PROTOCOL_VERSION = "2025-06-18"
 
 _MCP_ENDPOINT_PATH = "/mcp"
 _SSE_DATA_PREFIX = "data:"
+# One JSON-RPC message per stdout line; MCP results can be megabytes.
+_STDIO_LINE_LIMIT = 16 * 1024 * 1024
+_SESSION_REFUSED_STATUSES = frozenset({400, 404})
 
 
 class McpHttpError(RuntimeError):
     """The streamable-HTTP MCP endpoint returned an unusable response."""
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 class McpStdioError(RuntimeError):
@@ -73,13 +92,22 @@ class McpStdioError(RuntimeError):
 
 
 class McpSession:
-    """Transport-agnostic MCP session surface."""
+    """Transport-agnostic MCP session surface.
+
+    ``state`` and ``affinity`` belong to the server-specific middleware
+    (e.g. REA's active-target tracking under a reader/writer protocol on
+    the ``affinity`` condition); the transport resets ``state`` whenever
+    the server-side session is lost, because any server-side session
+    state (an opened target) is gone with it.
+    """
+
+    def __init__(self) -> None:
+        self.state: dict[str, Any] = {}
+        self.affinity = asyncio.Condition()
 
     async def list_tools(self, *, timeout: float) -> list[dict[str, Any]]:
         """Return the server's ``tools/list`` entries."""
-        result = await self.request(
-            "tools/list", {}, timeout=timeout,
-        )
+        result = await self.request("tools/list", {}, timeout=timeout)
         tools = result.get("tools") if isinstance(result, dict) else None
         return [t for t in tools if isinstance(t, dict)] if isinstance(tools, list) else []
 
@@ -108,19 +136,22 @@ class McpSession:
     def _next_id(self) -> str:
         return uuid.uuid4().hex[:12]
 
+    @staticmethod
+    def _initialize_params(client_name: str, client_version: str) -> dict[str, Any]:
+        return {
+            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {"name": client_name, "version": client_version},
+        }
+
 
 class McpHttpSession(McpSession):
     """One MCP session over the streamable-HTTP transport.
 
-    ``base_url`` is the SERVER ROOT (``http://127.0.0.1:18823``); the
-    ``/mcp`` endpoint path is appended here. The session performs the
-    ``initialize`` handshake on first use, retains the negotiated
-    protocol version and the ``Mcp-Session-Id`` response header, replays
-    the session id on later requests, and emits the one-time
-    ``notifications/initialized`` notification after the handshake.
-    Requests are serialized through an :class:`asyncio.Lock` because the
-    stateful servers behind this transport (REA) serve one client per
-    session and a second in-flight ``initialize`` would evict ours.
+    ``base_url`` is the SERVER ROOT (``http://127.0.0.1:18824``); the
+    ``/mcp`` endpoint path is appended here. Requests are serialized
+    through an :class:`asyncio.Lock` because the stateful servers behind
+    this transport serve one client per session.
     """
 
     def __init__(
@@ -131,6 +162,7 @@ class McpHttpSession(McpSession):
         client_version: str = "1.0",
         headers: dict[str, str] | None = None,
     ) -> None:
+        super().__init__()
         self._base = base_url.rstrip("/")
         self._client_name = client_name
         self._client_version = client_version
@@ -146,19 +178,17 @@ class McpHttpSession(McpSession):
             self._http = httpx.AsyncClient()
         return self._http
 
+    def _reset_session(self) -> None:
+        self._initialized = False
+        self._session_id = None
+        self.state.clear()
+
     async def _ensure_initialized(self) -> None:
         if self._initialized:
             return
         result, headers = await self._post_rpc(
             "initialize",
-            {
-                "protocolVersion": MCP_PROTOCOL_VERSION,
-                "capabilities": {},
-                "clientInfo": {
-                    "name": self._client_name,
-                    "version": self._client_version,
-                },
-            },
+            self._initialize_params(self._client_name, self._client_version),
             timeout=30.0,
         )
         session_id = headers.get("mcp-session-id")
@@ -168,9 +198,9 @@ class McpHttpSession(McpSession):
             negotiated = result.get("protocolVersion")
             if isinstance(negotiated, str) and negotiated:
                 self._protocol_version = negotiated
-        # The MCP streamable-HTTP transport REQUIRES the initialized
-        # notification after a successful handshake; servers (REA
-        # included) acknowledge it with 202. It carries no JSON-RPC id.
+        # The streamable-HTTP transport REQUIRES the initialized
+        # notification after a successful handshake; servers acknowledge
+        # it with 202. It carries no JSON-RPC id.
         await self._post_notification("notifications/initialized", {})
         self._initialized = True
 
@@ -178,13 +208,12 @@ class McpHttpSession(McpSession):
         self, method: str, params: dict[str, Any],
     ) -> None:
         message = {"jsonrpc": "2.0", "method": method, "params": params}
-        headers = self._request_headers()
         client = await self._client()
         try:
             await client.post(
                 self._endpoint(),
                 json=message,
-                headers=headers,
+                headers=self._request_headers(),
                 timeout=30.0,
             )
         except httpx.HTTPError as exc:
@@ -203,6 +232,7 @@ class McpHttpSession(McpSession):
         }
         if self._session_id:
             headers["Mcp-Session-Id"] = self._session_id
+            headers["MCP-Protocol-Version"] = self._protocol_version
         return headers
 
     async def _post_rpc(
@@ -212,7 +242,7 @@ class McpHttpSession(McpSession):
 
         Parses either a direct ``application/json`` JSON-RPC body or an
         SSE stream whose ``data:`` frames carry JSON-RPC messages; the
-        first message bearing our request id wins.
+        message bearing our request id wins.
         """
         request_id = self._next_id()
         message = {
@@ -228,40 +258,41 @@ class McpHttpSession(McpSession):
             headers=self._request_headers(),
             timeout=timeout,
         )
+        if resp.status_code >= 400:
+            raise McpHttpError(
+                f"HTTP {resp.status_code} from {self._endpoint()}: "
+                f"{resp.text[:200]}",
+                status_code=resp.status_code,
+            )
         content_type = resp.headers.get("content-type", "")
         if "text/event-stream" in content_type:
-            payload = self._decode_sse(resp, request_id)
+            payload: Any = self._decode_sse(resp.text, request_id)
         else:
             try:
                 payload = resp.json()
             except ValueError as exc:
                 raise McpHttpError(
                     f"non-JSON response from {self._endpoint()}: "
-                    f"{resp.text[:200]}"
+                    f"{resp.text[:200]}",
+                    status_code=resp.status_code,
                 ) from exc
-        if resp.status_code >= 400:
-            raise McpHttpError(
-                f"HTTP {resp.status_code} from {self._endpoint()}: "
-                f"{resp.text[:200]}"
-            )
         if not isinstance(payload, dict):
             raise McpHttpError(
-                f"unexpected JSON-RPC payload from {self._endpoint()}: "
-                f"{str(payload)[:200]}"
+                f"no JSON-RPC response for {method} from {self._endpoint()}",
+                status_code=resp.status_code,
             )
         error = payload.get("error")
         if isinstance(error, dict):
             raise McpHttpError(
-                f"JSON-RPC {error.get('code')}: {error.get('message')}"
+                f"JSON-RPC {error.get('code')}: {error.get('message')}",
+                status_code=resp.status_code,
             )
         return payload.get("result"), resp.headers
 
-    def _decode_sse(
-        self, resp: httpx.Response, request_id: str,
-    ) -> dict[str, Any] | None:
+    @staticmethod
+    def _decode_sse(text: str, request_id: str) -> dict[str, Any] | None:
         """Scan SSE frames for the JSON-RPC message matching ``request_id``."""
-        matched: dict[str, Any] | None = None
-        for line in resp.text.splitlines():
+        for line in text.splitlines():
             if not line.startswith(_SSE_DATA_PREFIX):
                 continue
             data = line[len(_SSE_DATA_PREFIX):].strip()
@@ -272,18 +303,33 @@ class McpHttpSession(McpSession):
             except ValueError:
                 continue
             if isinstance(message, dict) and str(message.get("id")) == request_id:
-                matched = message
-                break
-        return matched
+                return message
+        return None
 
     async def request(
         self, method: str, params: dict[str, Any], *, timeout: float,
     ) -> Any:
         async with self._lock:
             await self._ensure_initialized()
-            result, headers = await self._post_rpc(
-                method, params, timeout=timeout,
-            )
+            try:
+                result, headers = await self._post_rpc(
+                    method, params, timeout=timeout,
+                )
+            except McpHttpError as exc:
+                if exc.status_code not in _SESSION_REFUSED_STATUSES or not self._session_id:
+                    raise
+                # Another client replaced our session (or the server
+                # restarted): re-handshake once and retry. Server-side
+                # session state (an opened target) is gone with it.
+                _log.info(
+                    "mcp_http %s: session refused (HTTP %s) -- re-initializing",
+                    self._base, exc.status_code,
+                )
+                self._reset_session()
+                await self._ensure_initialized()
+                result, headers = await self._post_rpc(
+                    method, params, timeout=timeout,
+                )
             session_id = headers.get("mcp-session-id")
             if session_id:
                 self._session_id = session_id
@@ -293,106 +339,153 @@ class McpHttpSession(McpSession):
         if self._http is not None and not self._http.is_closed:
             await self._http.aclose()
         self._http = None
-        self._initialized = False
+        self._reset_session()
 
 
 class McpStdioSession(McpSession):
     """One MCP session over the stdio transport.
 
-    Spawns ``command`` (argv list, e.g. ``("npx", "rea-agents", "mcp")``)
-    and exchanges newline-delimited JSON-RPC messages: requests are
-    written to the child's stdin as single JSON lines; the reader task
-    consumes stdout lines and completes the pending request future whose
-    id matches. Notifications (no id) are logged at debug when they
-    carry a ``method``. The child is terminated on :meth:`aclose`.
+    Spawns ``command`` (argv, e.g. ``("rea", "mcp")``) with ``env`` (the
+    parent environment when ``None``) and exchanges newline-delimited
+    JSON-RPC messages: requests are written to the child's stdin as
+    single JSON lines; the reader task consumes stdout lines and
+    completes the pending request whose id matches. Notifications (no
+    id) are logged at debug. The child is terminated on :meth:`aclose`;
+    a child that exits on its own fails every pending request and is
+    respawned (with a fresh handshake) by the next request.
     """
 
-    def __init__(self, command: Sequence[str]) -> None:
+    def __init__(
+        self,
+        command: Sequence[str],
+        *,
+        env: dict[str, str] | None = None,
+        client_name: str = "aila",
+        client_version: str = "1.0",
+    ) -> None:
+        super().__init__()
         if not command:
             raise McpStdioError("stdio MCP session requires a command")
         self._command = tuple(command)
+        self._env = env
+        self._client_name = client_name
+        self._client_version = client_version
         self._proc: asyncio.subprocess.Process | None = None
         self._reader_task: asyncio.Task[None] | None = None
         self._pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self._write_lock = asyncio.Lock()
-        self._started = False
+        self._start_lock = asyncio.Lock()
+        self._ready = False
 
     async def _ensure_started(self) -> None:
-        if self._started:
+        if self._ready:
             return
-        self._proc = await asyncio.create_subprocess_exec(
-            *self._command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-        self._reader_task = asyncio.create_task(self._read_loop())
-        self._started = True
-        await self.request(
-            "initialize",
-            {
-                "protocolVersion": MCP_PROTOCOL_VERSION,
-                "capabilities": {},
-                "clientInfo": {"name": "aila", "version": "1.0"},
-            },
-            timeout=30.0,
-        )
-        await self._send_notification("notifications/initialized", {})
-
-    async def _read_loop(self) -> None:
-        assert self._proc is not None and self._proc.stdout is not None
-        while True:
-            line = await self._proc.stdout.readline()
-            if not line:
-                break
+        async with self._start_lock:
+            if self._ready:
+                return
             try:
-                message = json.loads(line.decode("utf-8", errors="replace"))
-            except ValueError:
-                continue
-            if not isinstance(message, dict):
-                continue
-            msg_id = message.get("id")
-            if msg_id is None:
-                method = message.get("method")
-                if isinstance(method, str):
-                    _log.debug("mcp_stdio: notification %s", method)
-                continue
-            future = self._pending.pop(str(msg_id), None)
-            if future is not None and not future.done():
-                future.set_result(message)
+                self._proc = await asyncio.create_subprocess_exec(
+                    *self._command,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=None,
+                    env=self._env,
+                    limit=_STDIO_LINE_LIMIT,
+                )
+            except OSError as exc:
+                raise McpStdioError(
+                    f"cannot spawn MCP server {self._command[0]!r}: {exc}",
+                ) from exc
+            self._reader_task = asyncio.create_task(self._read_loop(self._proc))
+            await self._send_request(
+                "initialize",
+                self._initialize_params(self._client_name, self._client_version),
+                timeout=60.0,
+            )
+            await self._send_notification("notifications/initialized", {})
+            self._ready = True
+
+    async def _read_loop(self, proc: asyncio.subprocess.Process) -> None:
+        assert proc.stdout is not None
+        try:
+            while True:
+                try:
+                    line = await proc.stdout.readline()
+                except (ValueError, asyncio.LimitOverrunError) as exc:
+                    _log.warning(
+                        "mcp_stdio %s: oversized stdout line dropped: %s",
+                        self._command[0], exc,
+                    )
+                    continue
+                if not line:
+                    break
+                try:
+                    message = json.loads(line.decode("utf-8", errors="replace"))
+                except ValueError:
+                    continue
+                if not isinstance(message, dict):
+                    continue
+                msg_id = message.get("id")
+                if msg_id is None:
+                    method = message.get("method")
+                    if isinstance(method, str):
+                        _log.debug("mcp_stdio: notification %s", method)
+                    continue
+                future = self._pending.pop(str(msg_id), None)
+                if future is not None and not future.done():
+                    future.set_result(message)
+        finally:
+            self._on_child_exit(proc)
+
+    def _on_child_exit(self, proc: asyncio.subprocess.Process) -> None:
+        """Fail pending requests and mark the session for respawn."""
+        if self._proc is not proc:
+            return
+        self._ready = False
+        self._proc = None
+        self.state.clear()
+        error = McpStdioError(
+            f"MCP server {self._command[0]!r} exited "
+            f"(returncode={proc.returncode})",
+        )
+        for future in self._pending.values():
+            if not future.done():
+                future.set_exception(error)
+        self._pending.clear()
+
+    async def _write_line(self, message: dict[str, Any]) -> None:
+        proc = self._proc
+        if proc is None or proc.stdin is None:
+            raise McpStdioError(f"MCP server {self._command[0]!r} is not running")
+        async with self._write_lock:
+            try:
+                proc.stdin.write((json.dumps(message) + "\n").encode("utf-8"))
+                await proc.stdin.drain()
+            except (BrokenPipeError, ConnectionResetError) as exc:
+                raise McpStdioError(
+                    f"MCP server {self._command[0]!r} closed stdin: {exc}",
+                ) from exc
 
     async def _send_notification(
         self, method: str, params: dict[str, Any],
     ) -> None:
-        assert self._proc is not None and self._proc.stdin is not None
-        message = {"jsonrpc": "2.0", "method": method, "params": params}
-        async with self._write_lock:
-            self._proc.stdin.write(
-                (json.dumps(message) + "\n").encode("utf-8"),
-            )
-            await self._proc.stdin.drain()
+        await self._write_line({"jsonrpc": "2.0", "method": method, "params": params})
 
-    async def request(
+    async def _send_request(
         self, method: str, params: dict[str, Any], *, timeout: float,
     ) -> Any:
-        if not self._started:
-            await self._ensure_started()
-        assert self._proc is not None and self._proc.stdin is not None
         request_id = self._next_id()
-        message = {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "method": method,
-            "params": params,
-        }
-        future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        future: asyncio.Future[dict[str, Any]] = (
+            asyncio.get_running_loop().create_future()
+        )
         self._pending[request_id] = future
         try:
-            async with self._write_lock:
-                self._proc.stdin.write(
-                    (json.dumps(message) + "\n").encode("utf-8"),
-                )
-                await self._proc.stdin.drain()
+            await self._write_line({
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": method,
+                "params": params,
+            })
             response = await asyncio.wait_for(future, timeout=timeout)
         except TimeoutError as exc:
             raise McpStdioError(
@@ -403,25 +496,74 @@ class McpStdioSession(McpSession):
         error = response.get("error")
         if isinstance(error, dict):
             raise McpStdioError(
-                f"JSON-RPC {error.get('code')}: {error.get('message')}"
+                f"JSON-RPC {error.get('code')}: {error.get('message')}",
             )
         return response.get("result")
 
+    async def request(
+        self, method: str, params: dict[str, Any], *, timeout: float,
+    ) -> Any:
+        await self._ensure_started()
+        return await self._send_request(method, params, timeout=timeout)
+
     async def aclose(self) -> None:
+        proc = self._proc
+        self._ready = False
+        self._proc = None
         for future in self._pending.values():
             if not future.done():
                 future.cancel()
         self._pending.clear()
+        self.state.clear()
         if self._reader_task is not None:
             self._reader_task.cancel()
             self._reader_task = None
-        if self._proc is not None:
-            if self._proc.stdin is not None:
-                self._proc.stdin.close()
-            self._proc.terminate()
+        if proc is None:
+            return
+        if proc.stdin is not None:
+            # MCP servers (REA included) shut down cleanly on stdin EOF.
+            proc.stdin.close()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=10.0)
+        except TimeoutError:
             try:
-                await asyncio.wait_for(self._proc.wait(), timeout=5.0)
-            except (TimeoutError, ProcessLookupError):
-                self._proc.kill()
-            self._proc = None
-        self._started = False
+                proc.kill()
+            except ProcessLookupError:
+                return
+            await proc.wait()
+
+
+# Process-wide session registry, partitioned per event loop: asyncio
+# primitives (locks, futures, subprocess transports) are loop-bound, so a
+# session created on one loop must never serve another (pytest and the
+# ARQ worker each run their own loops).
+_SHARED: weakref.WeakKeyDictionary[
+    asyncio.AbstractEventLoop, dict[tuple[str, ...], McpSession]
+] = weakref.WeakKeyDictionary()
+
+
+def shared_session(
+    key: tuple[str, ...], factory: Callable[[], McpSession],
+) -> McpSession:
+    """Return the loop-local session for ``key``, creating it once.
+
+    ``key`` identifies the endpoint: ``("mcp-http", url)`` or
+    ``("stdio", *command)``. Every bridge in the process that targets
+    the same endpoint shares one session (one stdio child, one HTTP
+    session id).
+    """
+    loop = asyncio.get_running_loop()
+    sessions = _SHARED.setdefault(loop, {})
+    session = sessions.get(key)
+    if session is None:
+        session = factory()
+        sessions[key] = session
+    return session
+
+
+async def close_shared_sessions() -> None:
+    """Close every session registered on the running loop (shutdown hook)."""
+    loop = asyncio.get_running_loop()
+    sessions = _SHARED.pop(loop, {})
+    for session in sessions.values():
+        await session.aclose()

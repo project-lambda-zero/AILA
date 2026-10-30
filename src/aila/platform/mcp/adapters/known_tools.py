@@ -404,8 +404,8 @@ REA_TOOLS: frozenset[str] = frozenset({
     "inspect_artifact",
     "compare_artifacts",
     "trace_feature",
-    "list_analysis_settings",
-    "set_analysis_option",
+    "inspect_analysis_settings",
+    "update_analysis_settings",
 })
 
 

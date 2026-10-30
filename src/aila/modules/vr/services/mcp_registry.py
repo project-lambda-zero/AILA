@@ -50,6 +50,20 @@ MCP_SERVERS: tuple[dict[str, str], ...] = (
         "default_url": "http://127.0.0.1:18821",
     },
     {
+        "id": "rea",
+        "name": "rea",
+        "description": (
+            "REA (morluto/rea) reverse-engineering MCP. Native binary "
+            "analysis over Ghidra/IDA/Hopper/Kuna providers: procedures, "
+            "decompilation, call graphs, function comparison. First "
+            "external MCP-native server; replaces ida-headless."
+        ),
+        "env_var": "REA_MCP_URL",
+        "config_key": "rea_mcp_url",
+        "default_url": "stdio://rea",
+        "transport": "stdio",
+    },
+    {
         "id": "android_mcp",
         "name": "android-mcp",
         "description": (
@@ -90,6 +104,7 @@ MODULE_CAPABILITIES: dict[str, tuple[str, ...]] = {
 SERVER_CAPABILITY_DEFAULTS: dict[str, tuple[str, ...]] = {
     "audit_mcp": ("source_audit",),
     "ida_headless": ("binary_audit",),
+    "rea": ("binary_audit",),
     "android_mcp": ("android_audit",),
 }
 

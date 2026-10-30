@@ -48,7 +48,11 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
-from aila.platform.mcp.instance_catalog import TRANSPORT_HTTP
+from aila.platform.mcp.instance_catalog import (
+    TRANSPORT_HTTP,
+    TRANSPORT_MCP_HTTP,
+    TRANSPORT_STDIO,
+)
 
 __all__ = [
     "McpServerDescriptor",
@@ -107,10 +111,11 @@ class McpServerDescriptor:
                 f"McpServerDescriptor({name!r}).default_url must not be empty",
             )
         transport = self.transport.strip().lower()
-        if transport not in {"http", "stdio"}:
+        if transport not in {TRANSPORT_HTTP, TRANSPORT_MCP_HTTP, TRANSPORT_STDIO}:
             raise ValueError(
-                f"McpServerDescriptor({name!r}).transport must be 'http' or "
-                f"'stdio' (got {self.transport!r})",
+                f"McpServerDescriptor({name!r}).transport must be one of "
+                f"{TRANSPORT_HTTP!r}, {TRANSPORT_MCP_HTTP!r}, {TRANSPORT_STDIO!r} "
+                f"(got {self.transport!r})",
             )
         tags = tuple(str(t).strip() for t in self.capability_tags)
         if not tags or any(not t for t in tags):
@@ -185,6 +190,7 @@ def descriptors_from_static_specs(
                 env_var=env_var,
                 config_key=config_key,
                 default_url=default_url,
+                transport=str(spec.get("transport") or TRANSPORT_HTTP).strip(),
                 description=str(spec.get("description") or "").strip(),
             ),
         )

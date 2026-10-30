@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from aila.platform.mcp.instance_catalog import TRANSPORT_HTTP, TRANSPORT_MCP_HTTP
+from aila.platform.mcp.instance_catalog import TRANSPORT_HTTP, TRANSPORT_STDIO
 
 __all__ = ["ServerSpec", "SERVER_SPECS", "spec_for"]
 
@@ -91,22 +91,31 @@ SERVER_SPECS: dict[str, ServerSpec] = {
     ),
     # REA (morluto/rea, npm ``rea-agents``) -- the first external,
     # MCP-native server. Replaces ida_headless for binary reverse
-    # engineering across Ghidra/IDA/Hopper/Kuna providers. Launched by
-    # start.sh as ``rea mcp --http --port 18824`` (or per-catalog-row
-    # endpoints for extra instances -- REA serves ONE client / ONE
-    # active target per process, so one catalog row per concurrent
-    # target). The 900 s default timeout covers the cold-Ghidra first
-    # query (observed 400-600 s on a constrained host); repeat queries
-    # answer in milliseconds.
+    # engineering across Ghidra/IDA/Hopper/Kuna providers.
+    #
+    # Default transport is stdio: REA's documented client model is one
+    # dedicated stdio process per client, and its HTTP listener serves
+    # ONE client with ONE shared active target (the newest initialize
+    # evicts the previous session). A per-process stdio child therefore
+    # gives every AILA process (backend, each worker) its own REA without
+    # cross-process session or target thrash. The spawn argv is
+    # ``REA_MCP_COMMAND`` (shlex-split) when set, else ``rea mcp`` from
+    # PATH. Setting ``REA_MCP_URL`` / ``rea_mcp_url`` to an http(s) URL,
+    # or approving a catalog row with transport ``mcp-http``, points the
+    # bridge at a remote ``rea mcp --http`` instance instead.
+    #
+    # The 900 s timeout covers the cold-Ghidra first query per binary
+    # (observed 400-600 s on a constrained host); repeats take ms.
     "rea": ServerSpec(
         server_id="rea",
         tool_name="rea_bridge",
         env_var="REA_MCP_URL",
         config_key="rea_mcp_url",
-        default_url="http://127.0.0.1:18824",
+        default_url="stdio://rea",
         default_timeout=900.0,
-        persistent_pool=True,
-        transport=TRANSPORT_MCP_HTTP,
+        persistent_pool=False,
+        transport=TRANSPORT_STDIO,
+        command=("rea", "mcp"),
     ),
 }
 

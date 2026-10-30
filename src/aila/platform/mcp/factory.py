@@ -16,13 +16,15 @@ capability dispatches without a code change.
 from __future__ import annotations
 
 import importlib
+import os
+import shlex
 from typing import Any
 
 from aila.platform.mcp.bridge_tool import McpBridgeTool
 from aila.platform.mcp.middleware import McpMiddleware
 from aila.platform.mcp.server_specs import SERVER_SPECS, ServerSpec
 
-__all__ = ["make_bridge", "load_middleware", "middleware_family"]
+__all__ = ["make_bridge", "load_middleware", "middleware_family", "stdio_command"]
 
 
 # server_id -> (module path, class name). Lazy so the factory imports
@@ -34,6 +36,7 @@ _MIDDLEWARE_REF: dict[str, tuple[str, str]] = {
     "ida_headless_exp": ("aila.platform.mcp.middleware.ida", "IdaMiddleware"),
     "audit_mcp": ("aila.platform.mcp.middleware.audit", "AuditMcpMiddleware"),
     "android_mcp": ("aila.platform.mcp.middleware.android", "AndroidMcpMiddleware"),
+    "rea": ("aila.platform.mcp.middleware.rea", "ReaMiddleware"),
 }
 
 _GENERIC_REF: tuple[str, str] = (
@@ -103,5 +106,20 @@ def make_bridge(
     middleware = load_middleware(spec, module_id=module_id)
     return McpBridgeTool(
         middleware=middleware, module_id=module_id, recorder=recorder,
-        transport=spec.transport, command=spec.command or None,
+        transport=spec.transport, command=stdio_command(spec) or None,
     )
+
+
+def stdio_command(spec: ServerSpec) -> tuple[str, ...]:
+    """Return the stdio spawn argv for ``spec``.
+
+    ``<SERVER_ID>_MCP_COMMAND`` (shlex-split, POSIX quoting -- use
+    forward slashes in Windows paths) overrides the spec's default argv
+    so an operator can point at a pinned install
+    (``REA_MCP_COMMAND="C:/tools/node24/node.exe C:/tools/rea/.../rea.mjs mcp"``)
+    without a code change.
+    """
+    override = os.environ.get(f"{spec.server_id.upper()}_MCP_COMMAND", "").strip()
+    if override:
+        return tuple(shlex.split(override))
+    return spec.command

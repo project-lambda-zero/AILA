@@ -114,6 +114,17 @@ class VRConfigSchema(ModuleConfigBase):
             "workstation that owns the IDA license + GPU."
         ),
     )
+    rea_mcp_url: str = Field(
+        default="",
+        description=(
+            "REA (morluto/rea) reverse-engineering MCP endpoint. Empty = each "
+            "AILA process spawns its own stdio REA child (REA_MCP_COMMAND, "
+            "default 'rea mcp'). An http(s) server root targets a remote "
+            "'rea mcp --http' instance (streamable-HTTP MCP at <root>/mcp). "
+            "REA opens targets by LOCAL path, so it must run on the host "
+            "that stores the target binaries."
+        ),
+    )
     android_mcp_url: str = Field(
         default="http://127.0.0.1:18823",
         description=(

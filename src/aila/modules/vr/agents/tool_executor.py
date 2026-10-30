@@ -117,7 +117,7 @@ class ToolExecutor(ToolExecutorHelpersBase):
     # AND appending it here.
     _AGENT_ALLOWED_SERVERS: frozenset[str] = frozenset(
         {
-            "audit_mcp", "ida_headless", "android_mcp", "knowledge",
+            "audit_mcp", "ida_headless", "rea", "android_mcp", "knowledge",
             "poc_runner", "symbolic", "dynamic",
         },
     )

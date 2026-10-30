@@ -66,6 +66,7 @@ from aila.platform.mcp.mcp_session import (
     McpSession,
     McpStdioError,
     McpStdioSession,
+    shared_session,
 )
 from aila.platform.observability.otel import (
     GEN_AI_OPERATION_EXECUTE_TOOL,
@@ -433,37 +434,60 @@ class McpClient:
     async def _effective_transport(self) -> str:
         """Return the wire protocol for the next call.
 
-        Explicit construction-time value wins (static spec); a
-        catalog-sourced resolution may override it per row; the default
-        is the legacy bridge contract.
-        """
-        if self._transport is not None:
-            return self._transport
-        resolved = await self.resolve()
-        return resolved.transport or TRANSPORT_HTTP
+        Precedence:
 
-    async def _mcp_session(self) -> McpSession:
-        """Return the cached native-MCP session, creating it on first use."""
-        if self._mcp is None:
-            transport = await self._effective_transport()
-            if transport == TRANSPORT_MCP_HTTP:
-                resolved = await self.resolve()
-                headers: dict[str, str] = {}
-                inject_trace_context(headers)
-                self._mcp = McpHttpSession(
-                    resolved.url,
-                    client_name="aila",
-                    client_version="1.0",
-                    headers=headers or None,
+        1. A catalog-sourced resolution carries the row's own transport
+           (an operator registers an HTTP instance of a stdio-default
+           server, or vice versa) -- the row wins.
+        2. A static ``stdio`` spec whose resolved endpoint is an
+           ``http(s)://`` URL (operator set the env var / config key)
+           means "talk to a remote instance": streamable-HTTP MCP.
+        3. Otherwise the static spec's transport; the legacy bridge
+           contract when none was declared.
+        """
+        resolved = await self.resolve()
+        if resolved.source == _SOURCE_CATALOG and resolved.transport:
+            return resolved.transport
+        if self._transport == TRANSPORT_STDIO and resolved.url.startswith(
+            ("http://", "https://"),
+        ):
+            return TRANSPORT_MCP_HTTP
+        return self._transport or TRANSPORT_HTTP
+
+    async def mcp_session(self) -> McpSession:
+        """Return the process-shared native-MCP session for this endpoint.
+
+        Sessions are shared per event loop by endpoint key (see
+        :func:`aila.platform.mcp.mcp_session.shared_session`): a stdio
+        server costs one child process and a stateful HTTP server serves
+        one client per session, so bridges never open their own.
+        Middleware that needs multi-request atomicity uses the returned
+        session's ``affinity`` / ``state``.
+        """
+        if self._mcp is not None:
+            return self._mcp
+        transport = await self._effective_transport()
+        if transport == TRANSPORT_MCP_HTTP:
+            url = (await self.resolve()).url
+            self._mcp = shared_session(
+                (TRANSPORT_MCP_HTTP, url),
+                lambda: McpHttpSession(url, client_name="aila", client_version="1.0"),
+            )
+        elif transport == TRANSPORT_STDIO:
+            command = self._command or ()
+            if not command:
+                raise McpStdioError(
+                    f"McpClient({self.server_id}): stdio transport has no command",
                 )
-            elif transport == TRANSPORT_STDIO:
-                command = self._command or ()
-                self._mcp = McpStdioSession(command)
-            else:
-                raise RuntimeError(
-                    f"McpClient({self.server_id}): transport {transport!r} "
-                    "has no native MCP session",
-                )
+            self._mcp = shared_session(
+                (TRANSPORT_STDIO, *command),
+                lambda: McpStdioSession(command),
+            )
+        else:
+            raise RuntimeError(
+                f"McpClient({self.server_id}): transport {transport!r} "
+                "has no native MCP session",
+            )
         return self._mcp
 
     def _drop_mcp_session(self) -> None:
@@ -552,7 +576,7 @@ class McpClient:
             return self._spec_cache
         if await self._effective_transport() != TRANSPORT_HTTP:
             try:
-                session = await self._mcp_session()
+                session = await self.mcp_session()
                 raw_tools = await session.list_tools(timeout=self._timeout)
             except (McpHttpError, McpStdioError, httpx.HTTPError) as exc:
                 _log.warning(
@@ -657,13 +681,17 @@ class McpClient:
             return await client.post(url, json=payload, headers=headers)
 
     async def aclose(self) -> None:
-        """Close the pool client and native-MCP session if opened."""
+        """Close the pool client; release (not close) the shared MCP session.
+
+        The native-MCP session is process-shared across bridges (see
+        :meth:`mcp_session`); closing it here would kill the stdio child
+        or HTTP session other bridges are using. Shutdown closes shared
+        sessions via :func:`aila.platform.mcp.mcp_session.close_shared_sessions`.
+        """
         if self._http is not None and not self._http.is_closed:
             await self._http.aclose()
         self._http = None
-        if self._mcp is not None:
-            await self._mcp.aclose()
-            self._mcp = None
+        self._mcp = None
 
     async def post(
         self,
@@ -854,7 +882,7 @@ class McpClient:
         if resolved.instance_id is not None:
             span.set_attribute("aila.mcp.instance_id", resolved.instance_id)
         effective_timeout = timeout if timeout is not None else self._timeout
-        session = await self._mcp_session()
+        session = await self.mcp_session()
         try:
             result = await session.call_tool(
                 action, payload, timeout=effective_timeout,
@@ -961,7 +989,7 @@ class McpClient:
         resolved = await self.resolve()
         if await self._effective_transport() != TRANSPORT_HTTP:
             try:
-                session = await self._mcp_session()
+                session = await self.mcp_session()
                 tools = await session.list_tools(timeout=10.0)
             except (McpHttpError, McpStdioError, httpx.HTTPError) as exc:
                 return {
