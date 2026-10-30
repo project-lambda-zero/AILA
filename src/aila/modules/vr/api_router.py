@@ -31,7 +31,6 @@ from sqlmodel import select
 from aila.api.deps import get_task_queue
 from aila.api.limiter import limiter
 from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
-from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.services.outcome_polarity import derive_outcome_polarity
 from aila.platform.config_base import ModuleConfigReader, _shared_registry
 from aila.platform.contracts import utc_now
@@ -2900,8 +2899,9 @@ def create_vr_router() -> APIRouter:
         summary=(
             "Upload a binary artifact for a native_binary / kernel_image / "
             "hypervisor_image / apk / ipa / jar / dotnet_assembly target. "
-            "AILA streams the bytes through to the IDA MCP and stores the "
-            "returned binary handle in the target. Re-triggers analysis."
+            "AILA stages the bytes on the local disk (REA opens targets by "
+            "absolute local path), stores the staged path in the target, "
+            "and re-triggers analysis."
         ),
     )
     @limiter.limit("10/minute")
@@ -2912,7 +2912,6 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> DataEnvelope[dict]:
         from aila.api.deps import get_task_queue
-        from aila.platform.mcp.factory import make_bridge
 
         from .db_models import VRTargetRecord
         from .workflow.task import run_target_analysis
@@ -2944,85 +2943,41 @@ def create_vr_router() -> APIRouter:
                     detail=f"Target kind {row.kind!r} does not accept uploads.",
                 )
 
-        # 2) Stream file → IDA MCP /upload. AILA holds bytes in flight but
-        #    never writes them to disk (D-33: no work in the platform).
+        # 2) Buffer + stage the bytes on the LOCAL disk. REA opens targets
+        #    by absolute local path, so unlike the retired HTTP-bridge flow
+        #    the uploaded artifact must exist where the REA child runs.
+        #    #57: buffer through the bounded reader so a chunked upload
+        #    without Content-Length cannot OOM the worker.
         if not file.filename:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="file.filename is required.",
             )
+        from pathlib import Path
 
-
-        # #57: buffer the body through the bounded reader so a chunked
-        # upload that omits Content-Length cannot OOM the worker. The
-        # previous streaming shape (passing file.file straight into
-        # httpx multipart) had no cap and slipped past the global
-        # _reject_oversized_requests middleware which only inspects
-        # Content-Length. Buffered upload matches the malware-side
-        # sample flow: bytes live in flight but never on local disk.
         from aila.api.uploads import read_upload_bounded
+
+        from .workflow.states.setup import VR_UPLOAD_STAGING
+
         upload_cap = await _cfg.get_int("upload_max_bytes")
         contents = await read_upload_bounded(file, upload_cap)
 
-        bridge = make_bridge("ida_headless", module_id="vr", recorder=record_call)
-        base_url = await bridge._resolve_base_url()
-        # #181: route the upload through the platform-guarded async client
-        # so the operator-set base_url is re-validated against the SSRF
-        # egress policy (link-local / cloud IMDS / RFC1918 blocked)
-        # before the sample bytes are POSTed.
-        from aila.config import get_settings as _get_settings
-        from aila.platform.config import (
-            build_platform_settings as _build_platform_settings,
-        )
+        staging_dir = VR_UPLOAD_STAGING / target_id
         try:
-            async with build_async_http_client(
-                _build_platform_settings(_get_settings()),
-                timeout=300.0,
-                allow_endpoints=endpoint_of(base_url),
-            ) as client:
-                resp = await client.post(
-                    f"{base_url}/upload",
-                    files={
-                        "file": (
-                            file.filename,
-                            contents,
-                            file.content_type or "application/octet-stream",
-                        ),
-                    },
-                )
-        except SSRFBlockedError as exc:
+            staging_dir.mkdir(parents=True, exist_ok=True)
+            staged_path = staging_dir / Path(file.filename).name
+            staged_path.write_bytes(contents)
+        except OSError as exc:
             raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"IDA MCP base_url refused by egress policy: {exc}",
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to stage upload on local disk: {exc}",
             ) from exc
-        except (httpx.ConnectError, httpx.TimeoutException) as exc:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"IDA MCP at {base_url} unreachable: {exc}",
-            ) from exc
-        try:
-            mcp_result = resp.json()
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"IDA MCP returned non-JSON: {resp.text[:200]}",
-            ) from exc
-        if resp.status_code >= 400 or mcp_result.get("status") == "error":
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"IDA MCP upload failed: {mcp_result.get('error', resp.text[:200])}",
-            )
 
-        binary_id = mcp_result.get("binary_id") or mcp_result.get("data", {}).get("binary_id")
-        if not binary_id:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"IDA MCP upload returned no binary_id: {mcp_result!r}",
-            )
-
-        # 3) Persist binary_id + filename into _mcp_handles_json (internal).
-        #    Operators only see "Ready" -- they don't see this id.
+        # 3) Persist the staged path + upload metadata into the internal
+        #    handles (operators only see "Ready" -- they don't see the path).
+        import hashlib as _hashlib
         import json as _json
+
         async with UnitOfWork() as uow:
             row = (await uow.session.exec(
                 select(VRTargetRecord).where(VRTargetRecord.id == target_id),
@@ -3034,9 +2989,9 @@ def create_vr_router() -> APIRouter:
                 )
             handles = _json.loads(row.mcp_handles_json or "{}")
             handles.update({
-                "binary_id": binary_id,
+                "target_path": str(staged_path),
                 "uploaded_filename": file.filename,
-                "uploaded_sha256": mcp_result.get("sha256"),
+                "uploaded_sha256": _hashlib.sha256(contents).hexdigest(),
             })
             row.mcp_handles_json = _json.dumps(handles)
             uow.session.add(row)

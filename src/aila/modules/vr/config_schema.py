@@ -106,12 +106,14 @@ class VRConfigSchema(ModuleConfigBase):
             "at a dedicated Linux workstation for production."
         ),
     )
-    ida_headless_url: str = Field(
-        default="http://127.0.0.1:18821",
+    re_analytics_url: str = Field(
+        default="",
         description=(
-            "Base URL for the IDA headless MCP server. The platform delegates "
-            "ALL binary upload/analysis to this server (D-33). Point at the "
-            "workstation that owns the IDA license + GPU."
+            "AILA-owned re_analytics binary-analytics MCP endpoint. Empty = "
+            "each AILA process spawns its own stdio child (python -m "
+            "aila.platform.re_analytics). Serves the capa / crypto / taint / "
+            "emulation / diff tool surface REA does not; opens targets by "
+            "LOCAL path like REA."
         ),
     )
     rea_mcp_url: str = Field(
@@ -358,7 +360,7 @@ class VRConfigSchema(ModuleConfigBase):
         ge=0,
         description=(
             "Minimum number of successful audit/binary tool probes "
-            "(audit_mcp / ida_headless / knowledge readings recorded on the "
+            "(audit_mcp / rea / re_analytics / knowledge readings recorded on the "
             "branch case_state) a variant-hunt branch is expected to have run "
             "before a no-finding / empty-orders submit is credible. Below "
             "this floor the submit gate injects an INVESTIGATION-TOO-SHALLOW "

@@ -55,9 +55,9 @@ Design contract
   observation writer.
 
 SEAM: this driver expects the caller to supply the function bytes.
-The AILA malware / VR path today reaches miasm through the
-``ida_headless.miasm_emulate`` MCP tool; a follow-up should add a
-platform helper that fetches bytes from an audit-mcp / ida-headless
+The AILA malware / VR path today reaches emulation through the
+``re_analytics.miasm_emulate`` MCP tool; a follow-up should add a
+platform helper that fetches bytes from an audit-mcp / re_analytics
 adapter and hands them to :func:`explore` so the reasoning loop can
 kick a concolic run without an operator marshalling bytes by hand.
 That helper is NOT this slice.

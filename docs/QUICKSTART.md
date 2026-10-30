@@ -24,10 +24,11 @@ PostgreSQL and Redis must be running locally on their default ports (`5432` and 
 | Server | Default port | Needed for | Repo |
 |--------|--------------|------------|------|
 | audit-mcp | `18822` | `vr` module (all source-repo targets); can also feed `vulnerability` intel workflows | [github.com/project-lambda-zero/audit-mcp](https://github.com/project-lambda-zero/audit-mcp) |
-| ida-headless-mcp | `18821` | `vr` binary targets, all `malware` investigations | [github.com/project-lambda-zero/ida-headless-mcp-exp](https://github.com/project-lambda-zero/ida-headless-mcp-exp) |
 | android-mcp | `18823` | `vr` audits against `android_apk` targets (MASVS L1/L2 pipeline) | [github.com/project-lambda-zero/android-mcp](https://github.com/project-lambda-zero/android-mcp) |
 
-All three are HTTP servers you run alongside AILA on the same host (or reachable over the network). The platform, `vulnerability`, `forensics`, and `hello_world` modules do NOT require any MCP. See section 4 below for install + start.
+Binary reverse engineering no longer uses a standalone HTTP server: REA (`rea-agents`, Ghidra provider) runs as an MCP-STDIO child spawned per AILA process (argv from `REA_MCP_COMMAND`), and the in-tree `re_analytics` server (`python -m aila.platform.re_analytics`, also stdio) preserves the archived ida-headless tool surface. Both are needed for `vr` binary targets and all `malware` investigations; see section 4 below for setup.
+
+All MCP servers run alongside AILA on the same host (or reachable over the network). The platform, `vulnerability`, `forensics`, and `hello_world` modules do NOT require any MCP. See section 4 below for install + start.
 
 ---
 
@@ -110,8 +111,9 @@ Edit `.env` and set at minimum:
 | `OPENAI_API_KEY` | your OpenAI-compatible provider key | Required for LLM-backed features. |
 | `AILA_CORS_ORIGINS` | `http://localhost:3000` | Comma-separated; must include the frontend origin. |
 | `AUDIT_MCP_URL` | `http://127.0.0.1:18822` | Only if using `vr`. |
-| `IDA_HEADLESS_URL` | `http://127.0.0.1:18821` | Only if using `malware`, or `vr` on binary targets. |
 | `ANDROID_MCP_URL` | `http://127.0.0.1:18823` | Only if using `vr` on `android_apk` targets. |
+| `REA_MCP_COMMAND` | see `start.sh` defaults | Only for `vr` binary targets / `malware`. Overrides the REA stdio spawn argv. |
+| `GHIDRA_INSTALL_DIR` / `JAVA_HOME` / `REA_ANALYSIS_PROVIDER` | see `start.sh` defaults | Ghidra provider environment for REA. |
 
 For an existing database (any subsequent runs), apply pending migrations:
 
@@ -129,20 +131,20 @@ cd src/aila && alembic upgrade head && cd ../..
 
 Skip this section if you only want the platform, `vulnerability`, `forensics`, and `hello_world` modules.
 
-Each MCP is a separate HTTP server. Install and run each one in its own terminal or under your process supervisor of choice. The AILA backend and workers connect over HTTP using the URLs from `.env`.
+Each MCP is a separate HTTP server (audit-mcp, android-mcp). Install and run each one in its own terminal or under your process supervisor of choice. The AILA backend and workers connect over HTTP using the URLs from `.env`.
 
-### ida-headless-mcp
+### REA + re_analytics (binary reverse engineering)
 
 Required for `malware`; required for `vr` on binary targets.
 
+REA is the npm `rea-agents` package running its Ghidra provider as a native MCP server over stdio. AILA spawns one REA child per process on demand -- nothing to start manually. Point `REA_MCP_COMMAND` at your install (shlex-split argv, forward slashes; `start.sh` exports working defaults including `GHIDRA_INSTALL_DIR`, `JAVA_HOME`, and `REA_ANALYSIS_PROVIDER=ghidra`):
+
 ```bash
-git clone https://github.com/project-lambda-zero/ida-headless-mcp-exp.git
-cd ida-headless-mcp-exp
-pip install -e .
-ida-headless-http --port 18821
+npm install -g rea-agents        # or a pinned local install
+export REA_MCP_COMMAND="C:/tools/node/node.exe C:/tools/rea/node_modules/rea-agents/scripts/rea.mjs mcp"
 ```
 
-This needs a working IDA Pro installation on the same host. See the repo's README for full setup.
+The `re_analytics` server is in-tree (`src/aila/platform/re_analytics`) and launches automatically as `python -m aila.platform.re_analytics`; it preserves every archived ida-headless tool REA does not provide (capa, crypto, dataflow, emulation, patching) under the same tool and argument names, taking `target_path` (absolute local binary path) instead of a binary id.
 
 ### audit-mcp
 
@@ -175,7 +177,6 @@ See [docs/VR_INSTALLATION_GUIDE.md](VR_INSTALLATION_GUIDE.md) section 3 for AILA
 ### Verify
 
 ```bash
-curl -s http://127.0.0.1:18821/ && echo   # ida-headless
 curl -s http://127.0.0.1:18822/tools/list_indexes && echo   # audit-mcp
 curl -s http://127.0.0.1:18823/ && echo   # android-mcp
 ```
@@ -229,8 +230,8 @@ If the backend health endpoint returns 200 and the frontend renders the login pa
 The default worker subscribes to the `default` queue. Module-heavy workloads (vulnerability scans, forensics analyses) are dispatched to dedicated queues so they can be scaled independently. Run additional workers per queue track:
 
 ```bash
-python -m aila worker -q vr                  # vulnerability research (needs audit-mcp; ida-headless for binary targets; android-mcp for APKs)
-python -m aila worker -q malware             # malware reverse engineering (needs ida-headless-mcp)
+python -m aila worker -q vr                  # vulnerability research (needs audit-mcp; rea + re_analytics for binary targets; android-mcp for APKs)
+python -m aila worker -q malware             # malware reverse engineering (needs rea + re_analytics)
 python -m aila worker -q vulnerability       # vulnerability scans (CVE, scoring, remediation)
 python -m aila worker -q forensics           # DFIR investigations, evidence analysis
 ```

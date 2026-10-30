@@ -10,21 +10,27 @@ select which server ids they expose and attach capability tags, but the
 env var names, config keys, default endpoints, timeouts, and pool policy
 live here.
 
-``ida_headless`` and ``ida_headless_exp`` are distinct ids (the malware
-module runs a dedicated experimental IDA worker) that share the
-:class:`IdaMiddleware` logic but resolve through different env vars and
-config keys. ``persistent_pool`` reuses one httpx client across calls for
+``audit_mcp`` / ``android_mcp`` are the in-repo HTTP servers; ``rea``
+is the external MCP-native reverse-engineering server (see its entry
+below). ``persistent_pool`` reuses one httpx client across calls for
 android-mcp only, matching its pre-Tier-C module-level connection pool;
-the ida/audit servers open a fresh client per call, byte-identical to
-their old bespoke bridges.
+the remaining http servers open a fresh client per call, byte-identical
+to their old bespoke bridges.
 """
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 
 from aila.platform.mcp.instance_catalog import TRANSPORT_HTTP, TRANSPORT_STDIO
 
 __all__ = ["ServerSpec", "SERVER_SPECS", "spec_for"]
+
+
+#: Interpreter used to spawn the in-repo stdio servers. ``sys.executable``
+#: is absolute, so the child always runs the same install that started
+#: the bridge (a PATH ``python`` may lack the re-analytics extra).
+_PY_EXE = sys.executable or "python"
 
 
 @dataclass(frozen=True)
@@ -35,7 +41,7 @@ class ServerSpec:
     as ``f"{module_id}.{tool_name}"`` so external callers reading
     ``bridge.name`` see the pre-Tier-C value. ``default_timeout`` is the
     fallback per-call HTTP timeout in seconds; a middleware MAY narrow or
-    widen it from its own env var (e.g. ``IDA_HEADLESS_TIMEOUT``).
+    widen it from its own env var.
     ``transport`` selects the wire protocol: ``"http"`` (the legacy
     bridge contract), ``"mcp-http"`` (streamable-HTTP MCP JSON-RPC), or
     ``"stdio"`` (MCP stdio JSON-RPC; ``command`` is the spawn argv).
@@ -53,24 +59,6 @@ class ServerSpec:
 
 
 SERVER_SPECS: dict[str, ServerSpec] = {
-    "ida_headless": ServerSpec(
-        server_id="ida_headless",
-        tool_name="ida_bridge",
-        env_var="IDA_HEADLESS_URL",
-        config_key="ida_headless_url",
-        default_url="http://127.0.0.1:18821",
-        default_timeout=120.0,
-        persistent_pool=False,
-    ),
-    "ida_headless_exp": ServerSpec(
-        server_id="ida_headless_exp",
-        tool_name="ida_bridge",
-        env_var="IDA_HEADLESS_EXP_URL",
-        config_key="ida_headless_exp_url",
-        default_url="http://127.0.0.1:18821",
-        default_timeout=120.0,
-        persistent_pool=False,
-    ),
     "audit_mcp": ServerSpec(
         server_id="audit_mcp",
         tool_name="audit_mcp_bridge",
@@ -90,8 +78,10 @@ SERVER_SPECS: dict[str, ServerSpec] = {
         persistent_pool=True,
     ),
     # REA (morluto/rea, npm ``rea-agents``) -- the first external,
-    # MCP-native server. Replaces ida_headless for binary reverse
-    # engineering across Ghidra/IDA/Hopper/Kuna providers.
+    # MCP-native server. Serves the core binary reverse-engineering
+    # surface (decompile, disassemble, xrefs, call graphs, segments,
+    # strings, byte/entropy reads) across Ghidra/IDA/Hopper/Kuna
+    # providers.
     #
     # Default transport is stdio: REA's documented client model is one
     # dedicated stdio process per client, and its HTTP listener serves
@@ -116,6 +106,35 @@ SERVER_SPECS: dict[str, ServerSpec] = {
         persistent_pool=False,
         transport=TRANSPORT_STDIO,
         command=("rea", "mcp"),
+    ),
+    # re_analytics -- AILA-owned native MCP server (this repo,
+    # ``python -m aila.platform.re_analytics``). Preserves the
+    # ida-headless tool surface REA lacks (capa_scan, classification,
+    # anti-analysis, crypto/dataflow analytics, diffing, session
+    # mutations) with the same tool/arg names, taking ``target_path``
+    # (absolute local path) instead of ida's binary handle.
+    #
+    # stdio transport like REA: one child process per AILA process, no
+    # external service to operate. The spawn argv uses ``sys.executable``
+    # so the child always runs this repo's interpreter (a bare
+    # ``python`` could resolve to a different install without the
+    # re-analytics extra). GenericMiddleware is used (no _MIDDLEWARE_REF
+    # entry): the bridge forwards ``target_path`` as a real argument and
+    # the server opens the binary from disk itself.
+    #
+    # The 900 s timeout matches the REA spec: cold capa rule loading plus
+    # a first extractor build on a large binary is the long pole; cached
+    # repeat calls return in seconds.
+    "re_analytics": ServerSpec(
+        server_id="re_analytics",
+        tool_name="re_analytics_bridge",
+        env_var="REA_ANALYTICS_MCP_URL",
+        config_key="re_analytics_mcp_url",
+        default_url="stdio://re_analytics",
+        default_timeout=900.0,
+        persistent_pool=False,
+        transport=TRANSPORT_STDIO,
+        command=(_PY_EXE, "-m", "aila.platform.re_analytics"),
     ),
 }
 

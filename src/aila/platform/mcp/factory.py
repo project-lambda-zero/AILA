@@ -1,8 +1,8 @@
 """RFC-11 Tier C -- construct the generic MCP bridge for a server id.
 
-``make_bridge("ida_headless", module_id="vr", recorder=record_call)``
-replaces the pre-Tier-C ``IDABridgeTool(recorder=record_call,
-module_id="vr")`` and its two siblings. The transport parameters come
+``make_bridge("rea", module_id="vr", recorder=record_call)`` replaces
+the pre-Tier-C per-server ``Tool`` subclasses (one bridge class per MCP
+server). The transport parameters come
 from :data:`aila.platform.mcp.server_specs.SERVER_SPECS`; the
 server-specific behaviour comes from a :class:`McpMiddleware` plugin
 resolved lazily by server id so this module carries no import-time
@@ -32,8 +32,6 @@ __all__ = ["make_bridge", "load_middleware", "middleware_family", "stdio_command
 # drag every plugin (and its regex tables) into memory. A server id
 # absent from this map falls back to the pass-through GenericMiddleware.
 _MIDDLEWARE_REF: dict[str, tuple[str, str]] = {
-    "ida_headless": ("aila.platform.mcp.middleware.ida", "IdaMiddleware"),
-    "ida_headless_exp": ("aila.platform.mcp.middleware.ida", "IdaMiddleware"),
     "audit_mcp": ("aila.platform.mcp.middleware.audit", "AuditMcpMiddleware"),
     "android_mcp": ("aila.platform.mcp.middleware.android", "AndroidMcpMiddleware"),
     "rea": ("aila.platform.mcp.middleware.rea", "ReaMiddleware"),
@@ -69,11 +67,11 @@ def _resolve_spec(server_id: str) -> ServerSpec:
 def middleware_family(server_id: str) -> str:
     """Return the middleware class name that serves ``server_id``.
 
-    The router pools only instances that share a family -- ``ida_headless``
-    and ``ida_headless_exp`` both map to ``IdaMiddleware`` so a call for
-    one can fail over to / share load with the other, while an unrelated
-    server (a differently-contracted tool set) is never a pool member
-    even when it shares a capability tag.
+    The router pools only instances that share a family -- two server
+    ids mapping to the same middleware class fail over to / share load
+    with each other, while an unrelated server (a differently-contracted
+    tool set) is never a pool member even when it shares a capability
+    tag.
     """
     ref = _MIDDLEWARE_REF.get(server_id)
     return ref[1] if ref is not None else _GENERIC_REF[1]

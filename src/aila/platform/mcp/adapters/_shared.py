@@ -57,7 +57,7 @@ def _printable_ratio(data: bytes) -> float:
         return 0.0
     # Printable = ASCII 0x20-0x7E + \t \n \r. Everything else flags as
     # non-printable, including UTF-8 multi-byte (which we won't try to
-    # decode here -- ida-headless strings are already utf-8 normalized).
+    # decode here -- bridge strings are already utf-8 normalized).
     printable = sum(
         1 for b in data
         if (0x20 <= b <= 0x7E) or b in (0x09, 0x0A, 0x0D)
@@ -73,7 +73,7 @@ def try_decode_string(raw: str) -> dict[str, str] | None:
     ``None``. Multiple candidates are tried in order (standard
     base64 -> url-safe base64 -> hex); the first success wins.
 
-    Used by ida-headless string-family adapters to enrich observation
+    Used by string-family adapters to enrich observation
     payloads so the agent sees decoded C2 URLs / file paths / config
     keys inline instead of having to call out to a separate decoder.
     """
@@ -146,7 +146,7 @@ def enrich_strings_with_decodes(
     fields when a base64 / hex decode looks meaningful.
 
     Each record can be a bare string OR a dict carrying the actual
-    string under ``key`` (defaults to "value"; ida-headless string
+    string under ``key`` (defaults to "value"; string-family
     tools commonly use "string" or "text" as well -- callers pass
     the right key). Records without a decodable value are returned
     unchanged; dict records get ``decoded`` + ``encoding`` keys
@@ -200,8 +200,9 @@ def enrich_strings_with_decodes(
 # paragraph rendered at body_sm, or ~8000 tokens of plain text --
 # which is enough for the agent to recognise the next move without
 # stuffing whole files into the reasoning state. Specialised renderers
-# (audit_mcp._render_matches_dense, _render_chunks_dense, ida_headless
-# pseudocode/disasm) reference this constant directly; raw responses
+# (audit_mcp._render_matches_dense, _render_chunks_dense, and the
+# rea / re_analytics pseudocode+disasm renderers) reference this constant
+# directly; raw responses
 # still live in the message store untruncated for the operator UI.
 MAX_OBS_DUMP_CHARS = 32 * 1024
 

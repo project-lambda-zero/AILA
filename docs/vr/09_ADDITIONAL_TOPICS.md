@@ -24,7 +24,7 @@ Topics not covered by the first eight documents. These are the operational, orga
 
 Cross-references:
 - `docs/vr/01_REASONING_LOOP.md` -- turn anatomy and the reasoning engine
-- `docs/vr/02_IDA_HEADLESS_MCP.md` -- the binary-database query layer
+- `docs/vr/02_BINARY_RE_MCP.md` -- the binary-database query layer
 - `docs/vr/03_EXPLOIT_AUTOMATION.md` -- what the LLM can and cannot do at exploitation time
 - `docs/vr/04_MULTI_TARGET.md` -- product decomposition and project-level evidence
 - `docs/VR_MODULE_TOOLCHAIN.md`

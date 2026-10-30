@@ -3,7 +3,7 @@
 AILA is orchestration only (D-33). Every analytical action is delegated
 to an MCP server running on a workstation. This service surfaces:
 
-* which MCP servers the module knows about (audit-mcp, ida-headless, ...)
+* which MCP servers the module knows about (audit-mcp, android-mcp, ...)
 * the URL each one currently resolves to (env -> ConfigRegistry -> catalog
   -> default)
 * a live HTTP health probe (reachable / unreachable + latency)
@@ -289,7 +289,7 @@ class McpRegistryServiceBase:
         start = asyncio.get_event_loop().time()
         try:
             async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT_SECONDS) as client:
-                # Both audit-mcp and ida-headless expose /openapi.json.
+                # The in-repo HTTP servers expose /openapi.json.
                 resp = await client.get(f"{url}/openapi.json")
                 resp.raise_for_status()
                 spec_doc = resp.json()

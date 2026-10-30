@@ -36,6 +36,7 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
 )
 from aila.modules.vr.services.analysis_system import resolve_investigation_integration
+from aila.modules.vr.services.binary_path import resolve_investigation_binary_path
 from aila.modules.vr.services.knowledge_scope import vr_knowledge_namespaces
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.tools.dynamic_analysis import (
@@ -75,8 +76,8 @@ _cfg = ModuleConfigReader("vr")
 
 
 class ToolExecutor(ToolExecutorHelpersBase):
-    """Per-investigation tool dispatcher. Injects the three MCP bridges
-    (ida_headless, audit_mcp, android_mcp).
+    """Per-investigation tool dispatcher. Injects the MCP bridges
+    (rea, re_analytics, audit_mcp, android_mcp).
 
     Tests can construct with fake bridges that have a ``.forward(action, **kwargs)``
     method returning a canned dict.
@@ -93,31 +94,37 @@ class ToolExecutor(ToolExecutorHelpersBase):
     # Hard allowlist of MCP servers the AGENT may dispatch against -- the
     # exact set wired in ``__init__``'s ``_bridges`` map. Matches the
     # server catalog vr exposes to the researcher via ``_fetch_tool_specs``:
-    #   - audit_mcp:   source-code audit (source_repo + android_apk source tree)
-    #   - ida_headless: binary analysis (native_binary / kernel / hypervisor /
-    #                   android_apk native libs)
-    #   - android_mcp: APK-facet tools (manifest / signing / permissions)
-    #   - knowledge:   RFC-12 read-only knowledge retrieval (available on
-    #                  every target kind)
-    #   - poc_runner:  issue #245 SSH-driven PoC compile/run/verify on a
-    #                  remote analysis workstation. Exploit-dev only and
-    #                  further phase-gated (per-phase allowed_servers); the
-    #                  SSH integration is injected server-side in
-    #                  _pre_dispatch_correct_args so the agent never supplies it.
-    #   - symbolic:    issue #148 in-process concolic driver
-    #                  (symbolic.explore). module + workspace injected
-    #                  server-side; feeds symbolic:<fn>:reached observables.
-    #   - dynamic:     issue #148 in-process sandboxed run driver
-    #                  (dynamic.run_dynamic). module + workspace injected
-    #                  server-side; feeds dynamic:<target>:coverage_delta
-    #                  / :crash observables.
+    #   - audit_mcp:    source-code audit (source_repo + android_apk source tree)
+    #   - rea:          core binary analysis over REA/Ghidra (native_binary /
+    #                   kernel / hypervisor / android_apk native libs)
+    #   - re_analytics: AILA-owned binary analytics (capa / crypto / taint /
+    #                   emulation / diff) -- preserves the legacy binary
+    #                   tool surface REA does not serve
+    #   - android_mcp:  APK-facet tools (manifest / signing / permissions)
+    #   - knowledge:    RFC-12 read-only knowledge retrieval (available on
+    #                   every target kind)
+    #   - poc_runner:   issue #245 SSH-driven PoC compile/run/verify on a
+    #                   remote analysis workstation. Exploit-dev only and
+    #                   further phase-gated (per-phase allowed_servers); the
+    #                   SSH integration is injected server-side in
+    #                   _pre_dispatch_correct_args so the agent never supplies it.
+    #   - symbolic:     issue #148 in-process concolic driver
+    #                   (symbolic.explore). module + workspace injected
+    #                   server-side; feeds symbolic:<fn>:reached observables.
+    #   - dynamic:      issue #148 in-process sandboxed run driver
+    #                   (dynamic.run_dynamic). module + workspace injected
+    #                   server-side; feeds dynamic:<target>:coverage_delta
+    #                   / :crash observables.
+    # Binary bridges (rea / re_analytics) receive ``target_path`` SERVER-SIDE
+    # in _pre_dispatch_correct_args (the investigation's local artifact) so
+    # the agent never supplies or forges it.
     # The base check (ToolExecutorHelpersBase._dispatch) rejects any other
     # server_id BEFORE adapter lookup with a clear "not exposed to this
     # agent" error. Adding a new bridge requires wiring it in ``__init__``
     # AND appending it here.
     _AGENT_ALLOWED_SERVERS: frozenset[str] = frozenset(
         {
-            "audit_mcp", "ida_headless", "rea", "android_mcp", "knowledge",
+            "audit_mcp", "rea", "re_analytics", "android_mcp", "knowledge",
             "poc_runner", "symbolic", "dynamic",
         },
     )
@@ -213,7 +220,8 @@ class ToolExecutor(ToolExecutorHelpersBase):
 
     def __init__(
         self,
-        ida: Any = None,
+        rea: Any = None,
+        re_analytics: Any = None,
         audit_mcp: Any = None,
         android_mcp: Any = None,
         knowledge: Any | None = None,
@@ -234,7 +242,10 @@ class ToolExecutor(ToolExecutorHelpersBase):
         self._bridge_overrides: dict[str, Any] = {
             server_id: bridge
             for server_id, bridge in {
-                "ida_headless": ida,
+                # Core binary RE (REA/Ghidra) + the AILA-owned analytics
+                # surface (capa / crypto / taint / emulation / diff).
+                "rea": rea,
+                "re_analytics": re_analytics,
                 "audit_mcp": audit_mcp,
                 "android_mcp": android_mcp,
                 # RFC-12 agentic path: read-only knowledge retrieval,
@@ -270,6 +281,10 @@ class ToolExecutor(ToolExecutorHelpersBase):
         # AND can't share state across instances). Cache lives on the
         # executor instance; created once per investigation loop.
         self._inv_index_id_cache: OrderedDict[str, str] = OrderedDict()
+        # Per-process LRU: investigation_id -> resolved absolute local
+        # path of the investigation's binary artifact ("" when the target
+        # carries no bound path). Same LRU discipline as the index cache.
+        self._inv_target_path_cache: OrderedDict[str, str] = OrderedDict()
 
     async def _hard_block_repeat_limit(self) -> int | None:
         return await _cfg.get_int("tool_executor_hard_block_repeat")
@@ -288,6 +303,19 @@ class ToolExecutor(ToolExecutorHelpersBase):
         # round-trip that would return "Unknown index" / a missing kwarg).
         if server_id == "audit_mcp":
             return await self._maybe_correct_index_id(investigation_id, args)
+        # Binary bridges (rea / re_analytics) open targets by ABSOLUTE LOCAL
+        # PATH. Inject the investigation's artifact path SERVER-SIDE so the
+        # agent never supplies or forges it. The ReaMiddleware consumes the
+        # kwarg for target affinity; re_analytics receives it as a real tool
+        # argument. Fail-open: an unresolved path leaves args untouched and
+        # the tool surfaces its own "target not bound" error.
+        if server_id in ("rea", "re_analytics"):
+            target_path = await self._resolve_target_path(investigation_id)
+            if not target_path:
+                return args
+            scoped = {k: v for k, v in args.items() if k != "target_path"}
+            scoped["target_path"] = target_path
+            return scoped
         # Issue #245: inject the investigation's SSH integration SERVER-SIDE so
         # the agent can never point the PoC runner at another workstation. Any
         # agent-supplied ``integration`` is dropped and replaced. Fail-open:
@@ -672,25 +700,6 @@ class ToolExecutor(ToolExecutorHelpersBase):
             ])
         return alternatives
 
-    async def _resolve_bridge_base_url(self) -> str:
-        # bridge_base_url comes from the audit_mcp bridge instance, not a
-        # hardcoded literal; falls back to the default when the bridge stub
-        # lacks the accessor.
-        audit_mcp_bridge = self._bridge_for("audit_mcp")
-        if hasattr(audit_mcp_bridge, "base_url"):
-            try:
-                return await audit_mcp_bridge.base_url()
-            except (AttributeError, RuntimeError, OSError, ValueError, TypeError) as exc:
-                _log.info(
-                    "tool_executor: bridge.base_url() failed (%s: %s); "
-                    "falling back to default",
-                    type(exc).__name__, exc, exc_info=True,
-                )
-        return "http://127.0.0.1:18822"
-
-
-
-
     async def _maybe_correct_index_id(
         self,
         investigation_id: str,
@@ -830,6 +839,35 @@ class ToolExecutor(ToolExecutorHelpersBase):
             )
             return ""
 
+    async def _resolve_target_path(self, investigation_id: str) -> str:
+        """Resolve investigation -> primary target -> local binary path.
+
+        REA / re_analytics open the investigation's artifact by absolute
+        local path; the value is deterministic per investigation (the
+        primary target's descriptor / ingested handle), so it is cached
+        in the same LRU shape as the index-id cache. An empty result
+        means "no bound artifact" -- the caller leaves args untouched
+        (fail-open) and the tool layer reports the real error.
+        """
+        cache = self._inv_target_path_cache
+        if investigation_id in cache:
+            cache.move_to_end(investigation_id)
+            return cache[investigation_id]
+        try:
+            resolved = await resolve_investigation_binary_path(investigation_id)
+        except (OSError, RuntimeError, ImportError, AttributeError, ValueError, TypeError) as exc:
+            _log.info(
+                "tool_executor._resolve_target_path: failed for inv=%s "
+                "(%s: %s); leaving args untouched",
+                investigation_id, type(exc).__name__, exc,
+                exc_info=True,
+            )
+            return ""
+        cache[investigation_id] = resolved
+        while len(cache) > self._INV_INDEX_CACHE_MAX:
+            cache.popitem(last=False)
+        return resolved
+
 
 
 
@@ -886,12 +924,11 @@ class ToolExecutor(ToolExecutorHelpersBase):
         ("audit_mcp", "list_indexes"),
         ("audit_mcp", "memory_usage"),
         ("audit_mcp", "cache_stats"),
-        ("ida_headless", "binary_survey"),
-        ("ida_headless", "binary_metadata"),
-        ("ida_headless", "list_functions"),
-        ("ida_headless", "imports"),
-        ("ida_headless", "exports"),
-        ("ida_headless", "segments"),
+        ("rea", "binary_overview"),
+        ("rea", "list_procedures"),
+        ("rea", "inspect_pe_imports"),
+        ("rea", "inspect_native_exports"),
+        ("rea", "list_segments"),
     })
 
     # fix §200 -- was a hardcoded class attribute. Now sourced from
@@ -918,13 +955,13 @@ class ToolExecutor(ToolExecutorHelpersBase):
         ("audit_mcp", "paths_between"),
         ("audit_mcp", "def_use"),
         ("audit_mcp", "find_related"),
-        ("ida_headless", "decompile"),
-        ("ida_headless", "disassemble_function"),
-        ("ida_headless", "pseudocode_slice_view"),
-        ("ida_headless", "interprocedural_taint"),
-        ("ida_headless", "trace_dataflow"),
-        ("ida_headless", "xrefs_to"),
-        ("ida_headless", "xrefs_from"),
+        ("rea", "procedure_pseudo_code"),
+        ("rea", "procedure_assembly"),
+        ("re_analytics", "pseudocode_slice_view"),
+        ("re_analytics", "interprocedural_taint"),
+        ("re_analytics", "trace_dataflow"),
+        ("rea", "xrefs"),
+        ("rea", "procedure_references"),
     })
 
 

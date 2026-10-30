@@ -19,7 +19,7 @@ ambiguity is left to the upstream validator to reject loudly rather
 than silently picking the wrong one.
 
 This module is bridge-agnostic. Caller supplies its own ``families``
-dict; same code works for audit_mcp, ida_headless, or any future MCP.
+dict; same code works for audit_mcp, android_mcp, or any future MCP.
 """
 from __future__ import annotations
 

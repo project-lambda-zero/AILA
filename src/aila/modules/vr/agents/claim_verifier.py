@@ -251,7 +251,7 @@ class ClaimVerifierAgent(ClaimVerifierAgentBase):
                     case_state = {}
 
             # McpCallLogRecord is the F4 tool-log table: one row per
-            # audit-mcp / ida-headless call. Filter to this
+            # audit-mcp / rea / re_analytics call. Filter to this
             # investigation + (when known) branch so the verifier sees
             # exactly the tool traffic the proposing branch produced.
             log_query = _select(McpCallLogRecord).where(
@@ -826,7 +826,11 @@ async def _resolve_investigation_index_id(investigation_id: str) -> str:
             or ""
         )
     except (SQLAlchemyError, OSError, RuntimeError, ValueError,
-            TypeError, AttributeError):
+            TypeError, AttributeError) as exc:
+        _log.warning(
+            "claim_verifier: index-id resolution failed for investigation=%s: %s",
+            investigation_id, exc,
+        )
         return ""
 
 

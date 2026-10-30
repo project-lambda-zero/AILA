@@ -68,7 +68,7 @@ class TargetCapabilityProfile(BaseModel):
 
     applicable_mcp_servers: list[str] = Field(
         default_factory=list,
-        description="MCP server IDs that can operate on this target (e.g. 'ida_headless', 'audit_mcp').",
+        description="MCP server IDs that can operate on this target (e.g. 'rea', 're_analytics', 'audit_mcp').",
     )
     applicable_fuzzing_engines: list[str] = Field(
         default_factory=list,

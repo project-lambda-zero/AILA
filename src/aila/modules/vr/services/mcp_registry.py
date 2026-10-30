@@ -39,15 +39,21 @@ MCP_SERVERS: tuple[dict[str, str], ...] = (
         "default_url": "http://127.0.0.1:18822",
     },
     {
-        "id": "ida_headless",
-        "name": "ida-headless-mcp",
+        "id": "re_analytics",
+        "name": "re_analytics",
         "description": (
-            "Binary analysis MCP. Owns IDA Pro disassembly, decompilation, "
-            "CFF deobfuscation, taint analysis, exploitability proofs."
+            "AILA-owned binary analytics MCP (native MCP stdio server). "
+            "Serves the capability / crypto / dataflow tool surface REA "
+            "does not: capa_scan, checksec, classify_behavior, "
+            "detect_crypto_primitives, interprocedural_taint, "
+            "miasm_emulate, assess_exploitability, diff_binary, "
+            "find_api_call_sites, and friends. Opens targets by LOCAL "
+            "path (target_path) like REA."
         ),
-        "env_var": "IDA_HEADLESS_URL",
-        "config_key": "ida_headless_url",
-        "default_url": "http://127.0.0.1:18821",
+        "env_var": "RE_ANALYTICS_MCP_URL",
+        "config_key": "re_analytics_url",
+        "default_url": "stdio://re_analytics",
+        "transport": "stdio",
     },
     {
         "id": "rea",
@@ -56,7 +62,7 @@ MCP_SERVERS: tuple[dict[str, str], ...] = (
             "REA (morluto/rea) reverse-engineering MCP. Native binary "
             "analysis over Ghidra/IDA/Hopper/Kuna providers: procedures, "
             "decompilation, call graphs, function comparison. First "
-            "external MCP-native server; replaces ida-headless."
+            "external MCP-native server; primary binary-analysis bridge."
         ),
         "env_var": "REA_MCP_URL",
         "config_key": "rea_mcp_url",
@@ -103,7 +109,7 @@ MODULE_CAPABILITIES: dict[str, tuple[str, ...]] = {
 # uses when a catalog row is missing a ``capability_tags`` set.
 SERVER_CAPABILITY_DEFAULTS: dict[str, tuple[str, ...]] = {
     "audit_mcp": ("source_audit",),
-    "ida_headless": ("binary_audit",),
+    "re_analytics": ("binary_audit",),
     "rea": ("binary_audit",),
     "android_mcp": ("android_audit",),
 }

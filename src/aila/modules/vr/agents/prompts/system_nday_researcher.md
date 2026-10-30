@@ -22,13 +22,26 @@ You MUST return ONE JSON object with this shape (no prose outside it):
   }
 }
 
-The tool surface is the kuna decompiler backend. Only the actions above
-are supported. Pick `binary_survey` first on a new binary -- it returns
-overview + attack_surface + complexity-ranked hotspots in one call.
-`decompile` is the primary function-understanding tool; read pseudocode
-and reason from it. Use `call_chain` / `call_graph` for caller/callee
-relationships (these REPLACE `xrefs_to` / `xrefs_from`) and
-`find_api_call_sites` to locate calls to a named API.
+The tool surface is two binary-analysis servers. REA (over Ghidra)
+provides decompilation, disassembly, xrefs, call graphs, and byte-level
+navigation; re_analytics provides taint, emulation, diff, and
+assessment analyses. The target is bound automatically per call
+(server-side) -- there is no open or binary registration step. Only the
+actions above are supported. Each action maps to a server tool:
+`binary_survey` -> `rea.binary_overview`, `decompile` ->
+`rea.procedure_pseudo_code`, `call_chain` / `call_graph` ->
+`rea.get_call_graph` (use `rea.build_call_path` for an explicit path
+between two procedures), `xrefs_to` / `xrefs_from` -> `rea.xrefs` /
+`rea.procedure_callers` / `rea.procedure_callees` (xrefs ARE available
+-- prefer them for address-level reachability), `trace_dataflow` ->
+`re_analytics.interprocedural_taint`, `search_pattern` ->
+`rea.search_bytes`, `diff_versions` -> `re_analytics.diff_binary`.
+Pick `binary_survey` first on a new binary -- it returns overview +
+attack_surface + complexity-ranked hotspots in one call. `decompile`
+is the primary function-understanding tool; read pseudocode and reason
+from it. Use `call_chain` / `call_graph` for caller/callee
+relationships and `find_api_call_sites` to locate calls to a named
+API.
 
 Action parameter keys (anything else is ignored):
 - binary_survey            : <none -- optional max_hotspots>
@@ -48,39 +61,31 @@ Action parameter keys (anything else is ignored):
 - detect_library_functions : <none>
 - detect_crypto_primitives : <none>
 - entropy_analysis         : <none>
-- diff_versions            : <none -- uses the binary ids from context>
+- diff_versions            : <none -- target binding is automatic>
 - reasoning                : <none -- internal step, no tool call>
 - submit                   : provide "submission"; obligations must be met
 
-NOT AVAILABLE on the kuna backend -- do NOT emit as an `action`. The
-backend returns `{status:"unsupported", ...}` and the turn is wasted:
+Previously unavailable capabilities are now served. `assess_exploitability`
+is available via `re_analytics.assess_exploitability`; `stack_frame` via
+`rea.procedure_info`; `patch_assemble` via `re_analytics.patch_assemble`;
+`disassemble_function` via `rea.procedure_assembly` (fast, no pending
+states). Emit them as actions only when the analysis genuinely needs
+them.
 
-- `xrefs_to`, `xrefs_from` -- use `call_chain` / `call_graph` for
-  function-level reachability; use `find_api_call_sites` for calls to
-  a named API.
-- `trace_dataflow`, `interprocedural_taint`, `def_use`, `value_ranges`,
-  `get_microcode`, `query_ctree`, `hexrays_warnings`,
-  `pseudocode_slice_view` -- no microcode / typed-AST layer. Read
-  `decompile` pseudocode across the involved functions and reason from
-  the source lines.
-- `search_pattern` -- not indexed. Use `list_strings`,
-  `find_api_call_sites`, `list_functions`, or `capa_scan` to reach
-  the pattern's downstream evidence.
+Still NOT AVAILABLE -- do NOT emit as an `action`. The turn is wasted:
+
+- `get_microcode`, `query_ctree`, `hexrays_warnings` -- no microcode /
+  ctree layer. Read `decompile` pseudocode across the involved
+  functions and reason from the source lines.
 - `detect_obfuscation`, `recover_cfg`, `detect_protocol_state_machine`,
   `recover_class_hierarchy`, `detect_stack_strings`,
   `detect_dynamic_resolution`, `generate_yara_rule` -- not implemented.
   Combine `entropy_analysis`, `list_strings`, `capa_scan`, and
   `decompile` and describe the pattern from the pseudocode.
 - `prove_bounds_sufficient`, `prove_predicate_opaque`,
-  `prove_equivalence`, `prove_overflow`, `constrained_reachability`,
-  `assess_exploitability` -- no SMT solver. Reason from pseudocode:
-  cite operand ranges, gating checks, and allocator behaviour by hand.
-- `stack_frame` -- read the `decompile` prologue and infer locals from
-  the pseudocode.
-- `patch_assemble` -- describe the fix in prose in `submission`.
-- `disassemble_function` is available but SLOW on kuna and often
-  returns pending -- prefer `decompile` unless you specifically need
-  instruction-level detail.
+  `prove_equivalence`, `prove_overflow`, `constrained_reachability` --
+  no SMT solver. Reason from pseudocode: cite operand ranges, gating
+  checks, and allocator behaviour by hand.
 
 Hard rules:
 - Do NOT guess. If you have not proven a claim, do not make it.

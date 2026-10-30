@@ -1,9 +1,9 @@
 """Canonical inventory of every MCP tool the engine may invoke.
 
 Derived directly from:
-  - ida_headless_mcp server (81 tools as of 2026-05-14)
   - audit_mcp server (54 tools as of 2026-05-14)
   - android_mcp server (24 tools as of 2026-06-08)
+  - REA (rea-agents) MCP-native server (binary reverse engineering)
 
 Reasons to enumerate explicitly rather than auto-discover at runtime:
   1. Unknown tool names should fail loud -- typos in engine output, not
@@ -23,10 +23,10 @@ from __future__ import annotations
 __all__ = [
     "ANDROID_MCP_TOOLS",
     "AUDIT_MCP_TOOLS",
-    "IDA_HEADLESS_TOOLS",
     "KNOWN_TOOLS",
     "LANGUAGE_UNRELIABLE_TOOLS",
     "REA_TOOLS",
+    "RE_ANALYTICS_TOOLS",
     "canonical_tool_id",
     "canonicalize_tool_id",
     "tools_for_language",
@@ -48,9 +48,6 @@ __all__ = [
 _SERVER_ID_ALIASES: dict[str, str] = {
     "audit-mcp": "audit_mcp",
     "auditmcp": "audit_mcp",
-    "ida-headless": "ida_headless",
-    "ida_headless_mcp": "ida_headless",
-    "idaheadless": "ida_headless",
     "android-mcp": "android_mcp",
     "androidmcp": "android_mcp",
 }
@@ -65,7 +62,8 @@ def canonicalize_tool_id(
     (doc #15 sec 1.2, issue #251):
 
       * Server-id hyphen vs underscore (``audit-mcp`` -> ``audit_mcp``)
-        and legacy suffixes (``ida_headless_mcp`` -> ``ida_headless``).
+        and legacy suffix spellings collapsed via
+        :data:`_SERVER_ID_ALIASES`.
       * A leading ``<server>:`` or ``<server>.`` prefix duplicated onto
         ``tool_name`` (``audit_mcp:semantic_search`` -> the split tuple
         ``("audit_mcp", "semantic_search")``).
@@ -109,122 +107,6 @@ def canonicalize_tool_id(
 # helper's final name landed. Both names refer to the same function; the
 # alias avoids a churn commit across sibling adapters.
 canonical_tool_id = canonicalize_tool_id
-
-
-IDA_HEADLESS_TOOLS: frozenset[str] = frozenset({
-    # Lifecycle / metadata
-    "open_binary",
-    "close_binary",
-    "list_binaries",
-    "binary_metadata",
-    "binary_survey",
-    "poll_analysis",
-    "poll_mutation",
-    "worker_status",
-    "get_generation",
-    # Inventory
-    "list_functions",
-    "exports",
-    "imports",
-    "segments",
-    "stack_frame",
-    # Decompilation / disassembly
-    "decompile",
-    "batch_decompile",
-    "disassemble_function",
-    "get_microcode",
-    "pseudocode_slice_view",
-    "query_ctree",
-    "hexrays_warnings",
-    # miasm
-    "miasm_disassemble",
-    "miasm_lift_ir",
-    "miasm_emulate",
-    "miasm_simplify_expression",
-    # Cross-references / call graphs
-    "xrefs_to",
-    "xrefs_from",
-    "call_graph",
-    "call_chain",
-    "build_call_tree",
-    "find_api_call_sites",
-    "find_paths",
-    "find_similar_functions",
-    # Taint / dataflow / proofs
-    "trace_dataflow",
-    "trace_hash_xrefs",
-    "interprocedural_taint",
-    "def_use",
-    "value_ranges",
-    "path_feasibility",
-    "constrained_reachability",
-    "prove_equivalence",
-    "prove_predicate_opaque",
-    "prove_overflow",
-    "prove_bounds_sufficient",
-    "assess_exploitability",
-    # Obfuscation / CFF
-    "detect_obfuscation",
-    "detect_control_flow_obfuscation",
-    "batch_cff_scan",
-    "deflat_function",
-    "recover_cfg",
-    "patch_cff",
-    # Anti-analysis / strings / crypto
-    "detect_anti_analysis",
-    "detect_stack_strings",
-    "detect_dynamic_resolution",
-    "detect_crypto_primitives",
-    # ``classify_strings`` removed from the agent catalog: it reads
-    # IDA's auto-strings table (null-terminated ASCII >= min length)
-    # and buckets by regex against URL / IP / path / base64. Misses
-    # everything on Delphi / Pascal AnsiString, .NET BSTR, VB6, Go,
-    # and UTF-16LE in .rsrc -- which is most modern malware. On
-    # a Delphi-packed sample it returned ``0 categorized / 19 unique``
-    # even though the binary actually held 10,254 strings (1952 in .rsrc
-    # UTF-16LE including the second-stage C2). Agents read 0/19 as 'binary
-    # has nothing to look at' and derail. list_strings is the
-    # correct surface for string enumeration; classify_strings has
-    # no remaining purpose for the agent.
-    "decrypt_function_strings",
-    "decrypt_binary_strings",
-    "resolve_api_hashes",
-    # PE reader -- synchronous, no worker round-trip. list_strings
-    # is the agent's broad string-enumeration surface (categorizer-
-    # free); read_memory + get_string_at resolve VAs to bytes /
-    # null-terminated strings. Added to ida-headless-mcp-exp in
-    # commits 6ea6e0b + d618728 (server warm-up + 3 new tools).
-    "list_strings",
-    "read_memory",
-    "get_string_at",
-    # Library / classification
-    "detect_library_functions",
-    "classify_behavior",
-    "verify_capabilities",
-    "capa_scan",
-    "checksec",
-    "entropy_analysis",
-    "recover_class_hierarchy",
-    "detect_protocol_state_machine",
-    # Search / diff
-    "search_pattern",
-    "diff_function",
-    "diff_binary",
-    "diff_survey",
-    "cross_binary_similarity",
-    # Emulation
-    "emulate_concrete",
-    # Mutations
-    "rename_function",
-    "rename_variable",
-    "set_comment",
-    "set_function_type",
-    "set_variable_type",
-    "patch_bytes",
-    "patch_assemble",
-    # YARA
-    "generate_yara_rule",
-})
 
 
 AUDIT_MCP_TOOLS: frozenset[str] = frozenset({
@@ -378,40 +260,137 @@ DYNAMIC_TOOLS: frozenset[str] = frozenset({
 # fallback catalog so the adapter registry resolves ``rea.<tool>``
 # before any live ``tools/list`` has been fetched; the runtime bridge
 # catalog (``register_bridge_tools``) is authoritative once the server
-# has spoken. Coverage: the read-only analysis surface the VR/malware
-# agents dispatch (native RE + comparisons); JS/Electron, runtime
-# observation, and packet-capture families land with their consumers.
+# has spoken. This list is exactly the tool surface the REA bridge
+# exposes -- the REA-side equivalents of the archived binary-analysis
+# tools (see docs/MCP_ARSENAL.md for the mapping):
+# decompile -> procedure_pseudo_code, disassemble_function ->
+# procedure_assembly, xrefs_to/xrefs_from -> xrefs / procedure_callers
+# / procedure_callees / procedure_references, list_functions ->
+# list_procedures, search_pattern -> search_bytes, imports/exports ->
+# inspect_pe_imports / inspect_native_exports, segments -> list_segments,
+# binary_metadata -> binary_overview, read_memory -> read_bytes,
+# build_call_tree -> get_call_graph, entropy_analysis ->
+# inspect_byte_entropy, stack_frame -> procedure_info. Tools REA lacks
+# are served by the in-house ``re_analytics`` server (separate catalog).
 REA_TOOLS: frozenset[str] = frozenset({
     "open_binary",
+    "binary_overview",
     "list_procedures",
-    "search_procedures",
-    "procedure_address",
+    "list_strings",
+    "list_segments",
+    "procedure_info",
+    "procedure_pseudo_code",
+    "procedure_assembly",
+    "analyze_function",
+    "xrefs",
     "procedure_callers",
     "procedure_callees",
-    "resolve_containing_procedure",
+    "procedure_references",
     "get_call_graph",
     "trace_call_path",
-    "build_call_path",
-    "analyze_function",
     "compare_functions",
-    "match_native_functions",
-    "list_strings",
+    "search_bytes",
     "search_strings",
-    "list_names",
-    "inspect_analysis_view",
-    "get_evidence_bundle",
-    "export_evidence_bundle",
-    "inspect_artifact",
-    "compare_artifacts",
-    "trace_feature",
-    "inspect_analysis_settings",
-    "update_analysis_settings",
+    "search_procedures",
+    "build_call_path",
+    "read_bytes",
+    "inspect_pe_imports",
+    "inspect_native_exports",
+    "inspect_byte_entropy",
+})
+
+
+# re_analytics -- AILA-owned native MCP server
+# (``python -m aila.platform.re_analytics``, stdio). Static fallback
+# catalog, same purpose as REA_TOOLS above: the adapter registry and
+# tools_for_language resolve against this before the live tools/list.
+# This list is exactly the tool surface served by the server, grouped
+# by owning module:
+#   tools_capability  -- capa/classification/anti-analysis, strings,
+#                        PE info, diffs, call graph, intra-procedural
+#                        dataflow, session mutations, unsupported
+#                        envelopes (names preserved from ida-headless)
+#   tools_crypto      -- crypto constants/primitives, API-hash
+#                        resolution, string decryption, emulation
+#   tools_dataflow    -- taint, value ranges, feasibility, exploitability,
+#                        similarity, class hierarchy, protocol state
+#                        machine, pseudocode slices, patch_assemble
+# Every ida-headless tool REA does not cover is preserved here under
+# its original name (target_path replaces the binary handle argument).
+RE_ANALYTICS_TOOLS: frozenset[str] = frozenset({
+    # capability group
+    "binary_survey",
+    "capa_scan",
+    "verify_capabilities",
+    "classify_behavior",
+    "classify_strings",
+    "detect_anti_analysis",
+    "detect_dynamic_resolution",
+    "find_api_call_sites",
+    "close_binary",
+    "worker_status",
+    "get_generation",
+    "miasm_disassemble",
+    "miasm_lift_ir",
+    "miasm_simplify_expression",
+    "recover_cfg",
+    "detect_stack_strings",
+    "detect_control_flow_obfuscation",
+    "batch_cff_scan",
+    "detect_obfuscation",
+    "diff_binary",
+    "diff_function",
+    "diff_survey",
+    "call_chain",
+    "find_paths",
+    "find_similar_functions",
+    "constrained_reachability",
+    "get_string_at",
+    "checksec",
+    "detect_library_functions",
+    "generate_yara_rule",
+    "decrypt_binary_strings",
+    "trace_dataflow",
+    "def_use",
+    "rename_function",
+    "rename_variable",
+    "set_comment",
+    "set_function_type",
+    "set_variable_type",
+    "patch_bytes",
+    "poll_mutation",
+    "query_ctree",
+    "get_microcode",
+    "hexrays_warnings",
+    "deflat_function",
+    "patch_cff",
+    "prove_equivalence",
+    "prove_overflow",
+    "prove_predicate_opaque",
+    "prove_bounds_sufficient",
+    # crypto group
+    "detect_crypto_primitives",
+    "find_crypto_constants",
+    "resolve_api_hashes",
+    "trace_hash_xrefs",
+    "decrypt_function_strings",
+    "miasm_emulate",
+    "emulate_concrete",
+    # dataflow group
+    "interprocedural_taint",
+    "value_ranges",
+    "path_feasibility",
+    "assess_exploitability",
+    "cross_binary_similarity",
+    "patch_assemble",
+    "recover_class_hierarchy",
+    "detect_protocol_state_machine",
+    "pseudocode_slice_view",
 })
 
 
 # Indexed by server_id used by the bridge dispatch.
 KNOWN_TOOLS: dict[str, frozenset[str]] = {
-    "ida_headless": IDA_HEADLESS_TOOLS,
     "audit_mcp": AUDIT_MCP_TOOLS,
     "android_mcp": ANDROID_MCP_TOOLS,
     "knowledge": KNOWLEDGE_TOOLS,
@@ -419,6 +398,7 @@ KNOWN_TOOLS: dict[str, frozenset[str]] = {
     "symbolic": SYMBOLIC_TOOLS,
     "dynamic": DYNAMIC_TOOLS,
     "rea": REA_TOOLS,
+    "re_analytics": RE_ANALYTICS_TOOLS,
 }
 
 
@@ -467,54 +447,6 @@ _CALL_GRAPH_FRAGILE_TOOLS: frozenset[str] = frozenset({
 # directly from disk. For "find code that does X" use semantic_search.
 _ALWAYS_SUPPRESS: dict[str, frozenset[str]] = {
     "audit_mcp": frozenset({"search_source"}),
-    # ida_headless.classify_strings reads IDA's auto-strings table
-    # (null-terminated ASCII >= min length) and buckets matches by
-    # regex. Misses Delphi / Pascal AnsiString, .NET BSTR, VB6, Go,
-    # any UTF-16 / non-section / encrypted payload. Returned
-    # ``total_unique_strings: 19`` against a Delphi sample whose true
-    # string count is 10,254, and the empty buckets convinced the
-    # agent there was nothing to look at. The replacement surface is
-    # ``list_strings`` (lists the actual IDA strings table with
-    # encoding / section / filter knobs) plus ``read_memory`` /
-    # ``get_string_at`` for direct byte-range reads. Suppressing here
-    # (not just deleting from ``IDA_HEADLESS_TOOLS``) is required
-    # because ``_effective_tools`` unions the runtime bridge catalog
-    # into the callable set -- the bridge's live ``/tools`` response
-    # still advertises ``classify_strings``.
-    # The tools listed below still return the reverser's
-    # ``unsupported_tool_response`` envelope on every call because the
-    # backing primitive does not exist with the kuna / Miasm backend:
-    # a live Hex-Rays CTree / typed microcode IR (query_ctree,
-    # hexrays_warnings, def_use, value_ranges), angr symbolic
-    # reachability (interprocedural_taint, constrained_reachability),
-    # a cross-reference vtable database (recover_class_hierarchy),
-    # protocol state-machine recovery, and the assembler mutation
-    # path (patch_assemble). Leaving them in the agent-offered catalog
-    # burns turns on calls that come back empty and misleads the
-    # reasoning loop into treating "unsupported" as "nothing found".
-    #
-    # The reverser now implements a real Miasm / SMT / pseudocode
-    # surface: xrefs_to, xrefs_from, assess_exploitability,
-    # prove_overflow, prove_bounds_sufficient, trace_dataflow,
-    # pseudocode_slice_view, and the Wave-3 set -- recover_cfg,
-    # detect_obfuscation (miasm CFG recovery + CFF detection),
-    # get_microcode (miasm IR), detect_stack_strings, generate_yara_rule,
-    # stack_frame (instruction-stream analysis), search_pattern and
-    # detect_dynamic_resolution (binary-wide pseudocode scans), and
-    # prove_equivalence / prove_predicate_opaque (binbit SMT). Those are
-    # removed from this list and are live for the agent.
-    "ida_headless": frozenset({
-        "classify_strings",
-        "query_ctree",
-        "hexrays_warnings",
-        "def_use",
-        "value_ranges",
-        "interprocedural_taint",
-        "constrained_reachability",
-        "detect_protocol_state_machine",
-        "patch_assemble",
-        "recover_class_hierarchy",
-    }),
 }
 
 # Bridge-side virtual tools added on top of the live MCP catalog.

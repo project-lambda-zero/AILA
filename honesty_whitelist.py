@@ -252,6 +252,22 @@ HONESTY_WHITELIST = [
     # at the system boundary; the breadth is the design.
     # ──────────────────────────────────────────────────────────────────
 
+    # re_analytics MCP stdio server: tools/call dispatch converts ANY
+    # handler failure into an MCP isError result -- that is the protocol
+    # contract (a tool fault is a call result, never a transport crash),
+    # so the catch must stay broad. The exception class and message are
+    # embedded verbatim in the returned error payload.
+    ("re_analytics/server.py", "broad_exception_catch", "catches everything"),
+    # The dispatch guard above carries the matching ruff noqa (BLE001);
+    # the noqa is the documented suppression for that intentional catch.
+    ("re_analytics/server.py", "noqa_inline", "noqa"),
+    # re_analytics address/disassembly sentinels: va_to_offset returns
+    # None for a VA outside every section (unmapped is a normal query
+    # outcome, not a failure), and disasm() returns [] on a capstone
+    # decode error mid-section (documented "empty on failure" contract
+    # every caller handles).
+    ("re_analytics/_binary.py", "except_return_default", "returns empty default"),
+
     # api/ -- FastAPI app, middleware, and routers. Each catch logs and
     # returns a typed error response or degrades a single endpoint.
     ("api/app.py", "broad_exception_catch", "catches everything"),
@@ -755,9 +771,19 @@ HONESTY_WHITELIST = [
     # gate skips rather than crashing the dispatch. Same fail-safe the
     # platform loader block already carries.
     # ------------------------------------------------------------------
-    ("vr/agents/claim_verifier.py",
-     "except returns empty default",
-     "silently hides failures"),
+    # ------------------------------------------------------------------
+    # re_analytics MCP server (REA cutover, ida-headless preservation).
+    # tools_dataflow.py guards every third-party analysis dependency
+    # (capstone / lief / keystone / angr / claripy) behind a lazy import
+    # with `# noqa: PLC0415` so the server module stays importable
+    # without the `re-analytics` optional extra; each handler raises
+    # ToolError with an install hint when its dependency is absent.
+    # Top-level imports would make a missing extra kill the whole
+    # server instead of failing one tool call.
+    # ------------------------------------------------------------------
+    ("re_analytics/tools_dataflow.py",
+     "noqa_inline",
+     "documented justification"),
 ]
 
 

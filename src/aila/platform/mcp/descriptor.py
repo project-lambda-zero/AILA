@@ -7,14 +7,14 @@ everything the platform needs to open a connection without knowing a
 module by name (per RFC-05):
 
 * ``name`` -- the stable server token (``"audit_mcp"``, ``"android_mcp"``,
-  ``"ida_headless"``, ...) that matches the corresponding
+  ``"rea"``, ...) that matches the corresponding
   :class:`aila.platform.mcp.instance_catalog.McpServerInstance.name`
   column so the four-tier resolver can find the operator's catalog row.
 * ``capability_tags`` -- what the server ADVERTISES it can do (``(
   "source_audit", "graph")``). Modules resolve MCP servers by
   capability, never by module name; the tag is the join key.
 * ``transport`` -- ``"http"`` (the legacy bridge contract spoken by
-  audit-mcp / ida-headless / android-mcp), ``"mcp-http"`` (streamable-
+  audit-mcp / android-mcp), ``"mcp-http"`` (streamable-
   HTTP MCP JSON-RPC), or ``"stdio"`` (MCP stdio JSON-RPC against
   ``command``). The two MCP transports are implemented by
   :mod:`aila.platform.mcp.mcp_session` and are what external servers

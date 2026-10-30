@@ -49,6 +49,20 @@ _STATE_INFLIGHT = "inflight"
 # Opening a target can import + auto-analyze it (Ghidra cold start).
 _OPEN_ACTIONS = frozenset({"open_binary", "close_binary"})
 
+# Offline file-inspection tools: they parse an explicit local path and
+# do NOT need an open analysis target, but their schema requires
+# ``path``. The module tool executor injects ``target_path`` (the
+# investigation's binary on disk) without the agent knowing the path,
+# so the middleware defaults ``path`` from it; an explicit agent-supplied
+# ``path`` (a DIFFERENT file) always wins. Everything else is answered
+# against the active session target and must not receive a spurious
+# ``path`` kwarg (schema validation rejects unrecognized keys).
+_PATH_ARG_TOOLS = frozenset({
+    "inspect_pe_imports",
+    "inspect_native_exports",
+    "inspect_byte_entropy",
+})
+
 
 class ReaMiddleware:
     """Pass-through middleware with per-session target affinity."""
@@ -77,6 +91,13 @@ class ReaMiddleware:
             return {"status": "ready", "tools": await self.list_tool_specs(client)}
         payload = {k: v for k, v in kwargs.items() if k != REA_TARGET_KWARG}
         target = kwargs.get(REA_TARGET_KWARG)
+        if (
+            action in _PATH_ARG_TOOLS
+            and isinstance(target, str)
+            and target
+            and "path" not in payload
+        ):
+            payload["path"] = target
         if not isinstance(target, str) or not target or action in _OPEN_ACTIONS:
             result = await client.call_tool(action, payload)
             if action in _OPEN_ACTIONS:

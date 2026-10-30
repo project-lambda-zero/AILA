@@ -366,22 +366,24 @@ tells you which phase you are in and what its brief is.
 - **`memory_safety_audit`.** Audit native code for allocator misuse (`malloc`/`free`), pointer arithmetic, array indexing without bounds checks, and integer sign conversions.
 - **`filter_bypass_synthesis`.** When an exploit trigger is blocked by a filter or WAF, mutate encoding (double URL encoding, Unicode normalization, comment injection, parameter pollution) to preserve execution semantics while bypassing signatures.
 - **`poc_development`.** Synthesize a complete, self-contained Python script or HTTP request string in `payload.poc_code`. Submit the PoC to trigger sandbox execution and verification.
-- **`binary_audit`.** Start with `ida_headless.binary_survey` for
+- **`binary_audit`.** Start with `rea.binary_overview` for
   one-call orientation (overview + attack surface + complexity-ranked
-  hotspots). Rank targets with `list_functions(order_by="complexity_desc", exclude_thunks=true, exclude_libraries=true)`.
-  Read function bodies with `decompile` -- do NOT use
-  `disassemble_function` unless you specifically need instruction-level
-  detail. Use `call_chain` / `call_graph` for caller/callee reachability
-  and `find_api_call_sites` to locate calls to named APIs (the kuna
-  backend has no `xrefs_to`/`xrefs_from`, no `trace_dataflow`, no
-  microcode). Use `capa_scan` up front to cheaply tag capabilities and
-  `entropy_analysis` + `list_strings` when packing/obfuscation is
-  suspected.
+  hotspots). Rank targets with `rea.list_procedures(order_by="complexity_desc", exclude_thunks=true, exclude_libraries=true)`.
+  Read function bodies with `rea.procedure_pseudo_code` -- do NOT use
+  `rea.procedure_assembly` unless you specifically need instruction-level
+  detail. Use `rea.get_call_graph` for caller/callee reachability
+  and `re_analytics.find_api_call_sites` to locate calls to named APIs
+  (rea serves disassembly, xrefs, and call graphs; re_analytics serves
+  capa, crypto, taint, and emulation). Use `re_analytics.capa_scan` up
+  front to cheaply tag capabilities and `rea.inspect_byte_entropy` +
+  `rea.list_strings` when packing/obfuscation is suspected. The target
+  is bound automatically per call (server-side) -- no open or binary
+  registration step exists.
 - **`mobile_audit`.** For `android_apk`: start with
   `android_mcp.apktool_decode` and `jadx_decompile`, then walk the
   MASVS surface -- `drozer_scan_apk` for exported components,
   `verify_apk_signing` for signature schemes, `analyze_native_libs`
-  for `lib/<abi>/*.so` (hand promising ones to `ida_headless`),
+  for `lib/<abi>/*.so` (hand promising ones to `rea`),
   `find_secrets` for embedded credentials, `yara_scan_dir` for known
   bad patterns. Correlate manifest permissions with actual API use
   via `verify_capabilities` / `classify_behavior`. Use `audit_mcp`
@@ -894,56 +896,61 @@ Composite security analysis
 
 Pair with `audit_mcp` against the jadx-decompiled tree for Java /
 Kotlin queries, and hand promising `lib/<abi>/*.so` files to
-`ida_headless` for native disassembly.
+`rea` for native disassembly.
 
-## `ida_headless` -- decision table (kuna backend)
+## `rea` / `re_analytics` -- decision table
 
-The `ida_headless` server on this platform is the kuna decompiler
-backend. It exposes a limited surface -- reach for these tools, in this
-order, and read pseudocode instead of asking for microcode / typed AST
-/ SMT reasoning the backend does not have.
+Binary analysis runs on two servers. `rea` (REA over Ghidra) serves
+disassembly, xrefs, call graphs, and byte-level navigation; reach for
+these tools first. `re_analytics` serves capa, crypto, taint, and
+emulation analyses. The target is bound automatically per call
+(server-side) -- there is no `open_binary` step and no binary
+registration; just call the tool. Read pseudocode instead of asking for
+microcode / typed AST reasoning the servers do not have.
 
 ### Supported navigation set -- start here
 
 | Tool | Primary purpose | When to use | Key args |
 | :--- | :--- | :--- | :--- |
-| `binary_survey` | One-call orientation | ALWAYS the first call on a new binary. Returns `overview`, `attack_surface`, and complexity-ranked `hotspots` in one shot. Read this before anything else. | `binary_id`, optional `max_hotspots` |
-| `decompile` | Hex-Rays pseudocode | Primary function-understanding tool. Read this to reason about control flow, buffer handling, size arithmetic, taint. PREFER over `disassemble_function` -- decompile is fast on kuna, disassemble is slow and often returns pending. | `binary_id`, `function` |
-| `call_chain` | Caller/callee chain | The kuna REPLACEMENT for `xrefs_to`/`xrefs_from`. Walk callers or callees of a function to prove reachability or find call sites. | `binary_id`, `target_function`, `direction` (`callers`/`callees`) |
-| `call_graph` | Local call graph | Wider caller/callee view around a function; use when a single chain is not enough. | `binary_id`, `function` |
-| `find_api_call_sites` | Named-API call sites | Locate every call to a named API (`memcpy`, `system`, `recv`, imported symbol). Use instead of `xrefs_to <api>`. | `binary_id`, `api_name` |
-| `list_functions` | Function inventory | Enumerate functions with `order_by="complexity_desc"`, `exclude_thunks`, `exclude_libraries`, `limit`. Use to rank targets when `binary_survey` hotspots are not enough. | `binary_id`, `order_by`, `exclude_thunks`, `exclude_libraries`, `limit` |
-| `imports` / `exports` | Boundary inspection | Map external API dependencies and exported entry points. | `binary_id` |
-| `segments` | Section layout | Enumerate segments/sections and their permissions. | `binary_id` |
-| `checksec` | Binary hardening | Report PIE / RELRO / stack canary / NX / CFI status. | `binary_id` |
-| `list_strings` | Global strings | ASCII/UTF strings across sections. | `binary_id`, `min_length` |
-| `capa_scan` | CAPA capabilities | High-level capability + ATT&CK tagging. | `binary_id` |
-| `classify_behavior` | Behavior class | Classify observed behaviors from static features. | `binary_id` |
-| `verify_capabilities` | Capability verification | Cross-check declared/expected capabilities against actual API use. | `binary_id` |
-| `detect_library_functions` | Library-function ID | Tag statically-linked library routines so you skip them. | `binary_id` |
-| `detect_crypto_primitives` | Crypto primitive ID | Identify crypto routines by constants and structure. | `binary_id` |
-| `entropy_analysis` | Entropy scan | Locate packed/encrypted regions. | `binary_id` |
-| `disassemble_function` | Instruction disassembly | Only when you specifically need register/branch detail decompile cannot show. Kuna's implementation is SLOW and often returns pending -- prefer `decompile`. | `binary_id`, `function` |
+| `rea.binary_overview` | One-call orientation | ALWAYS the first call on a new binary. Returns `overview`, `attack_surface`, and complexity-ranked `hotspots` in one shot. Read this before anything else. | optional `max_hotspots` |
+| `rea.procedure_pseudo_code` | Decompiler pseudocode | Primary function-understanding tool. Read this to reason about control flow, buffer handling, size arithmetic, taint. PREFER over `rea.procedure_assembly`. | `procedure` (name or address) |
+| `rea.get_call_graph` | Caller/callee graph | Walk callers or callees of a function to prove reachability or find call sites. Use `rea.build_call_path` for a specific path between two procedures. | `target_function`, `direction` (`callers`/`callees`), `path` (from/to) |
+| `rea.procedure_callers` | Direct callers | Narrower view: only the callers of one procedure. | `procedure` |
+| `rea.procedure_callees` | Direct callees | Narrower view: only the callees of one procedure. | `procedure` |
+| `rea.procedure_references` | Data/xref references | References to or from a procedure (strings, globals). | `procedure`, `direction` |
+| `re_analytics.find_api_call_sites` | Named-API call sites | Locate every call to a named API (`memcpy`, `system`, `recv`, imported symbol). Use instead of raw xrefs to an API name. | `api_name` |
+| `rea.list_procedures` | Function inventory | Enumerate procedures with `order_by="complexity_desc"`, `exclude_thunks`, `exclude_libraries`, `limit`. Use to rank targets when `binary_overview` hotspots are not enough. | `order_by`, `exclude_thunks`, `exclude_libraries`, `limit` |
+| `rea.inspect_pe_imports` / `rea.inspect_native_exports` | Boundary inspection | Map external API dependencies and exported entry points. | -- |
+| `rea.list_segments` | Section layout | Enumerate segments/sections and their permissions. | -- |
+| `re_analytics.checksec` | Binary hardening | Report PIE / RELRO / stack canary / NX / CFI status. | -- |
+| `rea.list_strings` | Global strings | ASCII/UTF strings across sections. | `min_length` |
+| `re_analytics.capa_scan` | CAPA capabilities | High-level capability + ATT&CK tagging. | -- |
+| `re_analytics.classify_behavior` | Behavior class | Classify observed behaviors from static features. | -- |
+| `re_analytics.verify_capabilities` | Capability verification | Cross-check declared/expected capabilities against actual API use. | -- |
+| `re_analytics.detect_crypto_primitives` | Crypto primitive ID | Identify crypto routines by constants and structure. | -- |
+| `re_analytics.find_crypto_constants` | Crypto constant scan | Locate known crypto constants (S-boxes, primes, K constants). | -- |
+| `rea.inspect_byte_entropy` | Entropy scan | Locate packed/encrypted regions. | -- |
+| `rea.procedure_assembly` | Instruction disassembly | Only when you specifically need register/branch detail pseudocode cannot show. Prefer `rea.procedure_pseudo_code`. | `procedure` |
+| `rea.xrefs` | Cross-references | Raw xref listing for a symbol or address when the specialized callers/callees tools do not fit. | `address`, `direction` |
 
-### NOT AVAILABLE on the kuna backend -- do NOT call
+### NOT AVAILABLE -- do NOT call
 
-The kuna backend returns `{status:"unsupported", tool, reason}` for the
-tools below. Do NOT emit a `tool_run` for them -- the turn is wasted.
-Where a supported alternative exists, use it.
+The servers below do not expose the tools in this table. Do NOT emit a
+`tool_run` for them -- the turn is wasted. Where a supported alternative
+exists, use it.
 
 | Do not call | Reason / alternative |
 | :--- | :--- |
-| `xrefs_to`, `xrefs_from` | No xref index. Use `call_chain` / `call_graph` for function-level reachability; use `find_api_call_sites` for calls to a named API. |
-| `trace_dataflow`, `interprocedural_taint`, `def_use`, `value_ranges` | No microcode / typed-AST layer. Read `decompile` pseudocode across the involved functions and reason about the flow directly, citing the pseudocode lines. |
-| `get_microcode`, `query_ctree`, `hexrays_warnings`, `pseudocode_slice_view` | No microcode / ctree access. Reason from `decompile` pseudocode; when you need a specific line, cite it verbatim in your reasoning. |
-| `search_pattern` | Not indexed on kuna. Use `list_strings`, `find_api_call_sites`, `list_functions`, or `capa_scan` to locate the pattern's downstream evidence. |
-| `detect_obfuscation`, `recover_cfg`, `detect_protocol_state_machine`, `recover_class_hierarchy`, `detect_stack_strings`, `detect_dynamic_resolution`, `generate_yara_rule` | Not implemented. When obfuscation is suspected, combine `entropy_analysis`, `list_strings`, `capa_scan`, and `decompile` and describe the pattern from the pseudocode. |
-| `prove_bounds_sufficient`, `prove_predicate_opaque`, `prove_equivalence`, `prove_overflow`, `constrained_reachability`, `assess_exploitability` | No SMT solver on kuna. Reason from `decompile` pseudocode: cite operand ranges, gating checks, allocator behaviour, and walk the 5-step arithmetic rule by hand. |
-| `stack_frame` | No stack-frame view. Read the prologue lines of `decompile` and infer locals from the pseudocode. |
-| `patch_assemble` | Not implemented. Describe the fix in prose in the finding; do not attempt to apply it. |
+| `trace_dataflow`, `def_use` | No generic microcode-level dataflow tool under that name. Use `re_analytics.interprocedural_taint` for taint across procedures, or read `rea.procedure_pseudo_code` across the involved functions and reason about the flow directly, citing the pseudocode lines. |
+| `get_microcode`, `query_ctree`, `hexrays_warnings` | No microcode / ctree access. Reason from `rea.procedure_pseudo_code`; when you need a specific line, cite it verbatim in your reasoning. |
+| `search_pattern` (raw grep-style byte search) | Prefer `rea.list_strings`, `re_analytics.find_api_call_sites`, `rea.list_procedures`, or `re_analytics.capa_scan` to locate the pattern's downstream evidence. Use `rea.search_bytes` only for a concrete byte signature. |
+| `detect_obfuscation`, `recover_cfg`, `detect_stack_strings`, `generate_yara_rule` | Not implemented. When obfuscation is suspected, combine `rea.inspect_byte_entropy`, `rea.list_strings`, `re_analytics.capa_scan`, and `rea.procedure_pseudo_code` and describe the pattern from the pseudocode. |
+| `prove_bounds_sufficient`, `prove_predicate_opaque`, `prove_equivalence`, `prove_overflow`, `constrained_reachability` | No SMT proof tool under those names. Reason from `rea.procedure_pseudo_code`: cite operand ranges, gating checks, allocator behaviour, and walk the 5-step arithmetic rule by hand. |
+| `stack_frame` (dedicated frame view) | No dedicated stack-frame tool. Use `rea.procedure_info` for stack-frame / local layout, or read the prologue lines of `rea.procedure_pseudo_code` and infer locals from the pseudocode. |
+| `patch_assemble` (apply patch to binary) | Not implemented. Describe the fix in prose in the finding; do not attempt to apply it. |
 
-Rule of thumb: if a question needs microcode, typed AST, taint tracking,
-or SMT proof, the answer is `decompile` plus reasoning -- not another
+Rule of thumb: if a question needs microcode or a typed AST,
+the answer is `rea.procedure_pseudo_code` plus reasoning -- not another
 tool call.
 
 ## Negative-verdict vocabulary (code-classified head window)
@@ -1178,8 +1185,8 @@ one full investigation + 5 spurious variant orders.)
    parser's range check. NEVER assume a `size_t` operand reaches
    `SIZE_MAX` just because the type permits it.
 2. **Walk the call graph** to every site influencing those operands
-   (`audit_mcp.callers_of` on source; `ida_headless.call_chain` /
-   `find_api_call_sites` on binary -- kuna has no `xrefs_to`); read
+   (`audit_mcp.callers_of` on source; `rea.get_call_graph` /
+   `re_analytics.find_api_call_sites` on binary); read
    the literal argument each caller passes. Compile-time constants
    bound that path.
 3. **Identify the gating invariant.** Search the function body ABOVE the

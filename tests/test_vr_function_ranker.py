@@ -77,8 +77,7 @@ class TestRankingSourceEnum:
         assert values == {
             "audit_mcp_fuzzing_targets",
             "audit_mcp_correlated",
-            "ida_assess_exploitability",
-            "ida_binary_survey",
+            "re_analytics_binary_survey",
         }
 
 
@@ -222,26 +221,26 @@ class TestDispatcherErrorPaths:
             "aila.modules.vr.services.stage_tracker.load_target_stages",
             _raise,
         )
-        d = FunctionRankingDispatcher(ida=_FakeMcp({}), audit_mcp=_FakeMcp({}))
+        d = FunctionRankingDispatcher(re_analytics=_FakeMcp({}), audit_mcp=_FakeMcp({}))
         with pytest.raises(StageTrackerError):
             await d.rank(str(uuid.uuid4()))
 
 
 class TestRankBinaryViaBinarySurvey:
-    """The binary path ranks kuna ``binary_survey`` hotspots by cyclomatic
-    complexity. ``_rank_binary`` only calls the IDA bridge (no DB), so it is
-    exercised directly with a canned bridge.
+    """The binary path ranks re_analytics ``binary_survey`` hotspots by
+    cyclomatic complexity. ``_rank_binary`` only calls the bridge (no DB),
+    so it is exercised directly with a canned bridge.
     """
 
     @pytest.mark.asyncio
-    async def test_missing_binary_id_raises(self) -> None:
-        d = FunctionRankingDispatcher(ida=_FakeMcp({}), audit_mcp=_FakeMcp({}))
+    async def test_missing_target_path_raises(self) -> None:
+        d = FunctionRankingDispatcher(re_analytics=_FakeMcp({}), audit_mcp=_FakeMcp({}))
         with pytest.raises(FunctionRankerError):
             await d._rank_binary("tgt-1", {})
 
     @pytest.mark.asyncio
     async def test_survey_hotspots_ranked_by_complexity(self) -> None:
-        ida = _FakeMcp({
+        bridge = _FakeMcp({
             "binary_survey": {
                 "hotspots": [
                     {"name": "mid", "address": "0x2000", "complexity": 8},
@@ -251,26 +250,26 @@ class TestRankBinaryViaBinarySurvey:
                 ],
             },
         })
-        d = FunctionRankingDispatcher(ida=ida, audit_mcp=_FakeMcp({}))
-        ranking = await d._rank_binary("tgt-1", {"binary_id": "b1"})
+        d = FunctionRankingDispatcher(re_analytics=bridge, audit_mcp=_FakeMcp({}))
+        ranking = await d._rank_binary("tgt-1", {"target_path": "C:/t/a.exe"})
 
-        assert ranking.source is RankingSource.IDA_BINARY_SURVEY
+        assert ranking.source is RankingSource.RE_ANALYTICS_BINARY_SURVEY
         assert [r.name for r in ranking.top_k] == ["hot", "mid", "cold"]
         assert [r.rank for r in ranking.top_k] == [1, 2, 3]
         # Most complex hotspot saturates the log-scale ceiling; scores fall off.
         assert ranking.top_k[0].score == pytest.approx(1.0)
         assert ranking.top_k[0].score > ranking.top_k[1].score > ranking.top_k[2].score
         assert ranking.total_candidates == 3
-        # Secondary survey signals surface in the reasons.
         assert "cyclomatic_complexity=40" in ranking.top_k[0].reasons
         assert "callees=12" in ranking.top_k[0].reasons
         assert "string_refs=3" in ranking.top_k[0].reasons
-        # Only the survey is called; no list_functions fallback.
-        assert [c[0] for c in ida.calls] == ["binary_survey"]
+        # The survey is called once, bound to the target's local path.
+        assert [c[0] for c in bridge.calls] == ["binary_survey"]
+        assert bridge.calls[0][1].get("target_path") == "C:/t/a.exe"
 
     @pytest.mark.asyncio
     async def test_hotspots_without_address_dropped(self) -> None:
-        ida = _FakeMcp({
+        bridge = _FakeMcp({
             "binary_survey": {
                 "hotspots": [
                     {"name": "keep", "address": "0x1000", "complexity": 5},
@@ -278,40 +277,18 @@ class TestRankBinaryViaBinarySurvey:
                 ],
             },
         })
-        d = FunctionRankingDispatcher(ida=ida, audit_mcp=_FakeMcp({}))
-        ranking = await d._rank_binary("tgt-1", {"binary_id": "b1"})
+        d = FunctionRankingDispatcher(re_analytics=bridge, audit_mcp=_FakeMcp({}))
+        ranking = await d._rank_binary("tgt-1", {"target_path": "C:/t/a.exe"})
         assert [r.name for r in ranking.top_k] == ["keep"]
         assert ranking.total_candidates == 1
 
     @pytest.mark.asyncio
-    async def test_empty_survey_falls_back_to_list_functions(self) -> None:
-        ida = _FakeMcp({
-            "binary_survey": {"hotspots": []},
-            "list_functions": {
-                "functions": [
-                    {"name": "big", "address": "0x4000", "cyclomatic_complexity": 30},
-                    {"name": "small", "address": "0x5000", "cyclomatic_complexity": 2},
-                ],
-            },
-        })
-        d = FunctionRankingDispatcher(ida=ida, audit_mcp=_FakeMcp({}))
-        ranking = await d._rank_binary("tgt-1", {"binary_id": "b1"})
-
-        assert [r.name for r in ranking.top_k] == ["big", "small"]
-        assert ranking.top_k[0].score == pytest.approx(1.0)
-        # The fallback ordered by complexity_desc was issued.
-        actions = [c[0] for c in ida.calls]
-        assert actions == ["binary_survey", "list_functions"]
-        assert ida.calls[1][1].get("order_by") == "complexity_desc"
-
-    @pytest.mark.asyncio
-    async def test_no_hotspots_anywhere_returns_empty_ranking(self) -> None:
-        ida = _FakeMcp({
-            "binary_survey": {"hotspots": []},
-            "list_functions": {"functions": []},
-        })
-        d = FunctionRankingDispatcher(ida=ida, audit_mcp=_FakeMcp({}))
-        ranking = await d._rank_binary("tgt-1", {"binary_id": "b1"})
+    async def test_empty_survey_returns_empty_ranking(self) -> None:
+        bridge = _FakeMcp({"binary_survey": {"hotspots": []}})
+        d = FunctionRankingDispatcher(re_analytics=bridge, audit_mcp=_FakeMcp({}))
+        ranking = await d._rank_binary("tgt-1", {"target_path": "C:/t/a.exe"})
         assert ranking.top_k == []
         assert ranking.total_candidates == 0
-        assert "no hotspots" in ranking.notes
+        assert "no address-tagged functions" in ranking.notes
+
+

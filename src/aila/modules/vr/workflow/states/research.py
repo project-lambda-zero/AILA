@@ -17,8 +17,8 @@ __all__ = ["state_research"]
 
 _BUDGET_EXHAUSTED_MARKER = "(budget exhausted; agent could not converge)"
 _FORWARDED_KEYS: tuple[str, ...] = (
-    "project_id", "target_path", "patched_path", "binary_id",
-    "patched_binary_id", "mitigations", "cve_id", "integration",
+    "project_id", "target_path", "patched_path",
+    "mitigations", "cve_id", "integration",
     "context_notes", "team_id",
 )
 
@@ -37,10 +37,11 @@ async def state_research(input: dict[str, Any], services: Any) -> StateResult:
         run_id=services.run_id,
         project_id=str(input.get("project_id") or ""),
         cve_id=str(input.get("cve_id") or ""),
-        binary_id=str(input["binary_id"]),
-        patched_binary_id=input.get("patched_binary_id"),
+        target_path=str(input["target_path"]),
+        patched_target_path=input.get("patched_path"),
         mitigations=input.get("mitigations") or {},
-        ida_bridge=services.ida_bridge,
+        rea_bridge=services.rea_bridge,
+        re_analytics_bridge=services.re_analytics_bridge,
         config=services.config,
         budget=budget,
         context_notes=str(input.get("context_notes") or ""),

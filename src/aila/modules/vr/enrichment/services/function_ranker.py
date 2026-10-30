@@ -9,11 +9,13 @@ already implement graph-aware ranking:
                    + taint reachability). Optional ``scan_and_correlate``
                    overlay when a SAST scanner is wired in.
 
-  binary target  → IDA ``binary_survey`` hotspots (kuna-supported),
-                   ranked by cyclomatic complexity with a log-scale
-                   normalized score. Falls back to
-                   ``list_functions(order_by=complexity_desc)`` when the
-                   survey returns no hotspots.
+  binary target  → REA ``list_procedures`` inventory (bound via
+                   ``binary_overview`` / target_path), ranked by
+                   cyclomatic complexity when the provider reports it
+                   (Ghidra ``detail=complete``) with a log-scale
+                   normalized score. Without complexity metadata the
+                   score collapses to provider order and the report
+                   says so in ``notes``.
 
 The dispatcher persists the result into
 ``vr_targets.capability_profile_json.function_ranking`` and updates
@@ -62,10 +64,9 @@ _log = logging.getLogger(__name__)
 class McpCallable(Protocol):
     """Subset of bridge tool interface used by the dispatcher.
 
-    Both ``IDABridgeTool`` and ``AuditMcpBridgeTool`` satisfy this
-    protocol. The dispatcher takes the two callables as constructor
-    arguments so it's unit-testable against fakes -- no live MCP server
-    required for tests.
+    Every MCP bridge tool satisfies this protocol. The dispatcher takes
+    the callables as constructor arguments so it's unit-testable against
+    fakes -- no live MCP server required for tests.
     """
 
     async def forward(self, action: str | None = None, **kwargs: Any) -> dict:
@@ -86,12 +87,12 @@ class FunctionRankingDispatcher:
 
     def __init__(
         self,
-        ida: McpCallable,
+        re_analytics: McpCallable,
         audit_mcp: McpCallable,
         *,
         top_k: int = 50,
     ) -> None:
-        self._ida = ida
+        self._re_analytics = re_analytics
         self._audit_mcp = audit_mcp
         self._top_k = top_k
 
@@ -262,56 +263,36 @@ class FunctionRankingDispatcher:
         )
 
     async def _rank_binary(self, target_id: str, handles: dict[str, Any]) -> FunctionRanking:
-        binary_id = handles.get("binary_id")
-        if not binary_id:
+        target_path = handles.get("target_path")
+        if not target_path:
             raise FunctionRankerError(
                 f"target {target_id} not analyzed yet -- POST "
                 "/vr/targets/{id}/analyze or wait for auto-ingestion",
             )
 
-        # Rank binaries from kuna's ``binary_survey`` hotspots (complexity
-        # sorted, pre-scored). ``find_api_call_sites`` + ``assess_exploitability``
-        # were the prior path; kuna returns unsupported for assess and
-        # emits call sites in a different shape, so the previous pipeline
-        # always produced empty rankings. Falls back to ``list_functions``
-        # ordered by cyclomatic complexity when the survey yields nothing.
-        survey = await self._ida.forward(
+        # Rank binaries by cyclomatic complexity from re_analytics'
+        # ``binary_survey`` (McCabe E - N + 2 over each recovered CFG,
+        # with callee / caller / string-reference counts). The survey
+        # returns every surveyed function sorted by complexity, so one
+        # call yields the full candidate set.
+        survey = await self._re_analytics.forward(
             action="binary_survey",
-            binary_id=binary_id,
-            max_hotspots=max(self._top_k, 20),
+            target_path=target_path,
+            max_hotspots=self._top_k,
         )
-        hotspots = survey.get("hotspots") if isinstance(survey, dict) else None
-        if not hotspots:
-            lf = await self._ida.forward(
-                action="list_functions",
-                binary_id=binary_id,
-                order_by="complexity_desc",
-                exclude_thunks=True,
-                exclude_libraries=True,
-                limit=max(self._top_k, 20),
-            )
-            if isinstance(lf, dict):
-                hotspots = [
-                    {
-                        "name": f.get("name"),
-                        "address": f.get("address"),
-                        "complexity": f.get("cyclomatic_complexity", 0),
-                    }
-                    for f in (lf.get("functions") or [])
-                ]
-            else:
-                hotspots = []
-
-        hotspots = [h for h in hotspots if h.get("address")]
-
+        raw = survey.get("hotspots") if isinstance(survey, dict) else None
+        hotspots = [
+            h for h in (raw if isinstance(raw, list) else [])
+            if isinstance(h, dict) and h.get("address")
+        ]
         if not hotspots:
             return FunctionRanking(
                 target_id=target_id,
-                source=RankingSource.IDA_BINARY_SURVEY,
+                source=RankingSource.RE_ANALYTICS_BINARY_SURVEY,
                 produced_at=utc_now(),
                 total_candidates=0,
                 top_k=[],
-                notes="binary_survey returned no hotspots",
+                notes="re_analytics.binary_survey returned no address-tagged functions",
             )
 
         hotspots.sort(key=lambda h: float(h.get("complexity") or 0), reverse=True)
@@ -336,11 +317,11 @@ class FunctionRankingDispatcher:
 
         return FunctionRanking(
             target_id=target_id,
-            source=RankingSource.IDA_BINARY_SURVEY,
+            source=RankingSource.RE_ANALYTICS_BINARY_SURVEY,
             produced_at=utc_now(),
             total_candidates=len(hotspots),
             top_k=top_k,
-            notes=f"ranked {len(top_k)} hotspots from binary_survey by cyclomatic complexity",
+            notes="ranked by re_analytics.binary_survey cyclomatic complexity",
         )
 
 

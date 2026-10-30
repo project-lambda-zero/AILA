@@ -19,7 +19,7 @@ Complete setup guide for the AILA Vulnerability Research module. Covers infrastr
 | Service | Role | Default URL |
 |---|---|---|
 | **audit-mcp** | Source code indexing, semantic search, function reading | `http://127.0.0.1:18822` |
-| **ida-headless-mcp** | Binary decompilation, function analysis (optional -- only for binary targets) | `http://127.0.0.1:18821` |
+| **rea** + **re_analytics** | Binary decompilation, function analysis (optional -- only for binary targets); stdio children spawned per AILA process, no URL | `stdio://rea`, `stdio://re_analytics` |
 | **android-mcp** | Android APK audit: apktool, jadx, androguard, MobSF, signing checks, native-lib hardening (optional -- only for `android_apk` targets) | `http://127.0.0.1:18823` |
 
 **LLM provider (at least one required):**
@@ -140,18 +140,23 @@ The audit-mcp server provides:
 - Function reading (by name or file:line range)
 - Cross-reference analysis
 
-### 3.2 ida-headless-mcp (optional -- for binary targets)
+### 3.2 rea + re_analytics (optional -- for binary targets)
 
-Only needed if you analyze compiled binaries (ELF, PE, Mach-O):
+Only needed if you analyze compiled binaries (ELF, PE, Mach-O).
 
-```bash
-cd ..
-git clone <your-ida-headless-mcp-repo-url> ida-headless-mcp-exp
-cd ida-headless-mcp-exp
-pip install -e .
-```
+- **rea** -- the npm `rea-agents` package with its Ghidra provider. AILA
+  spawns one REA MCP-STDIO child per process on demand; nothing to
+  install beyond node + the package, and nothing to start manually.
+  Point `REA_MCP_COMMAND` at your install (shlex-split argv, forward
+  slashes). `start.sh` exports working defaults for `REA_MCP_COMMAND`,
+  `GHIDRA_INSTALL_DIR`, `JAVA_HOME`, and `REA_ANALYSIS_PROVIDER=ghidra`.
+- **re_analytics** -- in-tree (`src/aila/platform/re_analytics`), launched
+  automatically as `python -m aila.platform.re_analytics`. Preserve of
+  the archived ida-headless tool surface (capa, crypto, dataflow,
+  emulation, patching) under the same tool / argument names, keyed by
+  `target_path` (absolute local binary path).
 
-Requires a licensed IDA Pro installation.
+Requires a JDK (Ghidra provider) on the same host.
 
 ### 3.3 android-mcp (optional -- for Android APK targets)
 
@@ -211,9 +216,13 @@ AUDIT_MCP_THREAD_POOL_LIMIT=64
 # forever and starve every query that touches the index.
 AUDIT_MCP_SEMBLE_BUILD_TIMEOUT_S=7200
 
-# ida-headless-mcp (optional, HTTP server, default :18821)
-IDA_HEADLESS_URL=http://127.0.0.1:18821
-IDA_HEADLESS_TIMEOUT=120
+# rea + re_analytics (optional, stdio children spawned per process;
+# nothing to start manually). REA_MCP_COMMAND is a shlex-split argv
+# (forward slashes); start.sh exports these defaults.
+REA_MCP_COMMAND=C:/tools/node/node.exe C:/tools/rea/node_modules/rea-agents/scripts/rea.mjs mcp
+GHIDRA_INSTALL_DIR=C:/tools/ghidra
+JAVA_HOME=C:/tools/jdk
+REA_ANALYSIS_PROVIDER=ghidra
 
 # android-mcp (optional, HTTP server, default :18823)
 ANDROID_MCP_URL=http://127.0.0.1:18823
@@ -258,10 +267,12 @@ bash start.sh
 
 This starts all services:
 - audit-mcp server (port 18822)
-- ida-headless-mcp server (port 18821, if available)
 - AILA backend (uvicorn, port 8000)
 - AILA workers (one per queue: default, vr, vulnerability, forensics)
 - AILA frontend (Vite dev server, port 3000)
+
+rea / re_analytics need no launch step -- each AILA process spawns its
+own stdio child (see section 3.2).
 
 `start.sh` does **not** currently spawn android-mcp -- the operator
 launches it in its own terminal (`python -m android_mcp --mode http
@@ -374,8 +385,8 @@ The investigation detail page shows:
 | `AUDIT_MCP_TOOL_CAP_<NAME>` | per-tool default | Per-tool concurrency cap; name uppercased |
 | `AUDIT_MCP_TIMEOUT_<NAME>` | per-tool default | Per-tool wall-clock cap (seconds); name uppercased |
 | `AUDIT_MCP_SEMBLE_BUILD_TIMEOUT_S` | `7200` | Hard ceiling for semble cold-build subprocess |
-| `IDA_HEADLESS_URL` | `http://127.0.0.1:18821` | ida-headless-mcp server URL |
-| `IDA_HEADLESS_TIMEOUT` | `120` | Timeout for IDA tool calls (seconds) |
+| `REA_MCP_COMMAND` | _(see `start.sh`)_ | REA stdio spawn argv (shlex-split, forward slashes) |
+| `GHIDRA_INSTALL_DIR` / `JAVA_HOME` / `REA_ANALYSIS_PROVIDER` | _(see `start.sh`)_ | Ghidra provider environment for REA |
 | `ANDROID_MCP_URL` | `http://127.0.0.1:18823` | android-mcp server URL |
 | `ANDROID_MCP_TIMEOUT` | `1800` | Absolute network ceiling per bridge HTTP call (seconds); per-stage StageTracker timeouts apply tighter caps |
 | `ANDROID_MCP_UPLOAD_DIR` | `~/.android-mcp/uploads` | APK upload root; per-team subdir `<root>/<team_id>/<sha>.apk` |
@@ -459,8 +470,9 @@ conn.close()
                     │       ▼              ▼               ▼      │
                     │  6 branches    tool calls      findings     │
                     │  (H/N/M/Y/R/W) (audit-mcp)    patterns     │
-                    │                (ida-headless)  disclosures  │
-                    │                (android-mcp)                 │
+                    │                (rea /         disclosures  │
+                    │                 re_analytics)              │
+                    │                (android-mcp)               │
                     └──────────────────────────────────────────────┘
 ```
 

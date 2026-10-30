@@ -730,7 +730,7 @@ class PlatformConfigSchema(BaseModel):
             "through the operator's ``opentelemetry-instrument`` bootstrap; "
             "a value flip lands on the next call without a worker restart. "
             "Cross-boundary MCP trace-context propagation "
-            "(audit-mcp / ida-headless / semble stitching) is intentionally "
+            "(audit-mcp / semble stitching) is intentionally "
             "NOT gated by this flag -- issue #160 tracks that as a follow-up "
             "slice."
         ),

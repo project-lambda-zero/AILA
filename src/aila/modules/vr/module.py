@@ -52,9 +52,9 @@ from .tool_keys import (
     ALL_TOOL_KEYS,
     TOOL_ADVISORY_BUILDER,
     TOOL_CRASH_TRIAGE,
-    TOOL_IDA_BRIDGE,
     TOOL_PATCH_DIFFER,
     TOOL_POC_RUNNER,
+    TOOL_REA_BRIDGE,
 )
 from .workflow.finalize import sweep_finalizable_investigations
 
@@ -173,7 +173,7 @@ class VRModule(ModuleProtocol):
     def required_tools(self) -> list[str]:
         """Return tool keys this module needs in its runtime tool scope."""
         return [
-            TOOL_IDA_BRIDGE,
+            TOOL_REA_BRIDGE,
             TOOL_POC_RUNNER,
             TOOL_PATCH_DIFFER,
             TOOL_CRASH_TRIAGE,
@@ -213,9 +213,10 @@ class VRModule(ModuleProtocol):
     ) -> None:
         """Register VR tables, config schema, and tool instances.
 
-        Tool construction is dependency-ordered: PatchDifferTool composes the
-        already-built IDA bridge so we instantiate the bridge first and
-        thread the same instance into the differ.
+        Tool construction is dependency-ordered: PatchDifferTool composes
+        the re_analytics bridge (diff_binary / diff_function live on
+        re_analytics) so we build that bridge alongside the core REA
+        bridge and thread the instance into the differ.
         """
         if schema_registry is not None:
             from aila.modules.vr.db_models import VRFindingRecord, VRProjectRecord
@@ -231,10 +232,13 @@ class VRModule(ModuleProtocol):
         from aila.modules.vr.tools.poc_runner import PoCRunnerTool
         from aila.platform.mcp.factory import make_bridge
 
-        ida_bridge = make_bridge("ida_headless", module_id="vr", recorder=record_call)
-        tool_registry.register(TOOL_IDA_BRIDGE, ida_bridge)
+        rea_bridge = make_bridge("rea", module_id="vr", recorder=record_call)
+        re_analytics_bridge = make_bridge(
+            "re_analytics", module_id="vr", recorder=record_call,
+        )
+        tool_registry.register(TOOL_REA_BRIDGE, rea_bridge)
         tool_registry.register(TOOL_POC_RUNNER, PoCRunnerTool(settings))
-        tool_registry.register(TOOL_PATCH_DIFFER, PatchDifferTool(ida_bridge))
+        tool_registry.register(TOOL_PATCH_DIFFER, PatchDifferTool(re_analytics_bridge))
         tool_registry.register(TOOL_CRASH_TRIAGE, CrashTriageTool())
         tool_registry.register(TOOL_ADVISORY_BUILDER, AdvisoryBuilderTool())
 
@@ -443,9 +447,9 @@ class VRModule(ModuleProtocol):
     def health_checks(self) -> dict[str, object]:
         """Probe every MCP server the VR runtime depends on.
 
-        VR reaches ida-headless (binary analysis), audit-mcp (source-
-        graph indexing), and android-mcp (APK audit) at runtime. Each
-        probe resolves the current base URL through :func:`make_bridge`
+        VR reaches rea + re_analytics (binary analysis), audit-mcp
+        (source-graph indexing), and android-mcp (APK audit) at runtime.
+        Each probe resolves the current base URL through :func:`make_bridge`
         (env -> ConfigRegistry -> catalog -> default) and probes
         ``/health`` through the platform McpClient transport (bounded
         timeout) so a wedged server never blocks the platform
@@ -453,7 +457,8 @@ class VRModule(ModuleProtocol):
         a ``down`` entry; the probe never raises.
         """
         return {
-            "ida_headless_reachability": _mcp_health_probe(self.module_id, "ida_headless"),
+            "rea_reachability": _mcp_health_probe(self.module_id, "rea"),
+            "re_analytics_reachability": _mcp_health_probe(self.module_id, "re_analytics"),
             "audit_mcp_reachability": _mcp_health_probe(self.module_id, "audit_mcp"),
             "android_mcp_reachability": _mcp_health_probe(self.module_id, "android_mcp"),
         }

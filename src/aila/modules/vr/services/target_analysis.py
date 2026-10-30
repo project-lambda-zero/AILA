@@ -2,24 +2,25 @@
 
 The operator submits descriptors that contain ONLY what they actually
 know (a repo URL, a file path, a kernel version). This service reads
-the descriptor, calls the right MCP bridge to ingest the artifact,
-polls until ready, and stores the resulting internal handles in
+the descriptor, calls the right MCP bridge to bind the artifact,
+and stores the resulting internal handles in
 ``vr_targets._mcp_handles_json`` for downstream enrichment + ranking.
 
 Per-kind dispatch:
 
   source_repo:      audit_mcp.index_codebase(repo_url, ref) → poll_index → store index_id
-  native_binary:    ida_headless.upload(file_path) → poll_analysis → store binary_id
-  kernel_image:     ida_headless.upload(image_path) → poll_analysis → store binary_id
-  kernel_module:    ida_headless.upload(ko_path) → poll_analysis → store binary_id
-  hypervisor_image: ida_headless.upload(binary_path) → poll_analysis → store binary_id
-  apk / ipa / jar / dotnet_assembly: ida_headless.upload(path) → poll_analysis → store binary_id
+  native_binary:    rea.open_binary(binary_path) → store target_path
+  kernel_image:     rea.open_binary(image_path) → store target_path
+  kernel_module:    rea.open_binary(ko_path) → store target_path
+  hypervisor_image: rea.open_binary(binary_path) → store target_path
+  apk / ipa / jar / dotnet_assembly: rea.open_binary(path) → store target_path
   cve / protocol_capture / crash_input / patch_diff:
                     No ingestion needed -- capability_profile builds from descriptor alone.
 
-After ingestion the service auto-detects primary_language when the
-operator didn't supply one (audit_mcp.detect_languages or
-ida_headless.binary_survey).
+Binary kinds open by ABSOLUTE LOCAL PATH: REA imports + auto-analyzes on
+open and there is no upload / poll-analysis cycle. After ingestion the
+service auto-detects primary_language when the operator didn't supply
+one (audit_mcp.detect_languages or rea.binary_overview).
 """
 from __future__ import annotations
 
@@ -578,11 +579,15 @@ class TargetAnalysisService:
 
     def __init__(
         self,
-        ida: Any | None = None,
+        rea: Any | None = None,
+        re_analytics: Any | None = None,
         audit_mcp: Any | None = None,
         android_mcp: Any | None = None,
     ) -> None:
-        self._ida = ida or make_bridge("ida_headless", module_id="vr", recorder=record_call)
+        self._rea = rea or make_bridge("rea", module_id="vr", recorder=record_call)
+        self._re_analytics = re_analytics or make_bridge(
+            "re_analytics", module_id="vr", recorder=record_call,
+        )
         self._audit_mcp = audit_mcp or make_bridge("audit_mcp", module_id="vr", recorder=record_call)
         self._android_mcp = android_mcp or make_bridge("android_mcp", module_id="vr", recorder=record_call)
 
@@ -597,7 +602,7 @@ class TargetAnalysisService:
           sequentially, each under its own StageTracker. See
           :meth:`_analyze_android_apk`.
         * All other kinds → run the legacy INGESTION stage (clone /
-          upload / index via audit-mcp or ida-headless-mcp).
+          index via audit-mcp, or open-by-local-path via rea).
 
         Stages that don't apply to the kind are pre-marked DONE-skipped
         at entry so ``roll_up_overall_state`` converges on READY once
@@ -1417,59 +1422,46 @@ class TargetAnalysisService:
         descriptor: dict[str, Any],
         current_handles: dict[str, Any] | None = None,
     ) -> tuple[dict[str, Any], str | None]:
-        """Resolve a binary handle on the IDA MCP.
+        """Bind a binary target on the REA MCP by absolute local path.
 
         Two paths:
 
         1. The browser uploaded the file via POST ``/vr/targets/{id}/upload``
-           -- that endpoint streams bytes through to the IDA MCP and stores
-           the returned ``binary_id`` in ``mcp_handles_json``. We just poll.
-        2. Operator pasted a path in the descriptor that already exists on
-           the IDA MCP filesystem. Dispatch ``ida.upload(file_path=...)``
-           and store the new ``binary_id``.
+           -- that endpoint staged the bytes on the local disk and stored
+           the path in ``mcp_handles_json`` as ``target_path``. We re-open
+           it (REA retains the analysis database across re-opens of the
+           same path, so this is cheap).
+        2. Operator pasted a path in the descriptor that exists on the
+           REA host's filesystem. Open it directly.
+
+        Either way the result handle is ``target_path`` -- there is no
+        upload / binary_id registration step.
         """
+        from aila.modules.vr.services.binary_path import (
+            TARGET_PATH_DESCRIPTOR_KEYS,
+            binary_path_from_target,
+        )
+
         current_handles = current_handles or {}
-        binary_id = current_handles.get("binary_id")
-        if not binary_id:
-            path_keys = (
-                "binary_path", "image_path", "ko_path", "apk_path",
-                "ipa_path", "jar_path", "dll_path",
+        binary_path = binary_path_from_target(descriptor, current_handles)
+        if not binary_path:
+            raise TargetAnalysisError(
+                f"{kind.value} target requires an upload via "
+                f"POST /vr/targets/{{id}}/upload, or a descriptor field "
+                f"naming a local file path REA can open: "
+                f"{list(TARGET_PATH_DESCRIPTOR_KEYS)}",
             )
-            binary_path: str | None = None
-            for key in path_keys:
-                v = descriptor.get(key)
-                if isinstance(v, str) and v:
-                    binary_path = v
-                    break
-            if not binary_path:
-                raise TargetAnalysisError(
-                    f"{kind.value} target requires an upload via "
-                    f"POST /vr/targets/{{id}}/upload, or a descriptor field "
-                    f"naming a file path the IDA MCP can read: {list(path_keys)}",
-                )
 
-            kickoff = await self._ida.forward(
-                action="upload", file_path=binary_path,
+        opened = await self._rea.forward(action="open_binary", path=binary_path)
+        if opened.get("status") == "error":
+            raise TargetAnalysisError(
+                f"rea.open_binary failed: {opened.get('error')}",
             )
-            if kickoff.get("status") == "error":
-                raise TargetAnalysisError(
-                    f"ida.upload failed: {kickoff.get('error')}",
-                )
-            binary_id = (
-                kickoff.get("binary_id")
-                or (kickoff.get("data") or {}).get("binary_id")
-            )
-            if not binary_id:
-                raise TargetAnalysisError(
-                    f"ida.upload returned no binary_id: {kickoff!r}",
-                )
-
-        await self._poll_ida(binary_id)
 
         language = None
         try:
-            survey = await self._ida.forward(
-                action="binary_survey", binary_id=binary_id,
+            survey = await self._rea.forward(
+                action="binary_overview", target_path=binary_path,
             )
             if isinstance(survey, dict):
                 lang_guess = survey.get("primary_language") or survey.get("language")
@@ -1477,11 +1469,11 @@ class TargetAnalysisService:
                     language = lang_guess.lower()
         except (OSError, RuntimeError, TimeoutError) as exc:
             _log.warning(
-                "ida.binary_survey failed for %s: %s -- leaving language unset",
-                binary_id, exc,
+                "rea.binary_overview failed for %s: %s -- leaving language unset",
+                binary_path, exc,
             )
 
-        handles: dict[str, Any] = {"binary_id": binary_id}
+        handles: dict[str, Any] = {"target_path": binary_path}
         # Preserve upload metadata across re-analysis.
         if current_handles.get("uploaded_filename"):
             handles["uploaded_filename"] = current_handles["uploaded_filename"]
@@ -1496,39 +1488,6 @@ class TargetAnalysisService:
         return handles, language
 
     # ─── polling ────────────────────────────────────────────────────────
-
-    async def _poll_ida(self, binary_id: str) -> None:
-        poll_timeout_s = await _cfg.get_float("ingestion_poll_timeout_s")
-        deadline = utc_now().timestamp() + poll_timeout_s
-        while utc_now().timestamp() < deadline:
-            resp = (await self._ida.forward(
-                action="poll_analysis", binary_id=binary_id,
-            )) or {}
-            # reverser-belt/kuna reports a failure via an error envelope
-            # or a populated ``error`` field while state stays pre-INDEXED;
-            # fail fast rather than polling to the ingestion timeout.
-            if resp.get("status") == "error" or resp.get("error"):
-                raise TargetAnalysisError(
-                    f"ida analysis failed: "
-                    f"{resp.get('message') or resp.get('error') or resp}",
-                )
-            state = resp.get("state") or resp.get("status")
-            # Terminal = the function index is built (kuna state INDEXED,
-            # index_ready True). READY is a transient pre-index state
-            # (workspace copied, decompiler not yet run), so it must NOT
-            # count as completion or the profile builds from an empty index.
-            if resp.get("index_ready") or state in {
-                "INDEXED", "complete", "completed",
-            }:
-                return
-            if state in {"FAILED", "failed"}:
-                raise TargetAnalysisError(
-                    f"ida analysis failed: {resp.get('error') or resp}",
-                )
-            await asyncio.sleep(_POLL_INTERVAL_SECONDS)
-        raise TargetAnalysisError(
-            f"ida analysis timed out after {poll_timeout_s:.0f}s",
-        )
 
     async def _poll_audit_mcp(
         self, index_id: str, interval_s: float | None = None,

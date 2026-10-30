@@ -142,6 +142,24 @@ symbolic = [
   # to activate concolic constraint emission on target-host workers.
   "miasm>=0.1.5",
 ]
+re-analytics = [
+  # REA-cutover: deps for the in-house ``re_analytics`` stdio MCP server
+  # (``python -m aila.platform.re_analytics``), which preserves the
+  # ida-headless tool surface REA does not serve. Every import is guarded:
+  # a tool whose engine is missing returns a structured ToolError with an
+  # install hint instead of crashing tools/list. flare-capa additionally
+  # needs a capa-rules checkout at RE_ANALYTICS_CAPA_RULES (or
+  # AILA_FORENSICS_CAPA_RULES) at runtime.
+  "pefile>=2023.2.7",
+  "lief>=0.14.0",
+  "capstone>=5.0.0",
+  "flare-capa>=9.0.0",
+  "unicorn>=2.1.0",
+  "keystone-engine>=0.9.2",
+  "miasm>=0.1.5",
+  "cryptography>=42.0.0",
+  "pycryptodome>=3.20.0",
+]
 
 [project.scripts]
 aila = "aila.cli:app"
@@ -154,6 +172,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "aila.modules.forensics.workflow.states.collectors" = ["*.tpl"]
+"aila.platform.re_analytics" = ["data/*.txt"]
 
 [tool.vulture]
 min_confidence = 80
@@ -232,6 +251,16 @@ ignore = [
 
 # All other suppressions are documented in src/aila/tools/honesty_whitelist.py.
 "src/aila/api/app.py" = ["PLC0415", "BLE001", "F401", "ARG001", "E402", "N814"]
+# re_analytics tool groups: PLC0415 for deferred heavyweight imports
+# (miasm submodules pulled only when a miasm-backed tool actually runs so
+# the stdio server boots in milliseconds); BLE001 for the third-party
+# exception boundary around those optional engines (miasm/lief/cryptography
+# raise heterogeneous internal types we cannot enumerate).
+"src/aila/platform/re_analytics/tools_capability.py" = ["PLC0415", "BLE001"]
+"src/aila/platform/re_analytics/tools_crypto.py" = ["PLC0415", "BLE001"]
+"src/aila/platform/re_analytics/tools_dataflow.py" = ["PLC0415", "BLE001"]
+"src/aila/platform/re_analytics/_capa_engine.py" = ["PLC0415"]
+"src/aila/platform/re_analytics/server.py" = ["PLC0415"]
 # events/redis_bridge.py: PLC0415 for the deferred `import redis` (optional
 # dependency) and the deferred bus/persistence imports that break the
 # bus <-> persistence <-> redis_bridge cycle (#106 cross-process bridge).

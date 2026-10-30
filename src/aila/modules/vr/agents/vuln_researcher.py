@@ -650,7 +650,9 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                     if not isinstance(v, (str, int, float, bool)):
                         continue
                     if k.startswith("audit_mcp:") or k.startswith("audit_mcp.") \
-                            or k.startswith("ida_headless:") or k.startswith("ida_headless."):
+                            or k.startswith("rea:") or k.startswith("rea.") \
+                            or k.startswith("re_analytics:") \
+                            or k.startswith("re_analytics."):
                         tool_obs[k] = str(v)[:5000]
                     elif not k.startswith("_"):
                         key_obs[k] = str(v)[:240]
@@ -2753,8 +2755,10 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             if not (
                 key.startswith("audit_mcp:")
                 or key.startswith("audit_mcp.")
-                or key.startswith("ida_headless:")
-                or key.startswith("ida_headless.")
+                or key.startswith("rea:")
+                or key.startswith("rea.")
+                or key.startswith("re_analytics:")
+                or key.startswith("re_analytics.")
                 or key.startswith("android_mcp:")
                 or key.startswith("android_mcp.")
                 # Issue #148: dynamic-analysis signals participate in
@@ -3006,7 +3010,7 @@ def _extract_cited_tool_pairs(
 
 
 _TOOL_CITE_RE = re.compile(
-    r"\b(audit_mcp|ida_headless|android_mcp|knowledge)"
+    r"\b(audit_mcp|rea|re_analytics|android_mcp|knowledge)"
     r"[:.]([a-z_][a-z0-9_]*)\b",
     re.IGNORECASE,
 )
@@ -3018,8 +3022,8 @@ def _render_target_snapshot_section(snapshot: dict[str, Any]) -> str:
     an opaque UUID.
 
     Without this block the agent saw only ``Primary target: <uuid>``
-    and defaulted to ``ida_headless.list_binaries`` even when the
-    target was a source repo already cloned + indexed by audit-mcp.
+    and defaulted to the binary list tool even when the target was a
+    source repo already cloned + indexed by audit-mcp.
     The block surfaces:
       - kind + language
       - descriptor (repo_url / upload_filename / binary_id)
@@ -3136,8 +3140,8 @@ def _mcp_family_rule_for_kind(
     actually exist. This is what stops the agent from drifting to the
     wrong tool family. By construction we ONLY mention the applicable
     server -- never name the one we want the agent to avoid, because
-    LLMs latch on to negated mentions ("Do NOT call ida_headless"
-    keeps ida_headless in their attention budget).
+    LLMs latch on to negated mentions ("Do NOT call <server>"
+    keeps that server in their attention budget).
     """
     k = (kind or "").lower()
     if k == "source_repo":
@@ -3194,30 +3198,32 @@ def _mcp_family_rule_for_kind(
         parts.append(
             "For NATIVE LIBRARY analysis (lib/arm64-v8a/*.so, "
             "lib/armeabi-v7a/*.so -- e.g. libucs-credential.so, "
-            "anti-tamper .so, JNI crypto .so) use **ida_headless** "
-            "tools. Start with `ida_headless.open_binary(path=\"<absolute "
-            "path to .so>\")` to register the library, then "
-            "`ida_headless.decompile(binary_id=..., address_or_name=...)`, "
-            "`ida_headless.imports`, `ida_headless.exports`, "
-            "`ida_headless.search_pattern`, etc. NEVER try to "
-            "analyze native .so files via audit_mcp (source-graph "
-            "indexer is Java/Kotlin only) or via android_mcp "
-            "(APK-level facets only, no instruction-level "
+            "anti-tamper .so, JNI crypto .so) use **rea** tools. The "
+            "target .so is bound automatically per call (server-side) -- "
+            "start with `rea.binary_overview` for orientation, then "
+            "`rea.procedure_pseudo_code(procedure=<name-or-address>)`, "
+            "`rea.procedure_assembly`, `rea.xrefs`, "
+            "`rea.inspect_pe_imports`, `rea.search_bytes`, etc. For "
+            "capability / crypto / taint work reach to "
+            "**re_analytics** (`capa_scan`, `detect_crypto_primitives`, "
+            "`interprocedural_taint` -- target bound the same way). "
+            "NEVER try to analyze native .so files via audit_mcp "
+            "(source-graph indexer is Java/Kotlin only) or via "
+            "android_mcp (APK-level facets only, no instruction-level "
             "decompilation). .so files in lib/<abi>/ are ELF "
-            "binaries -- ida_headless is the only correct tool."
+            "binaries -- rea is the only correct tool."
         )
         return "RULE: " + " ".join(parts)
     if k in {
         "native_binary", "ipa", "jar", "dotnet_assembly",
         "kernel_image", "kernel_module", "hypervisor_image",
     }:
-        bid = handles.get("binary_id")
-        if bid:
-            return (
-                f"RULE: binary target. Use **ida_headless** tools with "
-                f"`binary_id=\"{bid}\"`."
-            )
-        return "RULE: binary target. Use **ida_headless** tools."
+        return (
+            "RULE: binary target. Use **rea** tools (target bound "
+            "automatically per call) for decompilation, disassembly, "
+            "xrefs, and call graphs; reach to **re_analytics** for "
+            "capa / crypto / taint / emulation / exploitability."
+        )
     return ""
 
 
@@ -3771,8 +3777,10 @@ _ANDROID_KINDS = frozenset({"android_apk"})
 def _applicable_servers_for_kind(target_kind: str | None) -> set[str]:
     """Return the MCP server ids the agent should consider given the
     target's kind. Source repos resolve via audit-mcp; classic binary
-    kinds via ida_headless; android_apk gets the android_mcp bridge
-    PLUS audit_mcp (source-graph over the decompiled Java tree).
+    kinds via the rea + re_analytics pair (core RE plus the capa /
+    crypto / taint / emulation surface); android_apk gets the
+    android_mcp bridge PLUS audit_mcp (source-graph over the
+    decompiled Java tree) AND the binary pair for native libraries.
     Unknown / mixed kinds default to every known bridge so the agent
     isn't locked out of any path.
 
@@ -3790,17 +3798,18 @@ def _applicable_servers_for_kind(target_kind: str | None) -> set[str]:
         # APKs ship Java/Kotlin source (audit_mcp via jadx index) AND
         # APK-specific facets (android_mcp: manifest / permissions /
         # signing / etc.) AND native libraries in lib/<abi>/
-        # (ida_headless: the Huawei UCS credential .so, anti-tamper
-        # .so, Frida-resistant crypto .so etc.). Excluding ida_
-        # headless previously forced agents to either skip native
+        # (rea: the Huawei UCS credential .so, anti-tamper
+        # .so, Frida-resistant crypto .so etc.; re_analytics for the
+        # capa / crypto surface on those .so files). Excluding the
+        # binary pair previously forced agents to either skip native
         # analysis entirely or hallucinate calls to whichever
         # android_mcp tool LOOKED native-adjacent (frida_*) which
-        # then errored every call. Including all
-        # three gives the agent the actual right tool for every
-        # facet of an APK target.
-        return {"android_mcp", "audit_mcp", "ida_headless"}
+        # then errored every call. Including all four gives the
+        # agent the actual right tool for every facet of an APK
+        # target.
+        return {"android_mcp", "audit_mcp", "rea", "re_analytics"}
     if k in _BINARY_KINDS:
-        return {"ida_headless"}
+        return {"rea", "re_analytics"}
     return set(KNOWN_TOOLS.keys())
 
 
@@ -3909,16 +3918,28 @@ async def _fetch_tool_specs(
         )
         allowed = tools_for_language("audit_mcp", primary_language)
         out["audit_mcp"] = [s for s in specs if s.get("name", "") in allowed]
-    if "ida_headless" in applicable:
+    if "rea" in applicable:
         specs = await make_bridge(
-            "ida_headless", module_id="vr", recorder=record_call,
+            "rea", module_id="vr", recorder=record_call,
         ).list_tool_specs()
         register_bridge_tools(
-            "ida_headless",
+            "rea",
             [s.get("name") for s in specs if s.get("name")],
         )
-        allowed = tools_for_language("ida_headless", primary_language)
-        out["ida_headless"] = [s for s in specs if s.get("name", "") in allowed]
+        allowed = tools_for_language("rea", primary_language)
+        out["rea"] = [s for s in specs if s.get("name", "") in allowed]
+    if "re_analytics" in applicable:
+        specs = await make_bridge(
+            "re_analytics", module_id="vr", recorder=record_call,
+        ).list_tool_specs()
+        register_bridge_tools(
+            "re_analytics",
+            [s.get("name") for s in specs if s.get("name")],
+        )
+        allowed = tools_for_language("re_analytics", primary_language)
+        out["re_analytics"] = [
+            s for s in specs if s.get("name", "") in allowed
+        ]
     if "android_mcp" in applicable:
         specs = await make_bridge(
             "android_mcp", module_id="vr", recorder=record_call,
@@ -3969,7 +3990,7 @@ def _render_available_tools_section(
 
     Servers irrelevant to the target's kind are SUPPRESSED with a
     short note instead of listed -- the agent kept choosing
-    ida_headless.list_binaries for a source_repo target because the
+    rea.list_procedures for a source_repo target because the
     catalog showed every server unconditionally. Filtering at render
     time prevents the wrong tool family from ever being the obvious
     pick.
@@ -4000,11 +4021,11 @@ def _render_available_tools_section(
         )
     for server in sorted(KNOWN_TOOLS):
         if server not in applicable:
-            # Silently skip -- listing "NOT APPLICABLE: ida_headless"
+            # Silently skip -- listing "NOT APPLICABLE: rea"
             # against a source_repo target just gives the agent a hook
-            # to think about IDA tools it shouldn't be considering at
-            # all. Surfacing ida_headless on source-repo prompts was
-            # reported as wrong and is corrected here.
+            # to think about binary tools it shouldn't be considering
+            # at all. Surfacing the binary servers on source-repo
+            # prompts was reported as wrong and is corrected here.
             continue
 
         live_specs = specs_by_server.get(server) or []

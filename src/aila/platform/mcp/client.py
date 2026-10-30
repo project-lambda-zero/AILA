@@ -602,8 +602,8 @@ class McpClient:
             )
             self._spec_cache = []
             return []
-        # Accept two on-wire shapes: bare list at top level (audit-mcp,
-        # ida-headless) or ``{"tools": [...]}`` envelope (android-mcp).
+        # Accept two on-wire shapes: bare list at top level (audit-mcp)
+        # or ``{"tools": [...]}`` envelope (android-mcp).
         # A dict without a ``tools`` key is treated as an empty catalog
         # so downstream validators do not compare against a None
         # catalog (see the android-mcp §216 diagnosis).
@@ -661,10 +661,10 @@ class McpClient:
     ) -> httpx.Response:
         """POST ``payload`` to ``url`` via the pool or a fresh client.
 
-        The ``headers`` dict is populated by the otel propagator when
+        ``headers`` dict is populated by the otel propagator when
         ``platform.otel_enabled`` is on -- injecting the active span's
         W3C ``traceparent`` / ``tracestate`` so the downstream MCP
-        server (audit-mcp / ida-headless / semble / ...) can stitch its
+        server (audit-mcp / semble / ...) can stitch its
         own spans onto the caller's trace. When otel is absent or the
         flag is off, :func:`inject_trace_context` is a no-op and the
         headers dict stays empty -- httpx sends the same bytes as the

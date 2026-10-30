@@ -2,7 +2,7 @@
 
 :class:`McpClient` historically spoke only the bespoke bridge HTTP
 contract (``GET /tools`` + ``POST /tools/<action>``) implemented by the
-in-repo audit-mcp / ida-headless servers. External MCP servers speak the
+in-repo audit-mcp server. External MCP servers speak the
 Model Context Protocol itself: JSON-RPC 2.0 ``initialize`` /
 ``tools/list`` / ``tools/call`` over a streamable-HTTP endpoint (``POST
 {base}/mcp``, responses as ``application/json`` or ``text/event-stream``
@@ -44,6 +44,7 @@ bridge envelope so every downstream consumer keeps one shape.
 """
 from __future__ import annotations
 
+import abc
 import asyncio
 import json
 import logging
@@ -91,7 +92,7 @@ class McpStdioError(RuntimeError):
     """The stdio MCP child failed to handshake, respond, or stay up."""
 
 
-class McpSession:
+class McpSession(abc.ABC):
     """Transport-agnostic MCP session surface.
 
     ``state`` and ``affinity`` belong to the server-specific middleware
@@ -124,12 +125,13 @@ class McpSession:
         )
         return result if isinstance(result, dict) else {"result": result}
 
+    @abc.abstractmethod
     async def request(
-        self, _method: str, _params: dict[str, Any], *, timeout: float,
+        self, method: str, params: dict[str, Any], *, timeout: float,
     ) -> Any:
         """Send one JSON-RPC request and return the decoded result."""
-        raise NotImplementedError
 
+    @abc.abstractmethod
     async def aclose(self) -> None:
         """Release transport resources (HTTP client / child process)."""
 
@@ -406,7 +408,8 @@ class McpStdioSession(McpSession):
             self._ready = True
 
     async def _read_loop(self, proc: asyncio.subprocess.Process) -> None:
-        assert proc.stdout is not None
+        if proc.stdout is None:
+            raise McpStdioError(f"MCP server {self._command[0]!r} has no stdout pipe")
         try:
             while True:
                 try:
@@ -529,8 +532,9 @@ class McpStdioSession(McpSession):
             try:
                 proc.kill()
             except ProcessLookupError:
-                return
-            await proc.wait()
+                _log.debug("mcp_stdio %s: child already exited before kill", self._command[0])
+            else:
+                await proc.wait()
 
 
 # Process-wide session registry, partitioned per event loop: asyncio

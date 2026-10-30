@@ -1,7 +1,7 @@
 """RFC-11 step 1 -- DB-backed MCP server instance catalog.
 
 An operator-editable catalog of MCP server instances (audit-mcp,
-ida-headless, android-mcp, and future servers) persisted in
+android-mcp, and future servers) persisted in
 ``mcp_server_instances`` and administered through the
 ``/platform/mcp/instances`` REST surface. Live dispatch stays untouched:
 :class:`aila.platform.mcp.registry.McpRegistryServiceBase` MAY consult
@@ -16,7 +16,7 @@ Each row carries:
   descriptive ids so operators can address rows without a lookup).
 * ``name`` -- the stable server token that matches ``spec['id']`` in
   the module's static :class:`MCP_SERVERS` tuple (``"audit_mcp"``,
-  ``"ida_headless"`` ...). The registry looks up catalog rows by
+  ``"android_mcp"`` ...). The registry looks up catalog rows by
   ``(module_scope, name)``, so this field is the join key.
 * ``transport`` -- ``"http"`` or ``"stdio"``. The current bridges are
   HTTP-only; ``"stdio"`` reserves the row for the future stdio subprocess
@@ -73,7 +73,7 @@ TRANSPORT_MCP_HTTP: str = "mcp-http"
 TRANSPORT_STDIO: str = "stdio"
 # ``http`` is the legacy bridge contract (``GET /tools`` +
 # ``POST /tools/<action>``) spoken by the in-repo audit-mcp /
-# ida-headless / android-mcp servers. ``mcp-http`` and ``stdio`` are the
+# android-mcp servers. ``mcp-http`` and ``stdio`` are the
 # real Model Context Protocol transports implemented by
 # :mod:`aila.platform.mcp.mcp_session` -- streamable-HTTP JSON-RPC and
 # stdio JSON-RPC respectively -- for external servers such as REA

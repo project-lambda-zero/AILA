@@ -33,13 +33,13 @@ async def run_function_ranking(
 
     The dispatcher routes by target kind:
       source target → audit-mcp ``fuzzing_targets`` (+ optional scan_and_correlate)
-      binary target → IDA ``find_api_call_sites`` aggregation + ``assess_exploitability``
+      binary target → REA ``list_procedures`` inventory ranking
 
     Returns ``FunctionRanking.model_dump(mode='json')`` so the result is
     JSON-serializable for SSE push / audit trail.
     """
     dispatcher = FunctionRankingDispatcher(
-        ida=make_bridge("ida_headless", module_id="vr", recorder=record_call),
+        re_analytics=make_bridge("re_analytics", module_id="vr", recorder=record_call),
         audit_mcp=make_bridge("audit_mcp", module_id="vr", recorder=record_call),
     )
     ranking = await dispatcher.rank(target_id)
