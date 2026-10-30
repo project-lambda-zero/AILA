@@ -43,6 +43,15 @@ from aila.modules.vr.enrichment.workers import (
     run_function_ranking,
     run_target_enrichment,
 )
+
+# Re-export the benchmark-measurement tasks so the worker bootstrap (which
+# loads only <module>/workflow/task.py) registers them on the ARQ function
+# table. Without this the API can enqueue run_vr_eval_suite but the worker
+# rejects it as an unknown function.
+from aila.modules.vr.eval_suites.tasks import (
+    run_vr_eval_collect,
+    run_vr_eval_suite,
+)
 from aila.modules.vr.reporting.pdf_report import _collect_facts
 from aila.modules.vr.reporting.poc_writer import PocWriter
 from aila.modules.vr.services import TargetAnalysisService
@@ -90,6 +99,8 @@ __all__ = [
     "run_target_analysis",
     "run_target_enrichment",
     "run_vr_auto_patch",
+    "run_vr_eval_collect",
+    "run_vr_eval_suite",
     "run_vr_claim_verifier",
     "run_vr_investigate",
     "run_vr_narrative",

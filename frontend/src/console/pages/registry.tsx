@@ -50,6 +50,7 @@ const FuzzCampaignDetail = lazy(() => import("./FuzzCampaignDetail"));
 const MalwareTargetDetail = lazy(() => import("./MalwareTargetDetail"));
 const LifecyclePage = lazy(() => import("./admin/LifecyclePage"));
 const EvalBenchmarksPage = lazy(() => import("./admin/EvalBenchmarksPage"));
+const EvalSuitesPage = lazy(() => import("./admin/EvalSuitesPage"));
 const PromptAliasesPage = lazy(() => import("./admin/PromptAliasesPage"));
 const ReconcilePage = lazy(() => import("./admin/ReconcilePage"));
 const AuditSealsPage = lazy(() => import("./admin/AuditSealsPage"));
@@ -125,6 +126,7 @@ const BESPOKE = {
   // audit seal viewer + export, global search, and the cross-team heatmap.
   "admin:lifecycle": { title: "admin \u00b7 lifecycle", render: (p) => <LifecyclePage {...p} /> },
   "admin:eval-benchmarks": { title: "admin \u00b7 eval benchmarks", render: (p) => <EvalBenchmarksPage {...p} /> },
+  "admin:eval-suites": { title: "admin \u00b7 eval suites", render: (p) => <EvalSuitesPage {...p} /> },
   "admin:prompt-aliases": { title: "admin \u00b7 prompt aliases", render: (p) => <PromptAliasesPage {...p} /> },
   "admin:reconcile": { title: "admin \u00b7 reconcile", render: (p) => <ReconcilePage {...p} /> },
   "admin:audit-seals": { title: "admin \u00b7 audit seals", render: (p) => <AuditSealsPage {...p} /> },

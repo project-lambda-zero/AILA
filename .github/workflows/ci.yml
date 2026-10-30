@@ -39,6 +39,11 @@ jobs:
           python -m aila.tools.honesty_audit src/aila \
             --whitelist honesty_whitelist.py
 
+      - name: Liveness audit
+        run: |
+          python -m aila.tools.liveness_audit src/aila \
+            --whitelist liveness_whitelist.py
+
       - name: Liveness authority guard
         run: python -m aila.tools.liveness_guard src/aila
 

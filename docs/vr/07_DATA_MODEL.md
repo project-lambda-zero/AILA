@@ -61,7 +61,7 @@ implemented model. The authoritative model list lives at
   `VRInvestigationBranchRecord`, `VRInvestigationMessageRecord`,
   `VRInvestigationOutcomeRecord`, `VRInvestigationOutcomeReviewRecord`
 - `VRFindingRecord`, `VRPatternRecord`,
-  `VRDisclosureSubmissionRecord`, `VRCVERecord`, `VRCVEFeedStateRecord`
+  `VRDisclosureSubmissionRecord`, `VRCVERecord`
 - `VRFuzzCampaignRecord`, `VRFuzzCrashRecord`,
   `VRFuzzCampaignProposalRecord`, `VRFuzzTelemetryRecord`
 - `VRMcpCallLogRecord`

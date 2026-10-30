@@ -24,8 +24,10 @@ Coverage:
 """
 from __future__ import annotations
 
+import asyncio
 import tempfile
 import time
+import weakref
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -145,7 +147,8 @@ def _reset_middleware_class_state():
     """Snapshot and restore every class-level cache the middleware owns.
 
     ``_SPEC_CACHE`` / ``_SPEC_CACHE_FETCHED_AT`` / ``_AUTO_ALIAS_MAP`` /
-    ``_INDEX_ROOTS`` / ``_TOOL_SEMAPHORES`` are class attributes shared
+    ``_INDEX_ROOTS`` / ``_TOOL_SEMAPHORES`` / ``_INDEX_ROOTS_LOCKS`` are
+    class attributes shared
     across every middleware instance in the process -- restoring them
     per test guarantees one test's cache mutation cannot mask the next
     test's assertion.
@@ -157,18 +160,21 @@ def _reset_middleware_class_state():
         "_AUTO_ALIAS_MAP": cls._AUTO_ALIAS_MAP,
         "_INDEX_ROOTS": cls._INDEX_ROOTS,
         "_TOOL_SEMAPHORES": cls._TOOL_SEMAPHORES,
+        "_INDEX_ROOTS_LOCKS": cls._INDEX_ROOTS_LOCKS,
     }
     cls._SPEC_CACHE = None
     cls._SPEC_CACHE_FETCHED_AT = None
     cls._AUTO_ALIAS_MAP = {}
     cls._INDEX_ROOTS = {}
-    cls._TOOL_SEMAPHORES = {}
+    cls._TOOL_SEMAPHORES = weakref.WeakKeyDictionary()
+    cls._INDEX_ROOTS_LOCKS = weakref.WeakKeyDictionary()
     yield
     cls._SPEC_CACHE = prev["_SPEC_CACHE"]
     cls._SPEC_CACHE_FETCHED_AT = prev["_SPEC_CACHE_FETCHED_AT"]
     cls._AUTO_ALIAS_MAP = prev["_AUTO_ALIAS_MAP"]
     cls._INDEX_ROOTS = prev["_INDEX_ROOTS"]
     cls._TOOL_SEMAPHORES = prev["_TOOL_SEMAPHORES"]
+    cls._INDEX_ROOTS_LOCKS = prev["_INDEX_ROOTS_LOCKS"]
 
 
 @pytest.fixture(autouse=True)
@@ -420,3 +426,124 @@ async def test_plain_success_roundtrips_one_post_one_row() -> None:
     assert row["server_id"] == "audit_mcp"
     assert row["status"] == "ready"
     assert row["http_status"] == 200
+
+
+# ── (f) issue #205 hardening ─────────────────────────────────────────
+
+
+async def _contend_tool_semaphore(tool: str) -> asyncio.BoundedSemaphore:
+    """Saturate ``tool``'s semaphore and force one waiter onto the loop.
+
+    A contended ``acquire`` binds the semaphore to the running loop, so
+    reusing the same object on a later loop is what used to raise
+    ``RuntimeError: ... is bound to a different event loop``.
+    """
+    sem = AuditMcpMiddleware._tool_semaphore(tool)
+    assert sem is not None
+    assert AuditMcpMiddleware._tool_semaphore(tool) is sem
+    cap = AuditMcpMiddleware._HEAVY_TOOL_CAPS[tool]
+    for _ in range(cap):
+        await sem.acquire()
+    waiter = asyncio.create_task(sem.acquire())
+    await asyncio.sleep(0)
+    assert not waiter.done()  # cap is enforced within one loop
+    sem.release()
+    await asyncio.wait_for(waiter, timeout=1.0)
+    for _ in range(cap):
+        sem.release()
+    return sem
+
+
+def test_tool_semaphore_is_fresh_per_event_loop() -> None:
+    """A recreated event loop gets its own heavy-tool semaphore."""
+    loops = [asyncio.new_event_loop(), asyncio.new_event_loop()]
+    try:
+        sems = [
+            loop.run_until_complete(_contend_tool_semaphore("fuzzing_targets"))
+            for loop in loops
+        ]
+    finally:
+        for loop in loops:
+            loop.close()
+    assert sems[0] is not sems[1]
+
+
+async def test_read_lines_window_matches_readlines_slice(tmp_path: Path) -> None:
+    """The streamed window equals the old ``readlines()[start-1:end]`` slice."""
+    target = tmp_path / "multi.txt"
+    target.write_bytes(
+        "alpha\nbeta\r\ngamma \u00e9\n\ndelta\xff\nlast-no-newline".encode(
+            "latin-1",
+        ),
+    )
+    with target.open("r", encoding="utf-8", errors="replace") as f:
+        reference = f.readlines()
+    total = len(reference)
+
+    AuditMcpMiddleware._INDEX_ROOTS = {"idx1": str(tmp_path)}
+    client, transport = _make_client_and_transport()
+    mw = _new_middleware()
+
+    for start, end in [(1, 1), (2, 4), (1, total), (3, total + 50), (total, total)]:
+        result = await mw._read_lines_local(client, {
+            "index_id": "idx1",
+            "file_path": "multi.txt",
+            "start": start,
+            "end": end,
+        })
+        assert result["status"] == "ready", result
+        assert result["content"] == "".join(reference[start - 1:min(end, total)])
+        assert result["start_line"] == start
+        assert result["end_line"] == min(end, total)
+        assert result["total_lines_in_file"] == total
+
+    past_eof = await mw._read_lines_local(client, {
+        "index_id": "idx1",
+        "file_path": "multi.txt",
+        "start": total + 1,
+        "end": total + 5,
+    })
+    assert past_eof["status"] == "error"
+    assert f"start={total + 1} exceeds file length {total}" in past_eof["error"]
+    assert transport.posts == []
+
+
+async def test_refresh_index_roots_serialises_concurrent_refreshes() -> None:
+    """A slow, older list_indexes reply cannot overwrite a newer one."""
+
+    class _OrderedListIndexes:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def post(
+            self, action: str, payload: dict[str, Any], *, timeout: float,
+        ) -> dict[str, Any]:
+            assert action == "list_indexes"
+            self.calls += 1
+            if self.calls == 1:
+                await asyncio.sleep(0.05)
+                return {"indexes": [{"index_id": "old", "root_path": "/old"}]}
+            return {"indexes": [
+                {"index_id": "old", "root_path": "/old"},
+                {"index_id": "new", "root_path": "/new"},
+            ]}
+
+    client = _OrderedListIndexes()
+    mw = _new_middleware()
+    first = asyncio.create_task(mw._refresh_index_roots(client))  # type: ignore[arg-type]
+    await asyncio.sleep(0)
+    await asyncio.gather(
+        first, mw._refresh_index_roots(client),  # type: ignore[arg-type]
+    )
+    assert AuditMcpMiddleware._INDEX_ROOTS == {"old": "/old", "new": "/new"}
+
+
+async def test_prewarm_fanout_is_capped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Large worker counts stop at the fan-out ceiling; small ones keep 4x."""
+    cap = AuditMcpMiddleware._PREWARM_FANOUT_MAX
+    for workers, expected in [(2, 8), (100, cap)]:
+        monkeypatch.setenv("AUDIT_MCP_WORKERS", str(workers))
+        client, transport = _make_client_and_transport()
+        mw = _new_middleware()
+        await mw._ensure_prewarmed(client, "idx1")
+        assert len(transport.posts) == expected

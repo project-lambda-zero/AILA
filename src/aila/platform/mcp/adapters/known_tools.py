@@ -358,6 +358,21 @@ POC_RUNNER_TOOLS: frozenset[str] = frozenset({
 })
 
 
+# Issue #148: the in-process platform dynamic-analysis drivers exposed
+# to the VR reasoning agent. ``symbolic.explore`` runs a bounded concolic
+# walk of one function; ``dynamic.run_dynamic`` runs a target once in the
+# sandbox with coverage + crash capture. Each has a specialised adapter
+# (``dynamic_symbolic.py``) that projects the colon-keyed observable the
+# kill-criteria evaluator scans (``symbolic:<fn>:reached`` /
+# ``dynamic:<target>:coverage_delta``).
+SYMBOLIC_TOOLS: frozenset[str] = frozenset({
+    "explore",
+})
+DYNAMIC_TOOLS: frozenset[str] = frozenset({
+    "run_dynamic",
+})
+
+
 # Indexed by server_id used by the bridge dispatch.
 KNOWN_TOOLS: dict[str, frozenset[str]] = {
     "ida_headless": IDA_HEADLESS_TOOLS,
@@ -365,6 +380,8 @@ KNOWN_TOOLS: dict[str, frozenset[str]] = {
     "android_mcp": ANDROID_MCP_TOOLS,
     "knowledge": KNOWLEDGE_TOOLS,
     "poc_runner": POC_RUNNER_TOOLS,
+    "symbolic": SYMBOLIC_TOOLS,
+    "dynamic": DYNAMIC_TOOLS,
 }
 
 

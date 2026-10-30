@@ -476,3 +476,81 @@ export function useCrossTeamStats(enabled: boolean): UseQueryResult<CrossTeamSta
     retry: false,
   });
 }
+
+/* --------------------------- benchmark suites --------------------------- */
+
+/** vr/eval_suites/contracts.py TaskResultSummary. */
+export interface TaskResult {
+  task_id: string;
+  name: string;
+  category: string | null;
+  investigation_id: string | null;
+  status: string;
+  solved: boolean;
+  cost_usd: number;
+  polarity: string | null;
+}
+
+/** vr/eval_suites/contracts.py SuiteRunSummary. */
+export interface SuiteRun {
+  id: string;
+  suite: string;
+  status: string;
+  solved_count: number;
+  total_count: number;
+  total_cost_usd: number;
+  created_at: string | null;
+  finished_at: string | null;
+  results: TaskResult[];
+}
+
+/** vr/eval_suites/contracts.py LeaderboardRow. */
+export interface LeaderboardRow {
+  suite: string;
+  solved_count: number;
+  total_count: number;
+  solve_rate: number;
+  avg_cost_usd: number;
+  last_run_at: string | null;
+}
+
+export function useEvalSuiteRuns(): UseQueryResult<SuiteRun[]> {
+  return useQuery<SuiteRun[]>({
+    queryKey: ["admin", "eval-suites", "runs"],
+    queryFn: () => apiFetch<SuiteRun[]>("/vr/eval-suites/runs?limit=100"),
+    retry: false,
+  });
+}
+
+export function useEvalSuiteRun(id: string | null): UseQueryResult<SuiteRun | null> {
+  return useQuery<SuiteRun | null>({
+    queryKey: ["admin", "eval-suites", "run", id],
+    queryFn: () => apiFetch<SuiteRun>(`/vr/eval-suites/runs/${encodeURIComponent(id ?? "")}`),
+    enabled: id !== null,
+    retry: false,
+  });
+}
+
+export function useEvalSuiteLeaderboard(): UseQueryResult<LeaderboardRow[]> {
+  return useQuery<LeaderboardRow[]>({
+    queryKey: ["admin", "eval-suites", "leaderboard"],
+    queryFn: () => apiFetch<LeaderboardRow[]>("/vr/eval-suites/leaderboard"),
+    retry: false,
+  });
+}
+
+export function useStartEvalSuiteRun(): UseMutationResult<{ task_id: string; suite: string | null; run_id: string | null }, Error, { suite: string }> {
+  const qc = useQueryClient();
+  return useMutation<{ task_id: string; suite: string | null; run_id: string | null }, Error, { suite: string }>({
+    mutationFn: (body) => apiFetch("/vr/eval-suites/runs", json("POST", body)),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["admin", "eval-suites"] }),
+  });
+}
+
+export function useCollectEvalSuiteRun(): UseMutationResult<{ task_id: string; run_id: string | null }, Error, string> {
+  const qc = useQueryClient();
+  return useMutation<{ task_id: string; run_id: string | null }, Error, string>({
+    mutationFn: (runId) => apiFetch(`/vr/eval-suites/runs/${encodeURIComponent(runId)}/collect`, json("POST", {})),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["admin", "eval-suites"] }),
+  });
+}

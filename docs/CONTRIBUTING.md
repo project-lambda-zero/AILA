@@ -159,14 +159,15 @@ refactor(platform): consolidate UoW session lifecycle
 
 ## 5. Quality Gates
 
-Every PR must pass all four gates. Run them locally before pushing.
+Every PR must pass all five gates. Run them locally before pushing.
 
 | # | Gate | Command |
 |---|---|---|
 | 1 | Unit tests | `python -m pytest tests/ --ignore=tests/test_e2e.py --ignore=tests/test_e2e_live.py` |
 | 2 | Honesty audit | `python -m aila.tools.honesty_audit src/aila --whitelist honesty_whitelist.py` |
-| 3 | Lint | `python -m ruff check src/aila/` |
-| 4 | Frontend typecheck (if frontend changed) | `pnpm -r run type-check` (workspace-wide) |
+| 3 | Liveness audit | `python -m aila.tools.liveness_audit src/aila --whitelist liveness_whitelist.py` |
+| 4 | Lint | `python -m ruff check src/aila/` |
+| 5 | Frontend typecheck (if frontend changed) | `pnpm -r run type-check` (workspace-wide) |
 
 The honesty audit must report zero findings. Whitelist entries in
 [`honesty_whitelist.py`](../honesty_whitelist.py) require an inline comment

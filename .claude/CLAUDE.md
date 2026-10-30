@@ -71,6 +71,7 @@ python -m aila worker -q forensics                   # forensics queue
 # Quality gates (all must pass before submitting changes)
 python -m ruff check src/aila/                       # lint
 python -m aila.tools.honesty_audit src/aila --whitelist honesty_whitelist.py
+python -m aila.tools.liveness_audit src/aila --whitelist liveness_whitelist.py
 python -m compileall -q src/aila                     # smoke compile
 pnpm -r run type-check                                # TypeScript across shell + modules
 pnpm --filter @aila/shell run build                  # production build (single SPA)
@@ -87,7 +88,7 @@ make dev-logs       # tail compose logs
 make dev-status     # `docker compose ps`
 make db-init        # create tables + stamp head (one-time, fresh DB only)
 make migrate        # alembic upgrade head
-make check          # lint + honesty + compile + typecheck
+make check          # lint + honesty + liveness + liveness-guard + compile + typecheck
 make test           # backend unit tests
 make backend frontend worker          # dev servers (each in separate terminal)
 ```
@@ -267,6 +268,7 @@ Before yielding any change:
 - [ ] `python -m compileall -q src/aila` -- no syntax errors
 - [ ] `python -m ruff check src/aila/` -- clean
 - [ ] `python -m aila.tools.honesty_audit src/aila --whitelist honesty_whitelist.py` -- zero findings
+- [ ] `python -m aila.tools.liveness_audit src/aila --whitelist liveness_whitelist.py` -- zero findings
 - [ ] `pnpm -r run type-check` -- clean (if frontend changed)
 - [ ] `pnpm --filter @aila/shell run build` -- exits 0 (if frontend changed)
 - [ ] Tests covering the changed behavior pass

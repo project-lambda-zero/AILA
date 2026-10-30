@@ -21,9 +21,13 @@ _POOL_VARS = (
 def test_pool_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     for var in _POOL_VARS:
         monkeypatch.delenv(var, raising=False)
+    # max_overflow default is 5 per #197: the fleet runs one pool per
+    # process (backend + one worker per queue), so peak is bounded at
+    # pool_size + overflow per process (~90 fleet-wide under the raised
+    # Postgres ceiling) instead of exhausting the stock 100 connections.
     assert _resolve_pool_config() == {
         "pool_size": 10,
-        "max_overflow": 10,
+        "max_overflow": 5,
         "pool_timeout": 30,
         "pool_recycle": 1800,
     }
@@ -49,4 +53,4 @@ def test_pool_config_non_integer_falls_back(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.delenv("AILA_DB_MAX_OVERFLOW", raising=False)
     cfg = _resolve_pool_config()
     assert cfg["pool_size"] == 10  # malformed value keeps the default
-    assert cfg["max_overflow"] == 10
+    assert cfg["max_overflow"] == 5  # #197 default (see test_pool_config_defaults)

@@ -74,9 +74,16 @@ def _resolve_pool_config() -> dict[str, int]:
         except ValueError:
             return default
 
+    # max_overflow is bounded deliberately: the fleet runs one engine pool
+    # per process (backend + one worker per queue in start.sh WORKERS, ~6
+    # processes). Peak per process is pool_size + max_overflow; a default
+    # overflow of 10 (20/process) could reach ~120 connections and exhaust a
+    # stock Postgres max_connections=100. An overflow of 5 caps peak at
+    # 15/process (~90 fleet-wide) which fits comfortably under the raised
+    # ceiling configured in infra/utilities/docker-compose.yml (#197).
     return {
         "pool_size": _read("AILA_DB_POOL_SIZE", 10),
-        "max_overflow": _read("AILA_DB_MAX_OVERFLOW", 10),
+        "max_overflow": _read("AILA_DB_MAX_OVERFLOW", 5),
         "pool_timeout": _read("AILA_DB_POOL_TIMEOUT", 30),
         "pool_recycle": _read("AILA_DB_POOL_RECYCLE", 1800),
     }

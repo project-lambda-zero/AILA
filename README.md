@@ -557,9 +557,11 @@ Common targets in the root `Makefile`:
 | `make lint`             | `ruff check src/aila/`                                                    |
 | `make typecheck`        | `pnpm -r run type-check` (every workspace package, shell + modules)       |
 | `make honesty`          | `python -m aila.tools.honesty_audit src/aila --whitelist honesty_whitelist.py` |
+| `make liveness`         | `python -m aila.tools.liveness_audit src/aila --whitelist liveness_whitelist.py` |
+| `make liveness-guard`   | `python -m aila.tools.liveness_guard src/aila`                            |
 | `make compile`          | `python -m compileall -q src/aila`                                        |
 | `make build`            | `pnpm --filter @aila/shell run build` (production SPA bundle)             |
-| `make check`            | `lint` + `honesty` + `compile` + `typecheck` (the full pre-PR gate)       |
+| `make check`            | `lint` + `honesty` + `liveness` + `liveness-guard` + `compile` + `typecheck` (the full pre-PR gate) |
 | `make security-scan`    | `pip-audit --strict --desc` and `bandit -r src/aila -q -ll`               |
 | `make clean`            | Remove `__pycache__/` directories and coverage artifacts                  |
 

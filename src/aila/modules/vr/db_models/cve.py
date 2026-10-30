@@ -1,8 +1,7 @@
-"""CVE record + feed-state tables (v0.4 GA-51).
+"""CVE record table (v0.4 GA-51).
 
-vr_cve_records -- one row per CVE (NVD / GHSA / MITRE / manual).
-vr_cve_feed_state -- checkpoint per source so the poller knows where to
-                    resume. One row per source.
+vr_cve_records -- one row per CVE (NVD / GHSA / MITRE / manual), written by
+the VR CVE ingest endpoint.
 """
 from __future__ import annotations
 
@@ -14,7 +13,7 @@ from sqlmodel import Field, SQLModel
 
 from aila.platform.contracts import utc_now
 
-__all__ = ["VRCVEFeedStateRecord", "VRCVERecord"]
+__all__ = ["VRCVERecord"]
 
 
 class VRCVERecord(SQLModel, table=True):
@@ -50,34 +49,4 @@ class VRCVERecord(SQLModel, table=True):
 
     ingested_at: datetime = Field(
         default_factory=utc_now, sa_type=DateTime(timezone=True), index=True,
-    )
-
-
-class VRCVEFeedStateRecord(SQLModel, table=True):
-    """Per-source poller checkpoint.
-
-    One row per (source). Stores last successful poll timestamp + cursor
-    so the poller resumes where it left off.
-
-    DEFERRED (issue #209): the automated NVD / GHSA feed poller
-    (``poll_cve_feeds``) is intentionally NOT built -- see
-    ``services/cve_service.py`` module docstring. This table is reserved for
-    that future cron task; it stays unwritten until the poller ships.
-    Operators currently ingest CVEs manually through the ingest endpoint, so
-    these columns carry no rows in normal operation. Kept (not dropped) so the
-    poller can land without a migration when it is prioritized.
-    """
-
-    __tablename__ = "vr_cve_feed_state"
-
-    source: str = Field(primary_key=True, max_length=16)
-    last_polled_at: datetime | None = Field(
-        default=None, sa_type=DateTime(timezone=True),
-    )
-    last_cursor: str | None = Field(default=None, max_length=256)
-    last_error: str = Field(default="", sa_column=Column(Text))
-    consecutive_errors: int = Field(default=0)
-    records_ingested: int = Field(default=0)
-    updated_at: datetime = Field(
-        default_factory=utc_now, sa_type=DateTime(timezone=True),
     )

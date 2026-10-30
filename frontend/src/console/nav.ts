@@ -100,7 +100,7 @@ export const MODULES: ModuleDef[] = [
 /** Collapsible ADMIN SETTINGS categories -- verbatim from the mock adminCats. */
 export const ADMIN_CATS: { cat: string; items: string[] }[] = [
   { cat: "access", items: ["users", "teams", "teams cross-view", "cross-team heatmap", "api keys", "oidc providers"] },
-  { cat: "operations", items: ["ops war room", "lifecycle", "eval benchmarks", "reconcile", "task queue", "queue depth", "dead letter", "health", "automation", "automation actions", "workflows", "scheduled reports", "mcp instances", "mcp servers", "mcp call log", "eval calibrators", "calibration proposals"] },
+  { cat: "operations", items: ["ops war room", "lifecycle", "eval benchmarks", "eval suites", "reconcile", "task queue", "queue depth", "dead letter", "health", "automation", "automation actions", "workflows", "scheduled reports", "mcp instances", "mcp servers", "mcp call log", "eval calibrators", "calibration proposals"] },
   { cat: "platform", items: ["dashboard", "global search", "systems", "sessions", "specialist agents", "persona routing", "prompts", "prompt aliases", "platform corpus", "knowledge", "sandbox", "widget layout", "onboarding"] },
   { cat: "cost & reporting", items: ["cost"] },
   { cat: "data & config", items: ["config", "tools", "finding states"] },
