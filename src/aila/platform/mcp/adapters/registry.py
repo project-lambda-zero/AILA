@@ -46,6 +46,7 @@ from .audit_mcp import (
     adapt_taint_paths_to,
 )
 from .base import AdapterFn, register_read_tool
+from .dynamic_symbolic import adapt_dynamic_run, adapt_symbolic_explore
 from .generic import adapt_generic
 from .ida_headless import (
     adapt_call_chain,
@@ -144,6 +145,11 @@ _SPECIALIZED: dict[tuple[str, str], AdapterFn] = {
     ("audit_mcp", "find_related"): adapt_find_related,
     # Bridge-side virtual tool: raw file slice by line range.
     ("audit_mcp", "read_lines"): adapt_read_lines,
+    # Issue #148: VR dynamic-analysis tools. Both project the colon-keyed
+    # observable (``symbolic:<fn>:reached`` / ``dynamic:<target>:
+    # coverage_delta``) the kill-criteria evaluator scans.
+    ("symbolic", "explore"): adapt_symbolic_explore,
+    ("dynamic", "run_dynamic"): adapt_dynamic_run,
 }
 
 # fix §200 -- generic-adapter-backed read tools registered explicitly.

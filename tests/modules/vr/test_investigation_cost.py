@@ -12,7 +12,7 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_compute_live_investigation_cost_sums_by_investigation_id(test_db) -> None:
-    from aila.modules.vr.api_router import _compute_live_investigation_cost
+    from aila.platform.services.investigation_cost import compute_live_investigation_cost as _compute_live_investigation_cost
     from aila.platform.llm.cost_record import LLMCostRecord
     from aila.platform.uow import UnitOfWork
     from aila.storage.database import async_session_scope
@@ -39,7 +39,7 @@ async def test_compute_live_investigation_cost_sums_by_investigation_id(test_db)
 
 @pytest.mark.asyncio
 async def test_compute_live_investigation_cost_zero_when_no_rows(test_db) -> None:
-    from aila.modules.vr.api_router import _compute_live_investigation_cost
+    from aila.platform.services.investigation_cost import compute_live_investigation_cost as _compute_live_investigation_cost
     from aila.platform.uow import UnitOfWork
 
     async with UnitOfWork() as uow:

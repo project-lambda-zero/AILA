@@ -124,6 +124,25 @@ HONESTY_WHITELIST = [
     ("vr/agents/outcome_dispatcher.py", "_int_or_none", "inlining"),
     ("vr/api_router.py", "_fuzz_proposal_summary", "inlining"),
 
+    # Category (b): eval-suite harness lazy imports. workflow/task.py
+    # re-exports the eval-suite tasks (run_vr_eval_suite /
+    # run_vr_eval_collect), so eval_suites/*.py cannot top-level import
+    # run_vr_investigate or workflow.task -- the cycle is
+    # task.py -> eval_suites.tasks -> suite_runner -> task.py. The
+    # deferred import fires at enqueue time, after registration.
+    ("vr/eval_suites/suite_runner.py",
+     "inline '# noqa' comment on line 143",
+     "documented justification"),
+    ("vr/eval_suites/tasks.py",
+     "inline '# noqa' comment on line 48",
+     "documented justification"),
+    ("vr/eval_suites/api_router.py",
+     "inline '# noqa' comment on line 74",
+     "documented justification"),
+    ("vr/eval_suites/api_router.py",
+     "inline '# noqa' comment on line 160",
+     "documented justification"),
+
     # Category (b): Phase C surgical (orphan-branch close on terminal flip).
     # services/branch_cleanup.py is imported inline at every COMPLETED/FAILED/
     # ABANDONED transition site so the helper lands in the SAME UoW that the

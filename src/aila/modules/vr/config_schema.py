@@ -124,6 +124,24 @@ class VRConfigSchema(ModuleConfigBase):
         ),
     )
 
+    eval_suite_dataset_root: str = Field(
+        default="",
+        description=(
+            "Filesystem root holding the benchmark-measurement datasets. The "
+            "harness reads <root>/<suite>/manifest.json for each suite "
+            "(cybench, nyu_ctf, htb_lite). Empty disables measurement runs; "
+            "set it to the directory where the public datasets were unpacked."
+        ),
+    )
+    eval_suite_default_budget_usd: float = Field(
+        default=50.0,
+        gt=0.0,
+        description=(
+            "Default per-task cost budget for a benchmark investigation when a "
+            "manifest task does not set its own budget_usd."
+        ),
+    )
+
     # Investigation lifecycle caps (operator-tunable). Previously read
     # via VR_* env vars scattered across branch_manager / claim_verifier /
     # parent_reconciler / investigation_finalizers / target_analysis /

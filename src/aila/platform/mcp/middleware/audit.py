@@ -21,10 +21,12 @@ from __future__ import annotations
 
 import asyncio
 import difflib
+import itertools
 import logging
 import os
 import re
 import time
+import weakref
 from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -680,10 +682,23 @@ class AuditMcpMiddleware:
         "blast_radius_batch":  2,
         "semantic_search":     3,
     }
-    _TOOL_SEMAPHORES: dict[str, asyncio.BoundedSemaphore] = {}
+    # Keyed by the running event loop: asyncio primitives bind to the
+    # loop that first waits on them, so a semaphore created under one
+    # loop raises "attached to a different loop" when reused after the
+    # loop is recreated. Weak keys drop a closed loop's semaphores.
+    _TOOL_SEMAPHORES: weakref.WeakKeyDictionary[
+        asyncio.AbstractEventLoop, dict[str, asyncio.BoundedSemaphore]
+    ] = weakref.WeakKeyDictionary()
 
-    # Per-index pre-warm fan-out sizing (used by ``_ensure_prewarmed``).
-    _PREWARM_FANOUT: int = 16
+    # Serialises ``_refresh_index_roots`` so a slower, older
+    # ``list_indexes`` response cannot overwrite a newer one. One lock
+    # per running loop for the same reason as ``_TOOL_SEMAPHORES``.
+    _INDEX_ROOTS_LOCKS: weakref.WeakKeyDictionary[
+        asyncio.AbstractEventLoop, asyncio.Lock
+    ] = weakref.WeakKeyDictionary()
+
+    # Per-index pre-warm fan-out ceiling (used by ``_ensure_prewarmed``).
+    _PREWARM_FANOUT_MAX: int = 64
     _PREWARM_TIMEOUT_S: float = 90.0
 
     def __init__(self, *, spec: ServerSpec, module_id: str) -> None:
@@ -748,15 +763,32 @@ class AuditMcpMiddleware:
         ``async with`` cleanly. Class-level so every middleware
         instance in the worker process shares the cap (one
         investigation can't bypass by constructing a fresh middleware).
+        Scoped to the running event loop so a recreated loop gets
+        fresh semaphores instead of ones bound to a dead loop.
         """
         cap = cls._HEAVY_TOOL_CAPS.get(tool)
         if cap is None:
             return None
-        sem = cls._TOOL_SEMAPHORES.get(tool)
+        loop = asyncio.get_running_loop()
+        per_loop = cls._TOOL_SEMAPHORES.get(loop)
+        if per_loop is None:
+            per_loop = {}
+            cls._TOOL_SEMAPHORES[loop] = per_loop
+        sem = per_loop.get(tool)
         if sem is None:
             sem = asyncio.BoundedSemaphore(cap)
-            cls._TOOL_SEMAPHORES[tool] = sem
+            per_loop[tool] = sem
         return sem
+
+    @classmethod
+    def _index_roots_lock(cls) -> asyncio.Lock:
+        """Return the ``_INDEX_ROOTS`` refresh lock for the running loop."""
+        loop = asyncio.get_running_loop()
+        lock = cls._INDEX_ROOTS_LOCKS.get(loop)
+        if lock is None:
+            lock = asyncio.Lock()
+            cls._INDEX_ROOTS_LOCKS[loop] = lock
+        return lock
 
     # ── Public middleware surface ─────────────────────────────────────
 
@@ -1368,8 +1400,11 @@ class AuditMcpMiddleware:
 
             # Fan-out sized to 4x worker count so round-robin
             # distribution statistically hits every worker at least
-            # once (not a fixed 16).
-            fanout = max(workers * 4, 4)
+            # once (not a fixed 16), capped so a large worker count
+            # cannot launch an unbounded burst of concurrent posts.
+            fanout = min(
+                max(workers * 4, 4), self.__class__._PREWARM_FANOUT_MAX,
+            )
             _log.info(
                 "audit_mcp_bridge: pre-warming index %s across %d "
                 "workers (fan-out=%d, timeout=%.0fs)",
@@ -1583,30 +1618,38 @@ class AuditMcpMiddleware:
         return None
 
     async def _refresh_index_roots(self, client: McpClient) -> None:
-        """Fetch list_indexes and cache index_id -> root_path mapping."""
-        data = await client.post("list_indexes", {}, timeout=15.0)
-        if not isinstance(data, dict):
-            _log.warning(
-                "audit_mcp_bridge: list_indexes returned non-dict payload "
-                "(type=%s) -- keeping stale index roots",
-                type(data).__name__,
-            )
-            return
-        if data.get("status") == "error":
-            _log.warning(
-                "audit_mcp_bridge: list_indexes refresh failed: %s",
-                data.get("error"),
-            )
-            return
-        roots: dict[str, str] = {}
-        for idx in (data.get("indexes") or []):
-            if not isinstance(idx, dict):
-                continue
-            iid = idx.get("index_id")
-            rp = idx.get("root_path")
-            if isinstance(iid, str) and isinstance(rp, str) and iid and rp:
-                roots[iid] = rp
-        self.__class__._INDEX_ROOTS = roots
+        """Fetch list_indexes and cache index_id -> root_path mapping.
+
+        The fetch and the cache swap run under one lock so concurrent
+        refreshes complete in order: an older response that returns
+        late cannot replace a newer one and drop an index that just
+        appeared.
+        """
+        cls = self.__class__
+        async with cls._index_roots_lock():
+            data = await client.post("list_indexes", {}, timeout=15.0)
+            if not isinstance(data, dict):
+                _log.warning(
+                    "audit_mcp_bridge: list_indexes returned non-dict "
+                    "payload (type=%s) -- keeping stale index roots",
+                    type(data).__name__,
+                )
+                return
+            if data.get("status") == "error":
+                _log.warning(
+                    "audit_mcp_bridge: list_indexes refresh failed: %s",
+                    data.get("error"),
+                )
+                return
+            roots: dict[str, str] = {}
+            for idx in (data.get("indexes") or []):
+                if not isinstance(idx, dict):
+                    continue
+                iid = idx.get("index_id")
+                rp = idx.get("root_path")
+                if isinstance(iid, str) and isinstance(rp, str) and iid and rp:
+                    roots[iid] = rp
+            cls._INDEX_ROOTS = roots
 
     async def _read_lines_local(
         self, client: McpClient, kwargs: dict[str, Any],
@@ -1864,25 +1907,34 @@ class AuditMcpMiddleware:
                             ),
                         }
 
-        def _read_all_lines(path: Path) -> list[str]:
+        def _read_line_window(
+            path: Path, first: int, last: int,
+        ) -> tuple[list[str], int]:
+            # Streams the file: only lines [first, last] (1-indexed,
+            # inclusive) are kept; the rest are counted, not stored,
+            # so ``total_lines_in_file`` stays exact without loading
+            # the whole file.
             with path.open("r", encoding="utf-8", errors="replace") as f:
-                return f.readlines()
+                skipped = sum(1 for _ in itertools.islice(f, first - 1))
+                window = list(itertools.islice(f, last - first + 1))
+                trailing = sum(1 for _ in f)
+            return window, skipped + len(window) + trailing
 
         try:
-            all_lines = await asyncio.to_thread(_read_all_lines, abs_path)
+            slice_lines, total = await asyncio.to_thread(
+                _read_line_window, abs_path, start, end,
+            )
         except OSError as exc:
             return {
                 "status": "error",
                 "error": f"read_lines: read failed: {exc}",
             }
 
-        total = len(all_lines)
         if start > total:
             return _sig_error(
                 f"start={start} exceeds file length {total}",
             )
         actual_end = min(end, total)
-        slice_lines = all_lines[start - 1:actual_end]
         content = "".join(slice_lines)
         return {
             "status": "ready",

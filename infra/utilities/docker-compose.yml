@@ -20,6 +20,12 @@ services:
     image: pgvector/pgvector:pg16
     container_name: aila-postgres
     restart: unless-stopped
+    # Raise the connection ceiling above the stock 100. The fleet runs one
+    # SQLAlchemy engine pool per process (backend + one worker per queue in
+    # start.sh WORKERS), so burst demand scales with process count; 200 leaves
+    # clear headroom over the ~90 fleet-wide peak after the per-process pool
+    # bound in src/aila/storage/database.py (#197).
+    command: ["postgres", "-c", "max_connections=200"]
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: changeme

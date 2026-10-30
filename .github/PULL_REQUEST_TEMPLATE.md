@@ -16,6 +16,7 @@ Per `CONTRIBUTING.md`, every PR must pass these:
 
 - [ ] Unit tests pass: `pytest tests/ --ignore=tests/test_e2e.py --ignore=tests/test_e2e_live.py`
 - [ ] Honesty audit clean: `python -m aila.tools.honesty_audit src/aila --whitelist honesty_whitelist.py`
+- [ ] Liveness audit clean: `python -m aila.tools.liveness_audit src/aila --whitelist liveness_whitelist.py`
 - [ ] Ruff clean: `python -m ruff check src/aila/`
 - [ ] Golden rules respected (`docs/GOLDEN_RULES.md`)
 - [ ] If frontend changed: `pnpm -r run type-check` and `pnpm --filter @aila/shell run build` both pass

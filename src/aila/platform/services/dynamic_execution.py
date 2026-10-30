@@ -22,10 +22,21 @@ Design contract
 * Observations are burned through the existing #137 writer
   (:func:`aila.platform.agents.observation.record_observation`) into the
   workspace-scoped ``{module}.observation.workspace.{workspace_id}``
-  bucket the module retrievers already read. The kill-criteria layer and
-  the reasoning loop consume ``dynamic.*`` kinds through the same
-  retrieval path they consume ``read_hit`` / ``dead_end``; no new
-  channel, no new table, no migration.
+  bucket the module retrievers already read -- cross-investigation
+  memory, no new channel, no new table, no migration. The per-turn
+  kill-criteria evaluator does NOT read that bucket directly: the
+  reasoning loop reaches this driver through the VR ``dynamic.run_dynamic``
+  agent tool
+  (:class:`aila.modules.vr.tools.dynamic_analysis.DynamicRunTool`), whose
+  adapter
+  (:func:`aila.platform.mcp.adapters.dynamic_symbolic.adapt_dynamic_run`)
+  projects ``dynamic:<target>:coverage_delta`` (and
+  ``dynamic:<target>:crash`` on an abnormal exit) into the branch's
+  ``case_state.observables``. The evaluator
+  (:meth:`aila.modules.vr.agents.vuln_researcher.HonestVulnResearcher.
+  _evaluate_kill_criteria_this_turn`) scans those observables for keys on
+  its prefix allowlist, which includes ``dynamic:`` (next to ``fuzz:`` /
+  ``symbolic:``).
 * The observable vocabulary is intentionally small and namespaced:
 
   - :data:`DYNAMIC_RUN`           -- the run happened; polarity encodes
@@ -74,9 +85,11 @@ Module use pattern
     )
 
     if result.status is DynamicRunStatus.CRASHED:
-        # kill_criterion for the hypothesis fires via the emitted
-        # ``dynamic.crash`` observation in the workspace bucket the
-        # module retriever already reads.
+        # When dispatched through the VR ``dynamic.run_dynamic`` tool, the
+        # crash additionally lands as a ``dynamic:<target>:crash`` entry in
+        # the branch's case_state.observables (via the tool adapter), where
+        # the per-turn kill-criteria evaluator's ``dynamic:`` prefix scan
+        # confirms the "this input reaches a fault" hypothesis the same turn.
         ...
 
 Every module keeps its own target-selection code (which binary,

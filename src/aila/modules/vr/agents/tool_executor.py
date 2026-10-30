@@ -38,6 +38,10 @@ from aila.modules.vr.db_models import (
 from aila.modules.vr.services.analysis_system import resolve_investigation_integration
 from aila.modules.vr.services.knowledge_scope import vr_knowledge_namespaces
 from aila.modules.vr.services.mcp_call_logger import record_call
+from aila.modules.vr.tools.dynamic_analysis import (
+    DynamicRunTool,
+    SymbolicExploreTool,
+)
 from aila.modules.vr.tools.poc_runner import PoCRunnerTool
 from aila.platform.agents.observation import (
     ObservationKind,
@@ -100,12 +104,22 @@ class ToolExecutor(ToolExecutorHelpersBase):
     #                  further phase-gated (per-phase allowed_servers); the
     #                  SSH integration is injected server-side in
     #                  _pre_dispatch_correct_args so the agent never supplies it.
+    #   - symbolic:    issue #148 in-process concolic driver
+    #                  (symbolic.explore). module + workspace injected
+    #                  server-side; feeds symbolic:<fn>:reached observables.
+    #   - dynamic:     issue #148 in-process sandboxed run driver
+    #                  (dynamic.run_dynamic). module + workspace injected
+    #                  server-side; feeds dynamic:<target>:coverage_delta
+    #                  / :crash observables.
     # The base check (ToolExecutorHelpersBase._dispatch) rejects any other
     # server_id BEFORE adapter lookup with a clear "not exposed to this
     # agent" error. Adding a new bridge requires wiring it in ``__init__``
     # AND appending it here.
     _AGENT_ALLOWED_SERVERS: frozenset[str] = frozenset(
-        {"audit_mcp", "ida_headless", "android_mcp", "knowledge", "poc_runner"},
+        {
+            "audit_mcp", "ida_headless", "android_mcp", "knowledge",
+            "poc_runner", "symbolic", "dynamic",
+        },
     )
 
     # ---- Lateral-vulnerability discovery patterns (issue #95, #136) ----
@@ -204,6 +218,8 @@ class ToolExecutor(ToolExecutorHelpersBase):
         android_mcp: Any = None,
         knowledge: Any | None = None,
         poc_runner: Any | None = None,
+        symbolic: Any | None = None,
+        dynamic: Any | None = None,
     ) -> None:
         self._message_model = VRInvestigationMessageRecord
         self._branch_model = VRInvestigationBranchRecord
@@ -228,6 +244,12 @@ class ToolExecutor(ToolExecutorHelpersBase):
                 # integration (SSH config) is injected server-side in
                 # _pre_dispatch_correct_args so the agent can never supply it.
                 "poc_runner": poc_runner or PoCRunnerTool(get_settings()),
+                # Issue #148: in-process dynamic-analysis drivers. module +
+                # workspace are injected server-side in
+                # _pre_dispatch_correct_args so the agent can never point a
+                # run at another workspace.
+                "symbolic": symbolic or SymbolicExploreTool(),
+                "dynamic": dynamic or DynamicRunTool(),
             }.items()
             if bridge is not None
         }
@@ -298,6 +320,26 @@ class ToolExecutor(ToolExecutorHelpersBase):
                     "investigation_id": investigation_id,
                     "team_id": team_id,
                 }
+            return scoped
+        # Issue #148: inject the owning module id + resolved workspace scope
+        # (and investigation id for observation provenance) SERVER-SIDE so a
+        # symbolic / dynamic run is bound to THIS investigation's workspace
+        # and the agent cannot target another. Agent-supplied module /
+        # workspace_id are dropped and replaced. Fail-open on an unresolved
+        # workspace: the tool returns its own "scope unresolved" error,
+        # which the executor surfaces rather than crashing the dispatch.
+        if server_id in ("symbolic", "dynamic"):
+            workspace_id, _team_id = await self._resolve_workspace_scope(
+                investigation_id,
+            )
+            scoped = {
+                k: v for k, v in args.items()
+                if k not in ("module", "workspace_id", "investigation_id")
+            }
+            scoped["module"] = self._bridge_module_id
+            scoped["investigation_id"] = investigation_id
+            if workspace_id:
+                scoped["workspace_id"] = workspace_id
             return scoped
         return args
 

@@ -275,11 +275,18 @@ class VRModule(ModuleProtocol):
         under the declared prefix.
         """
         from .api_router import create_vr_router
+        from .eval_suites.api_router import create_vr_eval_router
 
         return [
             ModuleRouteSpec(
                 prefix="/vr",
                 router_factory=create_vr_router,
+                tool_keys=tuple(ALL_TOOL_KEYS),
+                config_namespace=self.module_id,
+            ),
+            ModuleRouteSpec(
+                prefix="/vr",
+                router_factory=create_vr_eval_router,
                 tool_keys=tuple(ALL_TOOL_KEYS),
                 config_namespace=self.module_id,
             ),

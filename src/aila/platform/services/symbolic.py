@@ -4,14 +4,25 @@ Concolic exploration of a single function under an operator-supplied
 precondition. The driver runs miasm's DSE (dynamic symbolic execution)
 engine over the function's bytes, records the reached basic-block
 addresses + emitted path constraints, and pipes ONE
-``symbolic.reached`` observation into the SAME platform observation
-channel (RFC #137,
-:func:`aila.platform.agents.observation.record_observation`) that the
-``fuzz.*`` kinds already feed. Hypothesis kill-criteria scanning the
-workspace-scoped ``{module}.observation.workspace.{workspace_id}``
-knowledge bucket for ``fuzz.*`` rows consume ``symbolic.reached``
-without any new plumbing -- same writer, same namespace shape, same
-retrieval path.
+``symbolic.reached`` observation into the platform observation channel
+(RFC #137, :func:`aila.platform.agents.observation.record_observation`)
+for cross-investigation memory -- the same writer + namespace shape the
+``fuzz.*`` kinds use.
+
+Hypothesis kill-criteria do NOT read that knowledge bucket directly.
+The reasoning loop reaches this driver through the VR
+``symbolic.explore`` agent tool
+(:class:`aila.modules.vr.tools.dynamic_analysis.SymbolicExploreTool`);
+its specialised adapter
+(:func:`aila.platform.mcp.adapters.dynamic_symbolic.adapt_symbolic_explore`)
+projects a ``symbolic:<function>:reached`` entry into the branch's
+``case_state.observables``, and the per-turn kill-criteria evaluator
+(:meth:`aila.modules.vr.agents.vuln_researcher.HonestVulnResearcher.
+_evaluate_kill_criteria_this_turn`) scans ``case_state.observables`` for
+keys on its prefix allowlist, which now includes ``symbolic:`` (next to
+``fuzz:`` / ``dynamic:``). That projection -- not the knowledge-bucket
+write -- is what feeds a reached result into a hypothesis kill-criterion
+the same turn.
 
 Design contract
 ---------------

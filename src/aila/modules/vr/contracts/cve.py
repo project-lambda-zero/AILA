@@ -1,7 +1,7 @@
 """CVE feed + memo invalidation contracts (v0.4 GA-51).
 
-The CVE feed poller normalizes records from NVD JSON 2.0 + GitHub
-Security Advisory feed into ``vr_cve_records``. Each new CVE
+Operators submit CVE records (sourced from NVD, GHSA, MITRE, or entered
+manually) through the ingest endpoint into ``vr_cve_records``. Each new CVE
 triggers a similarity scan over the workspace's audit memos: matches
 get an `invalidation_event` so the operator sees "this memo may be
 outdated -- CVE-2026-XXXXX landed in the same area".

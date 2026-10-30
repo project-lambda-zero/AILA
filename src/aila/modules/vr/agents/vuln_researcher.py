@@ -73,6 +73,10 @@ from aila.modules.vr.services.outcome_review import (
     summarize_outcome_for_review,
     upsert_review,
 )
+from aila.modules.vr.tools.dynamic_analysis import (
+    DynamicRunTool,
+    SymbolicExploreTool,
+)
 from aila.modules.vr.workflow.states.investigation_setup import (
     _resolve_retrieved_knowledge,
 )
@@ -197,6 +201,10 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         # so a turn only re-queries the knowledge base when the branch's live
         # focus actually changed (bounds cost to real pivots).
         self._last_retrieval_focus: int | None = None
+        # Issue #148: fuzz coverage/crash observables consumed this turn by
+        # _consume_pending_operator_messages, merged into case_state by
+        # _inject_promotion_directives before the kill-criteria scan.
+        self._pending_fuzz_observables: dict[str, str] = {}
 
     # ---- AgentTurnRunnerBase config + hooks (RFC-03 Phase 7) -----------
     _LOG_LABEL = "vuln_researcher"
@@ -1109,6 +1117,15 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
 
             messages: list[dict[str, Any]] = []
             seen_texts: set[str] = set()
+            # Issue #148: fuzz coverage/crash feedback messages that
+            # survive the same consumption gate (not acked, not expired,
+            # visible to this branch) are projected into case_state under
+            # ``fuzz:<campaign>:<kind>`` keys so the per-turn kill-criteria
+            # evaluator sees them the same turn. The chat-message behavior
+            # is untouched -- the row still lands in ``messages`` and the
+            # prompt as passive text; this is an ADDITIONAL structured
+            # projection keyed for the prefix allowlist.
+            pending_fuzz: dict[str, str] = {}
             stamped = False
             now = utc_now()
             ttl_seconds = self._OPERATOR_MESSAGE_TTL_SECONDS
@@ -1157,8 +1174,18 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                     "branch_addressed": row.branch_id,
                     "age_seconds": int(age_seconds),
                 })
+                # Issue #148: structured fuzz-loop projection alongside the
+                # chat message. Only rows that passed every filter above
+                # reach here, so an ACKed crash steering does not re-project.
+                fuzz_obs = _fuzz_observable_for_row(row, payload, text)
+                if fuzz_obs is not None:
+                    pending_fuzz[fuzz_obs[0]] = fuzz_obs[1]
             if stamped:
                 await uow.commit()
+            # Stash for _inject_promotion_directives to merge into the
+            # live case_state before it schedules the kill-criteria scan,
+            # so a crash/coverage signal fires kill-criteria THIS turn.
+            self._pending_fuzz_observables = pending_fuzz
             return messages[:10]
 
     def _maybe_reject_submit_with_unresolved_hypotheses(
@@ -1359,6 +1386,18 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         to the shared ledger; a scheduling failure logs and returns
         without blocking the turn.
         """
+        # Issue #148: merge the fuzz coverage/crash observables that
+        # _consume_pending_operator_messages projected earlier THIS turn
+        # into the live case_state, so the kill-criteria scan scheduled
+        # just below (and the prefix allowlist that now includes
+        # ``fuzz:``) sees them the same turn the feedback arrived. Applied
+        # BEFORE scheduling so the fire-and-forget evaluator reads the
+        # merged state; cleared after apply so a later turn without new
+        # fuzz feedback does not re-project stale signals.
+        pending_fuzz = getattr(self, "_pending_fuzz_observables", None)
+        if pending_fuzz:
+            case_state.observables.update(pending_fuzz)
+            self._pending_fuzz_observables = {}
         # F2 kill_criterion evaluator (issue #249 W10 / #262). Kept
         # outside the F1 toggle so the truth signal fires even when the
         # promote-confirmed toggle is off.
@@ -2718,6 +2757,22 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                 or key.startswith("ida_headless.")
                 or key.startswith("android_mcp:")
                 or key.startswith("android_mcp.")
+                # Issue #148: dynamic-analysis signals participate in
+                # kill-criteria exactly like the MCP tool-prefix readings.
+                # ``fuzz:`` is projected from the live fuzz campaign
+                # coverage/crash feedback messages by
+                # :meth:`_consume_pending_operator_messages` ->
+                # :meth:`_inject_promotion_directives`; ``symbolic:`` and
+                # ``dynamic:`` are projected by the symbolic.explore /
+                # dynamic.run_dynamic VR tool adapters. Each carries a
+                # colon-joined ``<prefix>:<subject>:<kind>`` key; the dot
+                # form is accepted for parity with the MCP prefixes above.
+                or key.startswith("fuzz:")
+                or key.startswith("fuzz.")
+                or key.startswith("symbolic:")
+                or key.startswith("symbolic.")
+                or key.startswith("dynamic:")
+                or key.startswith("dynamic.")
             ):
                 continue
             if not isinstance(val, str) or not val:
@@ -2855,6 +2910,52 @@ _KILL_MISSING_MARKERS: tuple[str, ...] = (
     "missing check", "unsanitized", "not validated",
     "without check", "no length",
 )
+
+
+def _fuzz_observable_for_row(
+    row: Any,
+    payload: dict[str, Any],
+    text: str,
+) -> tuple[str, str] | None:
+    """Project a consumed fuzz-feedback message row into a kill-criteria
+    observable ``(key, body)`` pair, or ``None`` when the row is not a
+    fuzz signal (issue #148).
+
+    Two live producers in
+    :mod:`aila.modules.vr.services.fuzz_service` write the rows this
+    reads:
+
+    * ``_emit_coverage_delta_feedback`` -- a SYSTEM message with
+      ``sender_id == "fuzz_coverage"`` whose payload carries
+      ``campaign_id`` + ``coverage_pct``. Projected as
+      ``fuzz:<campaign>:coverage_delta``.
+    * ``_emit_crash_confirmed_feedback`` -- an OPERATOR steering whose
+      ``auto_steering_key`` is ``fuzz_crash:<campaign>:<stack_hash>``.
+      Projected as ``fuzz:<campaign>:crash``.
+
+    The body is the message text verbatim (the same coverage/crash
+    summary the agent already reads as chat) so the kill-criteria
+    token-overlap scan has real content to match against. Returns
+    ``None`` for any other message so non-fuzz operator steering is
+    never mistaken for a dynamic-analysis signal.
+    """
+    body = (text or "").strip()
+    if not body:
+        return None
+    sender_id = str(getattr(row, "sender_id", "") or "")
+    if sender_id == "fuzz_coverage":
+        campaign = str(payload.get("campaign_id") or "").strip()
+        if campaign:
+            return f"fuzz:{campaign}:coverage_delta", body
+        return None
+    steering_key = str(getattr(row, "auto_steering_key", "") or "")
+    if steering_key.startswith("fuzz_crash:"):
+        parts = steering_key.split(":")
+        # fuzz_crash:<campaign_id>:<stack_hash>
+        campaign = parts[1].strip() if len(parts) >= 2 else ""
+        if campaign:
+            return f"fuzz:{campaign}:crash", body
+    return None
 
 
 def _extract_cited_tool_pairs(
@@ -3769,6 +3870,13 @@ async def _fetch_tool_specs(
     # the agent can pull prior workspace knowledge on demand regardless of
     # the code-analysis backend chosen above.
     applicable.add("knowledge")
+    # Issue #148: the in-process dynamic-analysis drivers are available on
+    # every kind so the agent can trigger a concolic walk / sandboxed run
+    # against any target. They short-circuit to a disabled/unavailable
+    # status when their platform flags are off, so advertising them costs
+    # nothing until an operator enables the feature.
+    applicable.add("symbolic")
+    applicable.add("dynamic")
     out: dict[str, list[dict[str, Any]]] = {}
     if "knowledge" in applicable:
         specs = await KnowledgeBridgeTool().list_tool_specs()
@@ -3776,6 +3884,18 @@ async def _fetch_tool_specs(
             "knowledge", [s.get("name") for s in specs if s.get("name")],
         )
         out["knowledge"] = specs
+    if "symbolic" in applicable:
+        specs = await SymbolicExploreTool().list_tool_specs()
+        register_bridge_tools(
+            "symbolic", [s.get("name") for s in specs if s.get("name")],
+        )
+        out["symbolic"] = specs
+    if "dynamic" in applicable:
+        specs = await DynamicRunTool().list_tool_specs()
+        register_bridge_tools(
+            "dynamic", [s.get("name") for s in specs if s.get("name")],
+        )
+        out["dynamic"] = specs
     if "audit_mcp" in applicable:
         specs = await make_bridge(
             "audit_mcp", module_id="vr", recorder=record_call,

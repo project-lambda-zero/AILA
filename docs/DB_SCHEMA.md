@@ -892,20 +892,8 @@ and crashes on conflict; `merge()` does INSERT-or-UPDATE keyed on the PK.
 
 ---
 
-## VR Tables (20)
+## VR Tables (19)
 
-
-### `vr_cve_feed_state`
-
-| Column | Type | Constraints |
-|--------|------|-------------|
-| `source` | VARCHAR(16) | PK |
-| `last_polled_at` | DATETIME |  |
-| `last_cursor` | VARCHAR(256) |  |
-| `last_error` | TEXT |  |
-| `consecutive_errors` | INTEGER | NOT NULL, default=0 |
-| `records_ingested` | INTEGER | NOT NULL, default=0 |
-| `updated_at` | DATETIME | NOT NULL, default=<function utc_now at 0x000000003DF8CF40> |
 
 ### `vr_cve_records`
 
@@ -2072,4 +2060,4 @@ and crashes on conflict; `merge()` does INSERT-or-UPDATE keyed on the PK.
 
 ---
 
-*Generated from live SQLModel metadata (120 tables). Alembic head `126_drop_result_path`. Regenerate with `.run/schema_dump.py` + `.run/gen_schema_md.py` after model changes.*
+*Generated from live SQLModel metadata (119 tables). Alembic head `126_drop_result_path`. Regenerate with `.run/schema_dump.py` + `.run/gen_schema_md.py` after model changes.*

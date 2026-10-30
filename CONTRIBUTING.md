@@ -37,18 +37,22 @@ python -m pytest tests/test_e2e.py -v
 # Honesty audit (must exit 0)
 python -m aila.tools.honesty_audit src/aila --whitelist honesty_whitelist.py
 
+# Liveness audit (must exit 0)
+python -m aila.tools.liveness_audit src/aila --whitelist liveness_whitelist.py
+
 # Linter
 python -m ruff check src/aila/
 ```
 
 ## Before Submitting a PR
 
-Every PR must pass all four gates:
+Every PR must pass all five gates:
 
 1. **Unit tests pass** -- `pytest` exits 0
 2. **Honesty audit clean** -- 0 findings (or whitelist entry with justification)
-3. **Ruff clean** -- no lint violations
-4. **Golden rules respected** -- see `docs/GOLDEN_RULES.md`
+3. **Liveness audit clean** -- 0 findings (or a `liveness_whitelist.py` entry naming the dynamic writer/reader)
+4. **Ruff clean** -- no lint violations
+5. **Golden rules respected** -- see `docs/GOLDEN_RULES.md`
 
 ## Code Standards
 

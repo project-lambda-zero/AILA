@@ -12,9 +12,8 @@ Two responsibilities:
    events that have been recorded for one memo entry. Used by the
    operator UI to surface "this memo may be outdated".
 
-The actual NVD / GHSA poller is deferred to the operator-run cron task
-``poll_cve_feeds`` -- out of scope for the service layer. v1 ships the
-ingest endpoint; operators can manually POST CVEs via API.
+CVE records enter only through the ingest endpoint (operators POST them via
+the API); there is no automated NVD / GHSA feed poller.
 """
 from __future__ import annotations
 

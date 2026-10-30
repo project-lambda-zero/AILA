@@ -1,4 +1,4 @@
-.PHONY: install dev dev-all dev-up dev-down dev-reset dev-logs dev-status teardown teardown-force backend frontend frontend-build worker worker-vuln worker-forensics worker-vr db-init migrate test test-e2e coverage lint typecheck honesty liveness-guard build compile check security-scan audit bandit clean
+.PHONY: install dev dev-all dev-up dev-down dev-reset dev-logs dev-status teardown teardown-force backend frontend frontend-build worker worker-vuln worker-forensics worker-vr db-init migrate test test-e2e coverage lint typecheck honesty liveness liveness-guard build compile check security-scan audit bandit clean
 
 # Cross-platform: use python for port-freeing and cleanup instead of
 # fuser/find/bash which are Linux-only.
@@ -113,6 +113,9 @@ typecheck:
 honesty:
 	python -m aila.tools.honesty_audit src/aila --whitelist honesty_whitelist.py
 
+liveness:
+	python -m aila.tools.liveness_audit src/aila --whitelist liveness_whitelist.py
+
 liveness-guard:
 	python -m aila.tools.liveness_guard src/aila
 
@@ -122,7 +125,7 @@ build:
 compile:
 	python -m compileall -q src/aila
 
-check: lint honesty liveness-guard compile typecheck
+check: lint honesty liveness liveness-guard compile typecheck
 	@echo "All gates passed."
 
 # ── Security ──

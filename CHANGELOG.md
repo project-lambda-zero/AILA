@@ -5,7 +5,28 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
-## [0.6.1] - 2026-10-30 -- reverser-belt (kuna) IDA backend adaptation
+## [0.6.2] - 2026-10-30 -- fuzz/symbolic feedback loop, benchmark harness, liveness gate
+
+### Added
+
+- VR benchmark-measurement harness (`vr/eval_suites/`): manifest-driven runs over public cyber-agent benchmark suites (cybench, nyu_ctf, htb_lite). One VR investigation is spun per benchmark task against the task's pre-provisioned target; each task is scored by reference-answer match plus live LLM cost and outcome polarity; per-suite aggregates feed a leaderboard. Admin API under `/vr/eval-suites/*` (start/list/detail/collect/leaderboard) and a console scoreboard page. Live runs need Redis, VR workers, and the external datasets (operator steps documented in the package README).
+- `symbolic.explore` and `dynamic.run_dynamic` are agent-callable VR tools wrapping the platform concolic / sandboxed-execution drivers.
+- The liveness auditor is now a hard gate: `make check` runs it alongside the honesty audit, and CI invokes both.
+
+### Changed
+
+- Fuzz coverage/crash campaign feedback is projected into `case_state.observables` under `fuzz:<campaign>:*` keys, and the per-turn kill-criteria evaluator now consumes `fuzz:` / `symbolic:` / `dynamic:` observables alongside the MCP tool prefixes. Coverage and symbolic evidence now participate in hypothesis kill-criteria instead of sitting beside the loop as chat text. Docstrings that described the old knowledge-bucket path are corrected.
+- DB pool default `max_overflow` lowered to 5 (per-process peak 15 connections) and dev Postgres `max_connections` raised to 200, so the backend-plus-workers fleet no longer risks exhausting the stock 100-connection ceiling.
+- MCP audit middleware internals: line-window reads stream through `islice` instead of materializing whole files, prewarm fanout capped at 64, per-tool semaphores keyed per event loop, and the index-root refresh serialized under a per-loop lock.
+- Malware `inherit_observations` is written at investigation create time and copied to spawned child investigations; the playbook per-family threshold documents its PATCH-endpoint writer.
+
+### Fixed
+
+- Orphan plaintext `data/secrets/master.key` deleted; the live `keyring.json` keyring is unaffected and `data/` remains gitignored.
+- The VR CVE feed-state table (never written; the automated poller is deferred) is dropped, removing its five permanent-zero columns.
+- Orphaned VR prompt `system_audit.full.md` confirmed absent from the tree and the prompt loader.
+
+---
 
 ### Added
 
