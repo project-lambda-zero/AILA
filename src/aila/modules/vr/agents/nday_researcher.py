@@ -2,8 +2,8 @@
 
 Drives the research phase of ``VR_NDAY_V1``: identify the patch, decompile
 the vulnerable function, classify the bug primitive, produce a root-cause
-statement. Uses ``AilaLLMClient`` for multi-turn LLM reasoning, the IDA
-bridge for analysis actions, and platform ``ObligationSet`` /
+statement. Uses ``AilaLLMClient`` for multi-turn LLM reasoning, the REA /
+reverser_belt bridges for analysis actions, and platform ``ObligationSet`` /
 ``BudgetState`` / ``BoundedEvidencePack`` to bound + adjudicate output.
 ``research()`` is the only entry point.
 """
@@ -77,14 +77,39 @@ _OBLIGATION_DEFS: tuple[tuple[str, str, str, ObligationSeverity], ...] = (
 )
 
 
+# Action → serving MCP server. REA covers decompilation / disassembly /
+# xrefs / call graphs; reverser_belt covers taint + the two-binary diff.
+_ACTION_SERVER: dict[str, str] = {
+    "decompile": "rea",
+    "call_chain": "rea",
+    "xrefs_to": "rea",
+    "search_pattern": "rea",
+    "binary_survey": "rea",
+    "trace_dataflow": "reverser_belt",
+    "diff_versions": "reverser_belt",
+}
+
+# Action → concrete tool name on the serving server. reverser_belt keeps
+# the legacy ida tool names; REA names follow the REA catalog.
+_ACTION_TOOL: dict[str, str] = {
+    "decompile": "procedure_pseudo_code",
+    "call_chain": "get_call_graph",
+    "xrefs_to": "procedure_callers",
+    "search_pattern": "search_bytes",
+    "binary_survey": "binary_overview",
+    "trace_dataflow": "interprocedural_taint",
+    "diff_versions": "diff_binary",
+}
+
+
 def _shape_decompile(p: dict[str, Any]) -> dict[str, Any]:
-    return {"address_or_name": str(p.get("address_or_name") or "")}
+    return {"procedure": str(p.get("address_or_name") or "")}
 
 
 def _shape_call_chain(p: dict[str, Any]) -> dict[str, Any]:
     direction = str(p.get("direction") or "callers")
     return {
-        "target_function": str(p.get("target_function") or ""),
+        "procedure": str(p.get("target_function") or ""),
         "direction": direction if direction in ("callers", "callees") else "callers",
     }
 
@@ -102,11 +127,16 @@ def _shape_trace_dataflow(p: dict[str, Any]) -> dict[str, Any]:
 
 
 def _shape_xrefs_to(p: dict[str, Any]) -> dict[str, Any]:
-    return {"address_or_name": str(p.get("address_or_name") or "")}
+    return {"procedure": str(p.get("address_or_name") or "")}
 
 
 def _shape_search_pattern(p: dict[str, Any]) -> dict[str, Any]:
-    return {"pattern_type": str(p.get("pattern_type") or "")}
+    # REA search_bytes takes a hex byte signature (``??`` wildcards
+    # supported), not ida's pattern_type enum -- forward whatever the
+    # model supplied under either key as the pattern.
+    return {
+        "pattern": str(p.get("pattern") or p.get("pattern_type") or ""),
+    }
 
 
 def _shape_binary_survey(_p: dict[str, Any]) -> dict[str, Any]:
@@ -114,8 +144,9 @@ def _shape_binary_survey(_p: dict[str, Any]) -> dict[str, Any]:
 
 
 # Action → (param shaper). Each shaper returns the kwargs forwarded to the
-# IDA bridge in addition to the implicit ``binary_id`` field. ``diff_versions``
-# is handled separately because it requires both the vulnerable and patched ids.
+# serving bridge alongside the implicit ``target_path`` binding.
+# ``diff_versions`` is handled separately because it requires both the
+# vulnerable and patched paths.
 _ACTION_SHAPERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
     "decompile": _shape_decompile,
     "call_chain": _shape_call_chain,
@@ -179,10 +210,11 @@ class NdayResearcher:
         run_id: str,
         project_id: str,
         cve_id: str,
-        binary_id: str,
-        patched_binary_id: str | None,
+        target_path: str,
+        patched_target_path: str | None,
         mitigations: dict[str, Any],
-        ida_bridge: Any,
+        rea_bridge: Any,
+        reverser_belt_bridge: Any,
         config: VRConfigSchema,
         budget: BudgetState | None = None,
         context_notes: str = "",
@@ -190,11 +222,12 @@ class NdayResearcher:
         self.run_id = run_id
         self.project_id = project_id
         self.cve_id = cve_id
-        self.binary_id = binary_id
-        self.patched_binary_id = patched_binary_id
+        self.target_path = target_path
+        self.patched_target_path = patched_target_path
         self.mitigations = mitigations or {}
         self.context_notes = context_notes or ""
-        self.ida = ida_bridge
+        self._rea = rea_bridge
+        self._reverser_belt = reverser_belt_bridge
         self.config = config
         self.obligations = self._build_obligations()
         if budget is not None:
@@ -341,7 +374,7 @@ class NdayResearcher:
             return record
         if action == "reasoning":
             return record
-        # Tool action through the IDA bridge.
+        # Tool action through the REA / reverser_belt bridges.
         tool_t0 = time.monotonic()
         outcome = await self._dispatch_action(action, params)
         record["tool_seconds"] = round(time.monotonic() - tool_t0, 2)
@@ -388,21 +421,28 @@ class NdayResearcher:
     async def _dispatch_action(
         self, action: str, params: dict[str, Any],
     ) -> dict[str, Any]:
-        """Translate one LLM action into one IDA bridge HTTP call."""
+        """Translate one LLM action into one bridge call (target bound by
+        ``target_path`` -- REA's middleware opens it, reverser_belt takes it
+        as a real argument)."""
+        server = _ACTION_SERVER.get(action, "rea")
+        bridge = self._rea if server == "rea" else self._reverser_belt
         if action == "diff_versions":
-            if not self.patched_binary_id:
-                return {"status": "error", "error": "no patched_binary_id available"}
-            return await self.ida.forward(
+            if not self.patched_target_path:
+                return {"status": "error", "error": "no patched target path available"}
+            # reverser_belt owns the two-binary diff; the vulnerable path is
+            # the bound target, the patched path rides alongside (server
+            # owns the exact cross-binary signature).
+            return await bridge.forward(
                 action="diff_binary",
-                binary_id_old=self.binary_id,
-                binary_id_new=self.patched_binary_id,
+                target_path=self.target_path,
+                patched_target_path=self.patched_target_path,
             )
         shaper = _ACTION_SHAPERS.get(action)
         if shaper is None:  # pragma: no cover -- guarded by _VALID_ACTIONS
             return {"status": "error", "error": f"unhandled action: {action}"}
-        return await self.ida.forward(
-            action=action, binary_id=self.binary_id, **shaper(params),
-        )
+        kwargs = shaper(params)
+        kwargs["target_path"] = self.target_path
+        return await bridge.forward(action=_ACTION_TOOL[action], **kwargs)
     def _absorb_outcome(
         self, action: str, params: dict[str, Any], outcome: dict[str, Any],
     ) -> None:
@@ -416,13 +456,13 @@ class NdayResearcher:
         self._sections.append(EvidenceSection(
             title=self._title_for(action, params),
             content=json.dumps(outcome, indent=2, default=str),
-            source=f"ida.{action}",
+            source=f"{_ACTION_SERVER.get(action, 'rea')}.{action}",
             priority=self._priority_for(action),
         ))
         if action == "diff_versions":
             self.obligations.satisfy(
                 "patch_identified",
-                f"diff_binary({self.binary_id} vs {self.patched_binary_id})",
+                f"diff_binary({self.target_path} vs {self.patched_target_path})",
             )
         elif action == "decompile":
             self.obligations.satisfy(
@@ -444,7 +484,7 @@ class NdayResearcher:
         return _PRIO_OTHER
     def _build_pack(self) -> BoundedEvidencePack:
         pack = BoundedEvidencePack(
-            hypothesis=f"Reproduce {self.cve_id} on {self.binary_id}",
+            hypothesis=f"Reproduce {self.cve_id} on {self.target_path}",
         )
         for s in self._sections:
             pack.add(EvidenceSection(
@@ -458,8 +498,8 @@ class NdayResearcher:
     ) -> str:
         header = (
             f"CVE: {self.cve_id}\n"
-            f"Vulnerable binary id: {self.binary_id}\n"
-            f"Patched binary id:    {self.patched_binary_id or '(not provided)'}\n"
+            f"Vulnerable target path: {self.target_path}\n"
+            f"Patched target path:    {self.patched_target_path or '(not provided)'}\n"
             f"Project: {self.project_id}\n"
             f"Run id:  {self.run_id}\n"
             f"Turn:    {turn}\n"

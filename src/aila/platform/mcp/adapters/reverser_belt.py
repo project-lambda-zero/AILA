@@ -1,8 +1,11 @@
-"""Adapters for the IDA Headless MCP server.
+"""Adapters for the reverser-belt MCP server.
 
 Specialized adapters defined here ship structured payloads keyed by
-``PayloadKind``. Every IDA tool not listed here still works via the
-generic fallback in ``generic.py`` (registered via ``KNOWN_TOOLS``).
+``PayloadKind``. Every reverser-belt tool not listed here still works
+via the generic fallback in ``generic.py`` (registered via
+``KNOWN_TOOLS``). The reverser-belt server returns ida-headless-shaped
+payloads (decompile/xrefs/taint/graph/microcode), so these renderers
+apply unchanged.
 
 Specialized v0.3 v2 set:
   - DECOMPILED_FUNCTION: decompile

@@ -1,7 +1,7 @@
 """MCP adapters (M3.R-3 + v0.3 v2 expansion).
 
 Per the no-overengineering rule: AILA does not implement enrichment
-heuristics. The MCP servers (IDA Headless MCP, audit-mcp) already do
+heuristics. The MCP servers (audit-mcp, REA, reverser_belt) already do
 the analysis. Adapters here are TINY pure functions that convert one
 raw MCP response into:
 
@@ -14,10 +14,10 @@ raw MCP response into:
 
 Coverage (v0.3 v2):
 
-  - **Specialized adapters** for ~25 tools where structured rendering
+  - **Specialized adapters** for the tools where structured rendering
     materially helps (decompile, xrefs, taint, call graphs, diffs,
     mitigations, ...).
-  - **Generic adapter** for the remaining ~110 tools across the two MCP
+  - **Generic adapter** for the remaining tools across the MCP
     servers -- every tool in ``KNOWN_TOOLS`` is callable immediately;
     structured rendering is added per-tool as real investigations need it.
 """
@@ -34,7 +34,6 @@ from .base import (
 from .known_tools import (
     ANDROID_MCP_TOOLS,
     AUDIT_MCP_TOOLS,
-    IDA_HEADLESS_TOOLS,
     KNOWN_TOOLS,
 )
 from .registry import get_adapter, registered_tools, specialized_tools
@@ -45,7 +44,6 @@ __all__ = [
     "AdapterContext",
     "AdapterFn",
     "AdapterResult",
-    "IDA_HEADLESS_TOOLS",
     "KNOWN_TOOLS",
     "get_adapter",
     "get_read_tools",

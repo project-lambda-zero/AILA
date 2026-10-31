@@ -7,15 +7,18 @@ everything the platform needs to open a connection without knowing a
 module by name (per RFC-05):
 
 * ``name`` -- the stable server token (``"audit_mcp"``, ``"android_mcp"``,
-  ``"ida_headless"``, ...) that matches the corresponding
+  ``"rea"``, ...) that matches the corresponding
   :class:`aila.platform.mcp.instance_catalog.McpServerInstance.name`
   column so the four-tier resolver can find the operator's catalog row.
 * ``capability_tags`` -- what the server ADVERTISES it can do (``(
   "source_audit", "graph")``). Modules resolve MCP servers by
   capability, never by module name; the tag is the join key.
-* ``transport`` -- ``"http"`` or ``"stdio"``. All three current bridges
-  are HTTP; the stdio branch is reserved for future MCP-SDK stdio
-  processes and does not run today.
+* ``transport`` -- ``"http"`` (the legacy bridge contract spoken by
+  audit-mcp / android-mcp), ``"mcp-http"`` (streamable-
+  HTTP MCP JSON-RPC), or ``"stdio"`` (MCP stdio JSON-RPC against
+  ``command``). The two MCP transports are implemented by
+  :mod:`aila.platform.mcp.mcp_session` and are what external servers
+  such as REA (morluto/rea) plug into.
 * ``env_var`` / ``config_key`` / ``default_url`` -- the four-tier
   resolver inputs (``env`` > ``config`` > ``catalog`` > ``default``).
 * ``description`` -- optional operator-facing prose surfaced in the
@@ -45,7 +48,11 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
-from aila.platform.mcp.instance_catalog import TRANSPORT_HTTP
+from aila.platform.mcp.instance_catalog import (
+    TRANSPORT_HTTP,
+    TRANSPORT_MCP_HTTP,
+    TRANSPORT_STDIO,
+)
 
 __all__ = [
     "McpServerDescriptor",
@@ -104,10 +111,11 @@ class McpServerDescriptor:
                 f"McpServerDescriptor({name!r}).default_url must not be empty",
             )
         transport = self.transport.strip().lower()
-        if transport not in {"http", "stdio"}:
+        if transport not in {TRANSPORT_HTTP, TRANSPORT_MCP_HTTP, TRANSPORT_STDIO}:
             raise ValueError(
-                f"McpServerDescriptor({name!r}).transport must be 'http' or "
-                f"'stdio' (got {self.transport!r})",
+                f"McpServerDescriptor({name!r}).transport must be one of "
+                f"{TRANSPORT_HTTP!r}, {TRANSPORT_MCP_HTTP!r}, {TRANSPORT_STDIO!r} "
+                f"(got {self.transport!r})",
             )
         tags = tuple(str(t).strip() for t in self.capability_tags)
         if not tags or any(not t for t in tags):
@@ -182,6 +190,7 @@ def descriptors_from_static_specs(
                 env_var=env_var,
                 config_key=config_key,
                 default_url=default_url,
+                transport=str(spec.get("transport") or TRANSPORT_HTTP).strip(),
                 description=str(spec.get("description") or "").strip(),
             ),
         )

@@ -6293,8 +6293,8 @@ class _HonestyVisitor(ast.NodeVisitor):
         static ``self._bridges`` dict-literal mapping server ids to bridge
         instances.
 
-        RFC-11 Tier C replaced the fixed ``self._bridges = {"ida_headless":
-        ..., "audit_mcp": ...}`` map with dynamic, catalog-driven
+        RFC-11 Tier C replaced the fixed per-server ``self._bridges``
+        dict-literal map with dynamic, catalog-driven
         construction via the base ``_bridge_for()`` + the factory. A NEW
         ``_bridges`` dict-literal assignment re-freezes the server set at
         code-write time, so an operator's catalog-added server can never

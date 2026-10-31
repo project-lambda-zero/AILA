@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aila"
-version = "0.6.2"
+version = "0.6.3"
 description = "Modular AI security platform with pluggable analysis modules."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -154,6 +154,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "aila.modules.forensics.workflow.states.collectors" = ["*.tpl"]
+"aila.platform.re_analytics" = ["data/*.txt"]
 
 [tool.vulture]
 min_confidence = 80
@@ -232,6 +233,16 @@ ignore = [
 
 # All other suppressions are documented in src/aila/tools/honesty_whitelist.py.
 "src/aila/api/app.py" = ["PLC0415", "BLE001", "F401", "ARG001", "E402", "N814"]
+# re_analytics tool groups: PLC0415 for deferred heavyweight imports
+# (miasm submodules pulled only when a miasm-backed tool actually runs so
+# the stdio server boots in milliseconds); BLE001 for the third-party
+# exception boundary around those optional engines (miasm/lief/cryptography
+# raise heterogeneous internal types we cannot enumerate).
+"src/aila/platform/re_analytics/tools_capability.py" = ["PLC0415", "BLE001"]
+"src/aila/platform/re_analytics/tools_crypto.py" = ["PLC0415", "BLE001"]
+"src/aila/platform/re_analytics/tools_dataflow.py" = ["PLC0415", "BLE001"]
+"src/aila/platform/re_analytics/_capa_engine.py" = ["PLC0415"]
+"src/aila/platform/re_analytics/server.py" = ["PLC0415"]
 # events/redis_bridge.py: PLC0415 for the deferred `import redis` (optional
 # dependency) and the deferred bus/persistence imports that break the
 # bus <-> persistence <-> redis_bridge cycle (#106 cross-process bridge).

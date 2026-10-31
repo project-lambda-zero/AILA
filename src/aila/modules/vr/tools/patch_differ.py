@@ -1,9 +1,9 @@
-"""Binary diff tool -- proxies IDA headless MCP diff capabilities.
+"""Binary diff tool -- proxies reverser_belt MCP diff capabilities.
 
 Compares two binary versions to surface security patches: structural diffs
 across whole binaries and pseudocode diffs for individual functions. The
-tool is a thin dispatcher that forwards to the IDA MCP bridge; all heavy
-analysis state lives in the MCP server.
+tool is a thin dispatcher that forwards to the reverser_belt bridge; all
+heavy analysis state lives in the MCP server.
 """
 from __future__ import annotations
 
@@ -15,14 +15,15 @@ __all__ = ["PatchDifferTool"]
 
 
 class PatchDifferTool(Tool):
-    """Multi-action tool for n-day patch analysis via IDA headless MCP."""
+    """Multi-action tool for n-day patch analysis via reverser_belt MCP."""
 
     name = "vr.patch_differ"
     description = (
-        "Diff two binary versions to identify security patches. Uses IDA "
-        "headless MCP. Actions: diff_binaries (structural diff across whole "
-        "binaries), diff_function (pseudocode diff for one function), "
-        "find_patched_functions (ranked list of changed functions)."
+        "Diff two binary versions to identify security patches. Uses the "
+        "reverser_belt MCP. Actions: diff_binaries (structural diff across "
+        "whole binaries), diff_function (pseudocode diff for one "
+        "function), find_patched_functions (ranked list of changed "
+        "functions)."
     )
     inputs = {
         "action": {
@@ -35,8 +36,8 @@ class PatchDifferTool(Tool):
     output_type = "object"
     skip_forward_signature_validation = True
 
-    def __init__(self, ida_bridge: Any) -> None:
-        self._ida = ida_bridge
+    def __init__(self, reverser_belt_bridge: Any) -> None:
+        self._reverser_belt = reverser_belt_bridge
 
     async def forward(self, action: str | None = None, **kwargs: Any) -> dict:
         """Dispatch to the requested diff action.
@@ -52,9 +53,9 @@ class PatchDifferTool(Tool):
             for ``find_patched_functions``.
         """
         if action == "diff_binaries":
-            return await self._ida.forward(action="diff_binary", **kwargs)
+            return await self._reverser_belt.forward(action="diff_binary", **kwargs)
         if action == "diff_function":
-            return await self._ida.forward(action="diff_function", **kwargs)
+            return await self._reverser_belt.forward(action="diff_function", **kwargs)
         if action == "find_patched_functions":
             return await self._find_patched(**kwargs)
         return {

@@ -33,13 +33,15 @@ async def run_capability_profile_build(
 
     The builder routes by target kind:
       source target → audit-mcp detect_languages + attack_surface + preanalysis
-      binary target → IDA binary_survey + checksec + classify_behavior
-                      + verify_capabilities + capa_scan
+      binary target → REA binary_overview + reverser_belt checksec +
+                      classify_behavior + verify_capabilities + capa_scan
+                      + REA inspect_pe_imports / inspect_native_exports
     Rule engine maps (target_kind, primary_language) onto D-51
     applicable_* lists.
     """
     builder = CapabilityProfileBuilder(
-        ida=make_bridge("ida_headless", module_id="vr", recorder=record_call),
+        rea=make_bridge("rea", module_id="vr", recorder=record_call),
+        reverser_belt=make_bridge("reverser_belt", module_id="vr", recorder=record_call),
         audit_mcp=make_bridge("audit_mcp", module_id="vr", recorder=record_call),
     )
     profile = await builder.build(target_id)

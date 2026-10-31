@@ -10,9 +10,11 @@ the MCPs do the actual classification.
                    + ``preanalysis`` → language + framework + entrypoint
                    classifications
 
-  binary target  → IDA ``binary_survey`` + ``checksec`` + ``classify_behavior``
-                   + ``verify_capabilities`` + ``capa_scan`` → mitigations +
-                   ATT&CK behavior categories + CAPA matches
+  binary target  → REA ``binary_overview`` + reverser_belt ``checksec`` +
+                   ``classify_behavior`` + ``verify_capabilities`` +
+                   ``capa_scan`` + REA ``inspect_pe_imports`` /
+                   ``inspect_native_exports`` → mitigations + ATT&CK
+                   behavior categories + CAPA matches
 
 Rule engine maps (target_kind, primary_language) onto the D-51
 ``applicable_*`` lists. Operator overrides take precedence over rule
@@ -41,6 +43,7 @@ from aila.modules.vr.db_models import VRTargetRecord
 from aila.modules.vr.enrichment.services.function_ranker import (
     McpCallable,
 )
+from aila.modules.vr.services.binary_path import binary_path_from_target
 from aila.modules.vr.services.stage_tracker import (
     StageAlreadyDoneError,
     StageInFlightError,
@@ -62,20 +65,20 @@ _log = logging.getLogger(__name__)
 # capability_profile.applicable_mcp_servers list and downstream
 # orchestration (which bridge to call for follow-up enrichment).
 _APPLICABLE_MCP_BY_KIND: dict[str, list[str]] = {
-    TargetKind.NATIVE_BINARY.value:   ["ida_headless", "audit_mcp"],
+    TargetKind.NATIVE_BINARY.value:   ["rea", "reverser_belt", "audit_mcp"],
     TargetKind.SOURCE_REPO.value:     ["audit_mcp"],
-    TargetKind.ANDROID_APK.value:     ["android_mcp", "audit_mcp"],
-    TargetKind.IPA.value:             ["ida_headless"],
-    TargetKind.JAR.value:             ["ida_headless", "audit_mcp"],
-    TargetKind.DOTNET_ASSEMBLY.value: ["ida_headless"],
+    TargetKind.ANDROID_APK.value:     ["android_mcp", "audit_mcp", "rea", "reverser_belt"],
+    TargetKind.IPA.value:             ["rea", "reverser_belt"],
+    TargetKind.JAR.value:             ["rea", "reverser_belt", "audit_mcp"],
+    TargetKind.DOTNET_ASSEMBLY.value: ["rea", "reverser_belt"],
     TargetKind.CVE.value:             ["audit_mcp"],
     TargetKind.PROTOCOL_CAPTURE.value: [],
-    TargetKind.CRASH_INPUT.value:     ["ida_headless"],
+    TargetKind.CRASH_INPUT.value:     ["rea", "reverser_belt"],
     TargetKind.PATCH_DIFF.value:      ["audit_mcp"],
     # v0.5 GA-54 -- kernel + hypervisor
-    TargetKind.KERNEL_IMAGE.value:    ["ida_headless", "audit_mcp"],
-    TargetKind.KERNEL_MODULE.value:   ["ida_headless"],
-    TargetKind.HYPERVISOR_IMAGE.value: ["ida_headless", "audit_mcp"],
+    TargetKind.KERNEL_IMAGE.value:    ["rea", "reverser_belt", "audit_mcp"],
+    TargetKind.KERNEL_MODULE.value:   ["rea", "reverser_belt"],
+    TargetKind.HYPERVISOR_IMAGE.value: ["rea", "reverser_belt", "audit_mcp"],
 }
 
 # (target_kind, primary_language) → applicable fuzzing engines. Source
@@ -235,10 +238,12 @@ class CapabilityProfileBuilder:
 
     def __init__(
         self,
-        ida: McpCallable,
+        rea: McpCallable,
+        reverser_belt: McpCallable,
         audit_mcp: McpCallable,
     ) -> None:
-        self._ida = ida
+        self._rea = rea
+        self._reverser_belt = reverser_belt
         self._audit_mcp = audit_mcp
 
 
@@ -254,7 +259,7 @@ class CapabilityProfileBuilder:
     async def build(self, target_id: str) -> TargetCapabilityProfile | None:
         """Build capability_profile for one target. Persists into vr_targets.
 
-        Reads MCP handles (binary_id, audit_mcp_index_id) from the
+        Reads MCP handles (target_path, audit_mcp_index_id) from the
         target's private ``_mcp_handles_json`` column populated by
         TargetAnalysisService. Refuses to run when handles are missing
         -- operator gets a clear 'target not analyzed yet' message.
@@ -296,7 +301,7 @@ class CapabilityProfileBuilder:
                     TargetKind.HYPERVISOR_IMAGE.value,
                 }:
                     signals, signals_attempted, signals_failed = (
-                        await self._gather_binary_signals(handles)
+                        await self._gather_binary_signals(handles, descriptor)
                     )
                 else:
                     # Unsupported kinds (cve / protocol_capture / crash_input /
@@ -437,36 +442,42 @@ class CapabilityProfileBuilder:
         return signals, attempted, failed
 
     async def _gather_binary_signals(
-        self, handles: dict[str, Any],
+        self,
+        handles: dict[str, Any],
+        descriptor: dict[str, Any],
     ) -> tuple[dict[str, Any], int, int]:
         # fix §224 -- returns (signals, n_attempted, n_failed) so build() can
         # detect "all MCP signals failed" instead of silently producing an
-        # empty-shell profile when IDA bridge is wedged.
-        # fix §225 -- fan all 7 IDA forwards out concurrently via asyncio.gather.
-        # Previously sequential at ~30 s each (~3.5 min total); now bounded by
-        # the slowest action (~30 s). Bridge concurrency is safe -- IDA worker
-        # serializes per binary_id internally; multiple actions for the same
-        # binary already share that lock.
-        binary_id = handles.get("binary_id")
-        if not binary_id:
+        # empty-shell profile when the binary bridges are wedged.
+        # fix §225 -- fan all forwards out concurrently via asyncio.gather.
+        # Previously sequential at ~30 s each (~3.5 min total); now bounded
+        # by the slowest action (~30 s). Bridge concurrency is safe -- REA
+        # serializes per-target internally; reverser_belt is per-process.
+        binary_path = binary_path_from_target(descriptor, handles)
+        if not binary_path:
             raise ProfileBuilderError(
                 "target not analyzed yet -- call POST /vr/targets/{id}/analyze "
                 "or wait for the auto-ingestion to complete",
             )
 
-        # (label, kwargs) -- order is the gather-output order below.
-        binary_actions: tuple[tuple[str, dict[str, Any]], ...] = (
-            ("binary_survey",       {"action": "binary_survey",       "binary_id": binary_id}),
-            ("checksec",            {"action": "checksec",            "binary_id": binary_id}),
-            ("classify_behavior",   {"action": "classify_behavior",   "binary_id": binary_id}),
-            ("verify_capabilities", {"action": "verify_capabilities", "binary_id": binary_id}),
-            ("capa_scan",           {"action": "capa_scan",           "binary_id": binary_id}),
-            ("imports",             {"action": "imports",             "binary_id": binary_id}),
-            ("exports",             {"action": "exports",             "binary_id": binary_id}),
+        # (label, bridge, action, kwargs) -- order is the gather-output
+        # order below. Session-bound REA tools take ``target_path`` (the
+        # middleware strips it and enforces target affinity); the explicit
+        # offline inspectors take their own ``path`` argument;
+        # reverser_belt tools keep the legacy ida arg shape with
+        # ``target_path`` replacing binary_id.
+        binary_actions: tuple[tuple[str, Any, str, dict[str, Any]], ...] = (
+            ("binary_overview", self._rea, "binary_overview", {"target_path": binary_path}),
+            ("checksec", self._reverser_belt, "checksec", {"target_path": binary_path}),
+            ("classify_behavior", self._reverser_belt, "classify_behavior", {"target_path": binary_path}),
+            ("verify_capabilities", self._reverser_belt, "verify_capabilities", {"target_path": binary_path}),
+            ("capa_scan", self._reverser_belt, "capa_scan", {"target_path": binary_path}),
+            ("imports", self._rea, "inspect_pe_imports", {"path": binary_path}),
+            ("exports", self._rea, "inspect_native_exports", {"path": binary_path}),
         )
 
         responses = await asyncio.gather(
-            *(self._ida.forward(**kw) for _, kw in binary_actions),
+            *(bridge.forward(**kw) for _, bridge, _, kw in binary_actions),
             return_exceptions=True,  # one bridge crash MUST NOT poison the batch
         )
 
@@ -474,7 +485,7 @@ class CapabilityProfileBuilder:
         attempted = len(binary_actions)
         failed = 0
         by_label: dict[str, dict[str, Any]] = {}
-        for (label, _kw), resp in zip(binary_actions, responses, strict=True):
+        for (label, _bridge, _action, _kw), resp in zip(binary_actions, responses, strict=True):
             if isinstance(resp, BaseException):
                 _log.warning(
                     "_gather_binary_signals: %s raised %s: %s",
@@ -487,8 +498,8 @@ class CapabilityProfileBuilder:
                 continue
             by_label[label] = resp
 
-        if "binary_survey" in by_label:
-            survey_resp = by_label["binary_survey"]
+        if "binary_overview" in by_label:
+            survey_resp = by_label["binary_overview"]
             signals["primary_language"] = (
                 survey_resp.get("primary_language") or _infer_language_from_survey(survey_resp)
             )
@@ -500,7 +511,7 @@ class CapabilityProfileBuilder:
             checksec_resp = by_label["checksec"]
             signals["mitigations"] = {
                 k: v for k, v in checksec_resp.items()
-                if k not in ("status", "binary_id")
+                if k not in ("status", "target_path")
             }
 
         if "classify_behavior" in by_label:

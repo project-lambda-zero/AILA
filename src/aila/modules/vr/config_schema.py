@@ -106,12 +106,26 @@ class VRConfigSchema(ModuleConfigBase):
             "at a dedicated Linux workstation for production."
         ),
     )
-    ida_headless_url: str = Field(
-        default="http://127.0.0.1:18821",
+    reverser_belt_mcp_url: str = Field(
+        default="",
         description=(
-            "Base URL for the IDA headless MCP server. The platform delegates "
-            "ALL binary upload/analysis to this server (D-33). Point at the "
-            "workstation that owns the IDA license + GPU."
+            "External reverser-belt-mcp endpoint (Kuna decompiler backend). "
+            "Empty = each AILA process spawns its own stdio child (python -m "
+            "reverser_belt_mcp.server). Serves the capa / crypto / taint / "
+            "emulation / diff / proof tool surface REA does not. Handle-based "
+            "(open_binary -> binary_id); the MCP middleware opens the "
+            "module-injected target_path and injects the binary_id per call."
+        ),
+    )
+    rea_mcp_url: str = Field(
+        default="",
+        description=(
+            "REA (morluto/rea) reverse-engineering MCP endpoint. Empty = each "
+            "AILA process spawns its own stdio REA child (REA_MCP_COMMAND, "
+            "default 'rea mcp'). An http(s) server root targets a remote "
+            "'rea mcp --http' instance (streamable-HTTP MCP at <root>/mcp). "
+            "REA opens targets by LOCAL path, so it must run on the host "
+            "that stores the target binaries."
         ),
     )
     android_mcp_url: str = Field(
@@ -347,7 +361,7 @@ class VRConfigSchema(ModuleConfigBase):
         ge=0,
         description=(
             "Minimum number of successful audit/binary tool probes "
-            "(audit_mcp / ida_headless / knowledge readings recorded on the "
+            "(audit_mcp / rea / reverser_belt / knowledge readings recorded on the "
             "branch case_state) a variant-hunt branch is expected to have run "
             "before a no-finding / empty-orders submit is credible. Below "
             "this floor the submit gate injects an INVESTIGATION-TOO-SHALLOW "

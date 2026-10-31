@@ -144,7 +144,7 @@ def classify_contract_error(text: str) -> str | None:
         or "unknown index" in low
         or "index not found" in low
         or "index_id not found" in low
-        # ida_headless call_chain / call_graph return
+        # reverser call_chain / call_graph return
         # "Function not found: <name-or-addr>" when the agent passes a
         # function identifier the reverser index cannot resolve -- same
         # class as a stale path: retyping a variant keeps missing, so

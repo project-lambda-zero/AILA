@@ -169,13 +169,16 @@ async def run_target_enrichment(
     recorder) and returns the JSON-serialised ``EnrichmentResult``.
     """
     del ctx
-    ida = make_bridge("ida_headless", module_id="vr", recorder=record_call)
+    rea = make_bridge("rea", module_id="vr", recorder=record_call)
+    reverser_belt = make_bridge("reverser_belt", module_id="vr", recorder=record_call)
     audit_mcp = make_bridge("audit_mcp", module_id="vr", recorder=record_call)
 
     result = await orchestrate_target_enrichment(
         target_id,
-        builder=CapabilityProfileBuilder(ida=ida, audit_mcp=audit_mcp),
-        dispatcher=FunctionRankingDispatcher(ida=ida, audit_mcp=audit_mcp),
+        builder=CapabilityProfileBuilder(
+            rea=rea, reverser_belt=reverser_belt, audit_mcp=audit_mcp,
+        ),
+        dispatcher=FunctionRankingDispatcher(reverser_belt=reverser_belt, audit_mcp=audit_mcp),
     )
 
     _log.info(

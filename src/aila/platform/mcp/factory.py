@@ -1,8 +1,8 @@
 """RFC-11 Tier C -- construct the generic MCP bridge for a server id.
 
-``make_bridge("ida_headless", module_id="vr", recorder=record_call)``
-replaces the pre-Tier-C ``IDABridgeTool(recorder=record_call,
-module_id="vr")`` and its two siblings. The transport parameters come
+``make_bridge("rea", module_id="vr", recorder=record_call)`` replaces
+the pre-Tier-C per-server ``Tool`` subclasses (one bridge class per MCP
+server). The transport parameters come
 from :data:`aila.platform.mcp.server_specs.SERVER_SPECS`; the
 server-specific behaviour comes from a :class:`McpMiddleware` plugin
 resolved lazily by server id so this module carries no import-time
@@ -16,13 +16,15 @@ capability dispatches without a code change.
 from __future__ import annotations
 
 import importlib
+import os
+import shlex
 from typing import Any
 
 from aila.platform.mcp.bridge_tool import McpBridgeTool
 from aila.platform.mcp.middleware import McpMiddleware
 from aila.platform.mcp.server_specs import SERVER_SPECS, ServerSpec
 
-__all__ = ["make_bridge", "load_middleware", "middleware_family"]
+__all__ = ["make_bridge", "load_middleware", "middleware_family", "stdio_command"]
 
 
 # server_id -> (module path, class name). Lazy so the factory imports
@@ -30,10 +32,12 @@ __all__ = ["make_bridge", "load_middleware", "middleware_family"]
 # drag every plugin (and its regex tables) into memory. A server id
 # absent from this map falls back to the pass-through GenericMiddleware.
 _MIDDLEWARE_REF: dict[str, tuple[str, str]] = {
-    "ida_headless": ("aila.platform.mcp.middleware.ida", "IdaMiddleware"),
-    "ida_headless_exp": ("aila.platform.mcp.middleware.ida", "IdaMiddleware"),
     "audit_mcp": ("aila.platform.mcp.middleware.audit", "AuditMcpMiddleware"),
     "android_mcp": ("aila.platform.mcp.middleware.android", "AndroidMcpMiddleware"),
+    "rea": ("aila.platform.mcp.middleware.rea", "ReaMiddleware"),
+    "reverser_belt": (
+        "aila.platform.mcp.middleware.reverser_belt", "ReverserBeltMiddleware",
+    ),
 }
 
 _GENERIC_REF: tuple[str, str] = (
@@ -66,11 +70,11 @@ def _resolve_spec(server_id: str) -> ServerSpec:
 def middleware_family(server_id: str) -> str:
     """Return the middleware class name that serves ``server_id``.
 
-    The router pools only instances that share a family -- ``ida_headless``
-    and ``ida_headless_exp`` both map to ``IdaMiddleware`` so a call for
-    one can fail over to / share load with the other, while an unrelated
-    server (a differently-contracted tool set) is never a pool member
-    even when it shares a capability tag.
+    The router pools only instances that share a family -- two server
+    ids mapping to the same middleware class fail over to / share load
+    with each other, while an unrelated server (a differently-contracted
+    tool set) is never a pool member even when it shares a capability
+    tag.
     """
     ref = _MIDDLEWARE_REF.get(server_id)
     return ref[1] if ref is not None else _GENERIC_REF[1]
@@ -103,4 +107,20 @@ def make_bridge(
     middleware = load_middleware(spec, module_id=module_id)
     return McpBridgeTool(
         middleware=middleware, module_id=module_id, recorder=recorder,
+        transport=spec.transport, command=stdio_command(spec) or None,
     )
+
+
+def stdio_command(spec: ServerSpec) -> tuple[str, ...]:
+    """Return the stdio spawn argv for ``spec``.
+
+    ``<SERVER_ID>_MCP_COMMAND`` (shlex-split, POSIX quoting -- use
+    forward slashes in Windows paths) overrides the spec's default argv
+    so an operator can point at a pinned install
+    (``REA_MCP_COMMAND="C:/tools/node24/node.exe C:/tools/rea/.../rea.mjs mcp"``)
+    without a code change.
+    """
+    override = os.environ.get(f"{spec.server_id.upper()}_MCP_COMMAND", "").strip()
+    if override:
+        return tuple(shlex.split(override))
+    return spec.command

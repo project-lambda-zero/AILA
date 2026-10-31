@@ -46,9 +46,9 @@ def _build_service(
     audit.forward = audit_forward or AsyncMock()
     android = MagicMock()
     android.forward = android_forward or AsyncMock()
-    ida = MagicMock()
+    rea = MagicMock()
     return TargetAnalysisService(
-        ida=ida, audit_mcp=audit, android_mcp=android,
+        rea=rea, audit_mcp=audit, android_mcp=android,
     )
 
 

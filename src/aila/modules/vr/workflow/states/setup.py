@@ -1,19 +1,19 @@
-"""Setup state -- ingest the target, upload to IDA MCP, prime budgets.
+"""Setup state -- ingest the target, bind it on the REA MCP, prime budgets.
 
 Responsibilities:
 1. Resolve the target onto the analyzer workstation based on input_source:
    - ``upload``     : SCP a previously-staged AILA upload to the workstation
    - ``git_repo``   : ``git clone`` (and optional build) on the workstation
    - ``http_url``   : ``curl``-download onto the workstation
-   - pre-existing ``binary_id`` : skip ingestion, just poll MCP
-2. Upload the resolved workstation-side file to the IDA headless MCP and
-   poll until analysis is ready.
+2. Open the resolved local path on the REA MCP (``open_binary`` via the
+   rea bridge). REA imports + auto-analyzes on open; there is no
+   upload / poll cycle -- the binary is read from local disk.
 3. Repeat (1)+(2) for the optional patched target. Patched target may use
    a different ``input_source`` than the vulnerable target.
-4. Run checksec on the vulnerable binary to extract mitigations.
+4. Run checksec (reverser_belt) on the vulnerable binary to extract
+   mitigations.
 5. Initialize a BudgetState from VR module config and stash it as JSON.
-6. Persist binary_id / patched_binary_id / mitigations / target_path onto
-   the project row.
+6. Persist target_path / patched_path / mitigations onto the project row.
 
 Failure modes surface as raised exceptions; the engine handles retry per
 the StateSpec retriable_on tuple. Project status is set to "analyzing"
@@ -47,37 +47,32 @@ __all__ = ["VR_UPLOAD_STAGING", "SetupBudgetExceededError", "state_setup"]
 
 _log = logging.getLogger(__name__)
 
-_POLL_INTERVAL_S = 2.0
-# fix §298 -- raised to 600s (10min) AND made explicit-error-on-exhaust.
-# Prior 60s budget fired before large-binary IDA analysis finished on
-# anything bigger than a small library, and the helpers below
-# _log.warning(...) then `return last` -- handing a not-yet-ready
-# payload to the caller as if it were a successful analysis. Down-
-# stream tools then hit "binary not indexed" errors per call.
-# A truthful explicit failure surfaces the timeout at the setup
-# boundary where the operator can extend the budget or bounce the
-# IDA bridge.
-_POLL_BUDGET_S = 600.0
+_OPEN_BUDGET_S = 900.0
+# fix §298 -- the budget now bounds the REA open_binary (Ghidra import +
+# auto-analysis) call rather than a poll loop. Same rationale: an
+# explicit error on exhaustion surfaces at the setup boundary where the
+# operator can extend the budget or bounce the REA bridge, instead of a
+# not-yet-ready payload flowing downstream and failing per call.
 
 
 class SetupBudgetExceededError(RuntimeError):
-    """Raised when IDA analysis polling exhausts _POLL_BUDGET_S.
+    """Raised when REA open_binary exceeds _OPEN_BUDGET_S.
 
-    Carries ``binary_id`` so downstream / operator tooling can
-    correlate against the in-flight MCP analysis. Engine treats this
-    as non-retriable by default -- extending the budget requires
-    operator intent (env override, code change), not a blind retry.
+    Carries ``target_path`` so downstream / operator tooling can
+    correlate against the in-flight analysis. Engine treats this as
+    non-retriable by default -- extending the budget requires operator
+    intent (env override, code change), not a blind retry.
     """
 
-    def __init__(self, binary_id: str, waited_s: float) -> None:
+    def __init__(self, target_path: str, waited_s: float) -> None:
         super().__init__(
-            f"IDA analysis polling exceeded {waited_s:.0f}s budget for "
-            f"binary_id={binary_id} (cap={_POLL_BUDGET_S:.0f}s) -- "
-            f"either the IDA bridge is wedged or the binary is too large "
-            f"for the configured budget; bump _POLL_BUDGET_S or restart "
-            f"the audit-mcp / IDA pipeline",
+            f"REA open_binary exceeded {waited_s:.0f}s budget for "
+            f"target_path={target_path} (cap={_OPEN_BUDGET_S:.0f}s) -- "
+            f"either the REA bridge is wedged or the binary is too large "
+            f"for the configured budget; bump _OPEN_BUDGET_S or restart "
+            f"the REA pipeline",
         )
-        self.binary_id = binary_id
+        self.target_path = target_path
         self.waited_s = waited_s
 
 # AILA-local staging directory for multipart uploads. The API multipart
@@ -102,8 +97,6 @@ async def _persist_setup(
     project_id: str,
     target_id: str | None,
     patched_target_id: str | None,
-    binary_id: str,
-    patched_binary_id: str | None,
     target_path: str,
     patched_path: str | None,
     mitigations: dict[str, Any],
@@ -111,7 +104,7 @@ async def _persist_setup(
 ) -> None:
     """Persist ingestion results.
 
-    Target metadata (binary_id, workstation_path, mitigations) goes onto the
+    Target metadata (workstation_path, mitigations) goes onto the
     vr_targets row referenced by the project (D-53 schema). Project row
     only gets project-scoped updates (status, budget_json).
     """
@@ -124,8 +117,6 @@ async def _persist_setup(
             ).first()
             if target_row is not None:
                 descriptor = json.loads(target_row.descriptor_json or "{}")
-                if binary_id:
-                    descriptor["binary_id"] = binary_id
                 if target_path:
                     descriptor["workstation_path"] = target_path
                 target_row.descriptor_json = json.dumps(descriptor)
@@ -136,7 +127,7 @@ async def _persist_setup(
                 target_row.updated_at = utc_now()
                 uow.session.add(target_row)
 
-        if patched_target_id and (patched_binary_id or patched_path):
+        if patched_target_id and patched_path:
             patched_row = (
                 await uow.session.exec(
                     _select(VRTargetRecord).where(VRTargetRecord.id == patched_target_id)
@@ -144,8 +135,6 @@ async def _persist_setup(
             ).first()
             if patched_row is not None:
                 pdescriptor = json.loads(patched_row.descriptor_json or "{}")
-                if patched_binary_id:
-                    pdescriptor["binary_id"] = patched_binary_id
                 if patched_path:
                     pdescriptor["workstation_path"] = patched_path
                 patched_row.descriptor_json = json.dumps(pdescriptor)
@@ -166,80 +155,32 @@ async def _persist_setup(
         await uow.commit()
 
 
-async def _upload_and_wait(ida_bridge: Any, file_path: str) -> dict[str, Any]:
-    """Upload a binary and poll until analysis is ready.
+async def _open_binary(rea_bridge: Any, target_path: str) -> dict[str, Any]:
+    """Open a local binary on the REA MCP (import + auto-analysis).
 
-    Returns the final ``poll_analysis`` payload (always includes a
-    ``binary_id`` once upload succeeds). Re-uses an existing analysis if
-    the MCP server already has the binary cached (state=READY immediately).
+    REA reads targets from LOCAL disk -- there is no upload step and no
+    poll-analysis cycle; the single ``open_binary`` call blocks through
+    the Ghidra import. Bounded by _OPEN_BUDGET_S so a wedged open
+    surfaces as an explicit setup failure (see SetupBudgetExceededError)
+    rather than hanging the workflow. The path is passed as REA's own
+    ``path`` argument (the middleware's ``target_path`` affinity kwarg
+    is reserved for analysis calls, not explicit opens).
     """
-    upload = await ida_bridge.forward(action="upload", file_path=file_path)
-    if upload.get("status") == "error":
-        raise RuntimeError(f"upload failed for {file_path}: {upload.get('error')}")
-    binary_id = upload.get("binary_id") or upload.get("id")
-    if not binary_id:
-        raise RuntimeError(f"upload returned no binary_id: {upload}")
-
-    # fix §299 -- track wall-clock via time.monotonic(). The prior
-    # \`waited += _POLL_INTERVAL_S\` after each \`asyncio.sleep\` counted
-    # POLL iterations, not real time: every \`ida_bridge.forward\` adds
-    # tens-of-ms to seconds of httpx latency that the counter ignored,
-    # so a "60s" budget under load actually wall-clocked to 3-4× that
-    # before failing. Operators set the budget against wall-clock
-    # expectations; track wall-clock.
-    #
-    # fix §300 -- single \`current\` variable in place of the prior
-    # \`upload\` / \`last\` duality. The original code seeded \`last = upload\`,
-    # then checked \`upload.get(...)\` (NEVER changes after upload) at the
-    # top of every loop AND \`last.get(...)\` (updated each iteration) at
-    # the bottom. The \`upload\` check was structurally dead after the
-    # first iteration; future readers stumbled over it. Renamed to
-    # \`current\`, reassigned in the loop, checked uniformly.
     start = time.monotonic()
-    current: dict[str, Any] = upload
-    while True:
-        elapsed = time.monotonic() - start
-        if elapsed >= _POLL_BUDGET_S:
-            raise SetupBudgetExceededError(
-                binary_id=str(binary_id), waited_s=elapsed,
-            )
-        # reverser-belt/kuna terminal is INDEXED (index_ready True). READY /
-        # analysis_ready is a transient pre-index state and must not count as
-        # done, or setup proceeds against an unbuilt function index.
-        if current.get("index_ready") or current.get("state") == "INDEXED":
-            return current
-        current = await ida_bridge.forward(
-            action="poll_analysis", binary_id=binary_id,
+    try:
+        opened = await asyncio.wait_for(
+            rea_bridge.forward(action="open_binary", path=target_path),
+            timeout=_OPEN_BUDGET_S,
         )
-        if current.get("status") == "error":
-            raise RuntimeError(f"poll_analysis error: {current.get('error')}")
-        await asyncio.sleep(_POLL_INTERVAL_S)
-
-
-async def _wait_until_ready(ida_bridge: Any, binary_id: str) -> dict[str, Any]:
-    """Poll an existing binary_id until analysis is ready or budget exhausts."""
-    # fix §299 -- wall-clock via time.monotonic() (see _upload_and_wait
-    # covering the full rationale; same shape, no upload payload to seed).
-    # fix §300 -- \`current\` naming consistent with _upload_and_wait.
-    start = time.monotonic()
-    current: dict[str, Any] = {}
-    while True:
-        elapsed = time.monotonic() - start
-        if elapsed >= _POLL_BUDGET_S:
-            raise SetupBudgetExceededError(
-                binary_id=str(binary_id), waited_s=elapsed,
-            )
-        current = await ida_bridge.forward(
-            action="poll_analysis", binary_id=binary_id,
+    except TimeoutError as exc:
+        raise SetupBudgetExceededError(
+            target_path=target_path, waited_s=time.monotonic() - start,
+        ) from exc
+    if opened.get("status") == "error":
+        raise RuntimeError(
+            f"open_binary failed for {target_path}: {opened.get('error')}",
         )
-        if current.get("status") == "error":
-            raise RuntimeError(f"poll_analysis error: {current.get('error')}")
-        # reverser-belt/kuna terminal is INDEXED (index_ready True). READY /
-        # analysis_ready is a transient pre-index state and must not count as
-        # done, or setup proceeds against an unbuilt function index.
-        if current.get("index_ready") or current.get("state") == "INDEXED":
-            return current
-        await asyncio.sleep(_POLL_INTERVAL_S)
+    return opened
 
 
 async def _ingest_target(
@@ -308,16 +249,13 @@ async def _ingest_target(
 
 
 async def state_setup(input: dict[str, Any], services: Any) -> StateResult:
-    """Ingest target(s), upload to IDA MCP, run checksec, initialize budget."""
+    """Ingest target(s), open on the REA MCP, run checksec, init budget."""
     project_id = str(input.get("project_id") or "")
     target_id = (input.get("target_id") or None)
     patched_target_id = (input.get("patched_target_id") or None)
 
     analysis_integration = input.get("analysis_integration") or input.get("integration") or {}
     poc_integration = input.get("poc_integration") or analysis_integration
-
-    input_binary_id = str(input.get("binary_id") or "")
-    input_patched_binary_id = str(input.get("patched_binary_id") or "") or None
 
     input_source = str(input.get("input_source") or "upload")
     upload_filename = input.get("upload_filename") or None
@@ -340,27 +278,22 @@ async def state_setup(input: dict[str, Any], services: Any) -> StateResult:
     project = await _load_project(project_id)
 
     # ── Resolve vulnerable target onto the analyzer workstation ─────────
-    if input_binary_id:
-        target_path = ""
-    else:
-        target_path = await _ingest_target(
-            services.ingestion,
-            analysis_integration,
-            label="vulnerable target",
-            input_source=input_source,
-            upload_filename=upload_filename,
-            repo_url=repo_url,
-            ref=vulnerable_ref,
-            build_command=build_command,
-            build_artifact=build_artifact,
-            download_url=download_url,
-        )
+    target_path = await _ingest_target(
+        services.ingestion,
+        analysis_integration,
+        label="vulnerable target",
+        input_source=input_source,
+        upload_filename=upload_filename,
+        repo_url=repo_url,
+        ref=vulnerable_ref,
+        build_command=build_command,
+        build_artifact=build_artifact,
+        download_url=download_url,
+    )
 
     # ── Resolve patched target (optional) ───────────────────────────────
     patched_path: str | None
-    if input_patched_binary_id:
-        patched_path = None
-    elif (
+    if (
         patched_upload_filename
         or patched_download_url
         or (patched_repo_url and patched_ref)
@@ -381,50 +314,32 @@ async def state_setup(input: dict[str, Any], services: Any) -> StateResult:
         patched_path = None
 
     _log.info(
-        "state_setup START project_id=%s input_source=%s target=%s patched=%s "
-        "pre_binary=%s pre_patched=%s",
+        "state_setup START project_id=%s input_source=%s target=%s patched=%s",
         project_id,
         input_source,
         target_path,
         patched_path,
-        input_binary_id or None,
-        input_patched_binary_id,
     )
 
-    # ── Upload to IDA MCP ───────────────────────────────────────────────
-    if input_binary_id:
-        binary_id = input_binary_id
-        await _wait_until_ready(services.ida_bridge, binary_id)
-    else:
-        if not target_path:
-            raise RuntimeError(
-                "state_setup: ingestion produced no workstation path for the "
-                "vulnerable target",
-            )
-        vuln_meta = await _upload_and_wait(services.ida_bridge, target_path)
-        binary_id = str(vuln_meta.get("binary_id") or "")
-        if not binary_id:
-            raise RuntimeError(
-                "state_setup: vulnerable binary upload yielded no binary_id",
-            )
-
-    patched_binary_id: str | None = None
-    if input_patched_binary_id:
-        patched_binary_id = input_patched_binary_id
-        await _wait_until_ready(services.ida_bridge, patched_binary_id)
-    elif patched_path:
-        patched_meta = await _upload_and_wait(services.ida_bridge, str(patched_path))
-        patched_binary_id = str(patched_meta.get("binary_id") or "") or None
+    # ── Open on the REA MCP ─────────────────────────────────────────────
+    if not target_path:
+        raise RuntimeError(
+            "state_setup: ingestion produced no workstation path for the "
+            "vulnerable target",
+        )
+    await _open_binary(services.rea_bridge, target_path)
+    if patched_path:
+        await _open_binary(services.rea_bridge, str(patched_path))
 
     # ── Mitigations + budget ────────────────────────────────────────────
-    checksec_result = await services.ida_bridge.forward(
-        action="checksec", binary_id=binary_id,
+    checksec_result = await services.reverser_belt_bridge.forward(
+        action="checksec", target_path=target_path,
     )
     mitigations: dict[str, Any] = {}
     if checksec_result.get("status") == "ready":
         mitigations = {
             k: v for k, v in checksec_result.items()
-            if k not in ("status", "binary_id")
+            if k not in ("status", "target_path")
         }
 
     budget = BudgetState(
@@ -439,8 +354,6 @@ async def state_setup(input: dict[str, Any], services: Any) -> StateResult:
         project_id,
         target_id if target_id else None,
         patched_target_id if patched_target_id else None,
-        binary_id,
-        patched_binary_id,
         target_path,
         patched_path,
         mitigations,
@@ -453,8 +366,6 @@ async def state_setup(input: dict[str, Any], services: Any) -> StateResult:
             "project_id": project_id,
             "target_path": target_path,
             "patched_path": patched_path,
-            "binary_id": binary_id,
-            "patched_binary_id": patched_binary_id,
             "mitigations": mitigations,
             "budget_json": budget.to_json(),
             "context_notes": str(

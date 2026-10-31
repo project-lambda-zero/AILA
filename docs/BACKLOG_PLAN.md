@@ -256,7 +256,7 @@ violations. Phase 0 is the ideal FIRST PR of the whole program.
    `__all__`; rewrite 14+ `tools._common` + 60+ `contracts._common` imports to
    public paths; canonicalize `ConfigRegistry` on `aila.storage.registry`.
 1. Parameterize MCP bridges by `module_id` (retire `vr.*` tool-name welding at
-   `audit_mcp:280`/`ida_headless:91`/`android_mcp:351`).
+   the audit_mcp / binary-server / android_mcp bridge boundaries).
 2. De-weld 9 API routers hardcoding `require('vulnerability')` -- opt-in
    `ModuleProtocol` methods + iterate registered modules; move domain endpoints
    into `vulnerability/api_router.py`.
@@ -348,13 +348,12 @@ controller (alias flips + RFC-07 re-run on rollback); (7) honesty rules.
 #### RFC-11 -- #35 Hot-pluggable MCP -- XL (8 phases)
 Depends on RFC-04 (de-dup MCP_SERVERS) + RFC-05 (retire `vr.*` welding) + RFC-07
 (instance failover). Three bespoke bridges (~150KB) vs a generic adapter that
-ALREADY invokes all 135 tools (`adapters/generic.py`). Phases: (1) generic
-`McpClient` (route ida_headless through it); (2) `McpServerInstance` catalog table
-(migration; `ida_headless_exp` becomes a row tagged `disassembly` -- seed port
-18821 not 18820); (3) runtime discovery as authority (demote `KNOWN_TOOLS` to
+invokes every catalogued tool (`adapters/generic.py`). Phases: (1) generic
+`McpClient` (route every MCP server through it); (2) `McpServerInstance` catalog table
+(migration; per-instance rows tagged by capability); (3) runtime discovery as authority (demote `KNOWN_TOOLS` to
 fallback); (4) capability binding (replace `_applicable_servers_for_kind` if/elif
 + per-module `MCP_SERVERS` tuples); (5) pooling + self-healing; (6) delete 3
-bridge classes (high blast radius -- behavior-preserve all 135 tools first);
+bridge classes (high blast radius -- behavior-preserve every catalogued tool first);
 (7) trust gate + provenance (`instance_id` on `mcp_call_log`); (8) honesty rules.
 
 #### RFC-12 -- #49 Knowledge base beyond naive RAG -- XL (8 phases)

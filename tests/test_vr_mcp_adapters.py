@@ -10,7 +10,6 @@ import json
 from aila.platform.mcp.adapters import (
     ANDROID_MCP_TOOLS,
     AUDIT_MCP_TOOLS,
-    IDA_HEADLESS_TOOLS,
     KNOWN_TOOLS,
     AdapterContext,
     get_adapter,
@@ -30,30 +29,24 @@ from aila.platform.mcp.adapters.audit_mcp import (
     adapt_taint_paths_to,
 )
 from aila.platform.mcp.adapters.generic import adapt_generic
-from aila.platform.mcp.adapters.ida_headless import (
-    adapt_call_chain,
-    adapt_call_graph,
-    adapt_capa_scan,
-    adapt_checksec,
-    adapt_classify_behavior,
-    adapt_decompile,
-    adapt_def_use,
-    adapt_diff_function,
-    adapt_disassemble_function,
-    adapt_find_api_call_sites,
-    adapt_get_microcode,
-    adapt_interprocedural_taint,
-    adapt_pseudocode_slice_view,
-    adapt_trace_dataflow,
-    adapt_xrefs_from,
-    adapt_xrefs_to,
+from aila.platform.mcp.adapters.known_tools import REA_TOOLS, REVERSER_BELT_TOOLS
+from aila.platform.mcp.adapters.rea import (
+    adapt_rea_analyze_function,
+    adapt_rea_binary_overview,
+    adapt_rea_byte_entropy,
+    adapt_rea_call_graph,
+    adapt_rea_compare_functions,
+    adapt_rea_disassembly,
+    adapt_rea_list_procedures,
+    adapt_rea_pseudocode,
+    adapt_rea_xrefs,
 )
 from aila.modules.vr.agents.tool_executor import ToolExecutor
 from aila.platform.agents.tool_execution import parse_command
 from aila.modules.vr.contracts import PayloadKind
 
 
-def _ctx(server: str = "ida_headless", tool: str = "decompile", **extra) -> AdapterContext:
+def _ctx(server: str = "rea", tool: str = "procedure_pseudo_code", **extra) -> AdapterContext:
     return AdapterContext(
         mcp_server_id=server,
         tool_name=tool,
@@ -72,10 +65,12 @@ def _ctx(server: str = "ida_headless", tool: str = "decompile", **extra) -> Adap
 class TestRegistry:
     def test_known_tools_complete(self) -> None:
         # Every server in KNOWN_TOOLS has tools registered
-        assert "ida_headless" in KNOWN_TOOLS
+        assert "rea" in KNOWN_TOOLS
+        assert "reverser_belt" in KNOWN_TOOLS
         assert "audit_mcp" in KNOWN_TOOLS
         assert "android_mcp" in KNOWN_TOOLS
-        assert len(IDA_HEADLESS_TOOLS) >= 80
+        assert len(REA_TOOLS) >= 20
+        assert len(REVERSER_BELT_TOOLS) >= 60
         assert len(AUDIT_MCP_TOOLS) >= 50
         assert len(ANDROID_MCP_TOOLS) >= 20
 
@@ -83,10 +78,14 @@ class TestRegistry:
         from aila.platform.mcp.adapters.known_tools import _ALWAYS_SUPPRESS
 
         tools = set(registered_tools())
-        for name in IDA_HEADLESS_TOOLS:
-            if name in _ALWAYS_SUPPRESS.get("ida_headless", frozenset()):
+        for name in REA_TOOLS:
+            if name in _ALWAYS_SUPPRESS.get("rea", frozenset()):
                 continue
-            assert f"ida_headless.{name}" in tools
+            assert f"rea.{name}" in tools
+        for name in REVERSER_BELT_TOOLS:
+            if name in _ALWAYS_SUPPRESS.get("reverser_belt", frozenset()):
+                continue
+            assert f"reverser_belt.{name}" in tools
         for name in AUDIT_MCP_TOOLS:
             if name in _ALWAYS_SUPPRESS.get("audit_mcp", frozenset()):
                 continue
@@ -119,48 +118,21 @@ class TestRegistry:
                 )
 
     def test_specialized_takes_priority_over_generic(self) -> None:
-        # decompile has a specialized adapter
-        adapter = get_adapter("ida_headless", "decompile")
-        assert adapter is adapt_decompile
-        # checksec also specialized
-        assert get_adapter("ida_headless", "checksec") is adapt_checksec
+        # procedure_pseudo_code has a specialized adapter
+        adapter = get_adapter("rea", "procedure_pseudo_code")
+        assert adapter is adapt_rea_pseudocode
+        # inspect_byte_entropy also specialized
+        assert get_adapter("rea", "inspect_byte_entropy") is adapt_rea_byte_entropy
 
     def test_unknown_tool_returns_none(self) -> None:
-        assert get_adapter("ida_headless", "bogus_tool_name") is None
-        assert get_adapter("nonexistent_server", "decompile") is None
-
-    def test_always_suppress_blocks_dispatch_even_with_specialized_or_runtime(
-        self,
-    ) -> None:
-        # Regression: deleting ``ida_headless.classify_strings`` from
-        # the static ``IDA_HEADLESS_TOOLS`` set was not enough --
-        # ``_effective_tools`` unions the runtime bridge catalog, and
-        # ``get_adapter`` checked the specialized table first. The
-        # bridge's ``/tools`` response still advertised the tool, and
-        # the historical specialized adapter entry was still wired.
-        # Net effect: the agent could still dispatch the deprecated
-        # tool through either path. Suppression now short-circuits
-        # the lookup before EITHER specialized OR runtime sees it.
-        from aila.platform.mcp.adapters.known_tools import _ALWAYS_SUPPRESS
-        from aila.platform.mcp.adapters.registry import (
-            _RUNTIME_BRIDGE_TOOLS,
-            _SPECIALIZED,
-            register_bridge_tools,
-        )
-
-        # classify_strings IS in the suppress set and is re-injected
-        # via the runtime catalog (the bridge's live ``/tools`` list
-        # still advertises it). The historical ``_SPECIALIZED`` entry
-        # was removed; the suppress short-circuit in ``get_adapter``
-        # is the second line of defense for any future re-add.
-        assert "classify_strings" in _ALWAYS_SUPPRESS["ida_headless"]
-        assert ("ida_headless", "classify_strings") not in _SPECIALIZED
-        register_bridge_tools("ida_headless", ["classify_strings"])
-        try:
-            assert "classify_strings" in _RUNTIME_BRIDGE_TOOLS["ida_headless"]
-            assert get_adapter("ida_headless", "classify_strings") is None
-        finally:
-            _RUNTIME_BRIDGE_TOOLS["ida_headless"].discard("classify_strings")
+        assert get_adapter("rea", "bogus_tool_name") is None
+        # A tool name that no catalog owns stays unknown even when the
+        # server_id is garbage. (A REAL rea tool name cannot be used
+        # here: ``canonicalize_tool_id`` deliberately collapses an
+        # unknown server + uniquely-owned tool onto its owner -- so
+        # ``("nonexistent_server", "procedure_pseudo_code")`` resolves
+        # to the rea adapter by design, issue #251.)
+        assert get_adapter("nonexistent_server", "bogus_tool_name") is None
 
     def test_suppressed_tools_absent_from_registered_tools(self) -> None:
         # ``registered_tools()`` is used by diagnostics + the prompt
@@ -168,7 +140,6 @@ class TestRegistry:
         # the listing is just another way for the agent to learn the
         # name and try to dispatch it.
         listed = set(registered_tools())
-        assert "ida_headless.classify_strings" not in listed
         assert "audit_mcp.search_source" not in listed
 
     def test_specialized_tools_lists_only_specialized(self) -> None:
@@ -176,10 +147,10 @@ class TestRegistry:
         # Sanity: spec is a proper subset of all registered tools
         assert spec.issubset(set(registered_tools()))
         # Known specialized tools are in
-        assert "ida_headless.decompile" in spec
+        assert "rea.procedure_pseudo_code" in spec
         assert "audit_mcp.taint_paths_to" in spec
         # Tools without specialized adapters are NOT in
-        assert "ida_headless.list_binaries" not in spec
+        assert "rea.search_strings" not in spec
         assert "audit_mcp.cache_stats" not in spec
 
 
@@ -253,11 +224,11 @@ class TestAndroidMcpDispatch:
         ida = _FakeBridge()
         audit = _FakeBridge()
         android = _FakeBridge()
-        executor = ToolExecutor(ida=ida, audit_mcp=audit, android_mcp=android)
+        executor = ToolExecutor(rea=ida, audit_mcp=audit, android_mcp=android)
         # RFC-11 Tier C: _bridge_for() is the dispatch surface inside
         # execute(); an injected bridge is returned as an override so the
         # "No bridge configured" path never fires for a wired server.
-        assert executor._bridge_for("ida_headless") is ida
+        assert executor._bridge_for("rea") is ida
         assert executor._bridge_for("audit_mcp") is audit
         assert executor._bridge_for("android_mcp") is android
 
@@ -265,7 +236,7 @@ class TestAndroidMcpDispatch:
         # The composite layer (verify_capabilities / classify_behavior /
         # compute_risk_score / find_secrets) is what VR personas mostly
         # call. They must be present even though the same names also
-        # appear on the ida_headless surface -- KNOWN_TOOLS is keyed by
+        # appear on the reverser_belt surface -- KNOWN_TOOLS is keyed by
         # server_id so collisions resolve by server.
         for composite in (
             "verify_capabilities",
@@ -284,10 +255,10 @@ class TestAndroidMcpDispatch:
 class TestAdaptGeneric:
     def test_packages_raw_as_text(self) -> None:
         raw = {"status": "ready", "count": 5, "results": [1, 2, 3]}
-        ctx = _ctx(server="ida_headless", tool="list_binaries")
+        ctx = _ctx(server="rea", tool="search_strings")
         out = adapt_generic(raw, ctx)
         assert out.payload_kind == PayloadKind.TEXT
-        assert out.payload["tool"] == "ida_headless.list_binaries"
+        assert out.payload["tool"] == "rea.search_strings"
         assert out.payload["data"] is raw
         assert out.payload["source_provenance"]["call_id"] == "call-1"
 
@@ -297,7 +268,7 @@ class TestAdaptGeneric:
         # below the cap surface verbatim in the observable so the
         # agent never has to issue a follow-up read to see the tail.
         raw = {"results": ["X" * 100 for _ in range(100)]}
-        out = adapt_generic(raw, _ctx(tool="search_pattern"))
+        out = adapt_generic(raw, _ctx(tool="search_bytes"))
         assert len(out.observables_delta) == 1
         obs = next(iter(out.observables_delta.values()))
         assert "truncated" not in obs
@@ -306,13 +277,13 @@ class TestAdaptGeneric:
 
     def test_summary_includes_status_and_counts(self) -> None:
         raw = {"status": "ready", "total": 42}
-        out = adapt_generic(raw, _ctx(tool="list_functions"))
+        out = adapt_generic(raw, _ctx(tool="list_procedures"))
         assert "status=ready" in out.summary
         assert "total=42" in out.summary
 
     def test_error_response_summary(self) -> None:
         raw = {"status": "error", "error": "binary not found"}
-        out = adapt_generic(raw, _ctx(tool="binary_metadata"))
+        out = adapt_generic(raw, _ctx(tool="binary_overview"))
         assert "error" in out.summary
         assert "binary not found" in out.summary
 
@@ -324,26 +295,26 @@ class TestAdaptGeneric:
 
 
 # ----------------------------------------------------------------------
-# DECOMPILED_FUNCTION adapters
+# DECOMPILED_FUNCTION adapters (REA)
 # ----------------------------------------------------------------------
 
 
-class TestAdaptDecompile:
+class TestAdaptReaPseudocode:
     def test_basic(self) -> None:
         raw = {
-            "status": "ready",
-            "function_name": "main",
-            "address": "0x140012345",
-            "pseudocode": "int main() {\n  return 0;\n}\n",
+            "normalized_result": "int main() {\n  return 0;\n}\n",
+            "evidence_id": "e1",
         }
-        ctx = _ctx(tool="decompile", binary_id="abc", address_or_name="main")
-        out = adapt_decompile(raw, ctx)
+        ctx = _ctx(tool="procedure_pseudo_code",
+                   procedure="main", address="0x140012345")
+        out = adapt_rea_pseudocode(raw, ctx)
         assert out.payload_kind == PayloadKind.DECOMPILED_FUNCTION
         assert out.payload["function_name"] == "main"
         assert out.payload["address"] == "0x140012345"
-        assert out.payload["line_count"] == 4
+        assert out.payload["pseudocode"] == "int main() {\n  return 0;\n}"
+        assert out.payload["line_count"] == 3
         # New global-namespaced obs key: <server>.<tool>.<suffix>
-        key = "ida_headless.decompile.decompiled.main"
+        key = "rea.procedure_pseudo_code.decompiled.main"
         assert key in out.observables_delta
         assert "int main()" in out.observables_delta[key]
 
@@ -353,17 +324,73 @@ class TestAdaptDecompile:
         # so the agent never sees a truncated load-bearing branch. The
         # observable carries the full body verbatim -- no truncation
         # marker, no banner -- up to that hard floor.
-        raw = {"function_name": "huge", "pseudocode": "X" * 5000}
-        out = adapt_decompile(raw, _ctx())
-        obs = out.observables_delta["ida_headless.decompile.decompiled.huge"]
+        raw = {"normalized_result": "X" * 5000}
+        out = adapt_rea_pseudocode(raw, _ctx(tool="procedure_pseudo_code", procedure="huge"))
+        obs = out.observables_delta["rea.procedure_pseudo_code.decompiled.huge"]
         assert "truncated" not in obs
         assert obs == "X" * 5000
 
     def test_missing_fields_recover(self) -> None:
-        raw = {"status": "ready"}
-        out = adapt_decompile(raw, _ctx(address_or_name="main"))
+        raw = {"normalized_result": None, "evidence_id": "e1"}
+        out = adapt_rea_pseudocode(raw, _ctx(tool="procedure_pseudo_code"))
         assert out.payload["function_name"] == "<unknown>"
-        assert out.payload["address"] == "main"
+        assert out.payload["address"] == ""
+        assert out.payload["pseudocode"] == ""
+        assert out.payload["line_count"] == 0
+        key = "rea.procedure_pseudo_code.decompiled.<unknown>"
+        assert key in out.observables_delta
+
+
+class TestAdaptReaAnalyzeFunction:
+    def test_dossier(self) -> None:
+        raw = {
+            "normalized_result": {
+                "procedure": {"name": "main", "address": "0x140000000"},
+                "pseudocode": "int main() {\n  return 0;\n}\n",
+                "callers": [{"name": "start", "address": "0x14000f000"}],
+                "callees": [{"name": "puts", "address": "0x14000a000"}],
+                "unresolved_calls": [],
+                "incoming_references": [{"source_address": "0x14000f000"}],
+                "outgoing_references": [],
+                "referenced_strings": [{"address": "0x2000", "value": "hello"}],
+            },
+            "evidence_id": "e1",
+        }
+        ctx = _ctx(tool="analyze_function", procedure="main")
+        out = adapt_rea_analyze_function(raw, ctx)
+        assert out.payload_kind == PayloadKind.DECOMPILED_FUNCTION
+        assert out.payload["function_name"] == "main"
+        assert out.payload["address"] == "0x140000000"
+        assert "int main()" in out.payload["pseudocode"]
+        assert out.payload["caller_count"] == 1
+        assert out.payload["callee_count"] == 1
+        assert out.payload["referenced_string_count"] == 1
+        key = "rea.analyze_function.decompiled.main"
+        assert "int main()" in out.observables_delta[key]
+
+    def test_summary_projection_reports_parent(self) -> None:
+        # Default detail on some providers returns an
+        # inspect_analysis_view projection (kind/view/parent_evidence_id/
+        # coverage/summary) with NO dossier content -- the adapter must
+        # say so and point at the retained parent evidence instead of
+        # faking a body.
+        raw = {
+            "normalized_result": {
+                "kind": "inspect_analysis_view",
+                "parent_evidence_id": "e-parent",
+                "summary": {"row_count": 3},
+            },
+            "evidence_id": "e1",
+        }
+        ctx = _ctx(tool="analyze_function", procedure="main")
+        out = adapt_rea_analyze_function(raw, ctx)
+        assert out.payload_kind == PayloadKind.DECOMPILED_FUNCTION
+        assert out.payload["summary_projection"] is True
+        assert out.payload["parent_evidence_id"] == "e-parent"
+        assert out.payload["pseudocode"] == ""
+        assert out.payload["line_count"] == 0
+        key = "rea.analyze_function.dossier.main"
+        assert key in out.observables_delta
 
 
 class TestAdaptReadFunction:
@@ -388,74 +415,31 @@ class TestAdaptReadFunction:
 # ----------------------------------------------------------------------
 
 
-class TestAdaptFindApiCallSites:
+class TestAdaptReaXrefs:
     def test_basic(self) -> None:
+        # Live shape: normalized_result is a bare list of hex address
+        # strings referencing the queried address (REA's xrefs_to
+        # analogue).
         raw = {
-            "api_name": "strcpy",
-            "call_sites": [
-                {"function_name": "parse_input", "function_address": "0x401200"},
-                {"function_name": "handle_request", "function_address": "0x401500"},
-            ],
+            "normalized_result": ["0x140001000", "0x140002000"],
+            "evidence_id": "e1",
         }
-        ctx = _ctx(tool="find_api_call_sites", api_name="strcpy")
-        out = adapt_find_api_call_sites(raw, ctx)
+        ctx = _ctx(tool="xrefs", address="0x140000000")
+        out = adapt_rea_xrefs(raw, ctx)
         assert out.payload_kind == PayloadKind.XREF_VIEW
-        assert out.payload["total"] == 2
-        key = "ida_headless.find_api_call_sites.callsites.strcpy"
-        assert "parse_input @ 0x401200" in out.observables_delta[key]
-
-    def test_truncates_large_lists(self) -> None:
-        raw = {
-            "api_name": "memcpy",
-            "call_sites": [
-                {"function_name": f"f{i}", "function_address": f"0x{i:x}"}
-                for i in range(100)
-            ],
-        }
-        out = adapt_find_api_call_sites(raw, _ctx(tool="find_api_call_sites", api_name="memcpy"))
-        assert out.payload["total"] == 100
-        key = "ida_headless.find_api_call_sites.callsites.memcpy"
-        # MAX_LIST_PREVIEW = 20 -- 100-20 = 80 entries suppressed.
-        # New pagination hint replaces the silent "and N more" line
-        # with an actionable directive that names the offset / limit
-        # for the follow-up call plus the call_id for direct payload
-        # access. Also stamps payload.pagination_hint so consumers
-        # can branch on it programmatically.
+        assert out.payload["target_address"] == "0x140000000"
+        assert out.payload["xrefs"] == ["0x140001000", "0x140002000"]
+        key = "rea.xrefs.xrefs_to.0x140000000"
         obs = out.observables_delta[key]
-        assert "80 more row" in obs
-        assert "offset=20" in obs
-        ph = out.payload["pagination_hint"]
-        assert ph["shown"] == 20
-        assert ph["total"] == 100
-        assert ph["suppressed"] == 80
-        assert ph["next_offset"] == 20
+        assert "2 referencing addresses for 0x140000000" in obs
+        assert "0x140001000" in obs
+        assert "0x140002000" in obs
 
-
-class TestAdaptXrefsTo:
-    def test_basic(self) -> None:
-        raw = {
-            "xrefs": [
-                {"function_name": "init", "address": "0x100", "type": "call"},
-                {"function_name": "destroy", "address": "0x200", "type": "call"},
-            ],
-        }
-        ctx = _ctx(tool="xrefs_to", address_or_name="0x4040")
-        out = adapt_xrefs_to(raw, ctx)
-        assert out.payload_kind == PayloadKind.XREF_VIEW
-        assert out.payload["target"] == "0x4040"
-        assert out.payload["total"] == 2
-        key = "ida_headless.xrefs_to.xrefs_to.0x4040"
-        assert "init @ 0x100" in out.observables_delta[key]
-
-
-class TestAdaptXrefsFrom:
-    def test_basic(self) -> None:
-        raw = {"xrefs": [{"function_name": "puts", "address": "0x300"}]}
-        ctx = _ctx(tool="xrefs_from", address_or_name="main")
-        out = adapt_xrefs_from(raw, ctx)
-        assert out.payload_kind == PayloadKind.XREF_VIEW
-        assert out.payload["source"] == "main"
-        assert out.payload["total"] == 1
+    def test_empty(self) -> None:
+        raw = {"normalized_result": [], "evidence_id": "e1"}
+        out = adapt_rea_xrefs(raw, _ctx(tool="xrefs", address="0x140000000"))
+        key = "rea.xrefs.xrefs_to.0x140000000"
+        assert "(none)" in out.observables_delta[key]
 
 
 class TestAdaptCallersOf:
@@ -486,22 +470,6 @@ class TestAdaptCalleesOf:
 # ----------------------------------------------------------------------
 # TAINT_FLOW adapters
 # ----------------------------------------------------------------------
-
-
-class TestAdaptInterproceduralTaint:
-    def test_basic(self) -> None:
-        raw = {
-            "chains": [
-                {"source": "recv", "sink": "memcpy", "hops": 3},
-                {"source": "read", "sink": "memcpy", "hops": 5},
-            ],
-        }
-        ctx = _ctx(tool="interprocedural_taint", sink_function="memcpy")
-        out = adapt_interprocedural_taint(raw, ctx)
-        assert out.payload_kind == PayloadKind.TAINT_FLOW
-        assert out.payload["total"] == 2
-        key = "ida_headless.interprocedural_taint.itp_taint.memcpy"
-        assert "recv → memcpy" in out.observables_delta[key]
 
 
 class TestAdaptTaintPathsTo:
@@ -556,22 +524,6 @@ class TestAdaptTaintPathsTo:
         assert "m:main" in obs and "create_test_session" in obs
 
 
-class TestAdaptDefUse:
-    def test_basic(self) -> None:
-        raw = {"chains": [{"source": "alloca", "sink": "use", "hops": 1}]}
-        ctx = _ctx(tool="def_use", address_or_name="vuln_fn")
-        out = adapt_def_use(raw, ctx)
-        assert out.payload_kind == PayloadKind.TAINT_FLOW
-
-
-class TestAdaptTraceDataflow:
-    def test_basic(self) -> None:
-        raw = {"trace": [{"source": "input", "sink": "memcpy", "hops": 2}]}
-        ctx = _ctx(tool="trace_dataflow", sink_function="memcpy")
-        out = adapt_trace_dataflow(raw, ctx)
-        assert out.payload_kind == PayloadKind.TAINT_FLOW
-
-
 class TestAdaptPathsBetween:
     def test_basic(self) -> None:
         raw = {"paths": [{"source": "A", "sink": "B", "hops": 2}]}
@@ -586,25 +538,35 @@ class TestAdaptPathsBetween:
 # ----------------------------------------------------------------------
 
 
-class TestAdaptCallGraph:
+class TestAdaptReaCallGraph:
     def test_basic(self) -> None:
-        raw = {"nodes": [{"id": "main"}, {"id": "foo"}],
-               "edges": [{"src": "main", "dst": "foo"}]}
-        ctx = _ctx(tool="call_graph", address_or_name="main")
-        out = adapt_call_graph(raw, ctx)
+        # Live shape: normalized_result.graph maps depth -> node list;
+        # each node is {address, status, calls: [address...]}.
+        raw = {
+            "normalized_result": {
+                "graph": {
+                    "0": [
+                        {"address": "0x140000000", "status": "ok",
+                         "calls": ["0x140001000"]},
+                    ],
+                    "1": [
+                        {"address": "0x140001000", "status": "ok", "calls": []},
+                    ],
+                },
+            },
+            "evidence_id": "e1",
+        }
+        ctx = _ctx(tool="get_call_graph", address="0x140000000")
+        out = adapt_rea_call_graph(raw, ctx)
         assert out.payload_kind == PayloadKind.GRAPH_VIEW
-        assert out.payload["node_count"] == 2
-        assert out.payload["edge_count"] == 1
-
-
-class TestAdaptCallChain:
-    def test_basic(self) -> None:
-        raw = {"chain": [{"name": "A"}, {"name": "B"}]}
-        ctx = _ctx(tool="call_chain", target_function="A", direction="callees")
-        out = adapt_call_chain(raw, ctx)
-        assert out.payload_kind == PayloadKind.GRAPH_VIEW
-        assert out.payload["direction"] == "callees"
-        assert out.payload["node_count"] == 2
+        assert out.payload["root"] == "0x140000000"
+        assert out.payload["direction"] == "forward"
+        assert out.payload["total"] == 2
+        assert out.payload["depth_counts"] == {"0": 1, "1": 1}
+        key = "rea.get_call_graph.call_graph.0x140000000"
+        obs = out.observables_delta[key]
+        assert '"total":2' in obs
+        assert "0x140001000" in obs
 
 
 class TestAdaptExportGraph:
@@ -623,37 +585,34 @@ class TestAdaptExportGraph:
 # ----------------------------------------------------------------------
 
 
-class TestAdaptDisassembleFunction:
+class TestAdaptReaDisassembly:
     def test_basic(self) -> None:
-        raw = {"disassembly": "push rbp\nmov rbp, rsp\nret\n"}
-        ctx = _ctx(tool="disassemble_function", address_or_name="main")
-        out = adapt_disassemble_function(raw, ctx)
+        # Live shape: normalized_result is assembly text, one
+        # "<addr>: <ins>" line per instruction.
+        raw = {
+            "normalized_result": (
+                "0x140001000: push rbp\n"
+                "0x140001001: mov rbp, rsp\n"
+                "0x140001002: ret\n"
+            ),
+            "evidence_id": "e1",
+        }
+        ctx = _ctx(tool="procedure_assembly", procedure="main")
+        out = adapt_rea_disassembly(raw, ctx)
         assert out.payload_kind == PayloadKind.CODE_POINTER
-        assert out.payload["line_count"] == 4
-        key = "ida_headless.disassemble_function.disasm.main"
+        assert out.payload["label"] == "assembly:main"
+        assert out.payload["line_count"] == 3
+        assert "push rbp" in out.payload["body"]
+        key = "rea.procedure_assembly.asm.main"
         assert "push rbp" in out.observables_delta[key]
 
-    def test_lines_field_form(self) -> None:
-        raw = {"lines": ["push rbp", "mov rbp, rsp", "ret"]}
-        out = adapt_disassemble_function(raw, _ctx(
-            tool="disassemble_function", address_or_name="foo"))
-        assert "push rbp" in out.payload["body"]
-
-
-class TestAdaptGetMicrocode:
-    def test_basic(self) -> None:
-        raw = {"microcode": "mov.4 t1, var_1\n"}
-        ctx = _ctx(tool="get_microcode", address_or_name="bar", maturity="current")
-        out = adapt_get_microcode(raw, ctx)
-        assert out.payload_kind == PayloadKind.CODE_POINTER
-
-
-class TestAdaptPseudocodeSliceView:
-    def test_basic(self) -> None:
-        raw = {"slices": "if (x) {\n  call();\n}\n"}
-        ctx = _ctx(tool="pseudocode_slice_view", address_or_name="fn")
-        out = adapt_pseudocode_slice_view(raw, ctx)
-        assert out.payload_kind == PayloadKind.CODE_POINTER
+    def test_missing_result(self) -> None:
+        raw = {"normalized_result": None, "evidence_id": "e1"}
+        out = adapt_rea_disassembly(raw, _ctx(tool="procedure_assembly", procedure="foo"))
+        assert out.payload["body"] == ""
+        assert out.payload["line_count"] == 0
+        key = "rea.procedure_assembly.asm.foo"
+        assert "(no assembly returned)" in out.observables_delta[key]
 
 
 # ----------------------------------------------------------------------
@@ -661,14 +620,28 @@ class TestAdaptPseudocodeSliceView:
 # ----------------------------------------------------------------------
 
 
-class TestAdaptDiffFunction:
+class TestAdaptReaCompareFunctions:
     def test_basic(self) -> None:
-        raw = {"unified_diff": "-old\n+new\n"}
-        ctx = _ctx(tool="diff_function",
-                   address_or_name_old="0x100", address_or_name_new="0x200")
-        out = adapt_diff_function(raw, ctx)
+        raw = {
+            "normalized_result": {
+                "verdict": "identical",
+                "dimensions": [
+                    {"dimension": "bytes", "status": "identical"},
+                    {"dimension": "pseudocode", "status": "changed"},
+                ],
+            },
+            "evidence_id": "e1",
+        }
+        ctx = _ctx(tool="compare_functions",
+                   procedure_a="main", procedure_b="main_patched")
+        out = adapt_rea_compare_functions(raw, ctx)
         assert out.payload_kind == PayloadKind.PATCH_DIFF
-        assert out.payload["unified_diff"] == "-old\n+new\n"
+        assert out.payload["verdict"] == "identical"
+        assert len(out.payload["dimensions"]) == 2
+        assert "1/2 dimensions changed" in out.summary
+        key = "rea.compare_functions.compare_functions"
+        assert key in out.observables_delta
+        assert '"verdict":"identical"' in out.observables_delta[key]
 
 
 class TestAdaptDiffCodebases:
@@ -693,6 +666,62 @@ class TestAdaptDiffCodebases:
 # ----------------------------------------------------------------------
 
 
+class TestAdaptReaBinaryOverview:
+    def test_basic(self) -> None:
+        raw = {
+            "normalized_result": {
+                "document": "sample.exe",
+                "image_base": "0x140000000",
+                "segments": [
+                    {"name": ".text", "start": "0x140001000",
+                     "end": "0x140010000"},
+                ],
+                "segment_count": 1,
+                "procedure_count": 42,
+                "string_count": 128,
+            },
+            "evidence_id": "e1",
+        }
+        ctx = _ctx(tool="binary_overview")
+        out = adapt_rea_binary_overview(raw, ctx)
+        assert out.payload_kind == PayloadKind.TEXT
+        assert out.payload["document"] == "sample.exe"
+        assert out.payload["image_base"] == "0x140000000"
+        assert out.payload["segment_count"] == 1
+        assert out.payload["procedure_count"] == 42
+        assert out.payload["string_count"] == 128
+        key = "rea.binary_overview.overview"
+        obs = out.observables_delta[key]
+        assert "sample.exe" in obs
+        assert "42 procedures" in obs
+        assert ".text" in obs
+
+
+class TestAdaptReaListProcedures:
+    def test_basic(self) -> None:
+        # Live shape: list of {address, value, symbol, procedure} rows;
+        # EXTERNAL:0xN pseudo-addresses mark imported procedures.
+        raw = {
+            "normalized_result": [
+                {"address": "0x140001000", "value": "main",
+                 "symbol": "main", "procedure": "main"},
+                {"address": "EXTERNAL:0x1", "value": "puts",
+                 "symbol": "puts", "procedure": "puts"},
+            ],
+            "evidence_id": "e1",
+        }
+        ctx = _ctx(tool="list_procedures")
+        out = adapt_rea_list_procedures(raw, ctx)
+        assert out.payload_kind == PayloadKind.TEXT
+        assert out.payload["total"] == 2
+        assert out.payload["external_count"] == 1
+        assert out.payload["internal_count"] == 1
+        key = "rea.list_procedures.procedures"
+        obs = out.observables_delta[key]
+        assert "main" in obs
+        assert "2 total (1 external imports)" in obs
+
+
 class TestAdaptFuzzingTargets:
     def test_basic(self) -> None:
         raw = {
@@ -715,77 +744,6 @@ class TestAdaptFuzzingTargets:
         raw = {"results": [{"name": "x", "score": 1.0}]}
         out = adapt_fuzzing_targets(raw, _ctx(server="audit_mcp", tool="fuzzing_targets"))
         assert out.payload["total"] == 1
-
-
-class TestAdaptChecksec:
-    def test_all_mitigations_on(self) -> None:
-        raw = {"nx": True, "aslr": True, "pie": True, "canary": True,
-               "cet": True, "cfi": True, "relro_full": True,
-               "sanitizers": ["asan"]}
-        ctx = _ctx(tool="checksec", binary_id="abc")
-        out = adapt_checksec(raw, ctx)
-        assert out.payload_kind == PayloadKind.TEXT
-        assert len(out.observables_delta) == 1
-        obs = next(iter(out.observables_delta.values()))
-        assert "NX: ON" in obs
-        assert "PIE: ON" in obs
-        assert "RELRO: full" in obs
-        assert "asan" in obs
-        assert "7 mitigations ON" in out.summary
-
-    def test_some_mitigations_off(self) -> None:
-        raw = {"nx": True, "aslr": False, "pie": False, "canary": True,
-               "cet": False, "cfi": False}
-        out = adapt_checksec(raw, _ctx(tool="checksec"))
-        assert len(out.observables_delta) == 1
-        obs = next(iter(out.observables_delta.values()))
-        assert "ASLR: OFF" in obs
-        assert "PIE: OFF" in obs
-
-
-class TestAdaptClassifyBehavior:
-    def test_basic(self) -> None:
-        raw = {
-            "categories": {
-                "process_injection": ["WriteProcessMemory", "CreateRemoteThread"],
-                "persistence": ["RegSetValueEx"],
-            },
-        }
-        ctx = _ctx(tool="classify_behavior", binary_id="abc")
-        out = adapt_classify_behavior(raw, ctx)
-        assert out.payload_kind == PayloadKind.TEXT
-        # obs_key carries the call-id fallback when args fingerprint is
-        # empty (binary_id is pagination noise). Single-key observable;
-        # pull it generically rather than hard-coding the suffix.
-        assert len(out.observables_delta) == 1
-        obs = next(iter(out.observables_delta.values()))
-        assert "process_injection: 2 API(s)" in obs
-        assert "persistence: 1 API(s)" in obs
-        # The structured-detail block lands after the summary so the
-        # next-turn prompt sees concrete category names + API counts.
-        assert "structured:" in obs
-        assert "WriteProcessMemory" in obs
-
-
-class TestAdaptCapaScan:
-    def test_basic(self) -> None:
-        raw = {
-            "matches": [
-                {"rule": "encrypt data using RC4", "attck": ["T1027"]},
-                {"rule": "communicate over HTTP"},
-            ],
-        }
-        ctx = _ctx(tool="capa_scan", binary_id="abc")
-        out = adapt_capa_scan(raw, ctx)
-        assert out.payload_kind == PayloadKind.TEXT
-        assert len(out.observables_delta) == 1
-        obs = next(iter(out.observables_delta.values()))
-        assert "encrypt data using RC4" in obs
-        assert "T1027" in obs
-        # Structured-detail block ships the rule + technique list so
-        # the next turn doesn't need to re-call to see the matches.
-        assert "structured:" in obs
-        assert "communicate over HTTP" in obs
 
 
 class TestAdaptAttackSurface:
@@ -851,13 +809,13 @@ class TestAdaptComplexityHotspots:
 
 class TestCommandParser:
     def test_valid_command(self) -> None:
-        raw = json.dumps({"tool": "ida_headless.decompile",
-                          "args": {"binary_id": "abc", "address_or_name": "main"}})
+        raw = json.dumps({"tool": "rea.procedure_pseudo_code",
+                          "args": {"procedure": "main", "address": "0x140000000"}})
         parsed = parse_command(raw)
         assert parsed is not None
         tool_id, args = parsed
-        assert tool_id == "ida_headless.decompile"
-        assert args == {"binary_id": "abc", "address_or_name": "main"}
+        assert tool_id == "rea.procedure_pseudo_code"
+        assert args == {"procedure": "main", "address": "0x140000000"}
 
     def test_empty_string(self) -> None:
         assert parse_command("") is None
@@ -876,7 +834,7 @@ class TestCommandParser:
         assert parse_command(json.dumps({"args": {}})) is None
 
     def test_missing_args_defaults_empty(self) -> None:
-        raw = json.dumps({"tool": "ida_headless.decompile"})
+        raw = json.dumps({"tool": "rea.procedure_pseudo_code"})
         parsed = parse_command(raw)
         assert parsed is not None
         assert parsed[1] == {}

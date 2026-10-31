@@ -7,21 +7,20 @@ against a half-built target. Two failure modes were observed live:
     or semantic (semble) index is still building -- every ``read_function``
     then fails and the agent burns turns flailing (Tomcat / OFBiz hunts).
   * native_binary / kernel / hypervisor / ipa / jar / dotnet_assembly
-    targets whose ida_headless ``binary_id`` is still ``pending`` (or
-    whose ``vr_targets.analysis_state`` is not yet ``ready``) -- every
-    ``ida_headless.*`` call returns ``unexpected status 'pending'`` and
-    the agent burns 30 min turns re-issuing the same read (observed
-    live on the nvcuda hunt where ``capability_profile`` had failed at
-    the reaper timeout and every subsequent branch turn produced only
-    pending-error messages).
+    targets whose binary artifact was not yet ingested -- every
+    ``rea.*`` / ``reverser_belt.*`` call errors and the agent burns
+    30 min turns re-issuing the same read (observed live on the nvcuda
+    hunt where ``capability_profile`` had failed at the reaper timeout
+    and every subsequent branch turn produced only error messages).
 
 This probe resolves an investigation's primary target and returns
 ``(ready, detail)``. Ready requires ALL of:
 
   * ``vr_targets.analysis_state == 'ready'`` (rolls up ingestion +
     capability_profile + function_ranking).
-  * For binary-like kinds with a bound ``binary_id``: ida_headless
-    ``poll_analysis`` reports a terminal ready state.
+  * For binary-like kinds with a bound local artifact path: the file
+    exists on disk. REA / reverser_belt open targets by local path per
+    call; there is no index-build phase to poll.
   * For source-code-like kinds with a bound audit-mcp index: the
     graph (trailmark) AND semantic (semble) indexes both report
     ``status == 'ready'``. When the graph is ready but semble has
@@ -47,7 +46,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -64,17 +63,14 @@ _AUDIT_MCP_ENV_VAR = "AUDIT_MCP_URL"
 _AUDIT_MCP_CONFIG_KEY = "audit_mcp_url"
 _AUDIT_MCP_DEFAULT_URL = "http://127.0.0.1:18822"
 
-_IDA_ENV_VAR = "IDA_HEADLESS_URL"
-_IDA_CONFIG_KEY = "ida_headless_url"
-_IDA_DEFAULT_URL = "http://127.0.0.1:18821"
-
 # Operator escape hatch. Default True == gate on.
 _GATE_CONFIG_KEY = "index_readiness_gate_enabled"
 
 _PROBE_ERRORS = (OSError, TimeoutError, RuntimeError, ValueError, TypeError)
 
-# Target kinds whose ingestion path binds an ida_headless ``binary_id``.
-# Mirrors ``services.target_analysis`` and ``profile_builder``. Kept as a
+# Target kinds whose ingestion path binds a local binary artifact
+# (opened per call by REA / reverser_belt). Mirrors
+# ``services.target_analysis`` and ``profile_builder``. Kept as a
 # frozenset (not an import from ``TargetKind``) so the readiness probe
 # stays cheap and dependency-light.
 _BINARY_KINDS: frozenset[str] = frozenset({
@@ -85,14 +81,6 @@ _BINARY_KINDS: frozenset[str] = frozenset({
     "ipa",
     "jar",
     "dotnet_assembly",
-})
-
-# Terminal ida_headless ``poll_analysis`` states. Mirrors the sentinel
-# set in ``TargetAnalysisService._poll_ida`` so the readiness probe agrees
-# with the ingestion worker on what "ready" means. Anything else
-# (``pending``, ``queued``, ``running``, ``analyzing``, unknown) holds.
-_IDA_READY_STATES: frozenset[str] = frozenset({
-    "READY", "INDEXED", "ready", "complete", "completed", "ok",
 })
 
 
@@ -113,14 +101,16 @@ async def _gate_enabled() -> bool:
 
 async def _resolve_target(
     investigation_id: str,
-) -> tuple[str, str, dict[str, str]] | None:
+) -> tuple[str, str, dict[str, str], dict[str, Any]] | None:
     """Resolve investigation -> primary target row.
 
-    Returns ``(kind, analysis_state, handles)`` or ``None`` when the
-    investigation is missing / has no bound target / target has been
-    deleted. ``handles`` is the parsed ``mcp_handles_json`` payload
-    (``audit_mcp_index_id`` for source repos, ``binary_id`` for binary
-    kinds, ``audit_mcp_decompiled_index_id`` for android_apk).
+    Returns ``(kind, analysis_state, handles, descriptor)`` or ``None``
+    when the investigation is missing / has no bound target / target has
+    been deleted. ``handles`` is the parsed ``mcp_handles_json`` payload
+    (``audit_mcp_index_id`` for source repos, ``target_path`` for binary
+    kinds, ``audit_mcp_decompiled_index_id`` for android_apk);
+    ``descriptor`` is the parsed ``descriptor_json`` (carries the
+    artifact path keys for binary kinds).
     """
     from sqlmodel import select
 
@@ -146,6 +136,7 @@ async def _resolve_target(
         kind = str(target.kind or "")
         analysis_state = str(target.analysis_state or "")
         handles_json = target.mcp_handles_json or "{}"
+        descriptor_json = target.descriptor_json or "{}"
     try:
         raw = json.loads(handles_json or "{}")
     except (ValueError, TypeError) as exc:
@@ -160,7 +151,17 @@ async def _resolve_target(
             if value is None:
                 continue
             handles[str(key)] = str(value)
-    return kind, analysis_state, handles
+    try:
+        descriptor = json.loads(descriptor_json or "{}")
+    except (ValueError, TypeError) as exc:
+        _log.debug(
+            "vr_index_readiness: malformed descriptor_json for inv=%s: %s",
+            investigation_id, exc,
+        )
+        descriptor = {}
+    if not isinstance(descriptor, dict):
+        descriptor = {}
+    return kind, analysis_state, handles, descriptor
 
 
 async def _audit_mcp_client() -> McpClient:
@@ -179,20 +180,34 @@ async def _audit_mcp_client() -> McpClient:
     )
 
 
-async def _ida_client() -> McpClient:
-    """Build an :class:`McpClient` bound to the resolved ida_headless URL."""
-    from aila.platform.mcp.client import McpClient, resolve_instance
+async def _probe_binary_artifact(
+    handles: dict[str, str], descriptor: dict[str, Any],
+) -> tuple[bool, str]:
+    """Check the target's local binary artifact exists on disk.
 
-    resolved = await resolve_instance(
-        module_scope="vr",
-        server_name="ida_headless",
-        env_var=_IDA_ENV_VAR,
-        config_key=_IDA_CONFIG_KEY,
-        default_url=_IDA_DEFAULT_URL,
-    )
-    return McpClient(
-        server_id="ida_headless", base_url=resolved.url, timeout=30.0,
-    )
+    REA / reverser_belt open targets by absolute local path per call --
+    there is no index-build state to poll, so readiness reduces to
+    "the artifact is actually there". A missing artifact holds the run
+    (the operator re-stages / re-ingests, at which point the probe
+    flips); a transport-level probe defect fails open so the per-call
+    tool guards surface the real error instead.
+    """
+    from pathlib import Path
+
+    from aila.modules.vr.services.binary_path import binary_path_from_target
+
+    path = binary_path_from_target(descriptor, handles)
+    if not path:
+        # analysis_state==ready but no bound path is an inconsistent
+        # row -- treat as ready so the tool layer surfaces the real
+        # error instead of the gate silently wedging the run.
+        return True, "no-bound-artifact-path"
+    try:
+        if Path(path).is_file():
+            return True, f"artifact present ({path})"
+    except (OSError, RuntimeError, ValueError) as exc:
+        return True, f"artifact-probe-error:{type(exc).__name__}"
+    return False, f"artifact missing on disk ({path})"
 
 
 async def _probe_audit_mcp(index_id: str) -> tuple[bool, str]:
@@ -230,28 +245,6 @@ async def _probe_audit_mcp(index_id: str) -> tuple[bool, str]:
     )
 
 
-async def _probe_ida(binary_id: str) -> tuple[bool, str]:
-    """Poll ida_headless.poll_analysis for *binary_id*.
-
-    Ready == the returned ``state``/``status`` is in ``_IDA_READY_STATES``.
-    Any transport / decode fault fails open so the per-call tool guards
-    still surface the real error to the operator instead of the gate
-    silently holding forever on a broken probe.
-    """
-    try:
-        client = await _ida_client()
-        resp = await client.post("poll_analysis", {"binary_id": binary_id})
-    except _PROBE_ERRORS as exc:
-        return True, f"ida-poll-error:{type(exc).__name__}"
-    data = resp.json() if hasattr(resp, "json") else resp
-    if not isinstance(data, dict):
-        return True, "ida-poll-nonjson"
-    state = str(data.get("state") or data.get("status") or "")
-    if state in _IDA_READY_STATES:
-        return True, f"ida ready (state={state})"
-    return False, f"ida not-ready (state={state or '?'})"
-
-
 async def vr_index_readiness(investigation_id: str) -> tuple[bool, str]:
     """Return ``(ready, detail)`` for the investigation's primary target.
 
@@ -263,8 +256,9 @@ async def vr_index_readiness(investigation_id: str) -> tuple[bool, str]:
        A ``failed`` target auto-resumes as soon as the operator retries
        ingestion and the row flips back to ``ready``.
     2. For binary-like kinds (native_binary / kernel_* / hypervisor_image
-       / ipa / jar / dotnet_assembly): the ida_headless ``binary_id``
-       poll_analysis must report a terminal ready state.
+       / ipa / jar / dotnet_assembly): the local artifact must exist on
+       disk (REA / reverser_belt open it per call; there is no
+       index-build phase to poll).
     3. For source-code-like kinds (source_repo / android_apk): the
        audit-mcp graph AND semble indexes must both be ready.
 
@@ -280,7 +274,7 @@ async def vr_index_readiness(investigation_id: str) -> tuple[bool, str]:
         return True, f"resolve-error:{type(exc).__name__}"
     if resolved is None:
         return True, "no-bound-target"
-    kind, analysis_state, handles = resolved
+    kind, analysis_state, handles, descriptor = resolved
 
     # (1) Target-row readiness. Rolls up ingestion + capability_profile +
     # function_ranking through ``services.stage_tracker``. A row in
@@ -295,15 +289,9 @@ async def vr_index_readiness(investigation_id: str) -> tuple[bool, str]:
             f"analysis_state={analysis_state or '?'})"
         )
 
-    # (2) Binary-like kinds: ida_headless binary must be ready.
+    # (2) Binary-like kinds: the local artifact must be present.
     if kind in _BINARY_KINDS:
-        binary_id = handles.get("binary_id")
-        if not binary_id:
-            # analysis_state==ready but no binary_id is an inconsistent
-            # row -- treat as ready so the tool layer surfaces the real
-            # error instead of the gate silently wedging the run.
-            return True, f"no-bound-binary (kind={kind})"
-        return await _probe_ida(binary_id)
+        return await _probe_binary_artifact(handles, descriptor)
 
     # (3) Source-code-like kinds: audit-mcp graph + semble must be ready.
     index_id = (

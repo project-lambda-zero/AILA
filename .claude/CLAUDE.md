@@ -258,7 +258,7 @@ Multi-step behavior uses staged workflows with named states, not nested conditio
 
 22. **`start.sh` WORKERS default needs every module's queue** -- Currently `default vr vulnerability forensics malware`. A queue absent from this list has no worker listening; tasks land in Redis and sit forever (display reads as `Queued`). The malware module's tasks all declare `track="malware"` so the worker line is `python -m aila worker -q malware`. After adding a new module that declares its own `track`, append the queue name and restart workers.
 
-23. **`ida-headless-mcp-exp` runs on port 18821** -- Not 18820. Multiple malware backend files were initialized with 18820 as the default; they were wrong. The canonical port is 18821 (matches the `IDA_HEADLESS_PORT` default in `start.sh`). Per-server URL overrides go through `IDA_HEADLESS_EXP_URL` env or `PATCH /malware/mcp/servers/ida_headless_exp` (live, no restart needed).
+23. **REA + re_analytics replace ida-headless** -- Binary reverse engineering no longer uses the ida-headless HTTP server (archived). REA (npm `rea-agents`, Ghidra provider) serves the core RE surface as an MCP-STDIO child spawned per AILA process; the spawn argv comes from `REA_MCP_COMMAND` (shlex-split, forward slashes) and defaults in `start.sh` export `GHIDRA_INSTALL_DIR`, `JAVA_HOME`, and `REA_ANALYSIS_PROVIDER=ghidra`. AILA's own `python -m aila.platform.re_analytics` stdio MCP server preserves every remaining ida-headless tool name under the `re_analytics` server id. Module tool executors inject `target_path` (absolute local binary path) server-side for server ids `rea` and `re_analytics`; there is no binary upload or port to configure.
 
 24. **Operator Resume/Retrigger writing `analysis_state="pending"` directly** -- The handlers in `api_router.py` rewrite the row's overall state column but DO NOT touch the per-stage state in `analysis_stages_json`. Next worker run hits `StageAlreadyDoneError`, logs "already ingested -- skip", and returns. Without an explicit `load_target_stages` -> `save_target_stages` re-roll on that skip path, the row sits at `pending` forever even though every applicable stage is DONE. The malware module's skip path does the re-roll; copy that pattern when adding new resume-style handlers.
 
@@ -463,7 +463,7 @@ investigations. These rules are the operational lessons:
 4. **Agent self-bloats observables.** They invent scratchpad keys
    like `sibling_renzo_h7`, `mandatory_next`, `critic_open_question`.
    `absorb()` caps agent-set obs at 10/turn + 50 total; tool-prefix
-   keys (audit_mcp:*, ida_headless:*, _directive.*) are never
+   keys (audit_mcp:*, rea:*, re_analytics:*, _directive.*) are never
    evicted. `render_case_model` partitions tool readings (shown
    unlimited, capped at 80 display) from agent scratchpad (capped
    at 15 display).

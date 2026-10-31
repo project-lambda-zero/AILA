@@ -3,7 +3,7 @@
 Two sub-packages:
 
 * :mod:`aila.platform.mcp.bridges` -- HTTP/SSE clients (one Tool subclass
-  per MCP server: audit_mcp, ida_headless, android_mcp). The bridges
+  per MCP server: audit_mcp, android_mcp). The bridges
   are stateless dispatchers; every binary / index / session state lives
   on the MCP server itself.
 * :mod:`aila.platform.mcp.adapters` -- pure response→payload adapters.

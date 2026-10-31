@@ -10,10 +10,18 @@
 #
 # Services started:
 #   audit-mcp            HTTP on  ${AUDIT_MCP_PORT:-18822}  (toggle: AILA_START_AUDIT_MCP=0)
-#   ida-headless         HTTP on  ${IDA_HEADLESS_PORT:-18821}  (toggle: AILA_START_IDA_HEADLESS=0)
 #   AILA backend         uvicorn on ${BACKEND_PORT:-8000}
 #   AILA workers         one per queue in $WORKERS
 #   AILA frontend        Vite on ${FRONTEND_PORT:-3000}     (toggle: AILA_START_FRONTEND=0)
+#
+# Binary reverse engineering is served by REA (rea-agents, MCP stdio child
+# spawned per process) plus the in-tree re_analytics MCP server; both are
+# launched on demand by the backend / workers -- no standalone service.
+# Their environment is exported below:
+#   REA_MCP_COMMAND       default "C:/Users/THEDEVIL/tools/node-v24.22.2-win-x64/node.exe C:/Users/THEDEVIL/tools/rea/node_modules/rea-agents/scripts/rea.mjs mcp"
+#   GHIDRA_INSTALL_DIR    default C:/Users/THEDEVIL/tools/ghidra_12.1.4_PUBLIC
+#   JAVA_HOME             default C:/Users/THEDEVIL/scoop/apps/temurin21-jdk/current
+#   REA_ANALYSIS_PROVIDER default ghidra
 #
 # PID tracking:
 #   Every spawned process writes its PID to .run/<label>.pid. ``stop`` walks
@@ -25,13 +33,15 @@
 #   BACKEND_PORT          default 8000
 #   FRONTEND_PORT         default 3000
 #   AUDIT_MCP_PORT        default 18822
-#   IDA_HEADLESS_PORT     default 18821
 #   WORKERS               default "default vr vulnerability forensics malware"
 #   AUDIT_MCP_DIR         default ../audit-mcp (relative to repo root)
-#   IDA_HEADLESS_DIR      default ../ida-headless-mcp-exp (relative to repo root)
+#   AUDIT_MCP_WORKERS     default 1
 #   AILA_START_FRONTEND   1/0 (default 1)
 #   AILA_START_AUDIT_MCP  1/0 (default 1)
-#   AILA_START_IDA_HEADLESS  1/0 (default 1)
+#   REA_MCP_COMMAND       override the REA stdio spawn argv (shlex-split)
+#   GHIDRA_INSTALL_DIR    override the Ghidra install REA uses
+#   JAVA_HOME             override the JDK REA's Ghidra provider uses
+#   REA_ANALYSIS_PROVIDER default ghidra
 
 set -e
 cd "$(dirname "$0")"
@@ -43,7 +53,6 @@ COMMAND="${1:-start}"
 : "${BACKEND_PORT:=8000}"
 : "${FRONTEND_PORT:=3000}"
 : "${AUDIT_MCP_PORT:=18822}"
-: "${IDA_HEADLESS_PORT:=18821}"
 : "${WORKERS:=default vr vulnerability forensics malware}"
 # Per-queue worker concurrency. The vr queue runs LLM-heavy investigations
 # with multi-minute LLM retries; one worker per queue serializes them
@@ -55,11 +64,29 @@ COMMAND="${1:-start}"
 : "${WORKER_COUNT_VULNERABILITY:=1}"
 : "${WORKER_COUNT_FORENSICS:=1}"
 : "${AUDIT_MCP_DIR:=../audit-mcp}"
-: "${IDA_HEADLESS_DIR:=../ida-headless-mcp-exp}"
 : "${AILA_START_FRONTEND:=1}"
 : "${AILA_START_AUDIT_MCP:=1}"
 : "${AUDIT_MCP_WORKERS:=1}"
-: "${AILA_START_IDA_HEADLESS:=1}"
+
+# REA (rea-agents) + reverser-belt environment. Both reverse-engineering
+# MCP servers are STDIO children spawned per AILA process on demand --
+# there is no standalone RE service to start here. REA (Ghidra core RE)
+# spawns from REA_MCP_COMMAND; reverser-belt (Kuna decompiler + capa /
+# crypto / taint / proof + angr analytics) spawns from
+# REVERSER_BELT_MCP_COMMAND, defaulting to `python -m
+# reverser_belt_mcp.server` in the current interpreter (the package must
+# be importable: `pip install -e C:/Users/THEDEVIL/Documents/ida-headless-mcp-exp`,
+# with kuna.exe built and angr installed). These exports seed the backend
+# / workers so the factory's stdio_command() and the Ghidra provider
+# resolve the same install every spawn. Every value is overridable from
+# .env or shell.
+: "${REA_MCP_COMMAND:=C:/Users/THEDEVIL/tools/node-v24.22.2-win-x64/node.exe C:/Users/THEDEVIL/tools/rea/node_modules/rea-agents/scripts/rea.mjs mcp}"
+: "${GHIDRA_INSTALL_DIR:=C:/Users/THEDEVIL/tools/ghidra_12.1.4_PUBLIC}"
+: "${JAVA_HOME:=C:/Users/THEDEVIL/scoop/apps/temurin21-jdk/current}"
+: "${REA_ANALYSIS_PROVIDER:=ghidra}"
+export REA_MCP_COMMAND GHIDRA_INSTALL_DIR JAVA_HOME REA_ANALYSIS_PROVIDER
+# reverser-belt override (empty = factory default argv from the spec).
+export REVERSER_BELT_MCP_COMMAND
 
 RUN_DIR=".run"
 mkdir -p "$RUN_DIR" 2>/dev/null || true
@@ -321,11 +348,9 @@ kill_aila_processes() {
   # pidfile (system reboot mid-run, manual kill in taskmgr, etc).
   kill_by_cmdline_substring "aila"
   kill_by_cmdline_substring "audit_mcp"
-  kill_by_cmdline_substring "ida_headless_mcp"
   # FALLBACK 2: anything still holding our ports.
   kill_port_owner "${BACKEND_PORT:-8000}"
   kill_port_owner "${AUDIT_MCP_PORT:-18822}"
-  kill_port_owner "${IDA_HEADLESS_PORT:-18821}"
   # Frontend: vite spawns under node.exe.
   kill_matching "node.exe" "vite|aila/shell"
   echo "[aila] Stopped."
@@ -486,7 +511,6 @@ show_status() {
   probe "backend  http://127.0.0.1:${BACKEND_PORT}/health" "http://127.0.0.1:${BACKEND_PORT}/health"
   probe "backend  http://127.0.0.1:${BACKEND_PORT}/vr/projects (auth)" "http://127.0.0.1:${BACKEND_PORT}/vr/projects"
   probe "audit-mcp http://127.0.0.1:${AUDIT_MCP_PORT}/tools" "http://127.0.0.1:${AUDIT_MCP_PORT}/tools"
-  probe "ida-headless http://127.0.0.1:${IDA_HEADLESS_PORT}/tools" "http://127.0.0.1:${IDA_HEADLESS_PORT}/tools"
   probe "frontend http://127.0.0.1:${FRONTEND_PORT}/" "http://127.0.0.1:${FRONTEND_PORT}/"
 }
 
@@ -599,7 +623,7 @@ case "$COMMAND" in
     load_env
     mkdir -p "$RUN_DIR"
     for q in $WORKERS; do restart_pool "$q"; done
-    echo "[aila] All workers restarted; backend/frontend/audit-mcp/ida-headless untouched." ; exit 0 ;;
+    echo "[aila] All workers restarted; backend/frontend/audit-mcp untouched." ; exit 0 ;;
   restart-worker)
     if [[ -z "${2:-}" ]]; then echo "Usage: bash start.sh restart-worker <queue>"; exit 1; fi
     load_env; mkdir -p "$RUN_DIR"
@@ -652,41 +676,12 @@ else
   echo "[aila]   audit-mcp disabled (AILA_START_AUDIT_MCP=0)"
 fi
 
-# ── ida-headless-mcp (in its own repo) ──────────────────────────────────────
-# Same launcher pattern as audit-mcp: detached background python via the
-# spawn helper. Uses `ida_headless_mcp.server:main_http` (mirrors every
-# MCP tool as a POST endpoint, no stdio plumbing -- what the VR
-# IDABridgeTool talks to). Without this MCP up, every `_rank_binary` /
-# `_gather_binary_signals` / `assess_exploitability` call from the VR
-# engine returns "Unreachable" and stalls binary-target investigations
-# (source_repo targets like firefox are unaffected; CVE-derived
-# native_binary targets aren't).
-if [[ "$AILA_START_IDA_HEADLESS" == "1" && -d "$IDA_HEADLESS_DIR" ]]; then
-  echo "[aila] Starting ida-headless-mcp..."
-  # The pip-installed `ida-headless-http` console script (defined in
-  # the package's pyproject.toml as ida_headless_mcp.server:main_http)
-  # bypasses the `python -c '...'` quoting hell of spawn(). We call
-  # PowerShell Start-Process on the .exe directly so the spawn helper
-  # (which hardcodes `python` as the binary) doesn't apply.
-  IDA_HEADLESS_EXE="${IDA_HEADLESS_EXE:-ida-headless-http}"
-  _ida_cwd=$(_winpath "$PWD")
-  # WMI Win32_Process.Create (Job-Object breakaway) like spawn(); env vars
-  # are set through a cmd /c prefix so they survive regardless of how WMI
-  # seeds the child environment.
-  IDA_HEADLESS_PID=$("$PS" -NoProfile -ExecutionPolicy Bypass -File "$(_winpath "$SCRIPT_DIR/scripts/start_hidden.ps1")" \
-      -CommandLine "cmd /c set IDA_HEADLESS_HTTP_PORT=${IDA_HEADLESS_PORT}&& set IDA_HEADLESS_HTTP_HOST=127.0.0.1&& ${IDA_HEADLESS_EXE}" \
-      -CurrentDirectory "${_ida_cwd}" 2>/dev/null | sed -n 's/^ProcessId=//p' | tr -d '\r\n ')
-  if [[ -n "$IDA_HEADLESS_PID" ]]; then
-    record_pid "ida-headless" "$IDA_HEADLESS_PID"
-    echo "[aila]   ida-headless started (PID $IDA_HEADLESS_PID)"
-  else
-    echo "[aila]   WARNING: ida-headless launch failed -- is ida-headless-http on PATH?"
-  fi
-elif [[ "$AILA_START_IDA_HEADLESS" == "1" ]]; then
-  echo "[aila]   WARNING: IDA_HEADLESS_DIR not found: $IDA_HEADLESS_DIR (skipping ida-headless)"
-else
-  echo "[aila]   ida-headless disabled (AILA_START_IDA_HEADLESS=0)"
-fi
+# ── REA note ────────────────────────────────────────────────────────────────
+# Binary analysis servers need no launch step: REA spawns as an MCP-STDIO
+# child per AILA process (argv from $REA_MCP_COMMAND, see defaults above)
+# and re_analytics spawns as `python -m aila.platform.re_analytics`. Both
+# inherit the exported REA / GHIDRA_INSTALL_DIR / JAVA_HOME /
+# REA_ANALYSIS_PROVIDER environment.
 
 # ── Backend ─────────────────────────────────────────────────────────────────
 echo "[aila] Starting backend..."
