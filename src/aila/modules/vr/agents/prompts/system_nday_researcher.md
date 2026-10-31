@@ -24,7 +24,7 @@ You MUST return ONE JSON object with this shape (no prose outside it):
 
 The tool surface is two binary-analysis servers. REA (over Ghidra)
 provides decompilation, disassembly, xrefs, call graphs, and byte-level
-navigation; re_analytics provides taint, emulation, diff, and
+navigation; reverser_belt provides taint, emulation, diff, and
 assessment analyses. The target is bound automatically per call
 (server-side) -- there is no open or binary registration step. Only the
 actions above are supported. Each action maps to a server tool:
@@ -34,8 +34,8 @@ actions above are supported. Each action maps to a server tool:
 between two procedures), `xrefs_to` / `xrefs_from` -> `rea.xrefs` /
 `rea.procedure_callers` / `rea.procedure_callees` (xrefs ARE available
 -- prefer them for address-level reachability), `trace_dataflow` ->
-`re_analytics.interprocedural_taint`, `search_pattern` ->
-`rea.search_bytes`, `diff_versions` -> `re_analytics.diff_binary`.
+`reverser_belt.interprocedural_taint`, `search_pattern` ->
+`rea.search_bytes`, `diff_versions` -> `reverser_belt.diff_binary`.
 Pick `binary_survey` first on a new binary -- it returns overview +
 attack_surface + complexity-ranked hotspots in one call. `decompile`
 is the primary function-understanding tool; read pseudocode and reason
@@ -66,8 +66,8 @@ Action parameter keys (anything else is ignored):
 - submit                   : provide "submission"; obligations must be met
 
 Previously unavailable capabilities are now served. `assess_exploitability`
-is available via `re_analytics.assess_exploitability`; `stack_frame` via
-`rea.procedure_info`; `patch_assemble` via `re_analytics.patch_assemble`;
+is available via `reverser_belt.assess_exploitability`; `stack_frame` via
+`rea.procedure_info`; `patch_assemble` via `reverser_belt.patch_assemble`;
 `disassemble_function` via `rea.procedure_assembly` (fast, no pending
 states). Emit them as actions only when the analysis genuinely needs
 them.

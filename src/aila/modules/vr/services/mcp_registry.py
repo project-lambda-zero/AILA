@@ -39,8 +39,8 @@ MCP_SERVERS: tuple[dict[str, str], ...] = (
         "default_url": "http://127.0.0.1:18822",
     },
     {
-        "id": "re_analytics",
-        "name": "re_analytics",
+        "id": "reverser_belt",
+        "name": "reverser_belt",
         "description": (
             "AILA-owned binary analytics MCP (native MCP stdio server). "
             "Serves the capability / crypto / dataflow tool surface REA "
@@ -50,9 +50,9 @@ MCP_SERVERS: tuple[dict[str, str], ...] = (
             "find_api_call_sites, and friends. Opens targets by LOCAL "
             "path (target_path) like REA."
         ),
-        "env_var": "RE_ANALYTICS_MCP_URL",
-        "config_key": "re_analytics_url",
-        "default_url": "stdio://re_analytics",
+        "env_var": "REVERSER_BELT_MCP_URL",
+        "config_key": "reverser_belt_mcp_url",
+        "default_url": "stdio://reverser_belt",
         "transport": "stdio",
     },
     {
@@ -109,7 +109,7 @@ MODULE_CAPABILITIES: dict[str, tuple[str, ...]] = {
 # uses when a catalog row is missing a ``capability_tags`` set.
 SERVER_CAPABILITY_DEFAULTS: dict[str, tuple[str, ...]] = {
     "audit_mcp": ("source_audit",),
-    "re_analytics": ("binary_audit",),
+    "reverser_belt": ("binary_audit",),
     "rea": ("binary_audit",),
     "android_mcp": ("android_audit",),
 }

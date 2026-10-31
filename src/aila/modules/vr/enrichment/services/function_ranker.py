@@ -87,12 +87,12 @@ class FunctionRankingDispatcher:
 
     def __init__(
         self,
-        re_analytics: McpCallable,
+        reverser_belt: McpCallable,
         audit_mcp: McpCallable,
         *,
         top_k: int = 50,
     ) -> None:
-        self._re_analytics = re_analytics
+        self._reverser_belt = reverser_belt
         self._audit_mcp = audit_mcp
         self._top_k = top_k
 
@@ -270,12 +270,12 @@ class FunctionRankingDispatcher:
                 "/vr/targets/{id}/analyze or wait for auto-ingestion",
             )
 
-        # Rank binaries by cyclomatic complexity from re_analytics'
+        # Rank binaries by cyclomatic complexity from reverser_belt'
         # ``binary_survey`` (McCabe E - N + 2 over each recovered CFG,
         # with callee / caller / string-reference counts). The survey
         # returns every surveyed function sorted by complexity, so one
         # call yields the full candidate set.
-        survey = await self._re_analytics.forward(
+        survey = await self._reverser_belt.forward(
             action="binary_survey",
             target_path=target_path,
             max_hotspots=self._top_k,
@@ -288,11 +288,11 @@ class FunctionRankingDispatcher:
         if not hotspots:
             return FunctionRanking(
                 target_id=target_id,
-                source=RankingSource.RE_ANALYTICS_BINARY_SURVEY,
+                source=RankingSource.REVERSER_BELT_BINARY_SURVEY,
                 produced_at=utc_now(),
                 total_candidates=0,
                 top_k=[],
-                notes="re_analytics.binary_survey returned no address-tagged functions",
+                notes="reverser_belt.binary_survey returned no address-tagged functions",
             )
 
         hotspots.sort(key=lambda h: float(h.get("complexity") or 0), reverse=True)
@@ -317,11 +317,11 @@ class FunctionRankingDispatcher:
 
         return FunctionRanking(
             target_id=target_id,
-            source=RankingSource.RE_ANALYTICS_BINARY_SURVEY,
+            source=RankingSource.REVERSER_BELT_BINARY_SURVEY,
             produced_at=utc_now(),
             total_candidates=len(hotspots),
             top_k=top_k,
-            notes="ranked by re_analytics.binary_survey cyclomatic complexity",
+            notes="ranked by reverser_belt.binary_survey cyclomatic complexity",
         )
 
 

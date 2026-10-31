@@ -41,12 +41,12 @@ class VRWorkflowServices:
         config: Operator-tunable VR module config (turn/tool-time budgets,
             PoC retry caps, SSH timeouts).
         rea_bridge: Bridge to the REA (Ghidra) reverse-engineering MCP.
-        re_analytics_bridge: Bridge to the AILA-owned re_analytics MCP
+        reverser_belt_bridge: Bridge to the AILA-owned reverser_belt MCP
             (capa / crypto / taint / emulation / diff surface).
         poc_runner: SSH-driven PoC compile/run/verify orchestrator.
         crash_triage: ASAN parser + dedup-signature computer.
         advisory_builder: CVSS scorer, CWE mapper, advisory formatter.
-        patch_differ: Wrapper over the re_analytics diff capabilities.
+        patch_differ: Wrapper over the reverser_belt diff capabilities.
         llm_client: Platform LLM client for agent reasoning steps.
         ssh: Platform SSH service for file transfer + remote command
             execution against analyzer / PoC workstations.
@@ -58,7 +58,7 @@ class VRWorkflowServices:
     settings: Settings
     config: VRConfigSchema
     rea_bridge: Any
-    re_analytics_bridge: Any
+    reverser_belt_bridge: Any
     poc_runner: PoCRunnerTool
     crash_triage: CrashTriageTool
     advisory_builder: AdvisoryBuilderTool
@@ -84,8 +84,8 @@ class VRWorkflowServices:
         settings = get_settings()
         config = await _resolve_vr_config()
         rea_bridge = make_bridge("rea", module_id="vr", recorder=record_call)
-        re_analytics_bridge = make_bridge(
-            "re_analytics", module_id="vr", recorder=record_call,
+        reverser_belt_bridge = make_bridge(
+            "reverser_belt", module_id="vr", recorder=record_call,
         )
         ssh = SSHService(build_platform_settings(settings))
         return cls(
@@ -93,11 +93,11 @@ class VRWorkflowServices:
             settings=settings,
             config=config,
             rea_bridge=rea_bridge,
-            re_analytics_bridge=re_analytics_bridge,
+            reverser_belt_bridge=reverser_belt_bridge,
             poc_runner=PoCRunnerTool(settings),
             crash_triage=CrashTriageTool(),
             advisory_builder=AdvisoryBuilderTool(),
-            patch_differ=PatchDifferTool(re_analytics_bridge=re_analytics_bridge),
+            patch_differ=PatchDifferTool(reverser_belt_bridge=reverser_belt_bridge),
             llm_client=ServiceFactory().llm_client,
             ssh=ssh,
             ingestion=TargetIngestionService(ssh=ssh),

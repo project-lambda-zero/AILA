@@ -18,6 +18,7 @@ from aila.modules.vr.agents.vuln_researcher import (
     _PROMPT_VERSION_STORE,
     HonestVulnResearcher,
     _applicable_servers_for_kind,
+    _canonical_evidence_refs_json,
     _decision_to_message_payload,
     _fetch_tool_specs,
     _format_param,
@@ -27,7 +28,6 @@ from aila.modules.vr.agents.vuln_researcher import (
     _prompt_key,
     _render_available_tools_section,
     _render_operator_messages_section,
-    _canonical_evidence_refs_json,
     _render_target_snapshot_section,
     _terminal_outcome_kind,
 )
@@ -47,8 +47,8 @@ from aila.platform.contracts.reasoning import (
 )
 from aila.platform.mcp.middleware.android import AndroidMcpMiddleware
 from aila.platform.mcp.middleware.audit import AuditMcpMiddleware
-from aila.platform.mcp.middleware.generic import GenericMiddleware
 from aila.platform.mcp.middleware.rea import ReaMiddleware
+from aila.platform.mcp.middleware.reverser_belt import ReverserBeltMiddleware
 
 
 class TestCaseStateEncoding:
@@ -356,7 +356,7 @@ class TestRenderAvailableToolsSection:
     def test_includes_both_servers(self) -> None:
         out = _render_available_tools_section()
         assert "## rea" in out
-        assert "## re_analytics" in out
+        assert "## reverser_belt" in out
         assert "## audit_mcp" in out
         assert "# Available tools" in out
 
@@ -385,7 +385,7 @@ class TestRenderAvailableToolsSection:
         # count is intentionally elastic -- bumping a tool catalog
         # shouldn't churn this test.
         assert re.search(r"## rea \(\d+ tools -- ", out)
-        assert re.search(r"## re_analytics \(\d+ tools -- ", out)
+        assert re.search(r"## reverser_belt \(\d+ tools -- ", out)
         assert re.search(r"## audit_mcp \(\d+ tools -- ", out)
 
 
@@ -560,14 +560,14 @@ class TestFetchToolSpecs:
             fake_rea_specs,
         )
         monkeypatch.setattr(
-            "aila.platform.mcp.middleware.generic.GenericMiddleware.list_tool_specs",
+            "aila.platform.mcp.middleware.reverser_belt.ReverserBeltMiddleware.list_tool_specs",
             fake_reanalytics_specs,
         )
 
         out = await _fetch_tool_specs(target_kind="source_repo")
         assert "audit_mcp" in out
         assert "rea" not in out
-        assert "re_analytics" not in out
+        assert "reverser_belt" not in out
         assert audit_calls == ["hit"]
         assert rea_calls == []
         assert reanalytics_calls == []
@@ -599,13 +599,13 @@ class TestFetchToolSpecs:
             fake_rea_specs,
         )
         monkeypatch.setattr(
-            "aila.platform.mcp.middleware.generic.GenericMiddleware.list_tool_specs",
+            "aila.platform.mcp.middleware.reverser_belt.ReverserBeltMiddleware.list_tool_specs",
             fake_reanalytics_specs,
         )
 
         out = await _fetch_tool_specs(target_kind="native_binary")
         assert "rea" in out
-        assert "re_analytics" in out
+        assert "reverser_belt" in out
         assert "audit_mcp" not in out
         assert rea_calls == ["hit"]
         assert reanalytics_calls == ["hit"]
@@ -618,7 +618,7 @@ class TestFetchToolSpecs:
     ) -> None:
         """android_apk targets now poll ALL FOUR bridges: android_mcp
         (APK-level facets), audit_mcp (source-graph over the jadx-
-        decompiled Java tree), AND the binary pair rea + re_analytics
+        decompiled Java tree), AND the binary pair rea + reverser_belt
         (native .so libraries under lib/<abi>/). See
         _applicable_servers_for_kind in
         src/aila/modules/vr/agents/vuln_researcher.py -- the binary
@@ -664,7 +664,7 @@ class TestFetchToolSpecs:
             ReaMiddleware, "list_tool_specs", fake_rea_specs,
         )
         monkeypatch.setattr(
-            GenericMiddleware, "list_tool_specs", fake_reanalytics_specs,
+            ReverserBeltMiddleware, "list_tool_specs", fake_reanalytics_specs,
         )
         monkeypatch.setattr(
             AndroidMcpMiddleware, "list_tool_specs", fake_android_specs,
@@ -674,7 +674,7 @@ class TestFetchToolSpecs:
         assert "android_mcp" in out
         assert "audit_mcp" in out
         assert "rea" in out
-        assert "re_analytics" in out
+        assert "reverser_belt" in out
         assert android_calls == ["hit"]
         assert audit_calls == ["hit"]
         assert rea_calls == ["hit"]
@@ -688,7 +688,7 @@ class TestFetchToolSpecs:
         assert "semantic_search" in audit_names
         rea_names = {s["name"] for s in out["rea"]}
         assert "procedure_pseudo_code" in rea_names
-        reanalytics_names = {s["name"] for s in out["re_analytics"]}
+        reanalytics_names = {s["name"] for s in out["reverser_belt"]}
         assert "capa_scan" in reanalytics_names
 
 
@@ -700,7 +700,7 @@ class TestApplicableServersForKind:
 
     def test_native_binary_returns_rea_pair_only(self) -> None:
         assert _applicable_servers_for_kind("native_binary") == {
-            "rea", "re_analytics",
+            "rea", "reverser_belt",
         }
 
     def test_legacy_apk_falls_through_to_unknown(self) -> None:
@@ -712,16 +712,16 @@ class TestApplicableServersForKind:
         # exercised by this drift test.
         out = _applicable_servers_for_kind("apk")
         assert "rea" in out
-        assert "re_analytics" in out
+        assert "reverser_belt" in out
         assert "audit_mcp" in out
         assert "android_mcp" in out
 
     def test_android_apk_returns_all_four_bridges(self) -> None:
         # android_apk needs android_mcp (APK-level facets), audit_mcp
         # (source-graph over jadx-decompiled Java) AND the binary pair
-        # rea + re_analytics (native .so files under lib/<abi>/).
+        # rea + reverser_belt (native .so files under lib/<abi>/).
         assert _applicable_servers_for_kind("android_apk") == {
-            "android_mcp", "audit_mcp", "rea", "re_analytics",
+            "android_mcp", "audit_mcp", "rea", "reverser_belt",
         }
 
     def test_unknown_kind_defaults_to_every_bridge(self) -> None:
@@ -729,7 +729,7 @@ class TestApplicableServersForKind:
         assert "android_mcp" in out
         assert "audit_mcp" in out
         assert "rea" in out
-        assert "re_analytics" in out
+        assert "reverser_belt" in out
 
 
 class TestMcpFamilyRuleForKind:
@@ -753,7 +753,7 @@ class TestMcpFamilyRuleForKind:
         # analysis on lib/<abi>/*.so. Excluding it caused agents to
         # skip native analysis entirely on APK targets.
         assert "**rea**" in rule
-        assert "**re_analytics**" in rule
+        assert "**reverser_belt**" in rule
 
     def test_android_apk_missing_handles_still_emits_rule(self) -> None:
         rule = _mcp_family_rule_for_kind("android_apk", {})
@@ -763,7 +763,7 @@ class TestMcpFamilyRuleForKind:
         # the sibling test above); the RULE talks about NATIVE
         # LIBRARY analysis for every android_apk target.
         assert "**rea**" in rule
-        assert "**re_analytics**" in rule
+        assert "**reverser_belt**" in rule
 
     def test_legacy_apk_kind_has_no_rule(self) -> None:
         # The legacy "apk" string is not in _mcp_family_rule_for_kind's

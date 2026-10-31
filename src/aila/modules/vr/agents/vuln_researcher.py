@@ -651,8 +651,8 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                         continue
                     if k.startswith("audit_mcp:") or k.startswith("audit_mcp.") \
                             or k.startswith("rea:") or k.startswith("rea.") \
-                            or k.startswith("re_analytics:") \
-                            or k.startswith("re_analytics."):
+                            or k.startswith("reverser_belt:") \
+                            or k.startswith("reverser_belt."):
                         tool_obs[k] = str(v)[:5000]
                     elif not k.startswith("_"):
                         key_obs[k] = str(v)[:240]
@@ -2757,8 +2757,8 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                 or key.startswith("audit_mcp.")
                 or key.startswith("rea:")
                 or key.startswith("rea.")
-                or key.startswith("re_analytics:")
-                or key.startswith("re_analytics.")
+                or key.startswith("reverser_belt:")
+                or key.startswith("reverser_belt.")
                 or key.startswith("android_mcp:")
                 or key.startswith("android_mcp.")
                 # Issue #148: dynamic-analysis signals participate in
@@ -3010,7 +3010,7 @@ def _extract_cited_tool_pairs(
 
 
 _TOOL_CITE_RE = re.compile(
-    r"\b(audit_mcp|rea|re_analytics|android_mcp|knowledge)"
+    r"\b(audit_mcp|rea|reverser_belt|android_mcp|knowledge)"
     r"[:.]([a-z_][a-z0-9_]*)\b",
     re.IGNORECASE,
 )
@@ -3205,7 +3205,7 @@ def _mcp_family_rule_for_kind(
             "`rea.procedure_assembly`, `rea.xrefs`, "
             "`rea.inspect_pe_imports`, `rea.search_bytes`, etc. For "
             "capability / crypto / taint work reach to "
-            "**re_analytics** (`capa_scan`, `detect_crypto_primitives`, "
+            "**reverser_belt** (`capa_scan`, `detect_crypto_primitives`, "
             "`interprocedural_taint` -- target bound the same way). "
             "NEVER try to analyze native .so files via audit_mcp "
             "(source-graph indexer is Java/Kotlin only) or via "
@@ -3221,7 +3221,7 @@ def _mcp_family_rule_for_kind(
         return (
             "RULE: binary target. Use **rea** tools (target bound "
             "automatically per call) for decompilation, disassembly, "
-            "xrefs, and call graphs; reach to **re_analytics** for "
+            "xrefs, and call graphs; reach to **reverser_belt** for "
             "capa / crypto / taint / emulation / exploitability."
         )
     return ""
@@ -3777,7 +3777,7 @@ _ANDROID_KINDS = frozenset({"android_apk"})
 def _applicable_servers_for_kind(target_kind: str | None) -> set[str]:
     """Return the MCP server ids the agent should consider given the
     target's kind. Source repos resolve via audit-mcp; classic binary
-    kinds via the rea + re_analytics pair (core RE plus the capa /
+    kinds via the rea + reverser_belt pair (core RE plus the capa /
     crypto / taint / emulation surface); android_apk gets the
     android_mcp bridge PLUS audit_mcp (source-graph over the
     decompiled Java tree) AND the binary pair for native libraries.
@@ -3799,7 +3799,7 @@ def _applicable_servers_for_kind(target_kind: str | None) -> set[str]:
         # APK-specific facets (android_mcp: manifest / permissions /
         # signing / etc.) AND native libraries in lib/<abi>/
         # (rea: the Huawei UCS credential .so, anti-tamper
-        # .so, Frida-resistant crypto .so etc.; re_analytics for the
+        # .so, Frida-resistant crypto .so etc.; reverser_belt for the
         # capa / crypto surface on those .so files). Excluding the
         # binary pair previously forced agents to either skip native
         # analysis entirely or hallucinate calls to whichever
@@ -3807,9 +3807,9 @@ def _applicable_servers_for_kind(target_kind: str | None) -> set[str]:
         # then errored every call. Including all four gives the
         # agent the actual right tool for every facet of an APK
         # target.
-        return {"android_mcp", "audit_mcp", "rea", "re_analytics"}
+        return {"android_mcp", "audit_mcp", "rea", "reverser_belt"}
     if k in _BINARY_KINDS:
-        return {"rea", "re_analytics"}
+        return {"rea", "reverser_belt"}
     return set(KNOWN_TOOLS.keys())
 
 
@@ -3928,16 +3928,16 @@ async def _fetch_tool_specs(
         )
         allowed = tools_for_language("rea", primary_language)
         out["rea"] = [s for s in specs if s.get("name", "") in allowed]
-    if "re_analytics" in applicable:
+    if "reverser_belt" in applicable:
         specs = await make_bridge(
-            "re_analytics", module_id="vr", recorder=record_call,
+            "reverser_belt", module_id="vr", recorder=record_call,
         ).list_tool_specs()
         register_bridge_tools(
-            "re_analytics",
+            "reverser_belt",
             [s.get("name") for s in specs if s.get("name")],
         )
-        allowed = tools_for_language("re_analytics", primary_language)
-        out["re_analytics"] = [
+        allowed = tools_for_language("reverser_belt", primary_language)
+        out["reverser_belt"] = [
             s for s in specs if s.get("name", "") in allowed
         ]
     if "android_mcp" in applicable:

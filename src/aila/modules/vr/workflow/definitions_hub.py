@@ -502,7 +502,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         name="recon",
         directive=_HUB_RECON_DIRECTIVE,
         max_turns=_RECON_MAX_TURNS,
-        allowed_servers=("audit_mcp", "rea", "re_analytics"),
+        allowed_servers=("audit_mcp", "rea", "reverser_belt"),
         trust="confirmed",
         priority=_PRIORITY_RECON,
     ),
@@ -605,7 +605,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         capability="binary-audit",
         max_turns=_BINARY_PHASE_MAX_TURNS,
         trust="advisory",
-        allowed_servers=("audit_mcp", "rea", "re_analytics"),
+        allowed_servers=("audit_mcp", "rea", "reverser_belt"),
         priority=_PRIORITY_SPECIALIZED,
     ),
     PhaseSpec(
@@ -617,7 +617,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         capability="binary-audit",
         max_turns=_BINARY_PHASE_MAX_TURNS,
         trust="advisory",
-        allowed_servers=("rea", "re_analytics"),
+        allowed_servers=("rea", "reverser_belt"),
         priority=_PRIORITY_SPECIALIZED,
     ),
     PhaseSpec(
@@ -627,7 +627,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         capability="binary-audit",
         max_turns=_HARDENING_PHASE_MAX_TURNS,
         trust="advisory",
-        allowed_servers=("audit_mcp", "rea", "re_analytics"),
+        allowed_servers=("audit_mcp", "rea", "reverser_belt"),
         priority=_PRIORITY_SPECIALIZED,
     ),
     PhaseSpec(
@@ -637,7 +637,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         capability="binary-audit",
         max_turns=_AUDIT_PHASE_MAX_TURNS,
         trust="advisory",
-        allowed_servers=("audit_mcp", "rea", "re_analytics"),
+        allowed_servers=("audit_mcp", "rea", "reverser_belt"),
         priority=_PRIORITY_SPECIALIZED,
     ),
     PhaseSpec(
@@ -647,7 +647,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         capability="crypto",
         max_turns=_HARDENING_PHASE_MAX_TURNS,
         trust="advisory",
-        allowed_servers=("audit_mcp", "rea", "re_analytics"),
+        allowed_servers=("audit_mcp", "rea", "reverser_belt"),
         priority=_PRIORITY_SPECIALIZED,
     ),
     PhaseSpec(
@@ -657,7 +657,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         capability="crypto",
         max_turns=_HARDENING_PHASE_MAX_TURNS,
         trust="advisory",
-        allowed_servers=("audit_mcp", "rea", "re_analytics"),
+        allowed_servers=("audit_mcp", "rea", "reverser_belt"),
         priority=_PRIORITY_SPECIALIZED,
     ),
     PhaseSpec(
@@ -667,7 +667,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         capability="variant-hunt",
         max_turns=_AUDIT_PHASE_MAX_TURNS,
         trust="advisory",
-        allowed_servers=("audit_mcp", "rea", "re_analytics"),
+        allowed_servers=("audit_mcp", "rea", "reverser_belt"),
         priority=_PRIORITY_SPECIALIZED,
     ),
     PhaseSpec(
@@ -677,7 +677,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         capability="variant-hunt",
         max_turns=_AUDIT_PHASE_MAX_TURNS,
         trust="advisory",
-        allowed_servers=("audit_mcp", "rea", "re_analytics"),
+        allowed_servers=("audit_mcp", "rea", "reverser_belt"),
         priority=_PRIORITY_SPECIALIZED,
     ),
     PhaseSpec(
@@ -687,7 +687,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         capability="binary-audit",
         max_turns=_BINARY_PHASE_MAX_TURNS,
         trust="advisory",
-        allowed_servers=("rea", "re_analytics"),
+        allowed_servers=("rea", "reverser_belt"),
         priority=_PRIORITY_BASELINE,
     ),
     PhaseSpec(
@@ -707,7 +707,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         capability="fuzz",
         max_turns=_HARDENING_PHASE_MAX_TURNS,
         trust="advisory",
-        allowed_servers=("audit_mcp", "rea", "re_analytics"),
+        allowed_servers=("audit_mcp", "rea", "reverser_belt"),
         priority=_PRIORITY_BASELINE,
     ),
     PhaseSpec(
@@ -720,7 +720,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         capability="exploit-dev",
         max_turns=_HARDENING_PHASE_MAX_TURNS,
         trust="advisory",
-        allowed_servers=("audit_mcp", "rea", "re_analytics", "poc_runner"),
+        allowed_servers=("audit_mcp", "rea", "reverser_belt", "poc_runner"),
         priority=_PRIORITY_FILTER_BYPASS,
     ),
     PhaseSpec(
@@ -733,7 +733,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         capability="exploit-dev",
         max_turns=_AUDIT_PHASE_MAX_TURNS,
         trust="confirmed",
-        allowed_servers=("audit_mcp", "rea", "re_analytics", "poc_runner"),
+        allowed_servers=("audit_mcp", "rea", "reverser_belt", "poc_runner"),
         priority=_PRIORITY_EXPLOIT_COMPOSE,
     ),
     PhaseSpec(
@@ -746,7 +746,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         capability="exploit-dev",
         max_turns=_POC_DEV_MAX_TURNS,
         trust="confirmed",
-        allowed_servers=("audit_mcp", "rea", "re_analytics", "poc_runner"),
+        allowed_servers=("audit_mcp", "rea", "reverser_belt", "poc_runner"),
         priority=_PRIORITY_POC,
     ),
     # Terminal open-ended hunt. Unconditional (no ``condition``) so it
@@ -762,7 +762,7 @@ VR_HUB_PHASES: tuple[PhaseSpec, ...] = (
         name="continued_hunt",
         directive=_CONTINUED_HUNT_DIRECTIVE,
         capability=None,
-        allowed_servers=("audit_mcp", "rea", "re_analytics"),
+        allowed_servers=("audit_mcp", "rea", "reverser_belt"),
         max_retries=_CONTINUED_HUNT_MAX_RETRIES,
         catch_all=True,
         priority=_PRIORITY_TERMINAL,

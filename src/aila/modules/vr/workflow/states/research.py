@@ -41,7 +41,7 @@ async def state_research(input: dict[str, Any], services: Any) -> StateResult:
         patched_target_path=input.get("patched_path"),
         mitigations=input.get("mitigations") or {},
         rea_bridge=services.rea_bridge,
-        re_analytics_bridge=services.re_analytics_bridge,
+        reverser_belt_bridge=services.reverser_belt_bridge,
         config=services.config,
         budget=budget,
         context_notes=str(input.get("context_notes") or ""),

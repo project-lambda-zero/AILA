@@ -10,7 +10,7 @@ Responsibilities:
    upload / poll cycle -- the binary is read from local disk.
 3. Repeat (1)+(2) for the optional patched target. Patched target may use
    a different ``input_source`` than the vulnerable target.
-4. Run checksec (re_analytics) on the vulnerable binary to extract
+4. Run checksec (reverser_belt) on the vulnerable binary to extract
    mitigations.
 5. Initialize a BudgetState from VR module config and stash it as JSON.
 6. Persist target_path / patched_path / mitigations onto the project row.
@@ -332,7 +332,7 @@ async def state_setup(input: dict[str, Any], services: Any) -> StateResult:
         await _open_binary(services.rea_bridge, str(patched_path))
 
     # ── Mitigations + budget ────────────────────────────────────────────
-    checksec_result = await services.re_analytics_bridge.forward(
+    checksec_result = await services.reverser_belt_bridge.forward(
         action="checksec", target_path=target_path,
     )
     mitigations: dict[str, Any] = {}

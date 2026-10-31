@@ -29,7 +29,7 @@ __all__ = ["ServerSpec", "SERVER_SPECS", "spec_for"]
 
 #: Interpreter used to spawn the in-repo stdio servers. ``sys.executable``
 #: is absolute, so the child always runs the same install that started
-#: the bridge (a PATH ``python`` may lack the re-analytics extra).
+#: the bridge (a PATH ``python`` may lack the reverser-belt extra).
 _PY_EXE = sys.executable or "python"
 
 
@@ -107,34 +107,39 @@ SERVER_SPECS: dict[str, ServerSpec] = {
         transport=TRANSPORT_STDIO,
         command=("rea", "mcp"),
     ),
-    # re_analytics -- AILA-owned native MCP server (this repo,
-    # ``python -m aila.platform.re_analytics``). Preserves the
-    # ida-headless tool surface REA lacks (capa_scan, classification,
-    # anti-analysis, crypto/dataflow analytics, diffing, session
-    # mutations) with the same tool/arg names, taking ``target_path``
-    # (absolute local path) instead of ida's binary handle.
+    # reverser_belt -- the standalone reverser-belt-mcp server
+    # (github repo ``ida-headless-mcp-exp``, package ``reverser_belt_mcp``),
+    # a real FastMCP server backed by the Kuna decompiler + LIEF + the
+    # binbit SMT solver. It owns every analytic the Ghidra provider (rea)
+    # lacks: capa_scan, behavior/string classification, anti-analysis and
+    # dynamic-resolution detection, crypto-constant / API-hash / string
+    # decryption, miasm + unicorn emulation, taint / value-range / path
+    # feasibility, exploitability + overflow/bounds SMT proofs, CFF
+    # deflattening and patching, diffing, YARA generation, and the
+    # session mutation tools. It speaks MCP natively (this is why the
+    # platform now has a real MCP client), so AILA connects to it over
+    # the wire instead of the retired bespoke HTTP bridge.
     #
-    # stdio transport like REA: one child process per AILA process, no
-    # external service to operate. The spawn argv uses ``sys.executable``
-    # so the child always runs this repo's interpreter (a bare
-    # ``python`` could resolve to a different install without the
-    # re-analytics extra). GenericMiddleware is used (no _MIDDLEWARE_REF
-    # entry): the bridge forwards ``target_path`` as a real argument and
-    # the server opens the binary from disk itself.
+    # Default transport is stdio: one child per AILA process, spawned via
+    # ``python -m reverser_belt_mcp.server`` (the editable-installed
+    # console entry). ``REVERSER_BELT_MCP_COMMAND`` overrides the argv;
+    # setting ``REVERSER_BELT_MCP_URL`` / the config key to an http(s)
+    # root instead targets a shared ``reverser-belt`` streamable-HTTP
+    # instance. GenericMiddleware forwards ``target_path`` as a real
+    # argument; the server opens the binary from disk.
     #
-    # The 900 s timeout matches the REA spec: cold capa rule loading plus
-    # a first extractor build on a large binary is the long pole; cached
-    # repeat calls return in seconds.
-    "re_analytics": ServerSpec(
-        server_id="re_analytics",
-        tool_name="re_analytics_bridge",
-        env_var="REA_ANALYTICS_MCP_URL",
-        config_key="re_analytics_mcp_url",
-        default_url="stdio://re_analytics",
+    # 900 s timeout: a cold Kuna decompile-all plus capa rule load on a
+    # large binary is the long pole; cached repeats return in seconds.
+    "reverser_belt": ServerSpec(
+        server_id="reverser_belt",
+        tool_name="reverser_belt_bridge",
+        env_var="REVERSER_BELT_MCP_URL",
+        config_key="reverser_belt_mcp_url",
+        default_url="stdio://reverser_belt",
         default_timeout=900.0,
         persistent_pool=False,
         transport=TRANSPORT_STDIO,
-        command=(_PY_EXE, "-m", "aila.platform.re_analytics"),
+        command=(_PY_EXE, "-m", "reverser_belt_mcp.server"),
     ),
 }
 

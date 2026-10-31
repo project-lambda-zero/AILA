@@ -29,7 +29,7 @@ from aila.platform.mcp.adapters.audit_mcp import (
     adapt_taint_paths_to,
 )
 from aila.platform.mcp.adapters.generic import adapt_generic
-from aila.platform.mcp.adapters.known_tools import REA_TOOLS, RE_ANALYTICS_TOOLS
+from aila.platform.mcp.adapters.known_tools import REA_TOOLS, REVERSER_BELT_TOOLS
 from aila.platform.mcp.adapters.rea import (
     adapt_rea_analyze_function,
     adapt_rea_binary_overview,
@@ -66,11 +66,11 @@ class TestRegistry:
     def test_known_tools_complete(self) -> None:
         # Every server in KNOWN_TOOLS has tools registered
         assert "rea" in KNOWN_TOOLS
-        assert "re_analytics" in KNOWN_TOOLS
+        assert "reverser_belt" in KNOWN_TOOLS
         assert "audit_mcp" in KNOWN_TOOLS
         assert "android_mcp" in KNOWN_TOOLS
         assert len(REA_TOOLS) >= 20
-        assert len(RE_ANALYTICS_TOOLS) >= 60
+        assert len(REVERSER_BELT_TOOLS) >= 60
         assert len(AUDIT_MCP_TOOLS) >= 50
         assert len(ANDROID_MCP_TOOLS) >= 20
 
@@ -82,10 +82,10 @@ class TestRegistry:
             if name in _ALWAYS_SUPPRESS.get("rea", frozenset()):
                 continue
             assert f"rea.{name}" in tools
-        for name in RE_ANALYTICS_TOOLS:
-            if name in _ALWAYS_SUPPRESS.get("re_analytics", frozenset()):
+        for name in REVERSER_BELT_TOOLS:
+            if name in _ALWAYS_SUPPRESS.get("reverser_belt", frozenset()):
                 continue
-            assert f"re_analytics.{name}" in tools
+            assert f"reverser_belt.{name}" in tools
         for name in AUDIT_MCP_TOOLS:
             if name in _ALWAYS_SUPPRESS.get("audit_mcp", frozenset()):
                 continue
@@ -236,7 +236,7 @@ class TestAndroidMcpDispatch:
         # The composite layer (verify_capabilities / classify_behavior /
         # compute_risk_score / find_secrets) is what VR personas mostly
         # call. They must be present even though the same names also
-        # appear on the re_analytics surface -- KNOWN_TOOLS is keyed by
+        # appear on the reverser_belt surface -- KNOWN_TOOLS is keyed by
         # server_id so collisions resolve by server.
         for composite in (
             "verify_capabilities",

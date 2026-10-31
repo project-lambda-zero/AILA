@@ -1,0 +1,865 @@
+"""Adapters for the reverser-belt MCP server.
+
+Specialized adapters defined here ship structured payloads keyed by
+``PayloadKind``. Every reverser-belt tool not listed here still works
+via the generic fallback in ``generic.py`` (registered via
+``KNOWN_TOOLS``). The reverser-belt server returns ida-headless-shaped
+payloads (decompile/xrefs/taint/graph/microcode), so these renderers
+apply unchanged.
+
+Specialized v0.3 v2 set:
+  - DECOMPILED_FUNCTION: decompile
+  - XREF_VIEW:           find_api_call_sites, xrefs_to, xrefs_from
+  - TAINT_FLOW:          interprocedural_taint, trace_dataflow, def_use
+  - GRAPH_VIEW:          call_graph, call_chain
+  - CODE_POINTER:        disassemble_function, get_microcode,
+                         pseudocode_slice_view
+  - PATCH_DIFF:          diff_function
+  - TEXT (structured):   checksec, classify_behavior, capa_scan
+"""
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from aila.platform.contracts.mcp_payload import PayloadKind
+
+from ._shared import (
+    MAX_LIST_PREVIEW,
+    MAX_OBS_DUMP_CHARS,
+    bounded_dump,
+    obs_key_for,
+    provenance_stamp,
+)
+from .base import AdapterContext, AdapterResult, is_read_tool
+
+__all__ = [
+    "adapt_decompile",
+    "adapt_find_api_call_sites",
+    "adapt_xrefs_to",
+    "adapt_xrefs_from",
+    "adapt_interprocedural_taint",
+    "adapt_trace_dataflow",
+    "adapt_def_use",
+    "adapt_call_graph",
+    "adapt_call_chain",
+    "adapt_disassemble_function",
+    "adapt_get_microcode",
+    "adapt_pseudocode_slice_view",
+    "adapt_diff_function",
+    "adapt_checksec",
+    "adapt_classify_behavior",
+    "adapt_capa_scan",
+]
+
+
+# fix §278 -- pseudocode / disasm observable caps are the shared
+# MAX_OBS_DUMP_CHARS (32 KiB). The prior comment narrated a "50000
+# chars covers ~600 lines" budget but the constants had drifted to
+# 100 MB -- the bounded-slice rationale was code-comment fiction.
+# Specialised renderers downstream still keep the raw response in
+# the message store; only the observable preview rides this cap.
+# fix §279 -- _MAX_OBS_CALLSITES previously sat at 25 alongside the
+# shared MAX_LIST_PREVIEW (20). One list-preview convention across
+# every adapter; if a specific tool ever needs a wider preview we
+# pass the cap explicitly at the call site instead of growing the
+# global constant.
+
+
+def _list_or_empty(raw: dict[str, Any], *keys: str) -> list[Any]:
+    """Return the first list-valued key from ``raw`` (or [])."""
+    for k in keys:
+        v = raw.get(k)
+        if isinstance(v, list):
+            return v
+    return []
+
+_log = logging.getLogger(__name__)
+
+
+def _unsupported_result(
+    raw: dict[str, Any],
+    ctx: AdapterContext,
+    *,
+    alt: str = "",
+) -> AdapterResult | None:
+    """Render a kuna ``{"status":"unsupported"}`` envelope as a clear
+    TEXT observation instead of letting a specialised adapter turn it
+    into an empty success. Returns ``None`` when the response is not
+    an unsupported envelope so callers can fall through to the normal
+    success path.
+    """
+    if not isinstance(raw, dict) or raw.get("status") != "unsupported":
+        return None
+    tool = raw.get("tool") or ctx.tool_name
+    reason = raw.get("reason") or "tool not available"
+    msg = f"UNSUPPORTED under kuna backend: {reason}"
+    if alt and alt.lower() not in reason.lower():
+        msg += f" Use {alt}."
+    return AdapterResult(
+        payload_kind=PayloadKind.TEXT,
+        payload={
+            "text": msg,
+            "unsupported": True,
+            "tool": tool,
+            "reason": raw.get("reason"),
+        },
+        observables_delta={f"ida_headless.unsupported.{tool}": msg},
+        summary=msg,
+    )
+
+
+def _assert_binary_id_match(raw: dict[str, Any], ctx: AdapterContext) -> None:
+    """fix §280 -- guard against cross-binary contamination.
+
+    IDA-headless tools key cached analysis by ``binary_id``. When the
+    upstream MCP server has a cache-mismatch or wrong-handle bug it
+    can return one binary's data for another binary's request, and
+    every downstream consumer (observables, prompt builder, frontend)
+    silently treats it as the correct branch's result. This helper
+    cross-checks ``raw['binary_id']`` against ``ctx.args['binary_id']``
+    at adapter entry so the contamination surfaces loudly instead of
+    contaminating the agent's case state.
+
+    Behaviour:
+
+      - Request carries no ``binary_id`` (e.g. ``call_graph`` only
+        takes ``address_or_name``) → no-op.
+      - Response omits ``binary_id`` → log a WARNING and continue;
+        the upstream contract didn't make the field available so we
+        can't validate but we can flag the gap for the operator.
+      - Both present and equal → no-op.
+      - Both present and differ → raise ``RuntimeError`` so the
+        tool_executor surfaces an error result to the agent instead
+        of writing wrong-binary data into the branch's observables.
+    """
+    req = ctx.args.get("binary_id") if isinstance(ctx.args, dict) else None
+    if not req:
+        return
+    resp = raw.get("binary_id") if isinstance(raw, dict) else None
+    if resp is None:
+        _log.warning(
+            "ida_headless adapter %s.%s: response omitted binary_id; "
+            "cannot validate against request binary_id=%s",
+            ctx.mcp_server_id, ctx.tool_name, req,
+        )
+        return
+    if str(resp) != str(req):
+        raise RuntimeError(
+            f"binary_id mismatch in {ctx.mcp_server_id}.{ctx.tool_name}: "
+            f"req={req!r} resp={resp!r}",
+        )
+
+
+# ----------------------------------------------------------------------
+# DECOMPILED_FUNCTION
+# ----------------------------------------------------------------------
+
+
+@is_read_tool("ida_headless", "decompile")
+def adapt_decompile(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
+    """Map ``decompile`` response to DECOMPILED_FUNCTION payload."""
+    # fix §280 -- guard against cross-binary contamination at entry.
+    _assert_binary_id_match(raw, ctx)
+    function_name = str(raw.get("function_name") or raw.get("name") or "<unknown>")
+    address = str(raw.get("address") or ctx.args.get("address_or_name") or "")
+    pseudocode = str(raw.get("pseudocode") or "")
+    line_count = pseudocode.count("\n") + (1 if pseudocode else 0)
+
+    payload: dict[str, Any] = {
+        "function_name": function_name,
+        "address": address,
+        "pseudocode": pseudocode,
+        "line_count": line_count,
+        "language": "c",
+        "source_provenance": provenance_stamp(ctx),
+    }
+
+    obs_value = pseudocode[:MAX_OBS_DUMP_CHARS]
+    if len(pseudocode) > MAX_OBS_DUMP_CHARS:
+        obs_value += f"\n\n[truncated -- full {line_count} lines in message {ctx.call_id}]"
+
+    return AdapterResult(
+        payload_kind=PayloadKind.DECOMPILED_FUNCTION,
+        payload=payload,
+        observables_delta={obs_key_for(ctx, f"decompiled.{function_name}"): obs_value},
+        summary=f"Decompiled {function_name} ({line_count} lines)",
+    )
+
+
+# ----------------------------------------------------------------------
+# XREF_VIEW family
+# ----------------------------------------------------------------------
+
+
+def _xref_compact_line(ref: dict[str, Any]) -> str:
+    fn = (
+        ref.get("function_name")
+        or ref.get("caller_function_name")
+        or ref.get("caller")
+        or ref.get("name")
+        or "<?>"
+    )
+    addr = (
+        ref.get("function_address")
+        or ref.get("caller_function_address")
+        or ref.get("address")
+        or ref.get("from")
+        or "?"
+    )
+    kind = ref.get("xref_kind") or ref.get("type") or ref.get("kind") or ""
+    suffix = f" [{kind}]" if kind else ""
+    return f"  - {fn} @ {addr}{suffix}"
+
+
+def _xref_view_result(
+    raw: dict[str, Any],
+    ctx: AdapterContext,
+    *,
+    target: str,
+    list_keys: tuple[str, ...],
+    target_field: str,
+    obs_suffix: str,
+    summary_noun: str,
+) -> AdapterResult:
+    if (u := _unsupported_result(raw, ctx, alt="call_chain or call_graph")) is not None:
+        return u
+    _assert_binary_id_match(raw, ctx)  # fix \u00a7280
+    refs = _list_or_empty(raw, *list_keys)
+    total = len(refs)
+    payload: dict[str, Any] = {
+        target_field: target,
+        "xrefs": refs,
+        "total": total,
+        "source_provenance": provenance_stamp(ctx),
+    }
+    lines = [
+        _xref_compact_line(r) for r in refs[:MAX_LIST_PREVIEW]
+        if isinstance(r, dict)
+    ]
+    # Pagination hint replaces the older silent "... and N more"
+    # marker. When the result is larger than the per-observable preview
+    # cap, surface BOTH the count of suppressed rows AND the exact
+    # follow-up call that pulls the rest. Without the actionable call
+    # shape the agent has no way to retrieve the suppressed rows and
+    # ends up either dropping them silently or re-issuing the same
+    # unbounded call hoping for different output.
+    if total > MAX_LIST_PREVIEW:
+        suppressed = total - MAX_LIST_PREVIEW
+        hint = (
+            f"  ... {suppressed} more row(s) suppressed from this "
+            f"observable preview (cap={MAX_LIST_PREVIEW}). The full "
+            f"list is on the message payload's ``xrefs`` array. To "
+            f"pull the next page into a fresh observable, re-issue "
+            f"the same call with `offset={MAX_LIST_PREVIEW}` and "
+            f"`limit=20` (or read the original payload directly via "
+            f"message_id={ctx.call_id})."
+        )
+        lines.append(hint)
+        payload["pagination_hint"] = {
+            "shown": MAX_LIST_PREVIEW,
+            "total": total,
+            "suppressed": suppressed,
+            "next_offset": MAX_LIST_PREVIEW,
+            "call_id": ctx.call_id,
+        }
+    body = "\n".join(lines) if lines else "  (none)"
+    obs_value = f"{total} {summary_noun} for {target}:\n{body}"
+    return AdapterResult(
+        payload_kind=PayloadKind.XREF_VIEW,
+        payload=payload,
+        observables_delta={
+            obs_key_for(ctx, f"{obs_suffix}.{target}"): obs_value,
+        },
+        summary=f"{total} {summary_noun} for {target}",
+    )
+
+
+def adapt_find_api_call_sites(
+    raw: dict[str, Any], ctx: AdapterContext,
+) -> AdapterResult:
+    """Map ``find_api_call_sites`` response to XREF_VIEW payload."""
+    api_name = str(raw.get("api_name") or ctx.args.get("api_name") or "<unknown>")
+    return _xref_view_result(
+        raw, ctx,
+        target=api_name,
+        list_keys=("call_sites",),
+        target_field="api_name",
+        obs_suffix="callsites",
+        summary_noun="call site(s)",
+    )
+
+
+@is_read_tool("ida_headless", "xrefs_to")
+def adapt_xrefs_to(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
+    """Map ``xrefs_to`` response to XREF_VIEW payload (incoming references)."""
+    target = str(
+        raw.get("target")
+        or raw.get("address")
+        or ctx.args.get("address_or_name")
+        or "<unknown>",
+    )
+    return _xref_view_result(
+        raw, ctx,
+        target=target,
+        list_keys=("xrefs", "results"),
+        target_field="target",
+        obs_suffix="xrefs_to",
+        summary_noun="xref(s) to",
+    )
+
+
+@is_read_tool("ida_headless", "xrefs_from")
+def adapt_xrefs_from(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
+    """Map ``xrefs_from`` response to XREF_VIEW payload (outgoing references)."""
+    source = str(
+        raw.get("source")
+        or raw.get("address")
+        or ctx.args.get("address_or_name")
+        or "<unknown>",
+    )
+    return _xref_view_result(
+        raw, ctx,
+        target=source,
+        list_keys=("xrefs", "results"),
+        target_field="source",
+        obs_suffix="xrefs_from",
+        summary_noun="xref(s) from",
+    )
+
+
+# ----------------------------------------------------------------------
+# TAINT_FLOW family
+# ----------------------------------------------------------------------
+
+
+def _taint_summary_lines(paths: list[Any]) -> list[str]:
+    lines: list[str] = []
+    for p in paths[:MAX_LIST_PREVIEW]:
+        if not isinstance(p, dict):
+            continue
+        src = p.get("source") or p.get("from") or "<src>"
+        sink = p.get("sink") or p.get("to") or "<sink>"
+        hops = p.get("hops") or p.get("length") or len(p.get("path", []) or [])
+        lines.append(f"  - {src} → {sink} ({hops} hop(s))")
+    if len(paths) > MAX_LIST_PREVIEW:
+        lines.append(f"  ... and {len(paths) - MAX_LIST_PREVIEW} more")
+    return lines
+
+
+def _taint_result(
+    raw: dict[str, Any],
+    ctx: AdapterContext,
+    *,
+    list_keys: tuple[str, ...],
+    obs_suffix: str,
+    label: str,
+) -> AdapterResult:
+    if (u := _unsupported_result(raw, ctx)) is not None:
+        return u
+    _assert_binary_id_match(raw, ctx)  # fix §280
+    paths = _list_or_empty(raw, *list_keys)
+    payload: dict[str, Any] = {
+        "paths": paths,
+        "total": len(paths),
+        "label": label,
+        "raw": raw,
+        "source_provenance": provenance_stamp(ctx),
+    }
+    lines = _taint_summary_lines(paths)
+    body = "\n".join(lines) if lines else "  (no taint paths reported)"
+    obs_value = f"{label}: {len(paths)} path(s)\n{body}"
+    return AdapterResult(
+        payload_kind=PayloadKind.TAINT_FLOW,
+        payload=payload,
+        observables_delta={obs_key_for(ctx, obs_suffix): obs_value},
+        summary=f"{label}: {len(paths)} path(s)",
+    )
+
+
+@is_read_tool("ida_headless", "interprocedural_taint")
+def adapt_interprocedural_taint(
+    raw: dict[str, Any], ctx: AdapterContext,
+) -> AdapterResult:
+    """Map ``interprocedural_taint`` to TAINT_FLOW payload."""
+    sink = str(ctx.args.get("sink_function") or "<sink>")
+    return _taint_result(
+        raw, ctx,
+        list_keys=("chains", "paths", "taint_paths", "results"),
+        obs_suffix=f"itp_taint.{sink}",
+        label=f"interprocedural_taint to {sink}",
+    )
+
+
+@is_read_tool("ida_headless", "trace_dataflow")
+def adapt_trace_dataflow(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
+    """Map ``trace_dataflow`` to TAINT_FLOW payload.
+
+    The reverser returns a single backward slice: an ordered list of
+    assignment hops from the sink argument toward its source, plus the
+    resolved source terms and whether a source was reached. This is one
+    path (not a list of paths), so it is rendered directly rather than
+    through the path-oriented ``_taint_result`` helper.
+    """
+    if (u := _unsupported_result(raw, ctx)) is not None:
+        return u
+    _assert_binary_id_match(raw, ctx)  # fix §280
+    sink = str(ctx.args.get("sink_function") or raw.get("sink_function") or "<sink>")
+    target = str(raw.get("target") or "<target>")
+    hops = _list_or_empty(raw, "hops", "trace")
+    sources = raw.get("source_terms") or []
+    reached = bool(raw.get("reached_source"))
+    lines: list[str] = []
+    for h in hops[:MAX_LIST_PREVIEW]:
+        if not isinstance(h, dict):
+            continue
+        lhs = h.get("lhs", "?")
+        rhs = h.get("rhs", "?")
+        ln = h.get("line")
+        loc = f"  (line {ln})" if ln is not None else ""
+        lines.append(f"  {lhs} = {rhs}{loc}")
+    if len(hops) > MAX_LIST_PREVIEW:
+        lines.append(f"  ... and {len(hops) - MAX_LIST_PREVIEW} more hop(s)")
+    body = (
+        "\n".join(lines) if lines
+        else "  (no assignment hops; sink argument is a direct source)"
+    )
+    src_txt = ", ".join(str(s) for s in sources) if sources else "unresolved"
+    obs_value = (
+        f"trace_dataflow: {target} (arg of {sink})\n"
+        f"backward slice ({len(hops)} hop(s), "
+        f"source={'reached' if reached else 'not reached'}):\n"
+        f"{body}\n"
+        f"source term(s): {src_txt}"
+    )
+    payload: dict[str, Any] = {
+        "target": target,
+        "sink_function": sink,
+        "hops": hops,
+        "source_terms": list(sources),
+        "reached_source": reached,
+        "raw": raw,
+        "source_provenance": provenance_stamp(ctx),
+    }
+    return AdapterResult(
+        payload_kind=PayloadKind.TAINT_FLOW,
+        payload=payload,
+        observables_delta={obs_key_for(ctx, f"trace.{sink}"): obs_value},
+        summary=f"trace_dataflow: {target} <- {src_txt} ({len(hops)} hop(s))",
+    )
+
+
+@is_read_tool("ida_headless", "def_use")
+def adapt_def_use(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
+    """Map ``def_use`` to TAINT_FLOW payload (def/use chains)."""
+    function = str(ctx.args.get("address_or_name") or "<fn>")
+    return _taint_result(
+        raw, ctx,
+        list_keys=("chains", "def_use", "uses", "results"),
+        obs_suffix=f"def_use.{function}",
+        label=f"def_use chains in {function}",
+    )
+
+
+# ----------------------------------------------------------------------
+# GRAPH_VIEW family
+# ----------------------------------------------------------------------
+
+
+def _graph_result(
+    raw: dict[str, Any],
+    ctx: AdapterContext,
+    *,
+    obs_suffix: str,
+    label: str,
+) -> AdapterResult:
+    _assert_binary_id_match(raw, ctx)  # fix §280
+    nodes = _list_or_empty(raw, "nodes")
+    edges = _list_or_empty(raw, "edges")
+    payload: dict[str, Any] = {
+        "nodes": nodes,
+        "edges": edges,
+        "node_count": len(nodes),
+        "edge_count": len(edges),
+        "label": label,
+        "raw": raw,
+        "source_provenance": provenance_stamp(ctx),
+    }
+    obs_value = (
+        f"{label}: {len(nodes)} node(s), {len(edges)} edge(s)"
+    )
+    return AdapterResult(
+        payload_kind=PayloadKind.GRAPH_VIEW,
+        payload=payload,
+        observables_delta={obs_key_for(ctx, obs_suffix): obs_value},
+        summary=obs_value,
+    )
+
+
+def adapt_call_graph(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
+    """Map ``call_graph`` to GRAPH_VIEW payload."""
+    root = str(ctx.args.get("address_or_name") or "<root>")
+    return _graph_result(raw, ctx, obs_suffix=f"call_graph.{root}", label=f"call_graph @ {root}")
+
+
+def adapt_call_chain(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
+    """Map ``call_chain`` to GRAPH_VIEW payload (chain rooted at a target)."""
+    target = str(ctx.args.get("target_function") or "<target>")
+    direction = str(ctx.args.get("direction") or "callers")
+    _assert_binary_id_match(raw, ctx)  # fix §280
+    chain = _list_or_empty(raw, "chain", "nodes")
+    payload: dict[str, Any] = {
+        "target": target,
+        "direction": direction,
+        "chain": chain,
+        "node_count": len(chain),
+        "edges": _list_or_empty(raw, "edges"),
+        "raw": raw,
+        "source_provenance": provenance_stamp(ctx),
+    }
+    obs_value = f"call_chain {direction} of {target}: {len(chain)} node(s)"
+    return AdapterResult(
+        payload_kind=PayloadKind.GRAPH_VIEW,
+        payload=payload,
+        observables_delta={obs_key_for(ctx, f"call_chain.{target}"): obs_value},
+        summary=obs_value,
+    )
+
+
+# ----------------------------------------------------------------------
+# CODE_POINTER family
+# ----------------------------------------------------------------------
+
+
+def _code_pointer_result(
+    raw: dict[str, Any],
+    ctx: AdapterContext,
+    *,
+    body_keys: tuple[str, ...],
+    obs_suffix: str,
+    label: str,
+    max_chars: int = MAX_OBS_DUMP_CHARS,
+) -> AdapterResult:
+    _assert_binary_id_match(raw, ctx)  # fix \u00a7280
+    # Walk body_keys looking for content. Empty list / empty string
+    # does NOT short-circuit -- the prior implementation broke on
+    # the first matched key even when the value was empty, hiding
+    # signal that lived under a later key (e.g. pseudocode_slice_view
+    # populates `slices`; when no focus is given that list is empty
+    # but `text` / `lines` may still carry the full pseudocode).
+    body = ""
+    for k in body_keys:
+        v = raw.get(k)
+        if isinstance(v, str) and v:
+            body = v
+            break
+        if isinstance(v, list) and v:
+            body = "\n".join(str(x) for x in v)
+            break
+    line_count = body.count("\n") + (1 if body else 0)
+    # Empty-body diagnostic: when no body_keys carried content,
+    # surface every non-housekeeping scalar from the raw response so
+    # the agent sees WHY (slices_count=0, total_lines=61, etc.)
+    # instead of an opaque "(empty)". Lets the next turn pick the
+    # right pivot (decompile the full function, or re-call with a
+    # focus argument).
+    diagnostic = ""
+    if not body:
+        bits: list[str] = []
+        for dk, dv in raw.items():
+            if dk in {"binary_id", "status", "generation", "action"}:
+                continue
+            if isinstance(dv, (str, int, float, bool)):
+                bits.append(f"{dk}={dv}")
+            elif isinstance(dv, list):
+                bits.append(f"{dk}_len={len(dv)}")
+            elif isinstance(dv, dict):
+                bits.append(f"{dk}_keys={sorted(dv.keys())[:5]}")
+        if bits:
+            diagnostic = ", ".join(bits)
+    payload: dict[str, Any] = {
+        "label": label,
+        "body": body,
+        "line_count": line_count,
+        "raw": raw,
+        "source_provenance": provenance_stamp(ctx),
+    }
+    obs_body = body[:max_chars]
+    if len(body) > max_chars:
+        obs_body += f"\n... [truncated -- {line_count} lines total in message {ctx.call_id}]"
+    if obs_body:
+        obs_value = f"{label}:\n{obs_body}"
+    elif diagnostic:
+        obs_value = (
+            f"{label}: (no body returned) -- {diagnostic}. "
+            f"Tool ran successfully but produced no slice body; the "
+            f"args may need refining (focus_callee / focus_address) "
+            f"or pivot to ida_headless.decompile for the full function."
+        )
+    else:
+        obs_value = f"{label}: (empty response)"
+    return AdapterResult(
+        payload_kind=PayloadKind.CODE_POINTER,
+        payload=payload,
+        observables_delta={obs_key_for(ctx, obs_suffix): obs_value},
+        summary=(
+            f"{label} ({line_count} lines)"
+            if line_count
+            else f"{label} (no body; {diagnostic or 'empty'})"
+        ),
+    )
+
+
+@is_read_tool("ida_headless", "disassemble_function")
+def adapt_disassemble_function(
+    raw: dict[str, Any], ctx: AdapterContext,
+) -> AdapterResult:
+    """Map ``disassemble_function`` to CODE_POINTER payload."""
+    fn = str(ctx.args.get("address_or_name") or "<fn>")
+    return _code_pointer_result(
+        raw, ctx,
+        body_keys=("disassembly", "asm", "listing", "lines"),
+        obs_suffix=f"disasm.{fn}",
+        label=f"disassembly of {fn}",
+    )
+
+
+def adapt_get_microcode(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
+    """Map ``get_microcode`` to CODE_POINTER payload (miasm IR).
+
+    The reverser returns miasm intermediate representation, not Hex-Rays
+    microcode: a per-block list of ``{dst, src}`` assignments. Render it as
+    a readable IR listing so the CODE_POINTER body carries real content.
+    """
+    if (u := _unsupported_result(raw, ctx)) is not None:
+        return u
+    fn = str(ctx.args.get("address_or_name") or "<fn>")
+    if isinstance(raw, dict) and "ir_blocks" in raw and "text" not in raw:
+        lines: list[str] = []
+        note = raw.get("note")
+        if note:
+            lines.append(f"// {note}")
+        lines.append(
+            f"// arch={raw.get('arch', '?')} blocks={raw.get('block_count', '?')} "
+            f"ir_blocks={raw.get('ir_block_count', '?')}"
+            + ("  [truncated]" if raw.get("truncated") else "")
+        )
+        for blk in raw.get("ir_blocks", []) or []:
+            lines.append(f"{blk.get('block_address', '?')}:")
+            for asg in blk.get("assignments", []) or []:
+                lines.append(f"    {asg.get('dst', '?')} = {asg.get('src', '?')}")
+        raw = {**raw, "text": "\n".join(lines)}
+    return _code_pointer_result(
+        raw, ctx,
+        body_keys=("text", "microcode", "lines"),
+        obs_suffix=f"microcode.{fn}",
+        label=f"miasm IR of {fn}",
+        max_chars=MAX_OBS_DUMP_CHARS,
+    )
+
+
+@is_read_tool("ida_headless", "pseudocode_slice_view")
+def adapt_pseudocode_slice_view(
+    raw: dict[str, Any], ctx: AdapterContext,
+) -> AdapterResult:
+    """Map ``pseudocode_slice_view`` to CODE_POINTER payload (slice around addresses)."""
+    fn = str(ctx.args.get("address_or_name") or "<fn>")
+    return _code_pointer_result(
+        raw, ctx,
+        body_keys=("text", "slices", "lines"),
+        obs_suffix=f"slice.{fn}",
+        label=f"pseudocode slices in {fn}",
+        max_chars=MAX_OBS_DUMP_CHARS,
+    )
+
+
+# ----------------------------------------------------------------------
+# PATCH_DIFF family
+# ----------------------------------------------------------------------
+
+
+def adapt_diff_function(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
+    """Map ``diff_function`` to PATCH_DIFF payload."""
+    # fix §280 -- diff_function may carry separate old/new binary
+    # ids; the helper checks ``ctx.args['binary_id']`` (single) when
+    # present and no-ops otherwise.
+    _assert_binary_id_match(raw, ctx)
+    old_name = str(ctx.args.get("address_or_name_old") or "<old>")
+    new_name = str(ctx.args.get("address_or_name_new") or "<new>")
+    unified = str(raw.get("unified_diff") or raw.get("diff") or "")
+    side_by_side = raw.get("side_by_side") or []
+    line_count = unified.count("\n") + (1 if unified else 0)
+    payload: dict[str, Any] = {
+        "old": old_name,
+        "new": new_name,
+        "unified_diff": unified,
+        "side_by_side": side_by_side,
+        "line_count": line_count,
+        "source_provenance": provenance_stamp(ctx),
+    }
+    obs_body = unified[:MAX_OBS_DUMP_CHARS]
+    if len(unified) > MAX_OBS_DUMP_CHARS:
+        obs_body += f"\n... [truncated -- {line_count} lines total in message {ctx.call_id}]"
+    obs_value = (
+        f"diff_function {old_name} vs {new_name} ({line_count} lines):\n{obs_body}"
+        if obs_body
+        else f"diff_function {old_name} vs {new_name}: (no diff body)"
+    )
+    return AdapterResult(
+        payload_kind=PayloadKind.PATCH_DIFF,
+        payload=payload,
+        observables_delta={obs_key_for(ctx, f"diff.{old_name}_vs_{new_name}"): obs_value},
+        summary=f"diff_function {old_name} vs {new_name} ({line_count} lines)",
+    )
+
+
+# ----------------------------------------------------------------------
+# TEXT specializations
+# ----------------------------------------------------------------------
+
+
+def adapt_checksec(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
+    """Map ``checksec`` response to TEXT payload (mitigations summary)."""
+    _assert_binary_id_match(raw, ctx)  # fix §280
+    flag_keys = ("nx", "aslr", "pie", "canary", "cet", "cfi", "relro_full", "relro_partial")
+    flags = {k: raw[k] for k in flag_keys if k in raw}
+    sanitizers = raw.get("sanitizers") or []
+    if not isinstance(sanitizers, list):
+        sanitizers = []
+
+    bullets: list[str] = []
+    for key in ("nx", "aslr", "pie", "canary", "cet", "cfi"):
+        v = flags.get(key)
+        if v is True:
+            bullets.append(f"  - {key.upper()}: ON")
+        elif v is False:
+            bullets.append(f"  - {key.upper()}: OFF")
+        else:
+            bullets.append(f"  - {key.upper()}: unknown")
+    if flags.get("relro_full"):
+        bullets.append("  - RELRO: full")
+    elif flags.get("relro_partial"):
+        bullets.append("  - RELRO: partial")
+    if sanitizers:
+        bullets.append(f"  - sanitizers: {', '.join(str(s) for s in sanitizers)}")
+
+    summary_text = "checksec mitigations:\n" + (
+        "\n".join(bullets) if bullets else "  (no flags reported)"
+    )
+    on_count = sum(1 for v in flags.values() if v is True)
+
+    payload: dict[str, Any] = {
+        "text": summary_text,
+        "tool": f"{ctx.mcp_server_id}.{ctx.tool_name}",
+        "flags": flags,
+        "sanitizers": sanitizers,
+        "raw": raw,
+        "source_provenance": provenance_stamp(ctx),
+    }
+    return AdapterResult(
+        payload_kind=PayloadKind.TEXT,
+        payload=payload,
+        observables_delta={obs_key_for(ctx): summary_text},
+        summary=f"checksec: {on_count} mitigations ON",
+    )
+
+
+# ``adapt_classify_strings`` was removed: ``classify_strings`` is in
+# ``_ALWAYS_SUPPRESS`` and unreachable from the agent surface. The
+# narrow-categorizer-banner approach (printing a pivot directive when
+# the categorizer returned <100 hits) did not stop branches from
+# concluding "no strings worth looking at"; replaced by the
+# ``list_strings`` family (real strings table + section / encoding
+# / filter knobs).
+
+
+def adapt_classify_behavior(
+    raw: dict[str, Any], ctx: AdapterContext,
+) -> AdapterResult:
+    """Map ``classify_behavior`` to TEXT payload (ATT&CK-aligned categories)."""
+    _assert_binary_id_match(raw, ctx)  # fix \u00a7280
+    categories = raw.get("categories") or raw.get("behaviors") or {}
+    if not isinstance(categories, dict):
+        categories = {}
+
+    bullets: list[str] = []
+    for cat_name in sorted(categories):
+        entries = categories[cat_name]
+        count = len(entries) if isinstance(entries, list | dict) else 1
+        bullets.append(f"  - {cat_name}: {count} API(s)")
+
+    summary_text = (
+        f"classify_behavior: {len(categories)} category(ies)\n"
+        + ("\n".join(bullets) if bullets else "  (no categorized behaviors)")
+    )
+    payload: dict[str, Any] = {
+        "text": summary_text,
+        "tool": f"{ctx.mcp_server_id}.{ctx.tool_name}",
+        "categories": categories,
+        "total_categories": len(categories),
+        "source_provenance": provenance_stamp(ctx),
+    }
+    # Ship the structured category dict alongside the bullet summary
+    # so the agent's next-turn prompt sees concrete category names +
+    # API counts instead of having to re-call the tool to learn them.
+    # Bounded by the shared 32 KiB observable dump cap.
+    obs_value = summary_text
+    if categories:
+        obs_value += "\n\nstructured:\n" + bounded_dump({
+            "categories": categories,
+            "total_categories": len(categories),
+        })
+    return AdapterResult(
+        payload_kind=PayloadKind.TEXT,
+        payload=payload,
+        observables_delta={obs_key_for(ctx): obs_value},
+        summary=f"classify_behavior: {len(categories)} categories",
+    )
+
+
+def adapt_capa_scan(raw: dict[str, Any], ctx: AdapterContext) -> AdapterResult:
+    """Map ``capa_scan`` to TEXT payload (capability matches)."""
+    _assert_binary_id_match(raw, ctx)  # fix \u00a7280
+    matches = _list_or_empty(raw, "matches", "results", "capabilities")
+    bullets: list[str] = []
+    for m in matches[:MAX_LIST_PREVIEW]:
+        if not isinstance(m, dict):
+            continue
+        rule = m.get("rule") or m.get("name") or "<rule>"
+        attck = m.get("attack") or m.get("attck") or []
+        if isinstance(attck, list) and attck:
+            bullets.append(f"  - {rule} [ATT&CK: {', '.join(str(a) for a in attck[:3])}]")
+        else:
+            bullets.append(f"  - {rule}")
+    if len(matches) > MAX_LIST_PREVIEW:
+        bullets.append(f"  ... and {len(matches) - MAX_LIST_PREVIEW} more")
+
+    summary_text = (
+        f"capa_scan: {len(matches)} capability match(es)\n"
+        + ("\n".join(bullets) if bullets else "  (none)")
+    )
+    payload: dict[str, Any] = {
+        "text": summary_text,
+        "tool": f"{ctx.mcp_server_id}.{ctx.tool_name}",
+        "matches": matches,
+        "total": len(matches),
+        "raw_preview": bounded_dump(raw),
+        "source_provenance": provenance_stamp(ctx),
+    }
+    # Carry the structured matches list (rule + ATT&CK techniques per
+    # entry) into observables so the next-turn prompt has the concrete
+    # rule names + technique ids without a re-call. Trimmed to
+    # MAX_LIST_PREVIEW entries and the shared 32 KiB dump cap.
+    obs_value = summary_text
+    if matches:
+        obs_value += "\n\nstructured:\n" + bounded_dump({
+            "matches": matches[:MAX_LIST_PREVIEW],
+            "total": len(matches),
+            "truncated": max(0, len(matches) - MAX_LIST_PREVIEW),
+        })
+    return AdapterResult(
+        payload_kind=PayloadKind.TEXT,
+        payload=payload,
+        observables_delta={obs_key_for(ctx): obs_value},
+        summary=f"capa_scan: {len(matches)} matches",
+    )

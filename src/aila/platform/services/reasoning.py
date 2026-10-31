@@ -55,7 +55,7 @@ __all__ = [
 _TOOL_PREFIXES: tuple[str, ...] = (
     "audit_mcp:", "audit_mcp.",
     "rea:", "rea.",
-    "re_analytics:", "re_analytics.",
+    "reverser_belt:", "reverser_belt.",
     "android_mcp:", "android_mcp.",
     "_directive.",
     "_recall.",
@@ -808,8 +808,8 @@ class CyberReasoningEngine:
         # read_function on names it already read.
         #
         # Tool keys are prefix-anchored: ``audit_mcp:*`` / ``audit_mcp.*``
-        # / ``rea:*`` / ``rea.*`` / ``re_analytics:*`` /
-        # ``re_analytics.*`` / ``android_mcp:*`` / ``android_mcp.*``.
+        # / ``rea:*`` / ``rea.*`` / ``reverser_belt:*`` /
+        # ``reverser_belt.*`` / ``android_mcp:*`` / ``android_mcp.*``.
         # ``_directive.*`` is already lifted to its own top-of-prompt
         # section so we drop them. ``_recall.*`` is engine bookkeeping
         # (drives the pinned-full section below) so we drop those too.
@@ -817,7 +817,7 @@ class CyberReasoningEngine:
         tool_prefixes = (
             "audit_mcp:", "audit_mcp.",
             "rea:", "rea.",
-            "re_analytics:", "re_analytics.",
+            "reverser_belt:", "reverser_belt.",
             "android_mcp:", "android_mcp.",
         )
         tool_obs: list[tuple[str, Any]] = []

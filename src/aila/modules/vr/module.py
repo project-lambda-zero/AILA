@@ -214,8 +214,8 @@ class VRModule(ModuleProtocol):
         """Register VR tables, config schema, and tool instances.
 
         Tool construction is dependency-ordered: PatchDifferTool composes
-        the re_analytics bridge (diff_binary / diff_function live on
-        re_analytics) so we build that bridge alongside the core REA
+        the reverser_belt bridge (diff_binary / diff_function live on
+        reverser_belt) so we build that bridge alongside the core REA
         bridge and thread the instance into the differ.
         """
         if schema_registry is not None:
@@ -233,12 +233,12 @@ class VRModule(ModuleProtocol):
         from aila.platform.mcp.factory import make_bridge
 
         rea_bridge = make_bridge("rea", module_id="vr", recorder=record_call)
-        re_analytics_bridge = make_bridge(
-            "re_analytics", module_id="vr", recorder=record_call,
+        reverser_belt_bridge = make_bridge(
+            "reverser_belt", module_id="vr", recorder=record_call,
         )
         tool_registry.register(TOOL_REA_BRIDGE, rea_bridge)
         tool_registry.register(TOOL_POC_RUNNER, PoCRunnerTool(settings))
-        tool_registry.register(TOOL_PATCH_DIFFER, PatchDifferTool(re_analytics_bridge))
+        tool_registry.register(TOOL_PATCH_DIFFER, PatchDifferTool(reverser_belt_bridge))
         tool_registry.register(TOOL_CRASH_TRIAGE, CrashTriageTool())
         tool_registry.register(TOOL_ADVISORY_BUILDER, AdvisoryBuilderTool())
 
@@ -447,7 +447,7 @@ class VRModule(ModuleProtocol):
     def health_checks(self) -> dict[str, object]:
         """Probe every MCP server the VR runtime depends on.
 
-        VR reaches rea + re_analytics (binary analysis), audit-mcp
+        VR reaches rea + reverser_belt (binary analysis), audit-mcp
         (source-graph indexing), and android-mcp (APK audit) at runtime.
         Each probe resolves the current base URL through :func:`make_bridge`
         (env -> ConfigRegistry -> catalog -> default) and probes
@@ -458,7 +458,7 @@ class VRModule(ModuleProtocol):
         """
         return {
             "rea_reachability": _mcp_health_probe(self.module_id, "rea"),
-            "re_analytics_reachability": _mcp_health_probe(self.module_id, "re_analytics"),
+            "reverser_belt_reachability": _mcp_health_probe(self.module_id, "reverser_belt"),
             "audit_mcp_reachability": _mcp_health_probe(self.module_id, "audit_mcp"),
             "android_mcp_reachability": _mcp_health_probe(self.module_id, "android_mcp"),
         }

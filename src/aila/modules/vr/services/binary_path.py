@@ -1,6 +1,6 @@
 """Resolve a VR target's local on-disk binary path.
 
-REA and re_analytics both open targets by ABSOLUTE LOCAL PATH -- there
+REA and reverser_belt both open targets by ABSOLUTE LOCAL PATH -- there
 is no upload / binary-id registration step. The path comes from the
 target's ``descriptor_json`` (one of the well-known artifact keys an
 operator or the upload endpoint wrote) or from the ``target_path`` entry

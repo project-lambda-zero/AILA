@@ -77,7 +77,7 @@ _cfg = ModuleConfigReader("vr")
 
 class ToolExecutor(ToolExecutorHelpersBase):
     """Per-investigation tool dispatcher. Injects the MCP bridges
-    (rea, re_analytics, audit_mcp, android_mcp).
+    (rea, reverser_belt, audit_mcp, android_mcp).
 
     Tests can construct with fake bridges that have a ``.forward(action, **kwargs)``
     method returning a canned dict.
@@ -97,7 +97,7 @@ class ToolExecutor(ToolExecutorHelpersBase):
     #   - audit_mcp:    source-code audit (source_repo + android_apk source tree)
     #   - rea:          core binary analysis over REA/Ghidra (native_binary /
     #                   kernel / hypervisor / android_apk native libs)
-    #   - re_analytics: AILA-owned binary analytics (capa / crypto / taint /
+    #   - reverser_belt: AILA-owned binary analytics (capa / crypto / taint /
     #                   emulation / diff) -- preserves the legacy binary
     #                   tool surface REA does not serve
     #   - android_mcp:  APK-facet tools (manifest / signing / permissions)
@@ -115,7 +115,7 @@ class ToolExecutor(ToolExecutorHelpersBase):
     #                   (dynamic.run_dynamic). module + workspace injected
     #                   server-side; feeds dynamic:<target>:coverage_delta
     #                   / :crash observables.
-    # Binary bridges (rea / re_analytics) receive ``target_path`` SERVER-SIDE
+    # Binary bridges (rea / reverser_belt) receive ``target_path`` SERVER-SIDE
     # in _pre_dispatch_correct_args (the investigation's local artifact) so
     # the agent never supplies or forges it.
     # The base check (ToolExecutorHelpersBase._dispatch) rejects any other
@@ -124,7 +124,7 @@ class ToolExecutor(ToolExecutorHelpersBase):
     # AND appending it here.
     _AGENT_ALLOWED_SERVERS: frozenset[str] = frozenset(
         {
-            "audit_mcp", "rea", "re_analytics", "android_mcp", "knowledge",
+            "audit_mcp", "rea", "reverser_belt", "android_mcp", "knowledge",
             "poc_runner", "symbolic", "dynamic",
         },
     )
@@ -221,7 +221,7 @@ class ToolExecutor(ToolExecutorHelpersBase):
     def __init__(
         self,
         rea: Any = None,
-        re_analytics: Any = None,
+        reverser_belt: Any = None,
         audit_mcp: Any = None,
         android_mcp: Any = None,
         knowledge: Any | None = None,
@@ -245,7 +245,7 @@ class ToolExecutor(ToolExecutorHelpersBase):
                 # Core binary RE (REA/Ghidra) + the AILA-owned analytics
                 # surface (capa / crypto / taint / emulation / diff).
                 "rea": rea,
-                "re_analytics": re_analytics,
+                "reverser_belt": reverser_belt,
                 "audit_mcp": audit_mcp,
                 "android_mcp": android_mcp,
                 # RFC-12 agentic path: read-only knowledge retrieval,
@@ -303,13 +303,13 @@ class ToolExecutor(ToolExecutorHelpersBase):
         # round-trip that would return "Unknown index" / a missing kwarg).
         if server_id == "audit_mcp":
             return await self._maybe_correct_index_id(investigation_id, args)
-        # Binary bridges (rea / re_analytics) open targets by ABSOLUTE LOCAL
+        # Binary bridges (rea / reverser_belt) open targets by ABSOLUTE LOCAL
         # PATH. Inject the investigation's artifact path SERVER-SIDE so the
         # agent never supplies or forges it. The ReaMiddleware consumes the
-        # kwarg for target affinity; re_analytics receives it as a real tool
+        # kwarg for target affinity; reverser_belt receives it as a real tool
         # argument. Fail-open: an unresolved path leaves args untouched and
         # the tool surfaces its own "target not bound" error.
-        if server_id in ("rea", "re_analytics"):
+        if server_id in ("rea", "reverser_belt"):
             target_path = await self._resolve_target_path(investigation_id)
             if not target_path:
                 return args
@@ -842,7 +842,7 @@ class ToolExecutor(ToolExecutorHelpersBase):
     async def _resolve_target_path(self, investigation_id: str) -> str:
         """Resolve investigation -> primary target -> local binary path.
 
-        REA / re_analytics open the investigation's artifact by absolute
+        REA / reverser_belt open the investigation's artifact by absolute
         local path; the value is deterministic per investigation (the
         primary target's descriptor / ingested handle), so it is cached
         in the same LRU shape as the index-id cache. An empty result
@@ -957,9 +957,9 @@ class ToolExecutor(ToolExecutorHelpersBase):
         ("audit_mcp", "find_related"),
         ("rea", "procedure_pseudo_code"),
         ("rea", "procedure_assembly"),
-        ("re_analytics", "pseudocode_slice_view"),
-        ("re_analytics", "interprocedural_taint"),
-        ("re_analytics", "trace_dataflow"),
+        ("reverser_belt", "pseudocode_slice_view"),
+        ("reverser_belt", "interprocedural_taint"),
+        ("reverser_belt", "trace_dataflow"),
         ("rea", "xrefs"),
         ("rea", "procedure_references"),
     })

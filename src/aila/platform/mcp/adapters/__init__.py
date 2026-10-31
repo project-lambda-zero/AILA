@@ -1,7 +1,7 @@
 """MCP adapters (M3.R-3 + v0.3 v2 expansion).
 
 Per the no-overengineering rule: AILA does not implement enrichment
-heuristics. The MCP servers (audit-mcp, REA, re_analytics) already do
+heuristics. The MCP servers (audit-mcp, REA, reverser_belt) already do
 the analysis. Adapters here are TINY pure functions that convert one
 raw MCP response into:
 

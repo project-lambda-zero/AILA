@@ -77,6 +77,24 @@ from .rea import (
     adapt_rea_trace_call_path,
     adapt_rea_xrefs,
 )
+from .reverser_belt import (
+    adapt_call_chain,
+    adapt_call_graph,
+    adapt_capa_scan,
+    adapt_checksec,
+    adapt_classify_behavior,
+    adapt_decompile,
+    adapt_def_use,
+    adapt_diff_function,
+    adapt_disassemble_function,
+    adapt_find_api_call_sites,
+    adapt_get_microcode,
+    adapt_interprocedural_taint,
+    adapt_pseudocode_slice_view,
+    adapt_trace_dataflow,
+    adapt_xrefs_from,
+    adapt_xrefs_to,
+)
 
 __all__ = [
     "get_adapter",
@@ -90,6 +108,29 @@ _log = logging.getLogger(__name__)
 
 # Specialized adapters. Keys: (server_id, tool_name).
 _SPECIALIZED: dict[tuple[str, str], AdapterFn] = {
+    # reverser_belt -- DECOMPILED_FUNCTION
+    ("reverser_belt", "decompile"): adapt_decompile,
+    # reverser_belt -- XREF_VIEW family
+    ("reverser_belt", "find_api_call_sites"): adapt_find_api_call_sites,
+    ("reverser_belt", "xrefs_to"): adapt_xrefs_to,
+    ("reverser_belt", "xrefs_from"): adapt_xrefs_from,
+    # reverser_belt -- TAINT_FLOW family
+    ("reverser_belt", "interprocedural_taint"): adapt_interprocedural_taint,
+    ("reverser_belt", "trace_dataflow"): adapt_trace_dataflow,
+    ("reverser_belt", "def_use"): adapt_def_use,
+    # reverser_belt -- GRAPH_VIEW family
+    ("reverser_belt", "call_graph"): adapt_call_graph,
+    ("reverser_belt", "call_chain"): adapt_call_chain,
+    # reverser_belt -- CODE_POINTER family
+    ("reverser_belt", "disassemble_function"): adapt_disassemble_function,
+    ("reverser_belt", "get_microcode"): adapt_get_microcode,
+    ("reverser_belt", "pseudocode_slice_view"): adapt_pseudocode_slice_view,
+    # reverser_belt -- PATCH_DIFF family
+    ("reverser_belt", "diff_function"): adapt_diff_function,
+    # reverser_belt -- TEXT specializations
+    ("reverser_belt", "checksec"): adapt_checksec,
+    ("reverser_belt", "classify_behavior"): adapt_classify_behavior,
+    ("reverser_belt", "capa_scan"): adapt_capa_scan,
     # audit_mcp -- DECOMPILED_FUNCTION
     ("audit_mcp", "read_function"): adapt_read_function,
     # audit_mcp -- XREF_VIEW family

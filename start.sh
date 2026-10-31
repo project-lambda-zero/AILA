@@ -68,16 +68,25 @@ COMMAND="${1:-start}"
 : "${AILA_START_AUDIT_MCP:=1}"
 : "${AUDIT_MCP_WORKERS:=1}"
 
-# REA (rea-agents) + re_analytics environment. REA is an MCP-STDIO child
-# spawned per AILA process on demand -- there is no standalone REA
-# service to start here. These exports seed the backend / workers so the
-# factory's stdio_command() and the Ghidra provider resolve the same
-# install every spawn. Every value is overridable from .env or shell.
+# REA (rea-agents) + reverser-belt environment. Both reverse-engineering
+# MCP servers are STDIO children spawned per AILA process on demand --
+# there is no standalone RE service to start here. REA (Ghidra core RE)
+# spawns from REA_MCP_COMMAND; reverser-belt (Kuna decompiler + capa /
+# crypto / taint / proof + angr analytics) spawns from
+# REVERSER_BELT_MCP_COMMAND, defaulting to `python -m
+# reverser_belt_mcp.server` in the current interpreter (the package must
+# be importable: `pip install -e C:/Users/THEDEVIL/Documents/ida-headless-mcp-exp`,
+# with kuna.exe built and angr installed). These exports seed the backend
+# / workers so the factory's stdio_command() and the Ghidra provider
+# resolve the same install every spawn. Every value is overridable from
+# .env or shell.
 : "${REA_MCP_COMMAND:=C:/Users/THEDEVIL/tools/node-v24.22.2-win-x64/node.exe C:/Users/THEDEVIL/tools/rea/node_modules/rea-agents/scripts/rea.mjs mcp}"
 : "${GHIDRA_INSTALL_DIR:=C:/Users/THEDEVIL/tools/ghidra_12.1.4_PUBLIC}"
 : "${JAVA_HOME:=C:/Users/THEDEVIL/scoop/apps/temurin21-jdk/current}"
 : "${REA_ANALYSIS_PROVIDER:=ghidra}"
 export REA_MCP_COMMAND GHIDRA_INSTALL_DIR JAVA_HOME REA_ANALYSIS_PROVIDER
+# reverser-belt override (empty = factory default argv from the spec).
+export REVERSER_BELT_MCP_COMMAND
 
 RUN_DIR=".run"
 mkdir -p "$RUN_DIR" 2>/dev/null || true

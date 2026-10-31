@@ -106,14 +106,15 @@ class VRConfigSchema(ModuleConfigBase):
             "at a dedicated Linux workstation for production."
         ),
     )
-    re_analytics_url: str = Field(
+    reverser_belt_mcp_url: str = Field(
         default="",
         description=(
-            "AILA-owned re_analytics binary-analytics MCP endpoint. Empty = "
-            "each AILA process spawns its own stdio child (python -m "
-            "aila.platform.re_analytics). Serves the capa / crypto / taint / "
-            "emulation / diff tool surface REA does not; opens targets by "
-            "LOCAL path like REA."
+            "External reverser-belt-mcp endpoint (Kuna decompiler backend). "
+            "Empty = each AILA process spawns its own stdio child (python -m "
+            "reverser_belt_mcp.server). Serves the capa / crypto / taint / "
+            "emulation / diff / proof tool surface REA does not. Handle-based "
+            "(open_binary -> binary_id); the MCP middleware opens the "
+            "module-injected target_path and injects the binary_id per call."
         ),
     )
     rea_mcp_url: str = Field(
@@ -360,7 +361,7 @@ class VRConfigSchema(ModuleConfigBase):
         ge=0,
         description=(
             "Minimum number of successful audit/binary tool probes "
-            "(audit_mcp / rea / re_analytics / knowledge readings recorded on the "
+            "(audit_mcp / rea / reverser_belt / knowledge readings recorded on the "
             "branch case_state) a variant-hunt branch is expected to have run "
             "before a no-finding / empty-orders submit is credible. Below "
             "this floor the submit gate injects an INVESTIGATION-TOO-SHALLOW "

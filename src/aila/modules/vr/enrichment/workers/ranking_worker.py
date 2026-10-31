@@ -39,7 +39,7 @@ async def run_function_ranking(
     JSON-serializable for SSE push / audit trail.
     """
     dispatcher = FunctionRankingDispatcher(
-        re_analytics=make_bridge("re_analytics", module_id="vr", recorder=record_call),
+        reverser_belt=make_bridge("reverser_belt", module_id="vr", recorder=record_call),
         audit_mcp=make_bridge("audit_mcp", module_id="vr", recorder=record_call),
     )
     ranking = await dispatcher.rank(target_id)

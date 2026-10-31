@@ -251,7 +251,7 @@ class ClaimVerifierAgent(ClaimVerifierAgentBase):
                     case_state = {}
 
             # McpCallLogRecord is the F4 tool-log table: one row per
-            # audit-mcp / rea / re_analytics call. Filter to this
+            # audit-mcp / rea / reverser_belt call. Filter to this
             # investigation + (when known) branch so the verifier sees
             # exactly the tool traffic the proposing branch produced.
             log_query = _select(McpCallLogRecord).where(

@@ -2,7 +2,7 @@
 
 The reasoning loop can now TRIGGER the two platform dynamic-analysis
 drivers mid-investigation, the same way it drives ``audit_mcp`` /
-``rea`` / ``re_analytics`` / ``poc_runner``:
+``rea`` / ``reverser_belt`` / ``poc_runner``:
 
 * :class:`SymbolicExploreTool` wraps
   :func:`aila.platform.services.symbolic.explore` -- a bounded concolic

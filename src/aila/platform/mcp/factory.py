@@ -35,6 +35,9 @@ _MIDDLEWARE_REF: dict[str, tuple[str, str]] = {
     "audit_mcp": ("aila.platform.mcp.middleware.audit", "AuditMcpMiddleware"),
     "android_mcp": ("aila.platform.mcp.middleware.android", "AndroidMcpMiddleware"),
     "rea": ("aila.platform.mcp.middleware.rea", "ReaMiddleware"),
+    "reverser_belt": (
+        "aila.platform.mcp.middleware.reverser_belt", "ReverserBeltMiddleware",
+    ),
 }
 
 _GENERIC_REF: tuple[str, str] = (

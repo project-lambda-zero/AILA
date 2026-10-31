@@ -8,7 +8,7 @@ every tool_run before adapter lookup and writes an ENGINE error
 message the researcher sees on the next turn.
 
 A real module constructs the executor with its MCP bridges
-(``audit_mcp``, ``rea``, ``re_analytics``, ``android_mcp``, ``knowledge``
+(``audit_mcp``, ``rea``, ``reverser_belt``, ``android_mcp``, ``knowledge``
 -- vr's shape) and widens ``_AGENT_ALLOWED_SERVERS`` to match. See
 :mod:`aila.modules.vr.agents.tool_executor` for the production
 reference.

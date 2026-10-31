@@ -3,7 +3,7 @@
 Drives the research phase of ``VR_NDAY_V1``: identify the patch, decompile
 the vulnerable function, classify the bug primitive, produce a root-cause
 statement. Uses ``AilaLLMClient`` for multi-turn LLM reasoning, the REA /
-re_analytics bridges for analysis actions, and platform ``ObligationSet`` /
+reverser_belt bridges for analysis actions, and platform ``ObligationSet`` /
 ``BudgetState`` / ``BoundedEvidencePack`` to bound + adjudicate output.
 ``research()`` is the only entry point.
 """
@@ -78,18 +78,18 @@ _OBLIGATION_DEFS: tuple[tuple[str, str, str, ObligationSeverity], ...] = (
 
 
 # Action → serving MCP server. REA covers decompilation / disassembly /
-# xrefs / call graphs; re_analytics covers taint + the two-binary diff.
+# xrefs / call graphs; reverser_belt covers taint + the two-binary diff.
 _ACTION_SERVER: dict[str, str] = {
     "decompile": "rea",
     "call_chain": "rea",
     "xrefs_to": "rea",
     "search_pattern": "rea",
     "binary_survey": "rea",
-    "trace_dataflow": "re_analytics",
-    "diff_versions": "re_analytics",
+    "trace_dataflow": "reverser_belt",
+    "diff_versions": "reverser_belt",
 }
 
-# Action → concrete tool name on the serving server. re_analytics keeps
+# Action → concrete tool name on the serving server. reverser_belt keeps
 # the legacy ida tool names; REA names follow the REA catalog.
 _ACTION_TOOL: dict[str, str] = {
     "decompile": "procedure_pseudo_code",
@@ -214,7 +214,7 @@ class NdayResearcher:
         patched_target_path: str | None,
         mitigations: dict[str, Any],
         rea_bridge: Any,
-        re_analytics_bridge: Any,
+        reverser_belt_bridge: Any,
         config: VRConfigSchema,
         budget: BudgetState | None = None,
         context_notes: str = "",
@@ -227,7 +227,7 @@ class NdayResearcher:
         self.mitigations = mitigations or {}
         self.context_notes = context_notes or ""
         self._rea = rea_bridge
-        self._re_analytics = re_analytics_bridge
+        self._reverser_belt = reverser_belt_bridge
         self.config = config
         self.obligations = self._build_obligations()
         if budget is not None:
@@ -374,7 +374,7 @@ class NdayResearcher:
             return record
         if action == "reasoning":
             return record
-        # Tool action through the REA / re_analytics bridges.
+        # Tool action through the REA / reverser_belt bridges.
         tool_t0 = time.monotonic()
         outcome = await self._dispatch_action(action, params)
         record["tool_seconds"] = round(time.monotonic() - tool_t0, 2)
@@ -422,14 +422,14 @@ class NdayResearcher:
         self, action: str, params: dict[str, Any],
     ) -> dict[str, Any]:
         """Translate one LLM action into one bridge call (target bound by
-        ``target_path`` -- REA's middleware opens it, re_analytics takes it
+        ``target_path`` -- REA's middleware opens it, reverser_belt takes it
         as a real argument)."""
         server = _ACTION_SERVER.get(action, "rea")
-        bridge = self._rea if server == "rea" else self._re_analytics
+        bridge = self._rea if server == "rea" else self._reverser_belt
         if action == "diff_versions":
             if not self.patched_target_path:
                 return {"status": "error", "error": "no patched target path available"}
-            # re_analytics owns the two-binary diff; the vulnerable path is
+            # reverser_belt owns the two-binary diff; the vulnerable path is
             # the bound target, the patched path rides alongside (server
             # owns the exact cross-binary signature).
             return await bridge.forward(

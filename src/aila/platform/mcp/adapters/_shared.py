@@ -201,7 +201,7 @@ def enrich_strings_with_decodes(
 # which is enough for the agent to recognise the next move without
 # stuffing whole files into the reasoning state. Specialised renderers
 # (audit_mcp._render_matches_dense, _render_chunks_dense, and the
-# rea / re_analytics pseudocode+disasm renderers) reference this constant
+# rea / reverser_belt pseudocode+disasm renderers) reference this constant
 # directly; raw responses
 # still live in the message store untruncated for the operator UI.
 MAX_OBS_DUMP_CHARS = 32 * 1024

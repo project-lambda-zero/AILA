@@ -372,9 +372,9 @@ tells you which phase you are in and what its brief is.
   Read function bodies with `rea.procedure_pseudo_code` -- do NOT use
   `rea.procedure_assembly` unless you specifically need instruction-level
   detail. Use `rea.get_call_graph` for caller/callee reachability
-  and `re_analytics.find_api_call_sites` to locate calls to named APIs
-  (rea serves disassembly, xrefs, and call graphs; re_analytics serves
-  capa, crypto, taint, and emulation). Use `re_analytics.capa_scan` up
+  and `reverser_belt.find_api_call_sites` to locate calls to named APIs
+  (rea serves disassembly, xrefs, and call graphs; reverser_belt serves
+  capa, crypto, taint, and emulation). Use `reverser_belt.capa_scan` up
   front to cheaply tag capabilities and `rea.inspect_byte_entropy` +
   `rea.list_strings` when packing/obfuscation is suspected. The target
   is bound automatically per call (server-side) -- no open or binary
@@ -898,11 +898,11 @@ Pair with `audit_mcp` against the jadx-decompiled tree for Java /
 Kotlin queries, and hand promising `lib/<abi>/*.so` files to
 `rea` for native disassembly.
 
-## `rea` / `re_analytics` -- decision table
+## `rea` / `reverser_belt` -- decision table
 
 Binary analysis runs on two servers. `rea` (REA over Ghidra) serves
 disassembly, xrefs, call graphs, and byte-level navigation; reach for
-these tools first. `re_analytics` serves capa, crypto, taint, and
+these tools first. `reverser_belt` serves capa, crypto, taint, and
 emulation analyses. The target is bound automatically per call
 (server-side) -- there is no `open_binary` step and no binary
 registration; just call the tool. Read pseudocode instead of asking for
@@ -918,17 +918,17 @@ microcode / typed AST reasoning the servers do not have.
 | `rea.procedure_callers` | Direct callers | Narrower view: only the callers of one procedure. | `procedure` |
 | `rea.procedure_callees` | Direct callees | Narrower view: only the callees of one procedure. | `procedure` |
 | `rea.procedure_references` | Data/xref references | References to or from a procedure (strings, globals). | `procedure`, `direction` |
-| `re_analytics.find_api_call_sites` | Named-API call sites | Locate every call to a named API (`memcpy`, `system`, `recv`, imported symbol). Use instead of raw xrefs to an API name. | `api_name` |
+| `reverser_belt.find_api_call_sites` | Named-API call sites | Locate every call to a named API (`memcpy`, `system`, `recv`, imported symbol). Use instead of raw xrefs to an API name. | `api_name` |
 | `rea.list_procedures` | Function inventory | Enumerate procedures with `order_by="complexity_desc"`, `exclude_thunks`, `exclude_libraries`, `limit`. Use to rank targets when `binary_overview` hotspots are not enough. | `order_by`, `exclude_thunks`, `exclude_libraries`, `limit` |
 | `rea.inspect_pe_imports` / `rea.inspect_native_exports` | Boundary inspection | Map external API dependencies and exported entry points. | -- |
 | `rea.list_segments` | Section layout | Enumerate segments/sections and their permissions. | -- |
-| `re_analytics.checksec` | Binary hardening | Report PIE / RELRO / stack canary / NX / CFI status. | -- |
+| `reverser_belt.checksec` | Binary hardening | Report PIE / RELRO / stack canary / NX / CFI status. | -- |
 | `rea.list_strings` | Global strings | ASCII/UTF strings across sections. | `min_length` |
-| `re_analytics.capa_scan` | CAPA capabilities | High-level capability + ATT&CK tagging. | -- |
-| `re_analytics.classify_behavior` | Behavior class | Classify observed behaviors from static features. | -- |
-| `re_analytics.verify_capabilities` | Capability verification | Cross-check declared/expected capabilities against actual API use. | -- |
-| `re_analytics.detect_crypto_primitives` | Crypto primitive ID | Identify crypto routines by constants and structure. | -- |
-| `re_analytics.find_crypto_constants` | Crypto constant scan | Locate known crypto constants (S-boxes, primes, K constants). | -- |
+| `reverser_belt.capa_scan` | CAPA capabilities | High-level capability + ATT&CK tagging. | -- |
+| `reverser_belt.classify_behavior` | Behavior class | Classify observed behaviors from static features. | -- |
+| `reverser_belt.verify_capabilities` | Capability verification | Cross-check declared/expected capabilities against actual API use. | -- |
+| `reverser_belt.detect_crypto_primitives` | Crypto primitive ID | Identify crypto routines by constants and structure. | -- |
+| `reverser_belt.find_crypto_constants` | Crypto constant scan | Locate known crypto constants (S-boxes, primes, K constants). | -- |
 | `rea.inspect_byte_entropy` | Entropy scan | Locate packed/encrypted regions. | -- |
 | `rea.procedure_assembly` | Instruction disassembly | Only when you specifically need register/branch detail pseudocode cannot show. Prefer `rea.procedure_pseudo_code`. | `procedure` |
 | `rea.xrefs` | Cross-references | Raw xref listing for a symbol or address when the specialized callers/callees tools do not fit. | `address`, `direction` |
@@ -941,10 +941,10 @@ exists, use it.
 
 | Do not call | Reason / alternative |
 | :--- | :--- |
-| `trace_dataflow`, `def_use` | No generic microcode-level dataflow tool under that name. Use `re_analytics.interprocedural_taint` for taint across procedures, or read `rea.procedure_pseudo_code` across the involved functions and reason about the flow directly, citing the pseudocode lines. |
+| `trace_dataflow`, `def_use` | No generic microcode-level dataflow tool under that name. Use `reverser_belt.interprocedural_taint` for taint across procedures, or read `rea.procedure_pseudo_code` across the involved functions and reason about the flow directly, citing the pseudocode lines. |
 | `get_microcode`, `query_ctree`, `hexrays_warnings` | No microcode / ctree access. Reason from `rea.procedure_pseudo_code`; when you need a specific line, cite it verbatim in your reasoning. |
-| `search_pattern` (raw grep-style byte search) | Prefer `rea.list_strings`, `re_analytics.find_api_call_sites`, `rea.list_procedures`, or `re_analytics.capa_scan` to locate the pattern's downstream evidence. Use `rea.search_bytes` only for a concrete byte signature. |
-| `detect_obfuscation`, `recover_cfg`, `detect_stack_strings`, `generate_yara_rule` | Not implemented. When obfuscation is suspected, combine `rea.inspect_byte_entropy`, `rea.list_strings`, `re_analytics.capa_scan`, and `rea.procedure_pseudo_code` and describe the pattern from the pseudocode. |
+| `search_pattern` (raw grep-style byte search) | Prefer `rea.list_strings`, `reverser_belt.find_api_call_sites`, `rea.list_procedures`, or `reverser_belt.capa_scan` to locate the pattern's downstream evidence. Use `rea.search_bytes` only for a concrete byte signature. |
+| `detect_obfuscation`, `recover_cfg`, `detect_stack_strings`, `generate_yara_rule` | Not implemented. When obfuscation is suspected, combine `rea.inspect_byte_entropy`, `rea.list_strings`, `reverser_belt.capa_scan`, and `rea.procedure_pseudo_code` and describe the pattern from the pseudocode. |
 | `prove_bounds_sufficient`, `prove_predicate_opaque`, `prove_equivalence`, `prove_overflow`, `constrained_reachability` | No SMT proof tool under those names. Reason from `rea.procedure_pseudo_code`: cite operand ranges, gating checks, allocator behaviour, and walk the 5-step arithmetic rule by hand. |
 | `stack_frame` (dedicated frame view) | No dedicated stack-frame tool. Use `rea.procedure_info` for stack-frame / local layout, or read the prologue lines of `rea.procedure_pseudo_code` and infer locals from the pseudocode. |
 | `patch_assemble` (apply patch to binary) | Not implemented. Describe the fix in prose in the finding; do not attempt to apply it. |
@@ -1186,7 +1186,7 @@ one full investigation + 5 spurious variant orders.)
    `SIZE_MAX` just because the type permits it.
 2. **Walk the call graph** to every site influencing those operands
    (`audit_mcp.callers_of` on source; `rea.get_call_graph` /
-   `re_analytics.find_api_call_sites` on binary); read
+   `reverser_belt.find_api_call_sites` on binary); read
    the literal argument each caller passes. Compile-time constants
    bound that path.
 3. **Identify the gating invariant.** Search the function body ABOVE the

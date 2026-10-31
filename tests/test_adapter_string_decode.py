@@ -1,4 +1,4 @@
-"""Adapter-side base64 / hex auto-decode for the re_analytics string tools.
+"""Adapter-side base64 / hex auto-decode for the reverser_belt string tools.
 
 The bridge surfaces strings the agent commonly needs to decode (base64
 C2 URLs, hex-encoded configs, etc.) directly in the observation row so

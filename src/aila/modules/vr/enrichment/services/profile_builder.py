@@ -10,7 +10,7 @@ the MCPs do the actual classification.
                    + ``preanalysis`` → language + framework + entrypoint
                    classifications
 
-  binary target  → REA ``binary_overview`` + re_analytics ``checksec`` +
+  binary target  → REA ``binary_overview`` + reverser_belt ``checksec`` +
                    ``classify_behavior`` + ``verify_capabilities`` +
                    ``capa_scan`` + REA ``inspect_pe_imports`` /
                    ``inspect_native_exports`` → mitigations + ATT&CK
@@ -65,20 +65,20 @@ _log = logging.getLogger(__name__)
 # capability_profile.applicable_mcp_servers list and downstream
 # orchestration (which bridge to call for follow-up enrichment).
 _APPLICABLE_MCP_BY_KIND: dict[str, list[str]] = {
-    TargetKind.NATIVE_BINARY.value:   ["rea", "re_analytics", "audit_mcp"],
+    TargetKind.NATIVE_BINARY.value:   ["rea", "reverser_belt", "audit_mcp"],
     TargetKind.SOURCE_REPO.value:     ["audit_mcp"],
-    TargetKind.ANDROID_APK.value:     ["android_mcp", "audit_mcp", "rea", "re_analytics"],
-    TargetKind.IPA.value:             ["rea", "re_analytics"],
-    TargetKind.JAR.value:             ["rea", "re_analytics", "audit_mcp"],
-    TargetKind.DOTNET_ASSEMBLY.value: ["rea", "re_analytics"],
+    TargetKind.ANDROID_APK.value:     ["android_mcp", "audit_mcp", "rea", "reverser_belt"],
+    TargetKind.IPA.value:             ["rea", "reverser_belt"],
+    TargetKind.JAR.value:             ["rea", "reverser_belt", "audit_mcp"],
+    TargetKind.DOTNET_ASSEMBLY.value: ["rea", "reverser_belt"],
     TargetKind.CVE.value:             ["audit_mcp"],
     TargetKind.PROTOCOL_CAPTURE.value: [],
-    TargetKind.CRASH_INPUT.value:     ["rea", "re_analytics"],
+    TargetKind.CRASH_INPUT.value:     ["rea", "reverser_belt"],
     TargetKind.PATCH_DIFF.value:      ["audit_mcp"],
     # v0.5 GA-54 -- kernel + hypervisor
-    TargetKind.KERNEL_IMAGE.value:    ["rea", "re_analytics", "audit_mcp"],
-    TargetKind.KERNEL_MODULE.value:   ["rea", "re_analytics"],
-    TargetKind.HYPERVISOR_IMAGE.value: ["rea", "re_analytics", "audit_mcp"],
+    TargetKind.KERNEL_IMAGE.value:    ["rea", "reverser_belt", "audit_mcp"],
+    TargetKind.KERNEL_MODULE.value:   ["rea", "reverser_belt"],
+    TargetKind.HYPERVISOR_IMAGE.value: ["rea", "reverser_belt", "audit_mcp"],
 }
 
 # (target_kind, primary_language) → applicable fuzzing engines. Source
@@ -239,11 +239,11 @@ class CapabilityProfileBuilder:
     def __init__(
         self,
         rea: McpCallable,
-        re_analytics: McpCallable,
+        reverser_belt: McpCallable,
         audit_mcp: McpCallable,
     ) -> None:
         self._rea = rea
-        self._re_analytics = re_analytics
+        self._reverser_belt = reverser_belt
         self._audit_mcp = audit_mcp
 
 
@@ -452,7 +452,7 @@ class CapabilityProfileBuilder:
         # fix §225 -- fan all forwards out concurrently via asyncio.gather.
         # Previously sequential at ~30 s each (~3.5 min total); now bounded
         # by the slowest action (~30 s). Bridge concurrency is safe -- REA
-        # serializes per-target internally; re_analytics is per-process.
+        # serializes per-target internally; reverser_belt is per-process.
         binary_path = binary_path_from_target(descriptor, handles)
         if not binary_path:
             raise ProfileBuilderError(
@@ -464,14 +464,14 @@ class CapabilityProfileBuilder:
         # order below. Session-bound REA tools take ``target_path`` (the
         # middleware strips it and enforces target affinity); the explicit
         # offline inspectors take their own ``path`` argument;
-        # re_analytics tools keep the legacy ida arg shape with
+        # reverser_belt tools keep the legacy ida arg shape with
         # ``target_path`` replacing binary_id.
         binary_actions: tuple[tuple[str, Any, str, dict[str, Any]], ...] = (
             ("binary_overview", self._rea, "binary_overview", {"target_path": binary_path}),
-            ("checksec", self._re_analytics, "checksec", {"target_path": binary_path}),
-            ("classify_behavior", self._re_analytics, "classify_behavior", {"target_path": binary_path}),
-            ("verify_capabilities", self._re_analytics, "verify_capabilities", {"target_path": binary_path}),
-            ("capa_scan", self._re_analytics, "capa_scan", {"target_path": binary_path}),
+            ("checksec", self._reverser_belt, "checksec", {"target_path": binary_path}),
+            ("classify_behavior", self._reverser_belt, "classify_behavior", {"target_path": binary_path}),
+            ("verify_capabilities", self._reverser_belt, "verify_capabilities", {"target_path": binary_path}),
+            ("capa_scan", self._reverser_belt, "capa_scan", {"target_path": binary_path}),
             ("imports", self._rea, "inspect_pe_imports", {"path": binary_path}),
             ("exports", self._rea, "inspect_native_exports", {"path": binary_path}),
         )

@@ -150,7 +150,7 @@ class PatchSourceContext(BaseModel):
     ``search_functions`` / ``read_function`` results before invoking
     :meth:`PatchingService.synthesize_patch`. The service does not open
     files itself: every module owns its own MCP transport (audit-mcp
-    for source-grounded work, rea / re_analytics for binary-only work)
+    for source-grounded work, rea / reverser_belt for binary-only work)
     and already carries the retrieval logic the finding was born from.
     """
 

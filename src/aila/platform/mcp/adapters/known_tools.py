@@ -26,7 +26,7 @@ __all__ = [
     "KNOWN_TOOLS",
     "LANGUAGE_UNRELIABLE_TOOLS",
     "REA_TOOLS",
-    "RE_ANALYTICS_TOOLS",
+    "REVERSER_BELT_TOOLS",
     "canonical_tool_id",
     "canonicalize_tool_id",
     "tools_for_language",
@@ -271,7 +271,7 @@ DYNAMIC_TOOLS: frozenset[str] = frozenset({
 # binary_metadata -> binary_overview, read_memory -> read_bytes,
 # build_call_tree -> get_call_graph, entropy_analysis ->
 # inspect_byte_entropy, stack_frame -> procedure_info. Tools REA lacks
-# are served by the in-house ``re_analytics`` server (separate catalog).
+# are served by the external ``reverser_belt`` server (separate catalog).
 REA_TOOLS: frozenset[str] = frozenset({
     "open_binary",
     "binary_overview",
@@ -300,92 +300,98 @@ REA_TOOLS: frozenset[str] = frozenset({
 })
 
 
-# re_analytics -- AILA-owned native MCP server
-# (``python -m aila.platform.re_analytics``, stdio). Static fallback
-# catalog, same purpose as REA_TOOLS above: the adapter registry and
-# tools_for_language resolve against this before the live tools/list.
-# This list is exactly the tool surface served by the server, grouped
-# by owning module:
-#   tools_capability  -- capa/classification/anti-analysis, strings,
-#                        PE info, diffs, call graph, intra-procedural
-#                        dataflow, session mutations, unsupported
-#                        envelopes (names preserved from ida-headless)
-#   tools_crypto      -- crypto constants/primitives, API-hash
-#                        resolution, string decryption, emulation
-#   tools_dataflow    -- taint, value ranges, feasibility, exploitability,
-#                        similarity, class hierarchy, protocol state
-#                        machine, pseudocode slices, patch_assemble
-# Every ida-headless tool REA does not cover is preserved here under
-# its original name (target_path replaces the binary handle argument).
-RE_ANALYTICS_TOOLS: frozenset[str] = frozenset({
-    # capability group
+# reverser_belt -- external reverser-belt-mcp server
+# (``python -m reverser_belt_mcp.server``, stdio; Kuna decompiler
+# backend). Static fallback catalog resolved before the live
+# tools/list. This is the exact 84-tool surface the server
+# serves. Handle-based: open_binary(path) -> binary_id; the
+# ReverserBeltMiddleware translates the module-injected
+# target_path into that binary_id per call.
+REVERSER_BELT_TOOLS: frozenset[str] = frozenset({
+    "assess_exploitability",
+    "batch_cff_scan",
+    "batch_decompile",
+    "binary_metadata",
     "binary_survey",
+    "build_call_tree",
+    "call_chain",
+    "call_graph",
     "capa_scan",
-    "verify_capabilities",
+    "checksec",
     "classify_behavior",
     "classify_strings",
-    "detect_anti_analysis",
-    "detect_dynamic_resolution",
-    "find_api_call_sites",
     "close_binary",
-    "worker_status",
-    "get_generation",
-    "miasm_disassemble",
-    "miasm_lift_ir",
-    "miasm_simplify_expression",
-    "recover_cfg",
-    "detect_stack_strings",
+    "constrained_reachability",
+    "cross_binary_similarity",
+    "decompile",
+    "decrypt_binary_strings",
+    "decrypt_function_strings",
+    "def_use",
+    "deflat_function",
+    "detect_anti_analysis",
     "detect_control_flow_obfuscation",
-    "batch_cff_scan",
+    "detect_crypto_primitives",
+    "detect_dynamic_resolution",
+    "detect_library_functions",
     "detect_obfuscation",
+    "detect_protocol_state_machine",
+    "detect_stack_strings",
     "diff_binary",
     "diff_function",
     "diff_survey",
-    "call_chain",
+    "disassemble_function",
+    "emulate_concrete",
+    "entropy_analysis",
+    "exports",
+    "find_api_call_sites",
     "find_paths",
     "find_similar_functions",
-    "constrained_reachability",
-    "get_string_at",
-    "checksec",
-    "detect_library_functions",
     "generate_yara_rule",
-    "decrypt_binary_strings",
-    "trace_dataflow",
-    "def_use",
-    "rename_function",
-    "rename_variable",
-    "set_comment",
-    "set_function_type",
-    "set_variable_type",
-    "patch_bytes",
-    "poll_mutation",
-    "query_ctree",
+    "get_generation",
     "get_microcode",
+    "get_string_at",
     "hexrays_warnings",
-    "deflat_function",
+    "imports",
+    "interprocedural_taint",
+    "list_binaries",
+    "list_functions",
+    "list_strings",
+    "miasm_disassemble",
+    "miasm_emulate",
+    "miasm_lift_ir",
+    "miasm_simplify_expression",
+    "open_binary",
+    "patch_assemble",
+    "patch_bytes",
     "patch_cff",
+    "path_feasibility",
+    "poll_analysis",
+    "poll_mutation",
+    "prove_bounds_sufficient",
     "prove_equivalence",
     "prove_overflow",
     "prove_predicate_opaque",
-    "prove_bounds_sufficient",
-    # crypto group
-    "detect_crypto_primitives",
-    "find_crypto_constants",
-    "resolve_api_hashes",
-    "trace_hash_xrefs",
-    "decrypt_function_strings",
-    "miasm_emulate",
-    "emulate_concrete",
-    # dataflow group
-    "interprocedural_taint",
-    "value_ranges",
-    "path_feasibility",
-    "assess_exploitability",
-    "cross_binary_similarity",
-    "patch_assemble",
-    "recover_class_hierarchy",
-    "detect_protocol_state_machine",
     "pseudocode_slice_view",
+    "query_ctree",
+    "read_memory",
+    "recover_cfg",
+    "recover_class_hierarchy",
+    "rename_function",
+    "rename_variable",
+    "resolve_api_hashes",
+    "search_pattern",
+    "segments",
+    "set_comment",
+    "set_function_type",
+    "set_variable_type",
+    "stack_frame",
+    "trace_dataflow",
+    "trace_hash_xrefs",
+    "value_ranges",
+    "verify_capabilities",
+    "worker_status",
+    "xrefs_from",
+    "xrefs_to",
 })
 
 
@@ -398,7 +404,7 @@ KNOWN_TOOLS: dict[str, frozenset[str]] = {
     "symbolic": SYMBOLIC_TOOLS,
     "dynamic": DYNAMIC_TOOLS,
     "rea": REA_TOOLS,
-    "re_analytics": RE_ANALYTICS_TOOLS,
+    "reverser_belt": REVERSER_BELT_TOOLS,
 }
 
 

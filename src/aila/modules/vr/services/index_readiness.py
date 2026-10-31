@@ -8,7 +8,7 @@ against a half-built target. Two failure modes were observed live:
     then fails and the agent burns turns flailing (Tomcat / OFBiz hunts).
   * native_binary / kernel / hypervisor / ipa / jar / dotnet_assembly
     targets whose binary artifact was not yet ingested -- every
-    ``rea.*`` / ``re_analytics.*`` call errors and the agent burns
+    ``rea.*`` / ``reverser_belt.*`` call errors and the agent burns
     30 min turns re-issuing the same read (observed live on the nvcuda
     hunt where ``capability_profile`` had failed at the reaper timeout
     and every subsequent branch turn produced only error messages).
@@ -19,7 +19,7 @@ This probe resolves an investigation's primary target and returns
   * ``vr_targets.analysis_state == 'ready'`` (rolls up ingestion +
     capability_profile + function_ranking).
   * For binary-like kinds with a bound local artifact path: the file
-    exists on disk. REA / re_analytics open targets by local path per
+    exists on disk. REA / reverser_belt open targets by local path per
     call; there is no index-build phase to poll.
   * For source-code-like kinds with a bound audit-mcp index: the
     graph (trailmark) AND semantic (semble) indexes both report
@@ -69,7 +69,7 @@ _GATE_CONFIG_KEY = "index_readiness_gate_enabled"
 _PROBE_ERRORS = (OSError, TimeoutError, RuntimeError, ValueError, TypeError)
 
 # Target kinds whose ingestion path binds a local binary artifact
-# (opened per call by REA / re_analytics). Mirrors
+# (opened per call by REA / reverser_belt). Mirrors
 # ``services.target_analysis`` and ``profile_builder``. Kept as a
 # frozenset (not an import from ``TargetKind``) so the readiness probe
 # stays cheap and dependency-light.
@@ -185,7 +185,7 @@ async def _probe_binary_artifact(
 ) -> tuple[bool, str]:
     """Check the target's local binary artifact exists on disk.
 
-    REA / re_analytics open targets by absolute local path per call --
+    REA / reverser_belt open targets by absolute local path per call --
     there is no index-build state to poll, so readiness reduces to
     "the artifact is actually there". A missing artifact holds the run
     (the operator re-stages / re-ingests, at which point the probe
@@ -257,7 +257,7 @@ async def vr_index_readiness(investigation_id: str) -> tuple[bool, str]:
        ingestion and the row flips back to ``ready``.
     2. For binary-like kinds (native_binary / kernel_* / hypervisor_image
        / ipa / jar / dotnet_assembly): the local artifact must exist on
-       disk (REA / re_analytics open it per call; there is no
+       disk (REA / reverser_belt open it per call; there is no
        index-build phase to poll).
     3. For source-code-like kinds (source_repo / android_apk): the
        audit-mcp graph AND semble indexes must both be ready.

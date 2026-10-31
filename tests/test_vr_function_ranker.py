@@ -77,7 +77,7 @@ class TestRankingSourceEnum:
         assert values == {
             "audit_mcp_fuzzing_targets",
             "audit_mcp_correlated",
-            "re_analytics_binary_survey",
+            "reverser_belt_binary_survey",
         }
 
 
@@ -221,20 +221,20 @@ class TestDispatcherErrorPaths:
             "aila.modules.vr.services.stage_tracker.load_target_stages",
             _raise,
         )
-        d = FunctionRankingDispatcher(re_analytics=_FakeMcp({}), audit_mcp=_FakeMcp({}))
+        d = FunctionRankingDispatcher(reverser_belt=_FakeMcp({}), audit_mcp=_FakeMcp({}))
         with pytest.raises(StageTrackerError):
             await d.rank(str(uuid.uuid4()))
 
 
 class TestRankBinaryViaBinarySurvey:
-    """The binary path ranks re_analytics ``binary_survey`` hotspots by
+    """The binary path ranks reverser_belt ``binary_survey`` hotspots by
     cyclomatic complexity. ``_rank_binary`` only calls the bridge (no DB),
     so it is exercised directly with a canned bridge.
     """
 
     @pytest.mark.asyncio
     async def test_missing_target_path_raises(self) -> None:
-        d = FunctionRankingDispatcher(re_analytics=_FakeMcp({}), audit_mcp=_FakeMcp({}))
+        d = FunctionRankingDispatcher(reverser_belt=_FakeMcp({}), audit_mcp=_FakeMcp({}))
         with pytest.raises(FunctionRankerError):
             await d._rank_binary("tgt-1", {})
 
@@ -250,10 +250,10 @@ class TestRankBinaryViaBinarySurvey:
                 ],
             },
         })
-        d = FunctionRankingDispatcher(re_analytics=bridge, audit_mcp=_FakeMcp({}))
+        d = FunctionRankingDispatcher(reverser_belt=bridge, audit_mcp=_FakeMcp({}))
         ranking = await d._rank_binary("tgt-1", {"target_path": "C:/t/a.exe"})
 
-        assert ranking.source is RankingSource.RE_ANALYTICS_BINARY_SURVEY
+        assert ranking.source is RankingSource.REVERSER_BELT_BINARY_SURVEY
         assert [r.name for r in ranking.top_k] == ["hot", "mid", "cold"]
         assert [r.rank for r in ranking.top_k] == [1, 2, 3]
         # Most complex hotspot saturates the log-scale ceiling; scores fall off.
@@ -277,7 +277,7 @@ class TestRankBinaryViaBinarySurvey:
                 ],
             },
         })
-        d = FunctionRankingDispatcher(re_analytics=bridge, audit_mcp=_FakeMcp({}))
+        d = FunctionRankingDispatcher(reverser_belt=bridge, audit_mcp=_FakeMcp({}))
         ranking = await d._rank_binary("tgt-1", {"target_path": "C:/t/a.exe"})
         assert [r.name for r in ranking.top_k] == ["keep"]
         assert ranking.total_candidates == 1
@@ -285,7 +285,7 @@ class TestRankBinaryViaBinarySurvey:
     @pytest.mark.asyncio
     async def test_empty_survey_returns_empty_ranking(self) -> None:
         bridge = _FakeMcp({"binary_survey": {"hotspots": []}})
-        d = FunctionRankingDispatcher(re_analytics=bridge, audit_mcp=_FakeMcp({}))
+        d = FunctionRankingDispatcher(reverser_belt=bridge, audit_mcp=_FakeMcp({}))
         ranking = await d._rank_binary("tgt-1", {"target_path": "C:/t/a.exe"})
         assert ranking.top_k == []
         assert ranking.total_candidates == 0

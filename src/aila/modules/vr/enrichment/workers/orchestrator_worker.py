@@ -170,15 +170,15 @@ async def run_target_enrichment(
     """
     del ctx
     rea = make_bridge("rea", module_id="vr", recorder=record_call)
-    re_analytics = make_bridge("re_analytics", module_id="vr", recorder=record_call)
+    reverser_belt = make_bridge("reverser_belt", module_id="vr", recorder=record_call)
     audit_mcp = make_bridge("audit_mcp", module_id="vr", recorder=record_call)
 
     result = await orchestrate_target_enrichment(
         target_id,
         builder=CapabilityProfileBuilder(
-            rea=rea, re_analytics=re_analytics, audit_mcp=audit_mcp,
+            rea=rea, reverser_belt=reverser_belt, audit_mcp=audit_mcp,
         ),
-        dispatcher=FunctionRankingDispatcher(re_analytics=re_analytics, audit_mcp=audit_mcp),
+        dispatcher=FunctionRankingDispatcher(reverser_belt=reverser_belt, audit_mcp=audit_mcp),
     )
 
     _log.info(
