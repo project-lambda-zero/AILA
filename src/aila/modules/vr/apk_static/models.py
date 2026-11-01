@@ -41,11 +41,11 @@ class ApkStaticMode(StrEnum):
         stages; the check needs only a catalog entry + a targeted prompt.
         These are the rows the audit dispatcher fans out.
     EXTRACTOR:
-        Needs a new pipeline stage that has not shipped yet (native
-        ``.so`` analysis via ida-headless, Flutter ``libapp.so`` Dart-AOT
-        decompile, or a full software bill of materials). Catalogued for
-        the roadmap; the dispatcher skips these so no child is asked a
-        question the current pipeline cannot answer.
+        Needs a new pipeline stage that has not shipped yet (Flutter
+        ``libapp.so`` Dart-AOT decompile, or a full software bill of
+        materials). Catalogued for the roadmap; the dispatcher skips
+        these so no child is asked a question the current pipeline
+        cannot answer.
     """
 
     STATIC = "static"

@@ -227,7 +227,7 @@ class TestRuleTables:
 
 class TestComposeProfile:
     def test_v8_binary_gets_fuzzilli(self) -> None:
-        builder = CapabilityProfileBuilder(ida=_FakeMcp({}), audit_mcp=_FakeMcp({}))
+        builder = CapabilityProfileBuilder(rea=_FakeMcp({}), reverser_belt=_FakeMcp({}), audit_mcp=_FakeMcp({}))
         target = _target(TargetKind.NATIVE_BINARY, "javascript")
         signals = {"primary_language": "javascript", "mitigations": {"nx": True}}
         profile = builder._compose_profile(target, signals)
@@ -236,35 +236,35 @@ class TestComposeProfile:
         assert "v8MapInference" in profile.applicable_strategies
         assert "differential" in profile.applicable_strategies
         assert profile.mitigations.nx is True
-        assert "ida_headless" in profile.applicable_mcp_servers
+        assert "rea" in profile.applicable_mcp_servers
         assert "audit_mcp" in profile.applicable_mcp_servers
 
     def test_source_rust_repo(self) -> None:
-        builder = CapabilityProfileBuilder(ida=_FakeMcp({}), audit_mcp=_FakeMcp({}))
+        builder = CapabilityProfileBuilder(rea=_FakeMcp({}), reverser_belt=_FakeMcp({}), audit_mcp=_FakeMcp({}))
         target = _target(TargetKind.SOURCE_REPO)
         signals = {"primary_language": "rust"}
         profile = builder._compose_profile(target, signals)
         assert "cargo-fuzz" in profile.applicable_fuzzing_engines
         assert profile.primary_language == "rust"
         assert "audit_mcp" in profile.applicable_mcp_servers
-        assert "ida_headless" not in profile.applicable_mcp_servers
+        assert "rea" not in profile.applicable_mcp_servers
         # rust source repo defaults to GitHub Security Advisory + vendor + blog
         assert "cna_github_gsa" in profile.default_disclosure_tracks
 
     def test_cve_uses_variant_hunt_strategy(self) -> None:
-        builder = CapabilityProfileBuilder(ida=_FakeMcp({}), audit_mcp=_FakeMcp({}))
+        builder = CapabilityProfileBuilder(rea=_FakeMcp({}), reverser_belt=_FakeMcp({}), audit_mcp=_FakeMcp({}))
         target = _target(TargetKind.CVE)
         profile = builder._compose_profile(target, {})
         assert profile.default_reasoning_strategy == "vulnerability_research.variant_hunt"
 
     def test_patch_diff_uses_patch_strategy(self) -> None:
-        builder = CapabilityProfileBuilder(ida=_FakeMcp({}), audit_mcp=_FakeMcp({}))
+        builder = CapabilityProfileBuilder(rea=_FakeMcp({}), reverser_belt=_FakeMcp({}), audit_mcp=_FakeMcp({}))
         target = _target(TargetKind.PATCH_DIFF)
         profile = builder._compose_profile(target, {})
         assert profile.default_reasoning_strategy == "vulnerability_research.patch_diff_analysis"
 
     def test_unknown_language_yields_empty_engines(self) -> None:
-        builder = CapabilityProfileBuilder(ida=_FakeMcp({}), audit_mcp=_FakeMcp({}))
+        builder = CapabilityProfileBuilder(rea=_FakeMcp({}), reverser_belt=_FakeMcp({}), audit_mcp=_FakeMcp({}))
         target = _target(TargetKind.NATIVE_BINARY)
         signals = {"primary_language": "ada"}
         profile = builder._compose_profile(target, signals)
@@ -275,17 +275,17 @@ class TestComposeProfile:
         assert profile.estimated_cost_per_investigation_usd > 0
 
     def test_apk_target(self) -> None:
-        builder = CapabilityProfileBuilder(ida=_FakeMcp({}), audit_mcp=_FakeMcp({}))
+        builder = CapabilityProfileBuilder(rea=_FakeMcp({}), reverser_belt=_FakeMcp({}), audit_mcp=_FakeMcp({}))
         target = _target(TargetKind.ANDROID_APK, "kotlin")
         profile = builder._compose_profile(target, {"primary_language": "kotlin"})
         assert "jazzer" in profile.applicable_fuzzing_engines
         # ANDROID_APK now routes through both android_mcp (APK-level
         # facets) and audit_mcp (source-graph over jadx-decompiled
         # Java). See _APPLICABLE_MCP_BY_KIND in profile_builder.py.
-        assert profile.applicable_mcp_servers == ["android_mcp", "audit_mcp"]
+        assert profile.applicable_mcp_servers == ["android_mcp", "audit_mcp", "rea", "reverser_belt"]
 
     def test_profile_round_trips(self) -> None:
-        builder = CapabilityProfileBuilder(ida=_FakeMcp({}), audit_mcp=_FakeMcp({}))
+        builder = CapabilityProfileBuilder(rea=_FakeMcp({}), reverser_belt=_FakeMcp({}), audit_mcp=_FakeMcp({}))
         target = _target(TargetKind.NATIVE_BINARY, "c")
         profile = builder._compose_profile(target, {"primary_language": "c"})
         dumped = profile.model_dump(mode="json")
@@ -306,6 +306,6 @@ class TestBuilderErrorPaths:
         del test_db  # fixture activates the aila_test PostgreSQL engine
         from aila.modules.vr.services.stage_tracker import StageTrackerError
 
-        builder = CapabilityProfileBuilder(ida=_FakeMcp({}), audit_mcp=_FakeMcp({}))
+        builder = CapabilityProfileBuilder(rea=_FakeMcp({}), reverser_belt=_FakeMcp({}), audit_mcp=_FakeMcp({}))
         with pytest.raises(StageTrackerError, match="not found"):
             await builder.build(str(uuid.uuid4()))

@@ -518,7 +518,7 @@ function StepsEditor({
             <input
               style={inputStyle}
               value={step.tool}
-              placeholder="ida_headless.capa_scan"
+              placeholder="re_analytics.capa_scan"
               onChange={(e) => setStep(i, { tool: e.target.value })}
             />
           </label>

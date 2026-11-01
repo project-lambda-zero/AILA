@@ -235,7 +235,7 @@ def _detect_tool_kwarg_rejected(
 
 
 async def _derive_eof_correction(
-    base_url: str, index_id: str, file_path: str, total: int,
+    audit_bridge: Any, index_id: str, file_path: str, total: int,
     branch_recent_queries: list[str],
 ) -> str | None:
     """For past-EOF: try to identify the symbol the agent was looking
@@ -256,20 +256,21 @@ async def _derive_eof_correction(
         if not basename:
             return None
         query = f"{basename} class declaration definition"
-    # Hit semantic_search
+    # Hit semantic_search through the audit_mcp bridge (middleware +
+    # adapter mapped), never a raw HTTP POST -- the bridge re-validates
+    # the resolved base URL against the egress policy per call.
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                f"{base_url}/tools/semantic_search",
-                json={"index_id": index_id, "query": query, "top_k": 3},
-            )
-            data = resp.json()
-    except (httpx.ConnectError, httpx.TimeoutException, ValueError) as exc:
+        data = await audit_bridge.forward(
+            action="semantic_search", index_id=index_id, query=query, top_k=3,
+        ) or {}
+    except (OSError, RuntimeError, ValueError, TypeError) as exc:
         _log.warning(
             "auto_steering: derive_eof_correction semantic_search failed "
             "index_id=%s file=%s err=%s",
             index_id, file_path, exc, exc_info=True,
         )
+        return None
+    if not isinstance(data, dict):
         return None
     results = data.get("results") or data.get("matches") or []
     if not results:
@@ -303,7 +304,7 @@ async def _derive_eof_correction(
 
 
 async def _derive_file_header_correction(
-    base_url: str, index_id: str, file_path: str, function_name: str,
+    audit_bridge: Any, index_id: str, file_path: str, function_name: str,
 ) -> str | None:
     """For read_function returning file header: fire semantic_search
     for the function name to locate its real body."""
@@ -311,18 +312,17 @@ async def _derive_file_header_correction(
         return None
     query = f"{function_name} function definition body"
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                f"{base_url}/tools/semantic_search",
-                json={"index_id": index_id, "query": query, "top_k": 3},
-            )
-            data = resp.json()
-    except (httpx.ConnectError, httpx.TimeoutException, ValueError) as exc:
+        data = await audit_bridge.forward(
+            action="semantic_search", index_id=index_id, query=query, top_k=3,
+        ) or {}
+    except (OSError, RuntimeError, ValueError, TypeError) as exc:
         _log.warning(
             "auto_steering: derive_file_header_correction semantic_search failed "
             "index_id=%s function=%s err=%s",
             index_id, function_name, exc, exc_info=True,
         )
+        return None
+    if not isinstance(data, dict):
         return None
     results = data.get("results") or data.get("matches") or []
     real_hits = []
@@ -362,7 +362,7 @@ async def _derive_file_header_correction(
 
 
 async def _derive_file_not_found_correction(
-    base_url: str, index_id: str, file_path: str,
+    audit_bridge: Any, index_id: str, file_path: str,
     branch_recent_queries: list[str],
 ) -> str | None:
     """For read_lines file-not-found: surface semantic_search hits for
@@ -386,13 +386,10 @@ async def _derive_file_not_found_correction(
     if not query:
         return None
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                f"{base_url}/tools/semantic_search",
-                json={"index_id": index_id, "query": query, "top_k": 5},
-            )
-            data = resp.json()
-    except (httpx.ConnectError, httpx.TimeoutException, ValueError):
+        data = await audit_bridge.forward(
+            action="semantic_search", index_id=index_id, query=query, top_k=5,
+        ) or {}
+    except (OSError, RuntimeError, ValueError, TypeError):
         data = {}
     results = (data or {}).get("results") or (data or {}).get("matches") or []
     hits: list[str] = []
@@ -1337,14 +1334,18 @@ async def _evaluate_rules(
     tool_name: str,
     args: dict,
     raw_result: dict,
-    bridge_base_url: str,
+    audit_bridge: Any,
     message_model: Any,
     branch_model: Any,
     lateral_patterns: list[tuple[re.Pattern[str], str]],
 ) -> str | None:
     """Run every rule against ``raw_result`` and post the first match.
 
-    ``lateral_patterns`` is the module vocabulary consulted by Rule 5
+    ``audit_bridge`` is the module-scoped audit_mcp bridge the
+    correction-derivation rules call back into (semantic_search); it is
+    built by the caller through the bridge factory so the resolve /
+    egress-policy re-validation happens per call. ``lateral_patterns``
+    is the module vocabulary consulted by Rule 5
     (:func:`_detect_lateral_pattern`); an empty list makes that rule a
     no-op. Extracted from :func:`maybe_post_auto_steering` so the
     outer function can wrap one call in the §337 failure-counter
@@ -1366,7 +1367,7 @@ async def _evaluate_rules(
             return None
         queries = await _recent_semantic_queries(branch_id, message_model=message_model)
         correction = await _derive_eof_correction(
-            bridge_base_url, index_id, file_path, total, queries,
+            audit_bridge, index_id, file_path, total, queries,
         )
         if not correction:
             return None
@@ -1399,7 +1400,7 @@ async def _evaluate_rules(
         ):
             return None
         correction = await _derive_file_header_correction(
-            bridge_base_url, index_id, file_path, fn_name,
+            audit_bridge, index_id, file_path, fn_name,
         )
         if not correction:
             return None
@@ -1467,7 +1468,7 @@ async def _evaluate_rules(
             return None
         queries = await _recent_semantic_queries(branch_id, message_model=message_model)
         correction = await _derive_file_not_found_correction(
-            bridge_base_url, index_id, file_path, queries,
+            audit_bridge, index_id, file_path, queries,
         )
         if not correction:
             return None
@@ -1544,7 +1545,7 @@ async def maybe_post_auto_steering(
     tool_name: str,
     args: dict,
     raw_result: dict,
-    bridge_base_url: str,
+    audit_bridge: Any,
     message_model: Any,
     branch_model: Any,
     lateral_patterns: list[tuple[re.Pattern[str], str]] | None = None,
@@ -1552,6 +1553,13 @@ async def maybe_post_auto_steering(
     """Examine ``raw_result`` against all rules. If one fires AND
     a correction can be derived AND the same auto-steering hasn't
     already been posted for this investigation, post it.
+
+    ``audit_bridge`` is the caller's module-scoped audit_mcp bridge;
+    the correction-derivation rules call back into it
+    (``semantic_search``) so every bridge round trip goes through the
+    middleware + adapter stack and the operator-set base URL is
+    re-validated against the egress policy per call -- never a raw
+    HTTP POST.
 
     ``lateral_patterns`` supplies the module vocabulary for Rule 5
     (passive lateral-vulnerability scan). Callers pass their tool
@@ -1583,7 +1591,7 @@ async def maybe_post_auto_steering(
             tool_name=tool_name,
             args=args,
             raw_result=raw_result,
-            bridge_base_url=bridge_base_url,
+            audit_bridge=audit_bridge,
             message_model=message_model,
             branch_model=branch_model,
             lateral_patterns=lateral_patterns or [],

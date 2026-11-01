@@ -339,7 +339,6 @@ Registered by the VR module via `VRConfigSchema`. All keys are settable via
 | `poc_memory_limit_mb` | int | Memory ceiling for a single PoC run (MB) |
 | `ssh_command_timeout_seconds` | float | Timeout for individual SSH commands on the analysis host |
 | `audit_mcp_url` | str | Base URL for the audit-mcp indexer bridge |
-| `ida_headless_url` | str | Base URL for the ida-headless-mcp bridge |
 | `android_mcp_url` | str | Base URL for the android-mcp bridge |
 | `max_branches_per_investigation` | int | Hard cap on active branches per investigation |
 | `claim_verifier_auto_promote_floor` | float | Minimum verifier confidence to auto-promote a claim |

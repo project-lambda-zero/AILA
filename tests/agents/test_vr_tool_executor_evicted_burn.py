@@ -45,7 +45,7 @@ class _FakeKnowledgeWriter:
 
 def _make_executor() -> ToolExecutor:
     return ToolExecutor(
-        ida=_FakeBridge(), audit_mcp=_FakeBridge(), android_mcp=_FakeBridge(),
+        rea=_FakeBridge(), audit_mcp=_FakeBridge(), android_mcp=_FakeBridge(),
     )
 
 

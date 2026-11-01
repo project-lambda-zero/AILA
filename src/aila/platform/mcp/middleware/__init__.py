@@ -1,6 +1,6 @@
 """RFC-11 Tier C -- per-server MCP middleware plugins.
 
-Each MCP server (ida-headless, audit-mcp, android-mcp) carries
+Each MCP server (audit-mcp, android-mcp, rea) carries
 server-specific behaviour that the generic :class:`McpClient` transport
 does not model: kwarg alias maps, path rewrites, pending-poll retry
 loops, dead-worker detection, dedup caches, prewarm fan-out, virtual
@@ -15,9 +15,9 @@ runs the transport and delegates every server-specific decision to the
 bound middleware. :func:`aila.platform.mcp.factory.make_bridge` resolves
 the middleware for a server id and constructs the generic tool.
 
-The three plugins (``ida``, ``audit``, ``android``) are imported lazily
-by the factory so this package has no import-time dependency on the
-concrete plugins and the base contract compiles standalone.
+The plugins (``audit``, ``android``, ``rea``) are imported lazily by the
+factory so this package has no import-time dependency on the concrete
+plugins and the base contract compiles standalone.
 """
 from __future__ import annotations
 

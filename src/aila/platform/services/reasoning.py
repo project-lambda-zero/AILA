@@ -54,7 +54,8 @@ __all__ = [
 # same absorb() pass.
 _TOOL_PREFIXES: tuple[str, ...] = (
     "audit_mcp:", "audit_mcp.",
-    "ida_headless:", "ida_headless.",
+    "rea:", "rea.",
+    "reverser_belt:", "reverser_belt.",
     "android_mcp:", "android_mcp.",
     "_directive.",
     "_recall.",
@@ -807,14 +808,16 @@ class CyberReasoningEngine:
         # read_function on names it already read.
         #
         # Tool keys are prefix-anchored: ``audit_mcp:*`` / ``audit_mcp.*``
-        # / ``ida_headless:*`` / ``ida_headless.*`` / ``android_mcp:*``
-        # / ``android_mcp.*``. ``_directive.*`` is already lifted to its
-        # own top-of-prompt section so we drop them. ``_recall.*`` is
-        # engine bookkeeping (drives the pinned-full section below) so
-        # we drop those too. Everything else is agent-set scratchpad.
+        # / ``rea:*`` / ``rea.*`` / ``reverser_belt:*`` /
+        # ``reverser_belt.*`` / ``android_mcp:*`` / ``android_mcp.*``.
+        # ``_directive.*`` is already lifted to its own top-of-prompt
+        # section so we drop them. ``_recall.*`` is engine bookkeeping
+        # (drives the pinned-full section below) so we drop those too.
+        # Everything else is agent-set scratchpad.
         tool_prefixes = (
             "audit_mcp:", "audit_mcp.",
-            "ida_headless:", "ida_headless.",
+            "rea:", "rea.",
+            "reverser_belt:", "reverser_belt.",
             "android_mcp:", "android_mcp.",
         )
         tool_obs: list[tuple[str, Any]] = []

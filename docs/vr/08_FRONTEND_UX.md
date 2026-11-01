@@ -8,7 +8,7 @@ The module's job is to put the right data on the right surface. This doc lays ou
 
 Cross-references:
 - `docs/vr/01_REASONING_LOOP.md` -- what the LLM emits per turn (drives the timeline page)
-- `docs/vr/02_IDA_HEADLESS_MCP.md` -- what produces the binary metadata the target page renders
+- `docs/vr/02_BINARY_RE_MCP.md` -- what produces the binary metadata the target page renders
 - `docs/vr/03_EXPLOIT_AUTOMATION.md` -- the obligation system the evidence graph visualises
 - `docs/vr/04_MULTI_TARGET.md` -- the project / target / campaign tree the dashboards walk
 - `frontend/src/components/aila/` -- the design system the pages are built from

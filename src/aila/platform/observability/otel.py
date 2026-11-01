@@ -279,7 +279,7 @@ def inject_trace_context(headers: dict[str, str]) -> None:
     Adds the ``traceparent`` (and, when present, ``tracestate``) header
     to the supplied dict so an outbound MCP request carries the current
     span context across the process boundary. The downstream server
-    (audit-mcp / ida-headless / semble / ...) can then attach its own
+    (audit-mcp / semble / ...) can then attach its own
     spans as children of the caller's span through any W3C
     trace-context-aware receiver.
 

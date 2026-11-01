@@ -53,11 +53,11 @@ class McpMiddleware(Protocol):
     Attributes are read once by :class:`McpBridgeTool` at construction to
     wire the client's resolver + timeout + pool policy:
 
-    * ``server_id`` -- the stable server token (``"ida_headless"``,
-      ``"audit_mcp"``, ``"android_mcp"``). Matches the catalog ``name``
+    * ``server_id`` -- the stable server token (``"audit_mcp"``,
+      ``"android_mcp"``, ``"rea"``). Matches the catalog ``name``
       column and the ``spec['id']`` in the module's static
       ``MCP_SERVERS`` tuple. This is the resolver's ``server_name``.
-    * ``tool_name`` -- the agent-facing tool suffix (``"ida_bridge"``,
+    * ``tool_name`` -- the agent-facing tool suffix (e.g.
       ``"audit_mcp_bridge"``, ``"android_mcp_bridge"``). The generic
       tool's ``name`` is ``f"{module_id}.{tool_name}"`` so external
       callers that read ``bridge.name`` see the pre-Tier-C value.
@@ -66,8 +66,8 @@ class McpMiddleware(Protocol):
     * ``default_timeout`` -- per-call HTTP timeout in seconds.
     * ``persistent_pool`` -- when ``True`` the client reuses one
       ``httpx.AsyncClient`` across calls (android-mcp's module-level
-      pool). When ``False`` (ida/audit) each call opens and closes its
-      own client, byte-identical to the pre-Tier-C bridges.
+      pool). When ``False`` each call opens and closes its own client,
+      byte-identical to the pre-Tier-C bridges.
     """
 
     server_id: str

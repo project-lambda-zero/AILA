@@ -700,16 +700,12 @@ class ToolExecutorHelpersBase:
         """Post-dispatch side effect, e.g. observation recording. Default: no-op."""
         del investigation_id, branch_id, server_id, tool_name, raw
 
-    async def _resolve_bridge_base_url(self) -> str:
-        """Bridge base URL embedded in auto-steering messages. Default: standard port."""
-        return "http://127.0.0.1:18822"
-
     # ---- RFC-07 router wiring (subclass hooks) --------------------------
     # Envelope-error prefixes that indicate INFRA failure (connection
     # refused / timeout / unreachable). The three bridges CATCH httpx
     # transport errors and return them as ``{"status": "error",
     # "error": "Cannot reach ..." | "Timeout (...)" | "Unreachable: ..."}``
-    # envelopes -- see audit_mcp / android_mcp / ida_headless bridges.
+    # envelopes -- see audit_mcp / android_mcp bridges.
     # The router-mediated dispatch inspects those envelopes and
     # re-raises them as :class:`ToolInfraError` so the router can
     # reroute to the next enabled instance. Every OTHER error text
@@ -858,10 +854,10 @@ class ToolExecutorHelpersBase:
                 continue
             # RFC-11 criteria 2/3: pool across every enabled + approved
             # instance sharing the requested server's MIDDLEWARE FAMILY,
-            # not just the exact name. ida_headless + ida_headless_exp
-            # both run IdaMiddleware, so a call for one fails over to /
-            # shares load with the other; a differently-contracted server
-            # that merely shares a tag is never a pool member.
+            # not just the exact name. Two ids mapping to the same
+            # middleware class fail over to / share load with each other;
+            # a differently-contracted server that merely shares a tag
+            # is never a pool member.
             if middleware_family(row.name) != target_family:
                 continue
             endpoint = (row.endpoint or "").strip().rstrip("/")
@@ -1334,9 +1330,9 @@ class ToolExecutorHelpersBase:
         if _status not in _SUCCESS_STATUSES:
             # Error detail is not carried in a single canonical key across
             # servers: audit_mcp / build_call_tree use ``error``, while
-            # ida_headless ``call_chain`` (and other reverser tools) put
-            # the actionable text in ``message`` (e.g. "Function not
-            # found: sub_1800317eb"). Reading only ``error`` dropped that
+            # reverser tools such as ``call_chain`` put the actionable
+            # text in ``message`` (e.g. "Function not found:
+            # sub_1800317eb"). Reading only ``error`` dropped that
             # detail and handed the agent the opaque "unexpected status
             # 'error'" fallback, so it reissued the same bad call until
             # the repeat-failure breaker killed the turn at zero progress.
@@ -1658,10 +1654,12 @@ class ToolExecutorHelpersBase:
             # never observable to the agent itself; only an out-of-band
             # reader (operator UI streaming inv messages) could see
             # the result-message before the steering operator-message.
-            # Module hook resolves the bridge base URL that the
-            # auto-steering correction messages embed. VR reads the
-            # value off its audit_mcp bridge; others take the default.
-            bridge_base_url = await self._resolve_bridge_base_url()
+            # Module bridge resolves the audit_mcp bridge the
+            # auto-steering correction rules call back into; every
+            # semantic_search round trip goes through the middleware +
+            # adapter stack (base URL re-validated against the egress
+            # policy per call) instead of a raw HTTP POST.
+            audit_bridge = self._bridge_for("audit_mcp")
             try:
                 posted_id = await maybe_post_auto_steering(
                     investigation_id=investigation_id,
@@ -1670,7 +1668,7 @@ class ToolExecutorHelpersBase:
                     tool_name=tool_name,
                     args=args,
                     raw_result=raw if isinstance(raw, dict) else {},
-                    bridge_base_url=bridge_base_url,
+                    audit_bridge=audit_bridge,
                     message_model=self._message_model,
                     branch_model=self._branch_model,
                     lateral_patterns=self.lateral_patterns,

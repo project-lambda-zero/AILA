@@ -30,12 +30,13 @@ Layer 0: Target Environment
 
 ## What VR actually drives today
 
-AILA's VR module reaches the layers above through three HTTP MCP servers and one in-process retriever, mediated by the module's bridge tools (`src/aila/modules/vr/tools/audit_mcp_bridge.py`, `ida_bridge.py`, `android_mcp_bridge.py`).
+AILA's VR module reaches the layers above through two HTTP MCP servers, two stdio MCP servers, and one in-process retriever, mediated by the module's bridge tools (audit_mcp bridge, rea / re_analytics bridges, android_mcp bridge).
 
 | Server | Port | Surface | Owner |
 |---|---|---|---|
 | **audit-mcp** | 18822 | 58+ tools (verify against `GET /tools` for the live count): source graph (Trailmark) + semantic search (semble) + SARIF correlation | source-code targets |
-| **ida-headless-mcp** | 18821 | 81 tools: Hex-Rays + miasm + CAPA + symbolic / SMT (binbit) | binary targets |
+| **rea** | stdio (per-process child) | core binary RE: decompile / disassemble / xrefs / call graphs / segments / strings / bytes (Ghidra provider) | binary targets |
+| **re_analytics** | stdio (in-tree) | archived ida-headless tool surface REA lacks: capa, crypto constants, API-hash resolution, dataflow, emulation, patching | binary targets |
 | **android-mcp** | 18823 | 13 tool wrappers (apktool / jadx / androguard / MobSF / drozer / qark / AndroBugs / LIEF / YARA / apksigner / objection / frida / adb) + 4 composite handlers (`verify_capabilities`, `classify_behavior`, `compute_risk_score`, `find_secrets`) | Android APK targets |
 | **semble** | embedded inside audit-mcp | Model2Vec + BM25 + RRF code-chunk retriever | semantic search backend |
 
@@ -48,7 +49,7 @@ The bridges sit between the LLM action layer and the HTTP transport. They are th
 - **Language-aware tool suppression.** `dead_code` and `unreachable_from_entrypoints` are hidden from the prompt for C++, Java, Kotlin, C#, Swift, Objective-C, and Scala targets where the indexer's reach analysis is unreliable.
 - **Lazy pre-warm fan-out.** When `AUDIT_MCP_WORKERS > 1` and a new `index_id` lands its first call, the bridge fires 16 cheap parallel requests so round-robin distribution warms each uvicorn worker's TypeResolver + semble + engine caches once. Skipped on `AUDIT_MCP_WORKERS=1` (the Windows reality).
 - **`read_lines` -- bridge-side virtual tool.** No upstream MCP endpoint. The bridge resolves `index_id → root_path` via `/tools/list_indexes` and slices the file from disk. Use when an indexer returned a stale or wrong slice (`read_function` returning a file header, `search_constants` returning 0) and you need verbatim source.
-- **IDA mutations.** Mutating IDA tools (`rename_function`, `rename_variable`, `set_comment`, `set_function_type`, `patch_bytes`, `patch_cff`, ...) return a `ticket_id` and apply asynchronously; the bridge polls `poll_mutation` for completion.
+- **Binary mutations.** Mutating binary tools (`rename_function`, `rename_variable`, `set_comment`, `set_function_type`, `patch_bytes`, ...) apply asynchronously where the backing server supports them and return a ticket the bridge polls for completion.
 - **android-mcp bridge -- deliberately slim.** No schema-driven kwarg validation, no pre-warm fan-out, no kwarg alias map, no virtual tools. The five ingestion stages (`APK_DECODE` / `JADX_DECOMPILE` / `INDEX_DECOMPILED` / `STATIC_SUMMARY` / `MOBSF_SCAN`) call a small fixed set of actions with known parameters. Transport errors surface as `{"status": "error", "error": "..."}` so callers can branch on one uniform shape. `ANDROID_MCP_TIMEOUT` (default 1800 s) is the absolute network ceiling; the per-stage `StageTracker` timeouts in `services/stage_tracker.py` (APK_DECODE 600 s, JADX_DECOMPILE 900 s, INDEX_DECOMPILED 3600 s, STATIC_SUMMARY 300 s, MOBSF_SCAN 1800 s) are the actual per-stage budgets.
 
 Operators and embedded harnesses can reach audit-mcp's HTTP API directly when they want a one-shot query (e.g. `mcp__audit_mcp_*` MCP tools exposed to outer agent harnesses). Inside AILA, the bridges are the canonical path -- they carry the validation, dedup, pre-warm, and survey-streak logic the loop needs.

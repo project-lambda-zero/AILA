@@ -1,6 +1,6 @@
 # VR Module -- The Evidence Obligation System: Anti-Bluffing Mechanics
 
-The reasoning loop (`docs/vr/01_REASONING_LOOP.md`) sketches an "adjudicator" that catches LLM bluffs. The exploitation doc (`docs/vr/03_EXPLOIT_AUTOMATION.md`) sketches a per-tier obligation table for runtime claims. The MCP doc (`docs/vr/02_IDA_HEADLESS_MCP.md`) sketches obligation-aware audit logs for static-analysis evidence. This document collapses the three views into one mechanism: how the obligation system is structured, what claims it tracks, how obligations are lifecycle-managed, what the deterministic rule engine actually checks per turn, and where the system breaks at the seams.
+The reasoning loop (`docs/vr/01_REASONING_LOOP.md`) sketches an "adjudicator" that catches LLM bluffs. The exploitation doc (`docs/vr/03_EXPLOIT_AUTOMATION.md`) sketches a per-tier obligation table for runtime claims. The MCP doc (`docs/vr/02_BINARY_RE_MCP.md`) sketches obligation-aware audit logs for static-analysis evidence. This document collapses the three views into one mechanism: how the obligation system is structured, what claims it tracks, how obligations are lifecycle-managed, what the deterministic rule engine actually checks per turn, and where the system breaks at the seams.
 
 The frame: **the LLM is allowed to be confident only when the evidence graph contains the artifacts that justify the confidence.** Every claim creates a debt; the loop discharges debts by collecting matching evidence. Submission is gated on the debt being paid. This is the Metis pattern (prior design notes), specialized to vulnerability research where claims fan out across static, dynamic, and exploitation domains.
 
@@ -505,7 +505,7 @@ Example: target is a Windows kernel driver. The "exploitable → mitigations enu
 
 **Three options, in order of preference:**
 
-1. **Backend-aware obligation specs.** The MCP advertises which evidence kinds are available for the current target (per `02_IDA_HEADLESS_MCP.md` §10). The obligation spec is parameterized on backend capabilities. For RTOS, the mitigation evidence becomes "manual mitigation analysis artifact authored by operator" -- a different artifact class with the same role.
+1. **Backend-aware obligation specs.** The MCP advertises which evidence kinds are available for the current target (per `02_BINARY_RE_MCP.md`). The obligation spec is parameterized on backend capabilities. For RTOS, the mitigation evidence becomes "manual mitigation analysis artifact authored by operator" -- a different artifact class with the same role.
 
 2. **Operator waiver with technical justification.** The operator inspects the target manually, writes a `MitigationAnalysisArtifact` by hand, and uploads it. This is the artifact class the obligation expects; it's just human-produced. The rule engine doesn't care who authored it.
 
@@ -552,9 +552,9 @@ Three layers of mitigation, none perfect:
 
 2. **Linkage requirements.** An artifact alone doesn't satisfy an obligation; the *link* between the artifact and the claim's hypothesis must be stated. The LLM has to write "A-072 (run on input I-019, which is the trigger from H-03)" not "A-072 shows the bug." If the linkage chain is broken -- A-072 was run on input I-014, not I-019 -- the rule engine sees the discrepancy and the obligation goes UNMET.
 
-3. **Tool-side ground truth.** The IDA MCP and the run_target tool both record exactly what they ran, when, and against what binary. The rule engine cross-references the LLM's cited provenance against the tool's ground-truth log. If the LLM cites "A-072 from running ./target with input I-019" and the tool log says A-072 was produced by running ./target_v2 with input I-014, the rule engine raises a `ProvenanceMismatch` finding. CRITICAL severity, blocks submit, escalates to operator.
+3. **Tool-side ground truth.** The binary-analysis MCP servers and the run_target tool both record exactly what they ran, when, and against what binary. The rule engine cross-references the LLM's cited provenance against the tool's ground-truth log. If the LLM cites "A-072 from running ./target with input I-019" and the tool log says A-072 was produced by running ./target_v2 with input I-014, the rule engine raises a `ProvenanceMismatch` finding. CRITICAL severity, blocks submit, escalates to operator.
 
-The tool-side ground-truth check is the most reliable. The audit log lives outside the project root (`/vr/audit/`), is append-only, and is what `02_IDA_HEADLESS_MCP.md` §10 calls "auditable provenance." The rule engine treats the audit log as canonical and the LLM's `reasoning` text as a claim *about* the audit log.
+The tool-side ground-truth check is the most reliable. The audit log lives outside the project root (`/vr/audit/`), is append-only, and is what `02_BINARY_RE_MCP.md` calls "auditable provenance." The rule engine treats the audit log as canonical and the LLM's `reasoning` text as a claim *about* the audit log.
 
 What survives all three layers: an LLM that fabricates a hypothetical ID for an artifact that doesn't exist. That's the cheap case -- the engine just looks up the ID in the graph and finds nothing. Caught at TRACKED time.
 
@@ -580,7 +580,7 @@ For grounding the design in the actual repo:
 - **Rule engine**: `src/aila/modules/vulnerability/adjudication/` -- runs after every turn. Pure functions over `(turn, state, graph, project) -> AdjudicationResult`. No LLM calls. Heavily tested.
 - **Obligation graph**: a SQLModel table (`ObligationRecord`) plus helpers; lives alongside the rest of the evidence graph schema in `src/aila/storage/`.
 - **Waiver UI**: a panel in the VR frontend (`frontend/src/modules/vulnerability/`) that surfaces obligations with state, severity, linked artifacts, and a "waive" button with required reason text.
-- **Audit log**: per `02_IDA_HEADLESS_MCP.md` §10, lives outside project root in `/vr/audit/`. Append-only. Read by the rule engine for provenance binding.
+- **Audit log**: per `02_BINARY_RE_MCP.md`, lives outside project root in `/vr/audit/`. Append-only. Read by the rule engine for provenance binding.
 
 No part of this lives in `aila.platform.*`. The obligation system is VR-specific. The forensics module has its own evidence semantics; copying the rule engine across modules would be premature. If a third module needs the same shape, the abstraction goes into `platform/services/adjudication/` and both modules consume it. Until then, it's a VR concern.
 

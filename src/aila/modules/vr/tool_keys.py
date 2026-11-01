@@ -5,14 +5,14 @@ All keys are prefixed with ``vr.`` to avoid collisions with other modules.
 """
 from __future__ import annotations
 
-TOOL_IDA_BRIDGE = "vr.ida_bridge"
+TOOL_REA_BRIDGE = "vr.rea_bridge"
 TOOL_POC_RUNNER = "vr.poc_runner"
 TOOL_PATCH_DIFFER = "vr.patch_differ"
 TOOL_CRASH_TRIAGE = "vr.crash_triage"
 TOOL_ADVISORY_BUILDER = "vr.advisory_builder"
 
 ALL_TOOL_KEYS: tuple[str, ...] = (
-    TOOL_IDA_BRIDGE,
+    TOOL_REA_BRIDGE,
     TOOL_POC_RUNNER,
     TOOL_PATCH_DIFFER,
     TOOL_CRASH_TRIAGE,
@@ -20,7 +20,7 @@ ALL_TOOL_KEYS: tuple[str, ...] = (
 )
 
 __all__ = [
-    "TOOL_IDA_BRIDGE",
+    "TOOL_REA_BRIDGE",
     "TOOL_POC_RUNNER",
     "TOOL_PATCH_DIFFER",
     "TOOL_CRASH_TRIAGE",

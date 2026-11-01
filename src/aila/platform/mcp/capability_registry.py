@@ -42,10 +42,9 @@ reviewer can trace where they will land):
   the health service, not here.
 * Bridge deletion -- once :class:`McpClient` covers the specialised
   transport tricks each bespoke bridge still applies (schema
-  validation, APK-path resolver, IDA rewrites), the bespoke classes
+  validation, APK-path resolver), the bespoke classes
   under ``platform/mcp/bridges/`` retire. Today they remain the
-  operator-critical dispatch path for audit-mcp / ida-headless /
-  android-mcp.
+  operator-critical dispatch path for audit-mcp / android-mcp.
 """
 from __future__ import annotations
 

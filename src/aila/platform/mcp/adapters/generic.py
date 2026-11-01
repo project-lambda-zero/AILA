@@ -1,11 +1,11 @@
 """Generic fallback adapter -- used for any registered MCP tool without a
 specialized adapter.
 
-This means the engine can invoke ALL 135 MCP tools (81 ida-headless +
-54 audit-mcp) immediately. Tools with structured rendering value
-(decompile, xrefs_to, call_graph, taint paths, diffs, etc.) get
-specialized adapters in their respective modules; everything else
-defaults to this TEXT adapter.
+This means the engine can invoke every MCP tool in the static catalog
+plus any tool a live bridge advertises (fix §244) immediately. Tools
+with structured rendering value (decompile, xrefs_to, call_graph, taint
+paths, diffs, etc.) get specialized adapters in their respective
+modules; everything else defaults to this TEXT adapter.
 
 Design contract: NEVER fabricate fields. The generic adapter does not
 invent semantics -- it just packages the raw response, stamps

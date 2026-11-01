@@ -3,7 +3,7 @@
 Resolution order:
 
   1. Specialized adapter explicitly registered in ``_SPECIALIZED``
-     (e.g. ``ida_headless.decompile`` -> ``adapt_decompile``).
+     (e.g. ``audit_mcp.read_function`` -> ``adapt_read_function``).
   2. Generic adapter ``adapt_generic`` when the tool name is present
      in the **effective** catalog for ``server_id`` -- i.e. the union
      of the static ``KNOWN_TOOLS[server_id]`` set and the runtime
@@ -17,7 +17,7 @@ Resolution order:
      loud error message back to the engine so it can retry with a
      correct name.
 
-This means the engine can invoke any of the 135 MCP tools immediately;
+This means the engine can invoke any catalogued MCP tool immediately;
 tools with high-value structured rendering get specialized adapters as
 they become useful in real investigations.
 """
@@ -48,7 +48,36 @@ from .audit_mcp import (
 from .base import AdapterFn, register_read_tool
 from .dynamic_symbolic import adapt_dynamic_run, adapt_symbolic_explore
 from .generic import adapt_generic
-from .ida_headless import (
+from .known_tools import (
+    _ALWAYS_SUPPRESS,
+    _VIRTUAL_TOOLS,
+    KNOWN_TOOLS,
+    canonicalize_tool_id,
+)
+from .rea import (
+    adapt_rea_analyze_function,
+    adapt_rea_binary_overview,
+    adapt_rea_byte_entropy,
+    adapt_rea_call_graph,
+    adapt_rea_compare_functions,
+    adapt_rea_disassembly,
+    adapt_rea_list_procedures,
+    adapt_rea_list_segments,
+    adapt_rea_list_strings,
+    adapt_rea_native_exports,
+    adapt_rea_open_binary,
+    adapt_rea_pe_imports,
+    adapt_rea_procedure_callees,
+    adapt_rea_procedure_callers,
+    adapt_rea_procedure_info,
+    adapt_rea_procedure_references,
+    adapt_rea_pseudocode,
+    adapt_rea_read_bytes,
+    adapt_rea_search_bytes,
+    adapt_rea_trace_call_path,
+    adapt_rea_xrefs,
+)
+from .reverser_belt import (
     adapt_call_chain,
     adapt_call_graph,
     adapt_capa_scan,
@@ -66,12 +95,6 @@ from .ida_headless import (
     adapt_xrefs_from,
     adapt_xrefs_to,
 )
-from .known_tools import (
-    _ALWAYS_SUPPRESS,
-    _VIRTUAL_TOOLS,
-    KNOWN_TOOLS,
-    canonicalize_tool_id,
-)
 
 __all__ = [
     "get_adapter",
@@ -85,33 +108,29 @@ _log = logging.getLogger(__name__)
 
 # Specialized adapters. Keys: (server_id, tool_name).
 _SPECIALIZED: dict[tuple[str, str], AdapterFn] = {
-    # ida_headless -- DECOMPILED_FUNCTION
-    ("ida_headless", "decompile"): adapt_decompile,
-    # ida_headless -- XREF_VIEW family
-    ("ida_headless", "find_api_call_sites"): adapt_find_api_call_sites,
-    ("ida_headless", "xrefs_to"): adapt_xrefs_to,
-    ("ida_headless", "xrefs_from"): adapt_xrefs_from,
-    # ida_headless -- TAINT_FLOW family
-    ("ida_headless", "interprocedural_taint"): adapt_interprocedural_taint,
-    ("ida_headless", "trace_dataflow"): adapt_trace_dataflow,
-    ("ida_headless", "def_use"): adapt_def_use,
-    # ida_headless -- GRAPH_VIEW family
-    ("ida_headless", "call_graph"): adapt_call_graph,
-    ("ida_headless", "call_chain"): adapt_call_chain,
-    # ida_headless -- CODE_POINTER family
-    ("ida_headless", "disassemble_function"): adapt_disassemble_function,
-    ("ida_headless", "get_microcode"): adapt_get_microcode,
-    ("ida_headless", "pseudocode_slice_view"): adapt_pseudocode_slice_view,
-    # ida_headless -- PATCH_DIFF family
-    ("ida_headless", "diff_function"): adapt_diff_function,
-    # ida_headless \u2014 TEXT specializations
-    ("ida_headless", "checksec"): adapt_checksec,
-    ("ida_headless", "classify_behavior"): adapt_classify_behavior,
-    # ``classify_strings`` is no longer wired: the tool is in
-    # ``_ALWAYS_SUPPRESS`` and ``get_adapter`` returns ``None`` for it
-    # before the specialized lookup. Leaving a row here would only
-    # keep ``specialized_tools()`` reporting a deprecated name.
-    ("ida_headless", "capa_scan"): adapt_capa_scan,
+    # reverser_belt -- DECOMPILED_FUNCTION
+    ("reverser_belt", "decompile"): adapt_decompile,
+    # reverser_belt -- XREF_VIEW family
+    ("reverser_belt", "find_api_call_sites"): adapt_find_api_call_sites,
+    ("reverser_belt", "xrefs_to"): adapt_xrefs_to,
+    ("reverser_belt", "xrefs_from"): adapt_xrefs_from,
+    # reverser_belt -- TAINT_FLOW family
+    ("reverser_belt", "interprocedural_taint"): adapt_interprocedural_taint,
+    ("reverser_belt", "trace_dataflow"): adapt_trace_dataflow,
+    ("reverser_belt", "def_use"): adapt_def_use,
+    # reverser_belt -- GRAPH_VIEW family
+    ("reverser_belt", "call_graph"): adapt_call_graph,
+    ("reverser_belt", "call_chain"): adapt_call_chain,
+    # reverser_belt -- CODE_POINTER family
+    ("reverser_belt", "disassemble_function"): adapt_disassemble_function,
+    ("reverser_belt", "get_microcode"): adapt_get_microcode,
+    ("reverser_belt", "pseudocode_slice_view"): adapt_pseudocode_slice_view,
+    # reverser_belt -- PATCH_DIFF family
+    ("reverser_belt", "diff_function"): adapt_diff_function,
+    # reverser_belt -- TEXT specializations
+    ("reverser_belt", "checksec"): adapt_checksec,
+    ("reverser_belt", "classify_behavior"): adapt_classify_behavior,
+    ("reverser_belt", "capa_scan"): adapt_capa_scan,
     # audit_mcp -- DECOMPILED_FUNCTION
     ("audit_mcp", "read_function"): adapt_read_function,
     # audit_mcp -- XREF_VIEW family
@@ -150,6 +169,30 @@ _SPECIALIZED: dict[tuple[str, str], AdapterFn] = {
     # coverage_delta``) the kill-criteria evaluator scans.
     ("symbolic", "explore"): adapt_symbolic_explore,
     ("dynamic", "run_dynamic"): adapt_dynamic_run,
+    # REA (morluto/rea) -- first MCP-native server. Evidence records map
+    # onto the payload kinds the audit_mcp adapters established. Shapes
+    # verified live against rea-agents 6.8.0 + Ghidra (see rea.py header).
+    ("rea", "procedure_pseudo_code"): adapt_rea_pseudocode,
+    ("rea", "analyze_function"): adapt_rea_analyze_function,
+    ("rea", "procedure_assembly"): adapt_rea_disassembly,
+    ("rea", "get_call_graph"): adapt_rea_call_graph,
+    ("rea", "trace_call_path"): adapt_rea_trace_call_path,
+    ("rea", "xrefs"): adapt_rea_xrefs,
+    ("rea", "procedure_callers"): adapt_rea_procedure_callers,
+    ("rea", "procedure_callees"): adapt_rea_procedure_callees,
+    ("rea", "procedure_references"): adapt_rea_procedure_references,
+    ("rea", "search_bytes"): adapt_rea_search_bytes,
+    ("rea", "compare_functions"): adapt_rea_compare_functions,
+    ("rea", "open_binary"): adapt_rea_open_binary,
+    ("rea", "binary_overview"): adapt_rea_binary_overview,
+    ("rea", "list_procedures"): adapt_rea_list_procedures,
+    ("rea", "list_strings"): adapt_rea_list_strings,
+    ("rea", "list_segments"): adapt_rea_list_segments,
+    ("rea", "procedure_info"): adapt_rea_procedure_info,
+    ("rea", "read_bytes"): adapt_rea_read_bytes,
+    ("rea", "inspect_pe_imports"): adapt_rea_pe_imports,
+    ("rea", "inspect_native_exports"): adapt_rea_native_exports,
+    ("rea", "inspect_byte_entropy"): adapt_rea_byte_entropy,
 }
 
 # fix §200 -- generic-adapter-backed read tools registered explicitly.
@@ -224,11 +267,8 @@ def get_adapter(server_id: str, tool_name: str) -> AdapterFn | None:
 
     Suppressed tools (``_ALWAYS_SUPPRESS``) short-circuit to ``None``
     BEFORE the specialized-adapter lookup. The specialized table is
-    additive and historically kept entries for tools we later
-    deprecated (e.g. ``ida_headless.classify_strings``); leaving the
-    entry wired meant the agent could still dispatch the tool through
-    the specialized path even after we removed the name from the
-    static catalog and now from the runtime union too.
+    additive; keep it free of deprecated tool names so
+    ``specialized_tools()`` never reports a name the catalog rejects.
 
     After the suppression gate: specialized adapters take priority.
     Falls back to ``adapt_generic`` when the tool is in

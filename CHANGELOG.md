@@ -5,6 +5,26 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.3] - 2026-10-31 -- native-MCP reverse-engineering arsenal (REA + reverser-belt)
+
+### Added
+
+- Native MCP client (`platform/mcp/mcp_session.py`, `McpHttpSession` / `McpStdioSession`) driving two external reverse-engineering servers behind the existing bridge layer: REA (rea-agents, Ghidra provider) for core RE, and reverser-belt (`reverser_belt_mcp`, Kuna decompiler + capa / crypto / taint / proof / angr) for the analytics REA does not cover. Sessions are shared per event loop and expose a `state` dict plus an `affinity` condition for middleware target coordination.
+- `ReverserBeltMiddleware`: the reverser-belt server is handle-based (`open_binary(path) -> binary_id`), so the middleware opens the server-injected `target_path` once, caches `path -> binary_id` on the session, and rewrites every handle tool to carry that `binary_id`; the raw `target_path` is never forwarded. Background analysis that answers `status: pending` is re-issued until it lands `ready` within a bounded wall-clock budget (`REVERSER_BELT_PENDING_POLL_TIMEOUT`, default 240s).
+- Seven reverser-belt tools that previously returned an unsupported envelope (`query_ctree`, `hexrays_warnings`, `def_use`, `value_ranges`, `interprocedural_taint`, `constrained_reachability`, `detect_protocol_state_machine`) now return real angr-backed results. The implementing engine ships in the external reverser-belt server; AILA agents observe structured output rather than an unsupported stub.
+- reverser-belt result adapters render decompile / xref / taint / call-graph / microcode payloads into the same structured observables the retired ida-headless adapters produced.
+
+### Changed
+
+- The binary-analytics MCP server is renamed from `re_analytics` to `reverser_belt` across the VR and malware modules: server id, config key (`reverser_belt_mcp_url`), environment variable (`REVERSER_BELT_MCP_URL`), bridge name, and the static tool catalog, which now matches the server's real 84-tool surface. Modules still address targets by `target_path`; the middleware performs the handle translation.
+- `start.sh` documents the reverser-belt stdio child (`python -m reverser_belt_mcp.server`) alongside REA and exports `REVERSER_BELT_MCP_COMMAND` for argv override.
+
+### Removed
+
+- The in-platform `re_analytics` MCP server package (`src/aila/platform/re_analytics/`) and its `re-analytics` optional-dependency group. Binary analysis is served exclusively by the external reverser-belt and REA MCP servers behind the native client; nothing in `platform/` hardcodes RE capabilities.
+
+---
+
 ## [0.6.2] - 2026-10-30 -- fuzz/symbolic feedback loop, benchmark harness, liveness gate
 
 ### Added

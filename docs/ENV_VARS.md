@@ -42,9 +42,10 @@ have. Required keys block boot when missing.
 
 **Dev-stack knobs read by `start.sh` (not Python config):**
 - `WORKER_COUNT_VR`, `WORKER_COUNT_VULNERABILITY`, `WORKER_COUNT_FORENSICS`, `WORKER_COUNT_DEFAULT` (per-queue worker concurrency)
-- `BACKEND_PORT`, `FRONTEND_PORT`, `AUDIT_MCP_PORT`, `IDA_HEADLESS_PORT`
-- `AILA_START_FRONTEND`, `AILA_START_AUDIT_MCP`, `AILA_START_IDA_HEADLESS` (toggle 1/0)
-- `AUDIT_MCP_DIR`, `IDA_HEADLESS_DIR`, `AUDIT_MCP_WORKERS`
+- `BACKEND_PORT`, `FRONTEND_PORT`, `AUDIT_MCP_PORT`
+- `AILA_START_FRONTEND`, `AILA_START_AUDIT_MCP` (toggle 1/0)
+- `AUDIT_MCP_DIR`, `AUDIT_MCP_WORKERS`
+- `REA_MCP_COMMAND`, `GHIDRA_INSTALL_DIR`, `JAVA_HOME`, `REA_ANALYSIS_PROVIDER` (REA / Ghidra provider environment; see `start.sh` defaults)
 
 **VR-specific runtime knobs:**
 - `VR_INVESTIGATION_WALL_CLOCK_HOURS` (default `6`) -- investigation lifetime; the emit-side cap and the reaper both consult this.

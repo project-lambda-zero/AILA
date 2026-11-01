@@ -91,8 +91,8 @@ def _seed_with_handles(kind: str, handles: dict) -> str:
 
 
 def _make_executor() -> tuple[ToolExecutor, _FakeBridge, _FakeBridge, _FakeBridge]:
-    ida, audit, android = _FakeBridge(), _FakeBridge(), _FakeBridge()
-    return ToolExecutor(ida=ida, audit_mcp=audit, android_mcp=android), ida, audit, android
+    rea, audit, android = _FakeBridge(), _FakeBridge(), _FakeBridge()
+    return ToolExecutor(rea=rea, audit_mcp=audit, android_mcp=android), rea, audit, android
 
 
 def _count_messages(branch_id: str) -> int:
@@ -109,7 +109,7 @@ def _count_messages(branch_id: str) -> int:
 async def test_malformed_command_errors_and_skips_bridge(test_db) -> None:
     del test_db
     inv_id, branch_id = _seed()
-    executor, ida, audit, android = _make_executor()
+    executor, rea, audit, android = _make_executor()
 
     result = await executor.execute(
         investigation_id=inv_id, branch_id=branch_id,
@@ -120,7 +120,7 @@ async def test_malformed_command_errors_and_skips_bridge(test_db) -> None:
     assert result.server_id == ""
     assert result.tool_name == ""
     assert result.message_id is not None
-    assert ida.calls == [] and audit.calls == [] and android.calls == []
+    assert rea.calls == [] and audit.calls == [] and android.calls == []
     assert _count_messages(branch_id) == 1
 
 
@@ -128,7 +128,7 @@ async def test_malformed_command_errors_and_skips_bridge(test_db) -> None:
 async def test_tool_without_server_prefix_errors_and_skips_bridge(test_db) -> None:
     del test_db
     inv_id, branch_id = _seed()
-    executor, ida, audit, android = _make_executor()
+    executor, rea, audit, android = _make_executor()
 
     result = await executor.execute(
         investigation_id=inv_id, branch_id=branch_id,
@@ -137,26 +137,26 @@ async def test_tool_without_server_prefix_errors_and_skips_bridge(test_db) -> No
 
     assert result.success is False
     assert result.tool_name == ""
-    assert ida.calls == [] and audit.calls == [] and android.calls == []
+    assert rea.calls == [] and audit.calls == [] and android.calls == []
 
 
 @pytest.mark.asyncio
 async def test_unknown_tool_no_adapter_errors_and_skips_bridge(test_db) -> None:
     del test_db
     inv_id, branch_id = _seed()
-    executor, ida, audit, android = _make_executor()
+    executor, rea, audit, android = _make_executor()
 
     result = await executor.execute(
         investigation_id=inv_id, branch_id=branch_id,
-        command_raw='{"tool": "ida_headless.__definitely_not_a_real_tool__", "args": {}}',
+        command_raw='{"tool": "rea.__definitely_not_a_real_tool__", "args": {}}',
         at_turn=1,
     )
 
     assert result.success is False
-    assert result.server_id == "ida_headless"
+    assert result.server_id == "rea"
     assert result.tool_name == "__definitely_not_a_real_tool__"
     assert result.message_id is not None
-    assert ida.calls == [] and audit.calls == [] and android.calls == []
+    assert rea.calls == [] and audit.calls == [] and android.calls == []
 
 
 # --------------------------------------------------------------------------
@@ -176,7 +176,7 @@ async def test_unknown_tool_close_to_real_appends_did_you_mean(test_db) -> None:
     naming at least one real catalog entry from the same server."""
     del test_db
     inv_id, branch_id = _seed()
-    executor, ida, audit, android = _make_executor()
+    executor, rea, audit, android = _make_executor()
 
     # 'audit_mcp.entrypoints' is one of the observed hallucinations; the
     # real catalog entry is 'audit_mcp.entrypoint_paths_to'.
@@ -193,7 +193,7 @@ async def test_unknown_tool_close_to_real_appends_did_you_mean(test_db) -> None:
     assert "Did you mean" in result.error
     assert "audit_mcp.entrypoint_paths_to" in result.error
     # Still short-circuits BEFORE any bridge is invoked.
-    assert ida.calls == [] and audit.calls == [] and android.calls == []
+    assert rea.calls == [] and audit.calls == [] and android.calls == []
 
 
 @pytest.mark.asyncio
@@ -202,7 +202,7 @@ async def test_unknown_server_produces_no_bogus_suggestion(test_db) -> None:
     so no 'Did you mean' hint is appended (empty difflib match set)."""
     del test_db
     inv_id, branch_id = _seed()
-    executor, ida, audit, android = _make_executor()
+    executor, rea, audit, android = _make_executor()
 
     result = await executor.execute(
         investigation_id=inv_id, branch_id=branch_id,
@@ -215,7 +215,7 @@ async def test_unknown_server_produces_no_bogus_suggestion(test_db) -> None:
     assert result.success is False
     assert result.error is not None
     assert "Did you mean" not in result.error
-    assert ida.calls == [] and audit.calls == [] and android.calls == []
+    assert rea.calls == [] and audit.calls == [] and android.calls == []
 
 
 @pytest.mark.asyncio
@@ -224,7 +224,7 @@ async def test_valid_tool_dispatches_and_skips_did_you_mean(test_db) -> None:
     invoked and the 'Did you mean' hint is never applied."""
     del test_db
     inv_id, branch_id = _seed()
-    executor, ida, _audit, _android = _make_executor()
+    executor, rea, _audit, _android = _make_executor()
     # The hard-block limit lookup reads ConfigRegistry; the test DB has
     # no seeded config, so short-circuit it so the dispatch can proceed
     # to the bridge call (which is what this test cares about).
@@ -234,22 +234,22 @@ async def test_valid_tool_dispatches_and_skips_did_you_mean(test_db) -> None:
 
     executor._hard_block_repeat_limit = _no_hard_block  # type: ignore[method-assign]
 
-    # 'ida_headless.binary_metadata' is a real generic-adapter tool; a
-    # valid dispatch must reach ida.forward().
+    # 'rea.binary_overview' is a real rea-adapter tool; a
+    # valid dispatch must reach rea.forward().
     result = await executor.execute(
         investigation_id=inv_id, branch_id=branch_id,
-        command_raw='{"tool": "ida_headless.binary_metadata", "args": {}}',
+        command_raw='{"tool": "rea.binary_overview", "args": {}}',
         at_turn=1,
     )
 
     # Bridge was called -> the adapter-None short-circuit did NOT fire.
-    assert ida.calls != []
-    assert ida.calls[0][0] == "binary_metadata"
+    assert rea.calls != []
+    assert rea.calls[0][0] == "binary_overview"
     # And whatever result text landed, it MUST NOT carry the hint that
     # only the unknown-tool branch adds.
     assert not (result.error and "Did you mean" in result.error)
-    assert result.server_id == "ida_headless"
-    assert result.tool_name == "binary_metadata"
+    assert result.server_id == "rea"
+    assert result.tool_name == "binary_overview"
 
 
 # --------------------------------------------------------------------------

@@ -1040,7 +1040,7 @@ Eliminates a class of "tool never matches anything" loops.
 ### 8.bis.16 absorb() caps on agent-set observables
 
 `absorb()` caps agent-set observables at 10 per turn + 50 total.
-Tool-prefix keys (`audit_mcp:*`, `ida_headless:*`, `_directive.*`)
+Tool-prefix keys (`audit_mcp:*`, `rea:*`, `re_analytics:*`, `_directive.*`)
 are never evicted. `render_case_model` partitions tool readings
 (shown unlimited, capped at 80 display) from agent scratchpad
 (capped at 15 display).

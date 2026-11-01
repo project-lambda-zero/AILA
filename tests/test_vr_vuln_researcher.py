@@ -18,6 +18,7 @@ from aila.modules.vr.agents.vuln_researcher import (
     _PROMPT_VERSION_STORE,
     HonestVulnResearcher,
     _applicable_servers_for_kind,
+    _canonical_evidence_refs_json,
     _decision_to_message_payload,
     _fetch_tool_specs,
     _format_param,
@@ -27,7 +28,6 @@ from aila.modules.vr.agents.vuln_researcher import (
     _prompt_key,
     _render_available_tools_section,
     _render_operator_messages_section,
-    _canonical_evidence_refs_json,
     _render_target_snapshot_section,
     _terminal_outcome_kind,
 )
@@ -47,7 +47,8 @@ from aila.platform.contracts.reasoning import (
 )
 from aila.platform.mcp.middleware.android import AndroidMcpMiddleware
 from aila.platform.mcp.middleware.audit import AuditMcpMiddleware
-from aila.platform.mcp.middleware.ida import IdaMiddleware
+from aila.platform.mcp.middleware.rea import ReaMiddleware
+from aila.platform.mcp.middleware.reverser_belt import ReverserBeltMiddleware
 
 
 class TestCaseStateEncoding:
@@ -77,8 +78,8 @@ class TestCaseStateEncoding:
 class TestDecisionToMessagePayload:
     def test_tool_run(self) -> None:
         cmd = json.dumps({
-            "tool": "ida_headless.decompile",
-            "args": {"address_or_name": "0x140012345"},
+            "tool": "rea.procedure_pseudo_code",
+            "args": {"procedure": "0x140012345"},
         })
         d = ReasoningTurnDecision(
             reasoning="run decompile on the suspect",
@@ -91,8 +92,8 @@ class TestDecisionToMessagePayload:
         assert kind == PayloadKind.TOOL_CALL
         assert payload["command"] == cmd
         parsed = json.loads(payload["command"])
-        assert parsed["tool"] == "ida_headless.decompile"
-        assert parsed["args"]["address_or_name"] == "0x140012345"
+        assert parsed["tool"] == "rea.procedure_pseudo_code"
+        assert parsed["args"]["procedure"] == "0x140012345"
         assert "address_or_name=0x140012345" in payload["script_content"]
         assert payload["reasoning"] == "run decompile on the suspect"
 
@@ -354,27 +355,28 @@ class TestRenderOperatorMessagesSection:
 class TestRenderAvailableToolsSection:
     def test_includes_both_servers(self) -> None:
         out = _render_available_tools_section()
-        assert "## ida_headless" in out
+        assert "## rea" in out
+        assert "## reverser_belt" in out
         assert "## audit_mcp" in out
         assert "# Available tools" in out
 
     def test_marks_specialized_tools(self) -> None:
         out = _render_available_tools_section()
-        # Specialized adapter: decompile
-        assert "`ida_headless.decompile` [structured]" in out
+        # Specialized adapter: procedure_pseudo_code
+        assert "`rea.procedure_pseudo_code` [structured]" in out
         # Specialized adapter: taint_paths_to
         assert "`audit_mcp.taint_paths_to` [structured]" in out
 
     def test_lists_generic_tools_without_marker(self) -> None:
         out = _render_available_tools_section()
-        # No specialized adapter: list_binaries (generic only)
-        assert "`ida_headless.list_binaries`\n" in out
+        # No specialized adapter: search_strings (generic only)
+        assert "`rea.search_strings`\n" in out
         # Not marked as [structured]
-        line_with_list_binaries = next(
+        line_with_search_strings = next(
             line for line in out.splitlines()
-            if "ida_headless.list_binaries" in line
+            if "rea.search_strings" in line
         )
-        assert "[structured]" not in line_with_list_binaries
+        assert "[structured]" not in line_with_search_strings
 
     def test_includes_tool_count_per_server(self) -> None:
         out = _render_available_tools_section()
@@ -382,7 +384,8 @@ class TestRenderAvailableToolsSection:
         # (``-- live schema`` or ``-- schema unavailable``). The exact
         # count is intentionally elastic -- bumping a tool catalog
         # shouldn't churn this test.
-        assert re.search(r"## ida_headless \(\d+ tools -- ", out)
+        assert re.search(r"## rea \(\d+ tools -- ", out)
+        assert re.search(r"## reverser_belt \(\d+ tools -- ", out)
         assert re.search(r"## audit_mcp \(\d+ tools -- ", out)
 
 
@@ -488,10 +491,10 @@ class TestRenderAvailableToolsWithSchemas:
         assert "`audit_mcp." in out
 
     def test_non_applicable_server_suppressed_even_with_specs(self) -> None:
-        """source_repo kind hides ida_headless even when specs are present."""
+        """source_repo kind hides rea even when specs are present."""
         specs = {
-            "ida_headless": [
-                {"name": "decompile", "params": [], "required": []},
+            "rea": [
+                {"name": "procedure_pseudo_code", "params": [], "required": []},
             ],
         }
         out = _render_available_tools_section(
@@ -500,12 +503,12 @@ class TestRenderAvailableToolsWithSchemas:
         )
         # Server section for a non-applicable kind is silently
         # suppressed entirely; an observed regression was that
-        # surfacing "NOT APPLICABLE: ida_headless" still gave the agent
-        # a hook to think about IDA tools on a source_repo target.
+        # surfacing "NOT APPLICABLE: rea" still gave the agent
+        # a hook to think about binary tools on a source_repo target.
         # Contract is now total absence.
-        assert "## ida_headless" not in out
+        assert "## rea" not in out
         # Don't render the signature for a suppressed server
-        assert "ida_headless.decompile(" not in out
+        assert "rea.procedure_pseudo_code(" not in out
 
 
 class TestFetchToolSpecs:
@@ -533,14 +536,19 @@ class TestFetchToolSpecs:
     @pytest.mark.asyncio
     async def test_source_repo_only_hits_audit_mcp(self, monkeypatch: pytest.MonkeyPatch) -> None:
         audit_calls: list[str] = []
-        ida_calls: list[str] = []
+        rea_calls: list[str] = []
+        reanalytics_calls: list[str] = []
 
         async def fake_audit_specs(self: object, client: object) -> list[dict]:
             audit_calls.append("hit")
             return [{"name": "read_function", "params": [], "required": []}]
 
-        async def fake_ida_specs(self: object, client: object) -> list[dict]:
-            ida_calls.append("hit")
+        async def fake_rea_specs(self: object, client: object) -> list[dict]:
+            rea_calls.append("hit")
+            return []
+
+        async def fake_reanalytics_specs(self: object, client: object) -> list[dict]:
+            reanalytics_calls.append("hit")
             return []
 
         monkeypatch.setattr(
@@ -548,68 +556,98 @@ class TestFetchToolSpecs:
             fake_audit_specs,
         )
         monkeypatch.setattr(
-            "aila.platform.mcp.middleware.ida.IdaMiddleware.list_tool_specs",
-            fake_ida_specs,
+            "aila.platform.mcp.middleware.rea.ReaMiddleware.list_tool_specs",
+            fake_rea_specs,
+        )
+        monkeypatch.setattr(
+            "aila.platform.mcp.middleware.reverser_belt.ReverserBeltMiddleware.list_tool_specs",
+            fake_reanalytics_specs,
         )
 
         out = await _fetch_tool_specs(target_kind="source_repo")
         assert "audit_mcp" in out
-        assert "ida_headless" not in out
+        assert "rea" not in out
+        assert "reverser_belt" not in out
         assert audit_calls == ["hit"]
-        assert ida_calls == []
+        assert rea_calls == []
+        assert reanalytics_calls == []
 
     @pytest.mark.asyncio
-    async def test_binary_only_hits_ida(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_binary_only_hits_rea_pair(self, monkeypatch: pytest.MonkeyPatch) -> None:
         audit_calls: list[str] = []
-        ida_calls: list[str] = []
+        rea_calls: list[str] = []
+        reanalytics_calls: list[str] = []
 
         async def fake_audit_specs(self: object, client: object) -> list[dict]:
             audit_calls.append("hit")
             return []
 
-        async def fake_ida_specs(self: object, client: object) -> list[dict]:
-            ida_calls.append("hit")
-            return [{"name": "decompile", "params": [], "required": []}]
+        async def fake_rea_specs(self: object, client: object) -> list[dict]:
+            rea_calls.append("hit")
+            return [{"name": "procedure_pseudo_code", "params": [], "required": []}]
+
+        async def fake_reanalytics_specs(self: object, client: object) -> list[dict]:
+            reanalytics_calls.append("hit")
+            return [{"name": "capa_scan", "params": [], "required": []}]
 
         monkeypatch.setattr(
             "aila.platform.mcp.middleware.audit.AuditMcpMiddleware.list_tool_specs",
             fake_audit_specs,
         )
         monkeypatch.setattr(
-            "aila.platform.mcp.middleware.ida.IdaMiddleware.list_tool_specs",
-            fake_ida_specs,
+            "aila.platform.mcp.middleware.rea.ReaMiddleware.list_tool_specs",
+            fake_rea_specs,
+        )
+        monkeypatch.setattr(
+            "aila.platform.mcp.middleware.reverser_belt.ReverserBeltMiddleware.list_tool_specs",
+            fake_reanalytics_specs,
         )
 
         out = await _fetch_tool_specs(target_kind="native_binary")
-        assert "ida_headless" in out
+        assert "rea" in out
+        assert "reverser_belt" in out
         assert "audit_mcp" not in out
-        assert ida_calls == ["hit"]
+        assert rea_calls == ["hit"]
+        assert reanalytics_calls == ["hit"]
         assert audit_calls == []
 
 
     @pytest.mark.asyncio
-    async def test_android_apk_hits_all_three_bridges(
+    async def test_android_apk_hits_all_four_bridges(
         self, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        """android_apk targets now poll ALL three bridges: android_mcp
+        """android_apk targets now poll ALL FOUR bridges: android_mcp
         (APK-level facets), audit_mcp (source-graph over the jadx-
-        decompiled Java tree), AND ida_headless (native .so libraries
-        under lib/<abi>/). See _applicable_servers_for_kind in
-        src/aila/modules/vr/agents/vuln_researcher.py -- ida_headless
-        was intentionally added because excluding it forced agents to
-        hallucinate android_mcp calls for native analysis.
+        decompiled Java tree), AND the binary pair rea + reverser_belt
+        (native .so libraries under lib/<abi>/). See
+        _applicable_servers_for_kind in
+        src/aila/modules/vr/agents/vuln_researcher.py -- the binary
+        pair is intentionally included because excluding it forced
+        agents to hallucinate android_mcp calls for native analysis.
         """
         audit_calls: list[str] = []
-        ida_calls: list[str] = []
+        rea_calls: list[str] = []
+        reanalytics_calls: list[str] = []
         android_calls: list[str] = []
 
         async def fake_audit_specs(self: object, client: object) -> list[dict]:
             audit_calls.append("hit")
             return [{"name": "semantic_search", "params": [], "required": []}]
 
-        async def fake_ida_specs(self: object, client: object) -> list[dict]:
-            ida_calls.append("hit")
-            return [{"name": "decompile", "params": [], "required": []}]
+        async def fake_rea_specs(self: object, client: object) -> list[dict]:
+            rea_calls.append("hit")
+            return [
+                {"name": "procedure_pseudo_code", "params": [], "required": []},
+                {"name": "procedure_assembly", "params": [], "required": []},
+                {"name": "xrefs", "params": [], "required": []},
+            ]
+
+        async def fake_reanalytics_specs(self: object, client: object) -> list[dict]:
+            reanalytics_calls.append("hit")
+            return [
+                {"name": "capa_scan", "params": [], "required": []},
+                {"name": "interprocedural_taint", "params": [], "required": []},
+            ]
 
         async def fake_android_specs(self: object, client: object) -> list[dict]:
             android_calls.append("hit")
@@ -623,7 +661,10 @@ class TestFetchToolSpecs:
             AuditMcpMiddleware, "list_tool_specs", fake_audit_specs,
         )
         monkeypatch.setattr(
-            IdaMiddleware, "list_tool_specs", fake_ida_specs,
+            ReaMiddleware, "list_tool_specs", fake_rea_specs,
+        )
+        monkeypatch.setattr(
+            ReverserBeltMiddleware, "list_tool_specs", fake_reanalytics_specs,
         )
         monkeypatch.setattr(
             AndroidMcpMiddleware, "list_tool_specs", fake_android_specs,
@@ -632,10 +673,12 @@ class TestFetchToolSpecs:
         out = await _fetch_tool_specs(target_kind="android_apk")
         assert "android_mcp" in out
         assert "audit_mcp" in out
-        assert "ida_headless" in out
+        assert "rea" in out
+        assert "reverser_belt" in out
         assert android_calls == ["hit"]
         assert audit_calls == ["hit"]
-        assert ida_calls == ["hit"]
+        assert rea_calls == ["hit"]
+        assert reanalytics_calls == ["hit"]
         # Each bridge contributes its full filtered catalog.
         android_names = {s["name"] for s in out["android_mcp"]}
         assert "apktool_decode" in android_names
@@ -643,8 +686,10 @@ class TestFetchToolSpecs:
         assert "verify_capabilities" in android_names
         audit_names = {s["name"] for s in out["audit_mcp"]}
         assert "semantic_search" in audit_names
-        ida_names = {s["name"] for s in out["ida_headless"]}
-        assert "decompile" in ida_names
+        rea_names = {s["name"] for s in out["rea"]}
+        assert "procedure_pseudo_code" in rea_names
+        reanalytics_names = {s["name"] for s in out["reverser_belt"]}
+        assert "capa_scan" in reanalytics_names
 
 
 class TestApplicableServersForKind:
@@ -653,8 +698,10 @@ class TestApplicableServersForKind:
     def test_source_repo_returns_audit_only(self) -> None:
         assert _applicable_servers_for_kind("source_repo") == {"audit_mcp"}
 
-    def test_native_binary_returns_ida_only(self) -> None:
-        assert _applicable_servers_for_kind("native_binary") == {"ida_headless"}
+    def test_native_binary_returns_rea_pair_only(self) -> None:
+        assert _applicable_servers_for_kind("native_binary") == {
+            "rea", "reverser_belt",
+        }
 
     def test_legacy_apk_falls_through_to_unknown(self) -> None:
         # "apk" is no longer a first-class kind (superseded by
@@ -664,23 +711,25 @@ class TestApplicableServersForKind:
         # kind. Live rows use "android_apk"; the legacy string is only
         # exercised by this drift test.
         out = _applicable_servers_for_kind("apk")
-        assert "ida_headless" in out
+        assert "rea" in out
+        assert "reverser_belt" in out
         assert "audit_mcp" in out
         assert "android_mcp" in out
 
-    def test_android_apk_returns_all_three_bridges(self) -> None:
+    def test_android_apk_returns_all_four_bridges(self) -> None:
         # android_apk needs android_mcp (APK-level facets), audit_mcp
-        # (source-graph over jadx-decompiled Java) AND ida_headless
-        # (native .so files under lib/<abi>/).
+        # (source-graph over jadx-decompiled Java) AND the binary pair
+        # rea + reverser_belt (native .so files under lib/<abi>/).
         assert _applicable_servers_for_kind("android_apk") == {
-            "android_mcp", "audit_mcp", "ida_headless",
+            "android_mcp", "audit_mcp", "rea", "reverser_belt",
         }
 
     def test_unknown_kind_defaults_to_every_bridge(self) -> None:
         out = _applicable_servers_for_kind("totally_made_up")
         assert "android_mcp" in out
         assert "audit_mcp" in out
-        assert "ida_headless" in out
+        assert "rea" in out
+        assert "reverser_belt" in out
 
 
 class TestMcpFamilyRuleForKind:
@@ -688,7 +737,7 @@ class TestMcpFamilyRuleForKind:
     right MCP family for the target kind.
     """
 
-    def test_android_apk_with_both_handles_names_all_three_servers(self) -> None:
+    def test_android_apk_with_both_handles_names_all_four_servers(self) -> None:
         rule = _mcp_family_rule_for_kind(
             "android_apk",
             {
@@ -700,19 +749,21 @@ class TestMcpFamilyRuleForKind:
         assert "android_mcp" in rule
         assert "idx-abc123" in rule
         assert "/tmp/sampleapp.apk" in rule
-        # ida_headless is now intentionally named for NATIVE LIBRARY
+        # The binary pair is intentionally named for NATIVE LIBRARY
         # analysis on lib/<abi>/*.so. Excluding it caused agents to
         # skip native analysis entirely on APK targets.
-        assert "ida_headless" in rule
+        assert "**rea**" in rule
+        assert "**reverser_belt**" in rule
 
     def test_android_apk_missing_handles_still_emits_rule(self) -> None:
         rule = _mcp_family_rule_for_kind("android_apk", {})
         assert "audit_mcp" in rule
         assert "android_mcp" in rule
-        # ida_headless is named unconditionally for android_apk (see
+        # The binary pair is named unconditionally for android_apk (see
         # the sibling test above); the RULE talks about NATIVE
         # LIBRARY analysis for every android_apk target.
-        assert "ida_headless" in rule
+        assert "**rea**" in rule
+        assert "**reverser_belt**" in rule
 
     def test_legacy_apk_kind_has_no_rule(self) -> None:
         # The legacy "apk" string is not in _mcp_family_rule_for_kind's

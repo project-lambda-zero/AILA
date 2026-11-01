@@ -196,10 +196,11 @@ async def test_malware_report_count_accepts_team_id_kwarg() -> None:
 
 
 def test_vr_health_checks_covers_all_mcp_dependencies() -> None:
-    """VR depends on ida_headless, audit_mcp, and android_mcp."""
+    """VR depends on rea, reverser_belt, audit_mcp, and android_mcp."""
     checks = VRModule().health_checks()
     assert set(checks.keys()) == {
-        "ida_headless_reachability",
+        "rea_reachability",
+        "reverser_belt_reachability",
         "audit_mcp_reachability",
         "android_mcp_reachability",
     }
@@ -208,10 +209,11 @@ def test_vr_health_checks_covers_all_mcp_dependencies() -> None:
 
 
 def test_malware_health_checks_covers_all_mcp_dependencies() -> None:
-    """Malware depends on ida_headless_exp and audit_mcp."""
+    """Malware depends on rea, reverser_belt, and audit_mcp."""
     checks = MalwareModule().health_checks()
     assert set(checks.keys()) == {
-        "ida_headless_exp_reachability",
+        "rea_reachability",
+        "reverser_belt_reachability",
         "audit_mcp_reachability",
     }
     for probe in checks.values():
@@ -244,11 +246,11 @@ async def test_health_probe_returns_down_when_mcp_unreachable(monkeypatch) -> No
         _fake_make_bridge,
     )
 
-    probe = vr_module._mcp_health_probe("vr", "ida_headless")
+    probe = vr_module._mcp_health_probe("vr", "rea")
     result = await probe()
     assert isinstance(result, dict)
     assert result["status"] == "down"
-    assert "ida_headless" in str(result["detail"])
+    assert "rea" in str(result["detail"])
 
 
 # ---------------------------------------------------------------------------
@@ -276,8 +278,8 @@ async def test_vr_system_summary_result_serializable_as_module_summary() -> None
 @pytest.mark.parametrize(
     "module_cls,server_ids",
     [
-        (VRModule, {"ida_headless", "audit_mcp", "android_mcp"}),
-        (MalwareModule, {"ida_headless_exp", "audit_mcp"}),
+        (VRModule, {"rea", "reverser_belt", "audit_mcp", "android_mcp"}),
+        (MalwareModule, {"rea", "reverser_belt", "audit_mcp"}),
     ],
 )
 def test_health_check_names_encode_server_id(module_cls, server_ids: set[str]) -> None:
