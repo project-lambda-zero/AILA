@@ -83,7 +83,8 @@ Every module must provide:
 | `services/` | Domain service layer |
 | `reporting/` | Report generation |
 
-Optional: `api_router.py`, `db_models/`, `frontend/`. The full contract is
+Optional: `api_router.py`, `db_models/`. The module's UI is registered in the
+shell (`frontend/src/console/nav.ts`), not inside the module. The full contract is
 [`docs/MODULE_STANDARD.md`](MODULE_STANDARD.md) (v2.1).
 
 ### Working reference
@@ -167,7 +168,7 @@ Every PR must pass all five gates. Run them locally before pushing.
 | 2 | Honesty audit | `python -m aila.tools.honesty_audit src/aila --whitelist honesty_whitelist.py` |
 | 3 | Liveness audit | `python -m aila.tools.liveness_audit src/aila --whitelist liveness_whitelist.py` |
 | 4 | Lint | `python -m ruff check src/aila/` |
-| 5 | Frontend typecheck (if frontend changed) | `pnpm -r run type-check` (workspace-wide) |
+| 5 | Frontend typecheck and lint (if frontend changed) | `pnpm -r run type-check` (workspace-wide) and `pnpm --filter @aila/shell run lint` |
 
 The honesty audit must report zero findings. Whitelist entries in
 [`honesty_whitelist.py`](../honesty_whitelist.py) require an inline comment
@@ -302,45 +303,35 @@ These are the patterns that consistently require human correction:
 
 ## 10. Frontend Conventions
 
-The frontend is React + Vite + TypeScript with Tailwind CSS v4.
+The frontend is a single React + Vite + TypeScript SPA (`@aila/shell` in
+`frontend/`) styled with plain CSS custom properties. There is no CSS
+framework and no per-module frontend package. The full standard is
+[`docs/FRONTEND_MODULE_STANDARD.md`](FRONTEND_MODULE_STANDARD.md).
 
-### Design system
+### Styling
 
-Use the platform design system everywhere:
-
-- Backgrounds: `bg-base`, `bg-surface`, `bg-elevated`
-- Text: `text-text`, `text-text-muted`, `text-accent`
-- Borders: `border-border`
-- CSS variables: `var(--color-*)` for dynamic theming
-- Components: `AilaCard`, `AilaBadge`, `EmptyState`, shadcn components
-
-### Rules
-
-- **No custom CSS files.** Tailwind utilities + CSS variables only.
-- **No hardcoded hex colors.** Use CSS variables or Tailwind tokens.
-- **No Tailwind arbitrary values** like `h-[720px]` or `bg-[#131313]`.
-  Tailwind v4 does not generate them. Use inline `style={{ height: 720 }}`.
-- **No `position: fixed` overlay layouts.** Pages render inside AppShell's
-  content area.
-- **CSS variables in SVG:** Recharts `fill` attributes do not resolve
-  `var(--color-*)`. Use the `useThemeChartColors()` hook to resolve hex values
-  via `getComputedStyle`.
+- Design tokens and themes live in `frontend/src/styles/globals.css`
+  (plain CSS custom properties, `[data-theme]` blocks).
+- Component styles are inline, built with `css()` from
+  `frontend/src/console/css.ts`, referencing tokens such as `var(--text-faint)`.
+- No hardcoded hex colors in new components; use the tokens.
+- Do not add a CSS framework or a second styling convention.
+- Windows (pages, overlays, floaters) use `ConsoleWindow`
+  (`frontend/src/console/window/`); pages do not draw their own frame.
 
 ### Module frontend contribution
 
-Modules contribute UI via `ModuleFrontendSpec` in `frontend/spec.ts`:
+A module surface is added inside the shell, not in the module directory:
 
-```typescript
-export const frontendSpec: ModuleFrontendSpec = {
-  moduleId: "my_module",
-  nav: [{ id: "my_module.home", slot: "sidebar.main", label: "My Module",
-          to: "/my_module", order: 100 }],
-  routes: [{ id: "my_module.home", path: "/my_module", title: "My Module",
-             nav: true, slot: "page.full", page: MyModulePage }],
-};
-```
+1. Add a `ModuleDef` to `MODULES` in `frontend/src/console/nav.ts`.
+2. Add each page either as a `PageConfig` in
+   `frontend/src/console/pages/configs.ts` (declarative `DataPage`) or as a
+   lazily loaded component registered in `BESPOKE` in
+   `frontend/src/console/pages/registry.tsx`. Page keys are
+   `<moduleKey>:<section>`.
+3. Add API hooks and types under `frontend/src/api/`.
 
-See `src/aila/modules/hello_world/frontend/` for a working example.
+See `docs/FRONTEND_MODULE_STANDARD.md` for the page, wizard, and widget model.
 
 ---
 

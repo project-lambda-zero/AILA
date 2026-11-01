@@ -1440,12 +1440,24 @@ def state_investigation_emit(
                             "falsifier_factory failed inv=%s: %s",
                             investigation_id, _exc,
                         )
+                # The module's outcome-kind polarity rides on its bound
+                # dispatcher class as ``claim_verification``. The binding
+                # is duck-typed (``type[Any] | None``), so a missing class
+                # or a dispatcher with no hook both mean "no polarity" and
+                # the aggregate promotes nothing.
+                _claim_verification = getattr(
+                    bindings.outcome_dispatcher_cls, "claim_verification", None,
+                )
                 _aggregate_result = await _aggregate(
                     investigation_id,
                     outcome_model=bindings.outcome_model,
                     branch_pool=_branch_pool,
                     falsifier=_falsifier,
                     ledger=LedgerService(),
+                    polarity_fn=(
+                        _claim_verification.polarity
+                        if _claim_verification is not None else None
+                    ),
                     branch_model=bindings.branch_model,
                 )
                 _log.info(

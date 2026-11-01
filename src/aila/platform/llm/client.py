@@ -43,6 +43,7 @@ from ..exceptions import AILAError
 from ..observability import GEN_AI_OPERATION_CHAT, gen_ai_span
 from .cancellation import LLMCancelledError, is_run_cancelled
 from .config import LLMConfigProvider
+from .correlation import current_module_id, resolve_run_id
 from .errors import LLMError
 from .pipeline import PipelineRunner
 
@@ -745,6 +746,9 @@ class AilaLLMClient:
                 disabled=True,
             )
 
+        # #288: a call inside an investigation's correlation scope is that
+        # investigation's spend even when the caller omitted run_id.
+        run_id = resolve_run_id(run_id)
         routing = await self._config.resolve_routing(task_type)
         # §309 -- narrow the routing max_tokens to a per-call ceiling when the
         # caller supplies one; never raise above the operator-configured cap.
@@ -759,6 +763,7 @@ class AilaLLMClient:
             model=routing.model_id,
             task_type=task_type,
             run_id=run_id,
+            module_id=current_module_id(),
         ) as _span:
             response = await self._call_with_retry(
                 routing=routing,
@@ -819,6 +824,7 @@ class AilaLLMClient:
                 disabled=True,
             )
 
+        run_id = resolve_run_id(run_id)  # #288 (see :meth:`chat`)
         routing = await self._config.resolve_routing(task_type)
         # fix §309 -- apply per-call ceiling by cloning the frozen
         # LLMRouting dataclass with the smaller max_tokens. Never raise
@@ -851,6 +857,7 @@ class AilaLLMClient:
             model=routing.model_id,
             task_type=task_type,
             run_id=run_id,
+            module_id=current_module_id(),
             attributes={"gen_ai.request.response_format": "json_schema"},
         ) as _span:
             try:
@@ -975,11 +982,13 @@ class AilaLLMClient:
         # cheap. The span here is the parent for every correction
         # attempt so total accumulated usage lands on ONE record.
         _routing = await self._config.resolve_routing(task_type)
+        run_id = resolve_run_id(run_id)  # #288 (see :meth:`chat`)
         with gen_ai_span(
             GEN_AI_OPERATION_CHAT,
             model=_routing.model_id,
             task_type=task_type,
             run_id=run_id,
+            module_id=current_module_id(),
             attributes={
                 "gen_ai.request.response_format": "json_schema",
                 "aila.chat_structured.model_class": model_class.__name__,
@@ -1248,151 +1257,16 @@ class AilaLLMClient:
                     run_id=run_id or "",
                     team_id=team_id or "",
                 )
-                # Cost recording AFTER successful call (Phase 122)
-                if self.cost_tracker is not None:
-                    self.cost_tracker.record(run_id, response.usage)
-                    # #155: fold provider-reported cache-token fields into
-                    # RunMemory so the /cost/runs/{run_id} surface can
-                    # report the cache-hit-rate gauge. Best-effort; the
-                    # helper swallows RunMemory backend errors at DEBUG.
-                    from aila.platform.llm.prompt_layout import (
-                        record_cache_metrics as _record_cache_metrics,
-                    )
-                    _record_cache_metrics(
-                        getattr(self.cost_tracker, "_mem", None),
-                        run_id,
-                        response.usage,
-                    )
-
-                # --- Durable cost recording (Phase 175 / D-05) ---
-                _cost_usd = 0.0
-                _pricing_configured = False
-                _prompt_tokens = response.usage.get("prompt_tokens", 0)
-                _completion_tokens = response.usage.get("completion_tokens", 0)
-                _call_duration = _time_mod.perf_counter() - _call_start
-
-                # Step 1: Calculate dollar cost (separate try/except)
-                try:
-                    from aila.platform.llm.cost import calculate_cost_usd
-                    _cost_usd, _pricing_configured = await calculate_cost_usd(
-                        routing.model_id, _prompt_tokens, _completion_tokens,
-                        self._config._registry,  # LLMConfigProvider._registry is ConfigRegistry
-                    )
-                except _COST_TELEMETRY_ERRORS:
-                    import structlog
-                    structlog.get_logger(__name__).warning(
-                        "cost_calculation_failed", run_id=run_id, model=routing.model_id,
-                    )
-
-                # Step 2: Persist to DB (separate try/except, runs even if calculation failed)
-                # registry passed so persist_cost_record can trigger budget check (Phase 175 / D-03)
-                try:
-                    from aila.platform.llm.cost import persist_cost_record
-                    # Plan 176e: capture truncated prompt/response + duration for
-                    # the admin LLM interaction log. Join only the last user
-                    # message so we don't mirror the full system prompt, and
-                    # gracefully handle non-string content lists (OpenAI tool
-                    # messages) by ignoring them for preview purposes.
-                    _last_user_text: str | None = None
-                    for _msg in reversed(messages):
-                        if not isinstance(_msg, dict):
-                            continue
-                        if _msg.get("role") == "user":
-                            _content = _msg.get("content")
-                            if isinstance(_content, str):
-                                _last_user_text = _content
-                                break
-                    _response_text: str | None = None
-                    try:
-                        _response_text = response.content if isinstance(response.content, str) else None
-                    except AttributeError:
-                        _response_text = None
-                    await persist_cost_record(
-                        run_id=run_id,
-                        model_id=routing.model_id,
-                        task_type=routing.task_type,
-                        team_id=team_id,
-                        prompt_tokens=_prompt_tokens,
-                        completion_tokens=_completion_tokens,
-                        cost_usd=_cost_usd,
-                        registry=self._config._registry,  # LLMConfigProvider._registry is ConfigRegistry
-                        prompt_preview=_last_user_text,
-                        response_preview=_response_text,
-                        duration_ms=int(_call_duration * 1000),
-                        status="ok",
-                    )
-                except _COST_TELEMETRY_ERRORS:
-                    import structlog
-                    structlog.get_logger(__name__).warning(
-                        "cost_persistence_failed", run_id=run_id, model=routing.model_id,
-                    )
-
-                # #39 replay-grade capture: LLMCostRecord stores only 200-char
-                # previews, which is enough for the operator interaction list
-                # but insufficient to REPLAY a turn. Persist the assembled
-                # prompt messages (with any tools spec) and the full response
-                # body to the hash-chained platform journal under
-                # kind="llm_prompt"/"llm_response". Correlation ids join the
-                # rows back to the same investigation/branch/turn as the cost
-                # record. Best-effort: replay-trail failure never blocks the
-                # LLM call path (record_llm_call_bodies absorbs its own
-                # errors and warns).
-                try:
-                    from aila.platform.services.replay import record_llm_call_bodies
-
-                    await record_llm_call_bodies(
-                        run_id=run_id,
-                        model_id=routing.model_id,
-                        task_type=routing.task_type,
-                        team_id=team_id,
-                        messages=messages,
-                        tools=tools,
-                        response_text=_response_text,
-                        usage=response.usage,
-                        duration_ms=int(_call_duration * 1000),
-                        status="ok",
-                    )
-                except _COST_TELEMETRY_ERRORS:
-                    import structlog
-                    structlog.get_logger(__name__).warning(
-                        "llm_replay_capture_failed",
-                        run_id=run_id,
-                        model=routing.model_id,
-                    )
-
-                # Step 3: Missing pricing warning (separate try/except)
-                if not _pricing_configured:
-                    try:
-                        from aila.platform.llm.cost import emit_missing_pricing_notification
-                        await emit_missing_pricing_notification(routing.model_id)
-                    except _COST_TELEMETRY_ERRORS:
-                        pass  # emit_missing_pricing_notification already swallows; belt-and-suspenders
-
-                # Step 4: Prometheus counter (separate try/except)
-                try:
-                    from aila.api.metrics import LLM_COST_TOTAL
-                    LLM_COST_TOTAL.labels(model=routing.model_id).inc(_cost_usd)
-                except _COST_TELEMETRY_ERRORS as exc:
-                    # Prometheus counter is best-effort telemetry; never fail the LLM call
-                    # because metrics emission failed.
-                    logger.debug("LLM cost counter update failed: %s", exc)
-
-                # Step 5: Domain event with real duration (separate try/except)
-                try:
-                    from aila.platform.events.domain_events import LlmCallCompleted, LlmCallCompletedPayload
-                    if self.bus is not None:
-                        self.bus.publish(LlmCallCompleted(
-                            team_id=team_id,
-                            payload=LlmCallCompletedPayload(
-                                model=routing.model_id,
-                                tokens=_prompt_tokens + _completion_tokens,
-                                cost=_cost_usd,
-                                duration=_call_duration,
-                            ),
-                        ))
-                except _COST_TELEMETRY_ERRORS:
-                    pass
-
+                await self._record_call_outcome(
+                    response=response,
+                    routing=routing,
+                    messages=messages,
+                    tools=tools,
+                    run_id=run_id,
+                    team_id=team_id,
+                    call_start=_call_start,
+                    journal_bodies=True,
+                )
                 _record_llm_ok(routing.base_url)
                 return _enrich_response(response, ctx)
             except LLMCancelledError:
@@ -1604,6 +1478,188 @@ class AilaLLMClient:
             retryable=False,
         )
 
+    async def _record_call_outcome(
+        self,
+        *,
+        response: LLMResponse,
+        routing: Any,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        run_id: str | None,
+        team_id: str | None,
+        call_start: float,
+        journal_bodies: bool,
+    ) -> None:
+        """Record the accounting side of one successful model call.
+
+        Shared by :meth:`_call_with_retry` (the turn's own call) and
+        :meth:`_inner_call` (gate consensus / verify, #289). Two hand-written
+        copies of this block had drifted, so a nested call reached only a
+        subset of the sinks. Both paths now write the same run-budget usage,
+        durable ``LLMCostRecord`` (stamped with ``current_module_id()``),
+        missing-pricing notice, Prometheus spend counter and
+        ``llm.call.completed`` event.
+
+        ``journal_bodies`` selects the replay-grade prompt / response capture
+        and is True only for the turn's own call. The transcript and corpus
+        builders take the newest ``llm_prompt`` / ``llm_response`` journal row
+        of a turn as THE turn's request and response, so a consensus candidate
+        or a verifier answer journaled the same way would shadow the accepted
+        response. A nested call's content stays covered by its
+        ``AuditSealRecord`` and its cost-record previews.
+
+        Every sink is best-effort and independent: a failure in one is logged
+        and never blocks the others or turns a good response into a retried
+        :class:`LLMError` (see :data:`_COST_TELEMETRY_ERRORS`).
+        """
+        # Cost recording AFTER successful call (Phase 122)
+        if self.cost_tracker is not None:
+            try:
+                self.cost_tracker.record(run_id, response.usage)
+                # #155: fold provider-reported cache-token fields into
+                # RunMemory so the /cost/runs/{run_id} surface can
+                # report the cache-hit-rate gauge. Best-effort; the
+                # helper swallows RunMemory backend errors at DEBUG.
+                from aila.platform.llm.prompt_layout import (
+                    record_cache_metrics as _record_cache_metrics,
+                )
+                _record_cache_metrics(
+                    getattr(self.cost_tracker, "_mem", None),
+                    run_id,
+                    response.usage,
+                )
+            except _COST_TELEMETRY_ERRORS as exc:
+                logger.debug("cost_tracker.record failed: %s", exc)
+
+        # --- Durable cost recording (Phase 175 / D-05) ---
+        cost_usd = 0.0
+        pricing_configured = False
+        prompt_tokens = response.usage.get("prompt_tokens", 0)
+        completion_tokens = response.usage.get("completion_tokens", 0)
+        duration_s = _time_mod.perf_counter() - call_start
+        duration_ms = int(duration_s * 1000)
+        # Plan 176e: capture truncated prompt/response + duration for the
+        # admin LLM interaction log. Join only the last user message so we
+        # don't mirror the full system prompt, and gracefully handle
+        # non-string content lists (OpenAI tool messages) by ignoring them
+        # for preview purposes.
+        last_user_text: str | None = None
+        for msg in reversed(messages):
+            if not isinstance(msg, dict):
+                continue
+            if msg.get("role") == "user":
+                content = msg.get("content")
+                if isinstance(content, str):
+                    last_user_text = content
+                    break
+        response_text = response.content if isinstance(response.content, str) else None
+
+        # Step 1: Calculate dollar cost (separate try/except)
+        try:
+            from aila.platform.llm.cost import calculate_cost_usd
+            cost_usd, pricing_configured = await calculate_cost_usd(
+                routing.model_id, prompt_tokens, completion_tokens,
+                self._config._registry,  # LLMConfigProvider._registry is ConfigRegistry
+            )
+        except _COST_TELEMETRY_ERRORS:
+            import structlog
+            structlog.get_logger(__name__).warning(
+                "cost_calculation_failed", run_id=run_id, model=routing.model_id,
+            )
+
+        # Step 2: Persist to DB (separate try/except, runs even if calculation failed)
+        # registry passed so persist_cost_record can trigger budget check (Phase 175 / D-03)
+        try:
+            from aila.platform.llm.cost import persist_cost_record
+            await persist_cost_record(
+                run_id=run_id,
+                model_id=routing.model_id,
+                task_type=routing.task_type,
+                team_id=team_id,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                cost_usd=cost_usd,
+                registry=self._config._registry,  # LLMConfigProvider._registry is ConfigRegistry
+                prompt_preview=last_user_text,
+                response_preview=response_text,
+                duration_ms=duration_ms,
+                status="ok",
+            )
+        except _COST_TELEMETRY_ERRORS:
+            import structlog
+            structlog.get_logger(__name__).warning(
+                "cost_persistence_failed", run_id=run_id, model=routing.model_id,
+            )
+
+        if journal_bodies:
+            # #39 replay-grade capture: LLMCostRecord stores only 200-char
+            # previews, which is enough for the operator interaction list
+            # but insufficient to REPLAY a turn. Persist the assembled
+            # prompt messages (with any tools spec) and the full response
+            # body to the hash-chained platform journal under
+            # kind="llm_prompt"/"llm_response". Correlation ids join the
+            # rows back to the same investigation/branch/turn as the cost
+            # record. Best-effort: replay-trail failure never blocks the
+            # LLM call path (record_llm_call_bodies absorbs its own
+            # errors and warns).
+            try:
+                from aila.platform.services.replay import record_llm_call_bodies
+
+                await record_llm_call_bodies(
+                    run_id=run_id,
+                    model_id=routing.model_id,
+                    task_type=routing.task_type,
+                    team_id=team_id,
+                    messages=messages,
+                    tools=tools,
+                    response_text=response_text,
+                    usage=response.usage,
+                    duration_ms=duration_ms,
+                    status="ok",
+                )
+            except _COST_TELEMETRY_ERRORS:
+                import structlog
+                structlog.get_logger(__name__).warning(
+                    "llm_replay_capture_failed",
+                    run_id=run_id,
+                    model=routing.model_id,
+                )
+
+        # Step 3: Missing pricing warning (separate try/except)
+        if not pricing_configured:
+            try:
+                from aila.platform.llm.cost import emit_missing_pricing_notification
+                await emit_missing_pricing_notification(routing.model_id)
+            except _COST_TELEMETRY_ERRORS as exc:
+                # emit_missing_pricing_notification already swallows; belt-and-suspenders
+                logger.debug("missing-pricing notification failed: %s", exc)
+
+        # Step 4: Prometheus counter (separate try/except)
+        try:
+            from aila.api.metrics import LLM_COST_TOTAL
+            LLM_COST_TOTAL.labels(model=routing.model_id).inc(cost_usd)
+        except _COST_TELEMETRY_ERRORS as exc:
+            # Prometheus counter is best-effort telemetry; never fail the LLM call
+            # because metrics emission failed.
+            logger.debug("LLM cost counter update failed: %s", exc)
+
+        # Step 5: Domain event with real duration (separate try/except)
+        try:
+            from aila.platform.events.domain_events import LlmCallCompleted, LlmCallCompletedPayload
+            if self.bus is not None:
+                self.bus.publish(LlmCallCompleted(
+                    team_id=team_id,
+                    payload=LlmCallCompletedPayload(
+                        model=routing.model_id,
+                        tokens=prompt_tokens + completion_tokens,
+                        cost=cost_usd,
+                        duration=duration_s,
+                        module_id=current_module_id(),
+                    ),
+                ))
+        except _COST_TELEMETRY_ERRORS as exc:
+            logger.debug("llm.call.completed publish failed: %s", exc)
+
     async def _inner_call(
         self,
         *,
@@ -1615,109 +1671,92 @@ class AilaLLMClient:
         run_id: str | None = None,
         team_id: str | None = None,
     ) -> LLMResponse:
-        """Execute one API call WITHOUT pipeline recursion.
+        """Execute one model call issued by a pipeline step (a nested call).
 
-        Used by gate consensus retries (§101) and verify second-model
-        calls (§100) -- both must bypass the pipeline (would recurse into
-        themselves) but still accumulate cost against the operator's
-        run budget. Previously each step constructed its own
-        ``AsyncOpenAI`` directly and the tokens were invisible to the
-        cost tracker / persist_cost_record / Prometheus pipeline. Now
-        the platform builds the inner client the same way
-        :meth:`_call_with_retry` does and records the same cost ledger.
+        Used by gate consensus retries (§101) and the verify second-model
+        call (§100). A nested call is a real model call, so it takes the same
+        path as the turn's own call (#289): it opens a ``gen_ai`` span and
+        runs ``PipelineRunner.run(nested=True)``, which classifies the
+        messages, validates the response and writes the ``AuditSealRecord``
+        (the seal step also feeds the confidence-drift tracker). Its
+        spend is recorded through :meth:`_record_call_outcome`, and the call
+        carries the investigation's ``run_id`` (#288) so it counts toward
+        per-investigation cost.
 
-        Pipeline recursion is avoided structurally -- we call
-        :meth:`_single_call` directly instead of routing through
-        :class:`PipelineRunner`.
+        Skipped on purpose: the ``gate`` and ``verify`` steps
+        (:data:`aila.platform.llm.pipeline.NESTED_SKIPPED_STEPS`). They are the
+        steps that call this method, so running them here would recurse
+        without bound; the outer call's gate already scores and majority-votes
+        every consensus response and its verify step compares the second
+        opinion. The replay journal (``journal_bodies=False``) and the
+        canary signal are also not written for a nested call, because both
+        are keyed to the turn's own call.
+
+        Operator configuration applies exactly as on the primary path: a step
+        disabled per task_type, or a fail-open override, is honoured for nested
+        calls too. Fail-closed steps (the default for classify, validate and
+        seal) raise :class:`LLMError` out of this method, which surfaces in
+        the calling gate / verify step.
         """
-        # #38-3.2: budget check BEFORE the provider call, mirroring the
-        # pre-flight in :meth:`_call_with_retry` above (see :~810). Consensus
-        # (gate.py) and verify (verify.py) retries route their token spend
-        # through this method; without the seed, a run that already exceeded
-        # its ceiling still spent on every retry because the check only ran
-        # once on the primary path. check_budget_async seeds the in-memory
-        # totals from the durable ledger and raises BudgetExceededError when
-        # the per-run token ceiling is already crossed -- fail fast, no spend.
-        if self.cost_tracker is not None and run_id is not None:
-            await self.cost_tracker.check_budget_async(run_id, routing.task_type)
+        run_id = resolve_run_id(run_id)
+        with gen_ai_span(
+            GEN_AI_OPERATION_CHAT,
+            model=routing.model_id,
+            task_type=routing.task_type,
+            run_id=run_id,
+            module_id=current_module_id(),
+            attributes={"aila.llm.nested": True},
+        ) as _span:
+            # #38-3.2: budget check BEFORE the provider call, mirroring the
+            # pre-flight in :meth:`_call_with_retry`. Consensus (gate.py) and
+            # verify (verify.py) retries route their token spend through this
+            # method; without the seed, a run that already exceeded its
+            # ceiling still spent on every retry because the check only ran
+            # once on the primary path. check_budget_async seeds the
+            # in-memory totals from the durable ledger and raises
+            # BudgetExceededError when the per-run token ceiling is already
+            # crossed -- fail fast, no spend.
+            if self.cost_tracker is not None and run_id is not None:
+                await self.cost_tracker.check_budget_async(run_id, routing.task_type)
 
-        # fix #132 -- ConfigRegistry-backed HTTP timeout (see essay above).
-        _timeout_s = _resolve_llm_timeout_seconds()
-        client = self._client_pool.get(
-            api_key=routing.api_key,
-            base_url=routing.base_url,
-            timeout_s=_timeout_s,
-        )
-        _call_start = _time_mod.perf_counter()
-        response = await self._single_call(
-            client=client,
-            routing=routing,
-            messages=messages,
-            response_format=response_format,
-            tools=tools,
-            tool_executor=tool_executor,
-        )
-
-        # Cost recording -- same shape as :meth:`_call_with_retry` so
-        # consensus / verify tokens land in the same per-run budget
-        # and the operator's spend reports tell the truth (fix §100).
-        try:
-            if self.cost_tracker is not None:
-                self.cost_tracker.record(run_id, response.usage)
-                # #155: mirror the /_call_with_retry/ cache-metrics
-                # fold so consensus / verify calls contribute to the
-                # per-run cache-hit-rate gauge too.
-                from aila.platform.llm.prompt_layout import (
-                    record_cache_metrics as _record_cache_metrics,
-                )
-                _record_cache_metrics(
-                    getattr(self.cost_tracker, "_mem", None),
-                    run_id,
-                    response.usage,
-                )
-        except Exception as exc:
-            logger.debug("inner_call cost_tracker.record failed: %s", exc)
-
-        try:
-            from aila.platform.llm.cost import (
-                calculate_cost_usd,
-                persist_cost_record,
+            # fix #132 -- ConfigRegistry-backed HTTP timeout.
+            _timeout_s = _resolve_llm_timeout_seconds()
+            client = self._client_pool.get(
+                api_key=routing.api_key,
+                base_url=routing.base_url,
+                timeout_s=_timeout_s,
             )
-            _prompt_tokens = response.usage.get("prompt_tokens", 0)
-            _completion_tokens = response.usage.get("completion_tokens", 0)
-            _cost_usd, _ = await calculate_cost_usd(
-                routing.model_id, _prompt_tokens, _completion_tokens,
-                self._config._registry,
-            )
-            _duration_ms = int(
-                (_time_mod.perf_counter() - _call_start) * 1000,
-            )
-            await persist_cost_record(
-                run_id=run_id,
-                model_id=routing.model_id,
+            _call_start = _time_mod.perf_counter()
+            response, ctx = await self._pipeline.run(
                 task_type=routing.task_type,
+                messages=messages,
+                routing=routing,
+                call_fn=self._single_call,
+                call_kwargs={
+                    "client": client,
+                    "routing": routing,
+                    "messages": messages,
+                    "response_format": response_format,
+                    "tools": tools,
+                    "tool_executor": tool_executor,
+                },
+                run_id=run_id or "",
+                team_id=team_id or "",
+                nested=True,
+            )
+            await self._record_call_outcome(
+                response=response,
+                routing=routing,
+                messages=messages,
+                tools=tools,
+                run_id=run_id,
                 team_id=team_id,
-                prompt_tokens=_prompt_tokens,
-                completion_tokens=_completion_tokens,
-                cost_usd=_cost_usd,
-                registry=self._config._registry,
-                prompt_preview=None,
-                response_preview=(
-                    response.content
-                    if isinstance(response.content, str) else None
-                ),
-                duration_ms=_duration_ms,
-                status="ok",
+                call_start=_call_start,
+                journal_bodies=False,
             )
-        except (
-            ValueError, sqlalchemy.exc.SQLAlchemyError, AttributeError,
-        ) as exc:
-            logger.debug(
-                "inner_call cost persistence failed: %s",
-                exc,
-            )
-
-        return response
+            enriched = _enrich_response(response, ctx)
+            _annotate_llm_span(_span, enriched, routing.model_id)
+            return enriched
 
     async def _single_call(
         self,
@@ -1740,8 +1779,8 @@ class AilaLLMClient:
         so the loop can (a) honour a mid-turn cancellation between tool steps
         and (b) mark side-effect commitment for the outer
         :meth:`_call_with_retry` idempotency guard (#44). Both default to None
-        for callers that bypass the pipeline (``_inner_call``), where no
-        outer-loop retry exists and side-effect replay is not a concern.
+        for nested callers (``_inner_call``), where no outer-loop retry
+        exists and side-effect replay is not a concern.
         """
         kwargs: dict[str, Any] = {
             "model": routing.model_id,
@@ -1955,9 +1994,9 @@ class AilaLLMClient:
                 # #44: mark side-effect commitment so a subsequent LLM
                 # failure in the same attempt cannot be retried without
                 # replaying this tool. ``call_state`` is None only for
-                # pipeline-bypass callers (``_inner_call`` -- gate consensus
-                # / verify second-model), where the outer retry loop does
-                # not run and replay is impossible by construction.
+                # nested callers (``_inner_call`` -- gate consensus / verify
+                # second-model), where the outer retry loop does not run and
+                # replay is impossible by construction.
                 if call_state is not None:
                     call_state.tools_committed += 1
                 messages.append({

@@ -46,6 +46,10 @@ have. Required keys block boot when missing.
 - `AILA_START_FRONTEND`, `AILA_START_AUDIT_MCP` (toggle 1/0)
 - `AUDIT_MCP_DIR`, `AUDIT_MCP_WORKERS`
 - `REA_MCP_COMMAND`, `GHIDRA_INSTALL_DIR`, `JAVA_HOME`, `REA_ANALYSIS_PROVIDER` (REA / Ghidra provider environment; see `start.sh` defaults)
+- `REVERSER_BELT_MCP_COMMAND` (optional override of the `reverser_belt` stdio spawn argv; empty uses the default `python -m reverser_belt_mcp.server`)
+
+**MCP endpoint overrides (read by the MCP server specs, `src/aila/platform/mcp/server_specs.py`):**
+- `REA_MCP_URL`, `REVERSER_BELT_MCP_URL` -- set to an http(s) URL to target a remote instance instead of the per-process stdio child (config keys `rea_mcp_url`, `reverser_belt_mcp_url` in the vr and malware config schemas)
 
 **VR-specific runtime knobs:**
 - `VR_INVESTIGATION_WALL_CLOCK_HOURS` (default `6`) -- investigation lifetime; the emit-side cap and the reaper both consult this.

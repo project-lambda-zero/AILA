@@ -62,6 +62,7 @@ from aila.modules.vr.contracts.investigation import (
     InvestigationKind,
     InvestigationStatus,
 )
+from aila.modules.vr.contracts.outcome import outcome_polarity
 from aila.modules.vr.db_models import (
     VRFindingRecord,
     VRFuzzCampaignProposalRecord,
@@ -78,6 +79,7 @@ from aila.modules.vr.services.outcome_review import (
     set_outcome_state,
 )
 from aila.platform.agents.outcome_dispatcher import (
+    ClaimVerificationHook,
     OutcomeDispatcherBase,
     OutcomeDispatcherError,
     OutcomeDispatchResult,
@@ -260,6 +262,23 @@ async def _ensure_initial_workflow_record(
     await session.flush()
 
 
+async def _verify_claim_evidence(packet: dict[str, Any]) -> dict[str, Any]:
+    """VR's ``ClaimVerificationHook.verify_evidence``.
+
+    Delegates to the claim verifier's module-level pre-dispatch
+    entrypoint. ``claim_verifier`` imports this module (it binds
+    :class:`OutcomeDispatcher` as ``_outcome_dispatcher_cls``), so a
+    module-scope import of it here would be circular. The import runs
+    on each call instead, which lets the hook be bound at class
+    definition. A missing ``verify_evidence`` surfaces as an
+    ``ImportError`` the platform gate logs, not as a silently disabled
+    gate.
+    """
+    from aila.modules.vr.agents.claim_verifier import verify_evidence
+
+    return await verify_evidence(packet)
+
+
 class OutcomeDispatcher(OutcomeDispatcherBase):
     """Routes accepted VR outcomes to their downstream artifacts.
 
@@ -288,6 +307,15 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
     # is marked FAILED and the caller can decide to retry. Malware
     # folds the same shape into a FAILED result via the base default.
     _catch_handler_errors = False
+    # Pre-dispatch claim verification (#286). VR hands the platform base
+    # its polarity contract and claim verifier instead of the base
+    # importing them: positive kinds (direct_finding, crash_triage_report)
+    # are verified before dispatch, and the finalize aggregate reads the
+    # same polarity to pick the strongest positive outcome.
+    claim_verification = ClaimVerificationHook(
+        polarity=outcome_polarity,
+        verify_evidence=_verify_claim_evidence,
+    )
 
     def __init__(
         self,

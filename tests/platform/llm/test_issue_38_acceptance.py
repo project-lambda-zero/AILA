@@ -43,6 +43,7 @@ from aila.platform.llm.cost import (
     emit_missing_pricing_notification,
 )
 from aila.platform.llm.errors import BudgetExceededError
+from aila.platform.llm.pipeline import PipelineRunner
 from aila.platform.llm.run_memory import RunMemory
 from aila.storage.registry import ConfigRegistry
 
@@ -90,6 +91,9 @@ def _new_client_stub() -> AilaLLMClient:
     client.cost_tracker = None
     client.bus = None
     client._client_pool = MagicMock()
+    # _inner_call runs the nested pipeline; no steps registered means a
+    # transparent pass-through to ``_single_call``.
+    client._pipeline = PipelineRunner(MagicMock())
     return client
 
 
@@ -197,6 +201,12 @@ class TestFinding2InnerCallTeamAndBudget:
             patch(
                 "aila.platform.llm.cost.persist_cost_record",
                 persist_call,
+            ),
+            # _inner_call records through the shared outcome helper, which
+            # raises the missing-pricing notice for an unpriced model.
+            patch(
+                "aila.platform.llm.cost.emit_missing_pricing_notification",
+                AsyncMock(return_value=None),
             ),
         ):
             await client._inner_call(

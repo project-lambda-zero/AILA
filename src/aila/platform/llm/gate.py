@@ -353,11 +353,14 @@ async def _run_consensus(
 
     §101: each retry routes through ``AilaLLMClient._inner_call`` so the
     consensus tokens land in the same cost ledger as the primary call.
-    The inner_call bypasses the pipeline by design (no recursive gate).
+    ``_inner_call`` runs the nested pipeline (classify, validate, seal; see
+    ``pipeline.NESTED_SKIPPED_STEPS``), which leaves out the gate itself, so
+    consensus never recurses, and every retry carries its own seal and span.
 
     Args:
-        inner_call: Async callable that issues a single LLM call WITHOUT
-            triggering the pipeline. Wired to AilaLLMClient._inner_call.
+        inner_call: Async callable that issues one nested LLM call through
+            the pipeline without the gate and verify steps. Wired to
+            AilaLLMClient._inner_call.
         config_provider: For reading consensus config.
         routing: Original routing from the pipeline call.
         messages: Original message list.
@@ -452,11 +455,11 @@ def make_gate_step(
 
     Args:
         config_provider: LLMConfigProvider for threshold/config reads.
-        inner_call: Async callable that issues a single LLM call WITHOUT
-            triggering the pipeline. Wired to
+        inner_call: Async callable that issues one nested LLM call through
+            the pipeline without the gate and verify steps. Wired to
             :meth:`AilaLLMClient._inner_call` so the consensus retries
             charge against the same cost ledger as the primary call
-            (fix §101).
+            (fix §101) and are sealed like it (#289).
         emitter: Optional EventEmitter for audit logging.
 
     Returns:

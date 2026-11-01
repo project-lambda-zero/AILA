@@ -602,24 +602,31 @@ check requires a real run id.
 |-----|---------|-------------|
 | `llm_budget_max_total_tokens_{task_type}` | `0` (unlimited) | Maximum total tokens per run for this task type. `0` means no enforcement. |
 
-### Known gap: VR investigation cost aggregation
+### Investigation cost aggregation
 
-`VRInvestigationRecord.cost_actual_usd` has **no writer** -- it stays `0.0`
-forever. The investigation summary instead reads a live value computed by
-`_compute_live_investigation_cost()`
-(`src/aila/modules/vr/api_router.py`), which sums
-`LLMCostRecord.cost_usd` over rows whose `run_id` joins back to the
-investigation's `TaskRecord` ids via
-`TaskRecord.kwargs_json LIKE '%"<investigation_id>"%'`.
+For an agent turn, `LLMCostRecord.run_id` is the investigation id:
+`AgentTurnRunnerBase.run_turn` passes `run_id=self.investigation_id` to the
+engine (`src/aila/platform/agents/turn_runner.py:1106`). The live total is
+therefore a direct filter, not a join through `TaskRecord` or
+`RunRecord`: `compute_live_investigation_cost`
+(`src/aila/platform/services/investigation_cost.py:34`) sums
+`LLMCostRecord.cost_usd` where `run_id == investigation_id` (`:50`), and the
+vr, malware, and template detail endpoints call it.
 
-The join only works when `LLMCostRecord.run_id` matches the ARQ
-`TaskRecord.id`. In VR-driven calls the value of `run_id` is the
-workflow-engine `RunRecord.id` rather than the ARQ `TaskRecord.id`, so the
-sum often comes back as `0.0` even when LLM spend is real. The budget
-gauge is therefore decorative for some investigations until the join is
-routed through `workflow_run_records` (planned follow-up). Use the
-`/llm-log` admin surface or query `LLMCostRecord` directly when you need
-the actual spend for an investigation.
+The stored `cost_actual_usd` column is also written: `persist_cost_record`
+calls `accrue_investigation_cost` in the same session as the cost-record
+insert (`src/aila/platform/llm/cost.py:406-410`;
+`investigation_cost.py:67`), and migration
+`121_backfill_investigation_cost` backfilled earlier rows.
+
+The remaining gap is attribution. A call made without a `run_id` is stored
+under the `_no_run` sentinel (`cost.py:36,381`), is skipped by
+`accrue_investigation_cost` (`investigation_cost.py:86`), and never counts
+toward an investigation total or budget check. Thread the investigation id
+through as `run_id` to attribute such spend. The `/llm-log` admin surface
+and direct `LLMCostRecord` queries (which also carry the nullable
+`investigation_id`, `branch_id`, and `turn_number` correlation columns)
+show unattributed calls.
 
 ### Idempotency cache (VR turn replay)
 

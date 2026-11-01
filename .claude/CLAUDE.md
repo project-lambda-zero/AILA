@@ -12,15 +12,21 @@ AILA/
 ├── .npmrc                        # save-prefix='', strict peers, hoist patterns
 ├── packages/
 │   └── typescript-config/        # @aila/typescript-config: shared tsconfig variants
-├── frontend/                     # @aila/shell: the React SPA host
-│   ├── src/platform/             # shared UI: design system, extension registry, layout
-│   ├── src/app/                  # app shell, routing, auth, error boundaries
-│   ├── src/components/           # shared components (AilaCard, AilaBadge, EmptyState)
-│   └── vite.config.ts            # @/, @app, @platform aliases only
+├── tools/
+│   ├── oxlint/                   # @aila/oxlint-config: oxlint anti-slop rule plugin (workspace member)
+│   └── aila_fuzz_reporter/       # Python fuzz-reporter helper
+├── frontend/                     # @aila/shell: the single React SPA (console UI)
+│   ├── src/App.tsx               # console shell: auth gate, windows, rails
+│   ├── src/console/              # nav.ts (MODULES), contract.ts, pages/ (page registry), wizards/, widgets/, window/
+│   ├── src/api/                  # typed API client + TanStack Query hooks
+│   ├── src/styles/globals.css    # plain CSS + custom properties (no Tailwind)
+│   └── vite.config.ts            # vite + react plugin, manual vendor chunks
 ├── scripts/
 │   └── db_init.py                # bootstrap a fresh database (create tables + stamp head)
 ├── src/aila/
 │   ├── platform/                 # shared infrastructure -- never imports from modules/
+│   │   ├── agents/               # shared reasoning-agent base: AgentTurnRunnerBase, ToolExecutorHelpersBase, submit gates, auto-steering
+│   │   ├── mcp/                  # native MCP client, server specs, middleware, adapters, bridge tools
 │   │   ├── contracts/            # cross-module data contracts
 │   │   ├── modules/              # module registry and discovery
 │   │   ├── routing/              # LLM-based request routing
@@ -34,15 +40,13 @@ AILA/
 │   │   ├── automation/           # cron-based automation runner
 │   │   └── sse/                  # server-sent events transport
 │   ├── modules/
-│   │   ├── vulnerability/        # production -- CVE scanning, remediation, scoring
-│   │   │   ├── frontend/         # @aila/vulnerability-frontend (own package.json)
-│   │   │   └── ...
+│   │   ├── vulnerability/        # production -- CVE scanning, remediation, scoring (pipeline module)
+│   │   ├── vr/                   # production -- vulnerability research (reasoning module)
+│   │   ├── malware/              # production -- static malware analysis (reasoning module)
 │   │   ├── forensics/            # production -- DFIR investigation
-│   │   │   └── frontend/         # @aila/forensics-frontend
 │   │   ├── hello_world/          # reference -- minimal module proving the contract
-│   │   │   └── frontend/         # @aila/hello-world-frontend
 │   │   └── _template/            # scaffold -- copy to start a new module
-│   ├── api/                      # FastAPI app, 28 routers, auth, middleware, schemas
+│   ├── api/                      # FastAPI app, routers/, auth, middleware, schemas
 │   ├── storage/                  # SQLModel models, Alembic migrations, config registry
 │   └── alembic/                  # migration versions
 ├── tests/                        # pytest suite (test_e2e*.py require live infrastructure)
@@ -73,7 +77,7 @@ python -m ruff check src/aila/                       # lint
 python -m aila.tools.honesty_audit src/aila --whitelist honesty_whitelist.py
 python -m aila.tools.liveness_audit src/aila --whitelist liveness_whitelist.py
 python -m compileall -q src/aila                     # smoke compile
-pnpm -r run type-check                                # TypeScript across shell + modules
+pnpm -r run type-check                                # TypeScript across the workspace (shell)
 pnpm --filter @aila/shell run build                  # production build (single SPA)
 
 # Tests
@@ -97,30 +101,27 @@ make backend frontend worker          # dev servers (each in separate terminal)
 
 ## Frontend pnpm Workspace
 
-The frontend is a pnpm workspace. Every package and module declares its own deps; pnpm catalogs in `pnpm-workspace.yaml` pin shared versions globally.
+The frontend is a pnpm workspace with one SPA. Modules do NOT ship their own frontend packages: every module's UI is a page or wizard inside the shell. pnpm catalogs in `pnpm-workspace.yaml` pin shared versions globally.
 
 ### Workspace members
 
+`pnpm-workspace.yaml` `packages:` lists `frontend`, `packages/*`, and `tools/oxlint`.
+
 | Package                            | Path                                       | Role                                                |
 |------------------------------------|--------------------------------------------|-----------------------------------------------------|
-| `@aila/shell`                      | `frontend/`                                | The host React SPA. Imports each module by name.    |
+| `@aila/shell`                      | `frontend/`                                | The React SPA (console shell + every module page)   |
 | `@aila/typescript-config`          | `packages/typescript-config/`              | Shared tsconfigs: `./base`, `./react-vite`, `./react-module` |
-| `@aila/hello-world-frontend`       | `src/aila/modules/hello_world/frontend/`   | Reference module                                    |
-| `@aila/vulnerability-frontend`     | `src/aila/modules/vulnerability/frontend/` | Vulnerability module UI                             |
-| `@aila/forensics-frontend`         | `src/aila/modules/forensics/frontend/`     | Forensics module UI                                 |
+| `@aila/oxlint-config`              | `tools/oxlint/`                            | oxlint anti-slop rule plugin used by `pnpm --filter @aila/shell run lint` |
 
 ### Catalogs
 
-`pnpm-workspace.yaml` defines named catalogs (`react19`, `router`, `vite`, `tailwind`, `query`, `ui`, `dnd`, `flow`, `testing`, `storybook`, `types`, `maps`, `particles`, `data`). Packages reference deps by catalog, never by literal version:
+`pnpm-workspace.yaml` defines the top-level `catalog:` slot (TypeScript) plus named catalogs `react19`, `vite`, `query`, `ui`, `lint`, and `types`. Packages reference deps by catalog, never by literal version:
 
 ```json
 {
   "dependencies": {
-    "@dnd-kit/core": "catalog:dnd"
-  },
-  "peerDependencies": {
     "react": "catalog:react19",
-    "react-router": "catalog:router"
+    "@tanstack/react-query": "catalog:query"
   }
 }
 ```
@@ -134,8 +135,8 @@ pnpm install                                # install / sync all workspace packa
 pnpm dev                                    # alias for: pnpm --filter @aila/shell run dev
 pnpm build                                  # alias for: pnpm --filter @aila/shell run build
 pnpm -r run type-check                      # typecheck across all workspace packages
-pnpm --filter @aila/vulnerability-frontend run type-check   # one module
-pnpm add <pkg> --filter @aila/<module>-frontend             # add a dep to a single module
+pnpm --filter @aila/shell run lint          # oxlint over frontend/src
+pnpm add <pkg> --filter @aila/shell         # add a dep to the shell
 ```
 
 ## Module Authoring
@@ -144,14 +145,12 @@ To create a new module:
 1. Copy `src/aila/modules/_template/` to `src/aila/modules/<your_module>/`
 2. Rename all Template/TEMPLATE placeholders
 3. Register in `src/aila/platform/modules/builtin.py`
-4. If the module has a frontend:
-   - Add `frontend/package.json` (name `@aila/<module>-frontend`, see hello_world for reference)
-   - Add `frontend/tsconfig.json` extending `@aila/typescript-config/react-module`
-   - Add `"@aila/<module>-frontend": "workspace:*"` to `frontend/package.json` (the shell)
-   - Import its `frontendSpec` in `frontend/src/platform/extension-registry/loadModuleSpecs.ts`
-5. Run `pnpm install` to wire up the workspace symlinks
-6. See `docs/MODULE_STANDARD.md` and `docs/FRONTEND_MODULE_STANDARD.md` for the complete specifications
-7. Reference `src/aila/modules/hello_world/` as a working example
+4. If the module has a UI, add it to the shell (there is no per-module frontend package):
+   - Add a `ModuleDef` entry (id, label, noun, pages) to `MODULES` in `frontend/src/console/nav.ts`
+   - Map each page id to a renderer in `frontend/src/console/pages/registry.tsx` (data-table pages use `DataPage` with a `PAGE_CONFIGS` entry from `frontend/src/console/pages/configs`; bespoke pages are lazy-loaded components taking `ModulePageProps` from `frontend/src/console/contract.ts`)
+   - Typed API calls live in `frontend/src/api/`
+5. See `docs/MODULE_STANDARD.md` and `docs/FRONTEND_MODULE_STANDARD.md` for the complete specifications
+6. Reference `src/aila/modules/hello_world/` as a working example
 
 ### Module structure
 
@@ -166,26 +165,20 @@ tools/                # Tool subclasses
 services/             # domain services
 reporting/            # report generation
 api_router.py         # optional HTTP router factory
-frontend/             # optional React UI
-  package.json        # @aila/<module>-frontend, declares deps + peer deps
-  tsconfig.json       # extends @aila/typescript-config/react-module
-  spec.ts             # exports ModuleFrontendSpec via `frontendSpec`
-  routes.tsx          # route definitions
-  screens/            # top-level screens
-  components/         # module-local components
+agents/               # reasoning modules only (see "Reasoning agents" below)
 ```
 
-### Frontend dep allocation rules
+Reasoning modules also carry `db_models/`, `config_schema.py`, and a `workflow/` package; see `src/aila/modules/_template/` for the minimal shape. The module UI is not part of the module directory: it lives in the shell (`frontend/src/console/`).
 
-| Layer            | Owner                                         |
-|------------------|-----------------------------------------------|
-| Framework        | shell direct, modules `peerDependencies`      |
-| Data / state     | shell direct, modules `peerDependencies`      |
-| Design system    | shell direct, modules `peerDependencies`      |
-| Module-specific  | module `dependencies`                         |
-| Test-only        | module `devDependencies`                      |
+### Reasoning agents
 
-Modules MUST NOT depend on other `@aila/<module>-frontend` packages. Cross-module communication goes through the shell's extension registry.
+The shared per-branch turn loop lives in `src/aila/platform/agents/turn_runner.py`: `AgentTurnRunnerBase` (`turn_runner.py:146`, `run_turn` at `:881`). A module researcher subclasses it, sets the config class attributes (`_LOG_LABEL`, `_MODULE_ID`, ...), binds its module-level helpers, and overrides the behavior hooks. `HonestVulnResearcher` (`modules/vr/agents/vuln_researcher.py:175`), `HonestMalwareResearcher` (`modules/malware/agents/malware_researcher.py:227`), and the template researcher (`modules/_template/agents/researcher.py`) are the subclasses. Forensics does not use it: its panel loop is a separate minimal handler (`modules/forensics/workflow/panel/loop.py`).
+
+Tool dispatch is per module. The shared pieces are `ToolExecutorHelpersBase` (`platform/agents/tool_executor.py:93`: message persistence, circuit breaker, observable merge) and the dispatch primitives in `platform/agents/tool_execution.py` (`ToolExecutionResult`, `parse_command`, `classify_contract_error`). Each module defines its own `ToolExecutor(ToolExecutorHelpersBase)` with its own `_AGENT_ALLOWED_SERVERS` allowlist (`modules/vr/agents/tool_executor.py:78,125`, `modules/malware/agents/tool_executor.py:589,618`, `modules/_template/agents/tool_executor.py:41,53`).
+
+### Frontend dep rules
+
+The shell (`frontend/package.json`) is the only frontend package with runtime deps. Add a dep with `pnpm add <pkg> --filter @aila/shell` and reference shared versions through a catalog entry in `pnpm-workspace.yaml`.
 
 ## Non-Negotiable Rules
 
@@ -205,14 +198,15 @@ Multi-step behavior uses staged workflows with named states, not nested conditio
 - Platform owns: routing, runtime, services, contracts, tools, task queue
 - Modules own: domain logic, module-specific contracts/tools/services, reports, workflow
 - Platform never imports from `aila.modules.*`
-- Modules never import from each other (Python OR frontend -- pnpm strict mode enforces this at install time by failing on undeclared bare imports)
+- Modules never import from each other (Python)
 
 ### 6. Frontend dep ownership
-- Every bare import in a module's frontend MUST be declared in that module's `package.json` (deps, peerDeps, or devDeps)
+- Every bare import in `frontend/src` MUST be declared in `frontend/package.json` (pnpm strict mode fails the install on undeclared bare imports)
 - Shared versions go through pnpm catalogs in `pnpm-workspace.yaml`, never as literal versions
-- The shell never imports from a module-specific dep that no other code uses (e.g., `@dnd-kit/*` is owned by `@aila/vulnerability-frontend`, not the shell)
 
 ## Common Mistakes
+
+Entry numbers are stable identifiers cited from source comments and migrations; gaps are retired entries (Recharts, Tailwind, react-router, and per-module frontend package guidance no longer apply to the single-SPA frontend).
 
 1. **Top-level api_router import in module.py** -- MODULE_STANDARD requires deferred import inside `route_specs()`. The honesty audit catches this.
 
@@ -220,9 +214,7 @@ Multi-step behavior uses staged workflows with named states, not nested conditio
 
 3. **Missing `__all__`** -- Every `__init__.py` and public module needs `__all__`. Underscore-prefixed private modules omit it.
 
-4. **CSS variables in SVG** -- Recharts `fill` attributes don't resolve CSS `var(--color-*)`. Use `getComputedStyle` via the `useThemeChartColors()` hook.
-
-5. **Tailwind v4 arbitrary values** -- `h-[720px]`, `bg-[#131313]` don't generate CSS in Tailwind v4. Use inline `style={{ height: 720 }}` instead.
+4. **Module page id with no registry entry** -- A page listed in `MODULES` (`frontend/src/console/nav.ts`) opens only if `PAGE_REGISTRY` has the key `<moduleId>:<pageId>` (built from `PAGE_CONFIGS` plus the `BESPOKE` map in `frontend/src/console/pages/registry.tsx`). `openNamedPage` returns early when `resolvePage(key)` is null (`frontend/src/App.tsx:178`, `registry.tsx:407`), so the click does nothing and no error is shown.
 
 6. **Schema changes without Alembic** -- All DDL goes through `src/aila/alembic/versions/`. No runtime CREATE TABLE, no `metadata.create_all()` outside test fixtures.
 
@@ -234,23 +226,17 @@ Multi-step behavior uses staged workflows with named states, not nested conditio
 
 10. **`session.add()` on potentially-existing rows** -- When a `WorkflowRunRecord` or other row may already exist (e.g., created by `_ensure_run_record`), use `session.merge()` instead of `session.add()`. ORM `add()` always INSERTs; `merge()` does INSERT-or-UPDATE based on PK.
 
-11. **Adding a frontend bare import without declaring it in the module's `package.json`** -- Every module is a pnpm workspace package at `src/aila/modules/<name>/frontend/`. pnpm strict mode catches missing deps at install time. Fix by adding the dep to `dependencies`, `peerDependencies` (for shell-owned packages), or `devDependencies` (for test-only).
+11. **Adding a frontend bare import without declaring it in `frontend/package.json`** -- `@aila/shell` is the only frontend package with runtime deps. pnpm strict mode catches missing deps at install time. Fix by adding the dep to `dependencies` (or `devDependencies` for build/test-only tools).
 
-12. **Using `react-router-dom`** -- React Router v7 unified `react-router-dom` and `react-router`. The codebase canonicalizes on `react-router`. New code must import from `react-router` only.
-
-13. **Using literal versions in module `package.json`** -- Shared deps (react, vite, tailwind, etc.) must reference catalog entries (`"react": "catalog:react19"`). Only module-specific deps that aren't shared may use literal versions, and even those should be added to a catalog if a second consumer appears.
+13. **Using literal versions in `frontend/package.json`** -- Shared deps (react, vite, typescript, etc.) must reference catalog entries (`"react": "catalog:react19"`). Add a new dep to a catalog in `pnpm-workspace.yaml` and reference it from the consumer.
 
 14. **Hand-editing `pnpm-lock.yaml`** -- Always re-run `pnpm install` to regenerate. The lockfile format is structured but not designed for manual edits.
-
-15. **Tailwind classes in module frontends have no CSS rules** -- Tailwind v4 scans content starting from the directory containing `frontend/src/styles/globals.css`. Module frontends live OUTSIDE `frontend/src/` (under `src/aila/modules/<name>/frontend/`), reached only via pnpm symlinks in `node_modules/@aila/*` which Tailwind ignores by default. A class added in a module-side file gets NO CSS rule generated unless that same class is also used somewhere inside `frontend/src/`. Symptom: `position: fixed` with `bottom-6 right-6` renders at flow position because the inset rules don't exist. Fix: add `@source "../../../src/aila/modules/<name>/frontend/**/*.{ts,tsx}";` to `frontend/src/styles/globals.css` for every module. Already wired for vr, vulnerability, forensics, hello_world, malware.
-
-16. **Module page components wrapping their own `<PageShell>`** -- The shell's `protectPage` in `frontend/src/app/router.tsx` already wraps every routed module page in `<PageFrame>` which renders the title bar. If the page component ALSO returns `<PageShell title=...>`, you get two stacked `<h1>` blocks + two icon badges. VR's screens render bare `<div>` fragments and let the shell own the title. Malware screens were authored against the wrong pattern initially and produced doubled headers across all 22 pages until stripped. Mirror VR's pattern: return content directly, hoist any page-level CTAs into an in-body top-of-page `flex items-center justify-between` row.
 
 17. **JSX escape sequence leaks** -- `\u00b7` / `\u2026` / `\u2715` written as bare text inside JSX children (NOT inside string literals) render literally as `\u00b7`, not as `\u00b7`. JSX child text is taken verbatim. Either use the actual glyph or wrap in `{"\u00b7"}` so it parses as a string literal.
 
 18. **Module summary contracts with `ConfigDict(extra="forbid")` reject undeclared kwargs at response-serialization time** -- The 500 fires AFTER the underlying DB row has committed (request handler ran, then Pydantic rejected the response shape on the way out). The operator sees a generic error toast but the row is in fact persisted. Fix at the source: add the missing field to the contract. Pattern: every `_<x>_summary()` helper kwarg MUST appear on the matching Pydantic `BaseModel`. Surfaced in this codebase on `MalwareTargetSummary.capability_profile`.
 
-19. **`@platform_task` collides on `__name__` across modules** -- The decorator's wrapper at `aila/platform/tasks/template.py:558` sets `_wrapper.__name__ = fn.__name__`. ARQ keys its function name resolution by the bare `__name__`, so two modules each defining `run_target_analysis` collide -- the later-loaded module overwrites the earlier registration. Symptom: queue X dispatches X's job but a Y-module function runs the body. Fix: name module tasks with the module prefix (e.g. `run_malware_target_analysis`). Worth fixing upstream (set `_wrapper.__name__ = registry_name` for the qualified key) but not in any current scope.
+19. **`@platform_task` registration key is module-qualified (no cross-module `__name__` collision)** -- The decorator computes `registry_name = f"{fn.__module__}.{fn.__qualname__}"` (`aila/platform/tasks/template.py:457`), registers the task under that key (`template.py:633,641`), and `_Registry.all_functions` hands it to ARQ as `_arq_func(t.fn, name=t.name, ...)` (`template.py:147`). The wrapper's `__name__`/`__qualname__` are set to the same qualified key (`template.py:627-628`). Two modules that each define `run_target_analysis` therefore register as distinct ARQ functions. `TaskQueue.submit`, `requeue_failed`, and resume-from-pause enqueue by the stored `TaskRecord.fn_path` (the same qualified key; `aila/platform/tasks/queue.py:137-150`). Registering the same fully-qualified name twice raises `ValueError` (`template.py:122-127`). Module-prefixed handler names (e.g. `run_malware_target_analysis`) are a readability convention, not a correctness requirement. Never enqueue an ARQ job by a bare `__qualname__`: the worker only knows the qualified key.
 
 20. **TaskQueue constructor takes `(config_registry, module_id)`, NOT `track`** -- `track` is a `.submit()` kwarg, not a constructor kwarg. The canonical pattern (mirror VR's `_task_queue.py`): `return TaskQueue(config_registry=ConfigRegistry(), module_id="<module_id>")`. A wrong constructor signature crashes at every enqueue site silently if the only call path is wrapped in a `try/except` warning logger.
 
@@ -258,7 +244,7 @@ Multi-step behavior uses staged workflows with named states, not nested conditio
 
 22. **`start.sh` WORKERS default needs every module's queue** -- Currently `default vr vulnerability forensics malware`. A queue absent from this list has no worker listening; tasks land in Redis and sit forever (display reads as `Queued`). The malware module's tasks all declare `track="malware"` so the worker line is `python -m aila worker -q malware`. After adding a new module that declares its own `track`, append the queue name and restart workers.
 
-23. **REA + re_analytics replace ida-headless** -- Binary reverse engineering no longer uses the ida-headless HTTP server (archived). REA (npm `rea-agents`, Ghidra provider) serves the core RE surface as an MCP-STDIO child spawned per AILA process; the spawn argv comes from `REA_MCP_COMMAND` (shlex-split, forward slashes) and defaults in `start.sh` export `GHIDRA_INSTALL_DIR`, `JAVA_HOME`, and `REA_ANALYSIS_PROVIDER=ghidra`. AILA's own `python -m aila.platform.re_analytics` stdio MCP server preserves every remaining ida-headless tool name under the `re_analytics` server id. Module tool executors inject `target_path` (absolute local binary path) server-side for server ids `rea` and `re_analytics`; there is no binary upload or port to configure.
+23. **`rea` + `reverser_belt` replace ida-headless (no RE port to configure)** -- Binary reverse engineering no longer uses the ida-headless HTTP server (archived; its old port 18821 is unused). Two stdio MCP children are spawned per AILA process (`SERVER_SPECS` in `aila/platform/mcp/server_specs.py`): `rea` (npm `rea-agents`, Ghidra provider; default argv `rea mcp`, override `REA_MCP_COMMAND`) and `reverser_belt` (package `reverser_belt_mcp`, default argv `python -m reverser_belt_mcp.server` in the current interpreter at `server_specs.py:142`, override `REVERSER_BELT_MCP_COMMAND`; `stdio_command` in `aila/platform/mcp/factory.py:114` shlex-splits the override, so use forward slashes on Windows). `reverser_belt` is a separate repo (`ida-headless-mcp-exp`) that must be importable in the AILA interpreter (`pip install -e <checkout>`; `start.sh:75-79`); it owns the scanner surface REA lacks (capa, crypto, API-hash, emulation, taint, SMT proofs, patching, YARA). The in-platform `re_analytics` package was deleted; do not reference it or the `re_analytics` server id. `start.sh` exports `REA_MCP_COMMAND`, `GHIDRA_INSTALL_DIR`, `JAVA_HOME`, and `REA_ANALYSIS_PROVIDER=ghidra`. Setting `REA_MCP_URL` / `REVERSER_BELT_MCP_URL` (or the `rea_mcp_url` / `reverser_belt_mcp_url` config keys) to an http(s) URL targets a remote instance instead. Modules address a binary by the server-injected absolute `target_path`; `ReaMiddleware` opens it for `rea`, and `ReverserBeltMiddleware` (`aila/platform/mcp/middleware/reverser_belt.py`) opens it once per path and rewrites each call to carry the resulting `binary_id`. The agent never passes a path or id. Tool executors allow `rea` and `reverser_belt` for binary targets (`modules/vr/agents/tool_executor.py:125-129`, `modules/malware/agents/tool_executor.py:618-620`). The only fixed MCP ports are `audit_mcp` 18822 and `android_mcp` 18823 (`server_specs.py:64-79`).
 
 24. **Operator Resume/Retrigger writing `analysis_state="pending"` directly** -- The handlers in `api_router.py` rewrite the row's overall state column but DO NOT touch the per-stage state in `analysis_stages_json`. Next worker run hits `StageAlreadyDoneError`, logs "already ingested -- skip", and returns. Without an explicit `load_target_stages` -> `save_target_stages` re-roll on that skip path, the row sits at `pending` forever even though every applicable stage is DONE. The malware module's skip path does the re-roll; copy that pattern when adding new resume-style handlers.
 
@@ -326,8 +312,6 @@ value in the same commit:
 - `package.json` (root) -> `"version": "X.Y.Z"`
 - `frontend/package.json`
 - `packages/typescript-config/package.json`
-- `src/aila/modules/*/frontend/package.json` (every module frontend:
-  vr, vulnerability, forensics, malware, hello_world)
 - `tools/aila_fuzz_reporter/__init__.py` -> `__version__ = "X.Y.Z"`
 
 `workspace:*` deps mean a version bump does NOT churn
@@ -385,13 +369,15 @@ investigations. These rules are the operational lessons:
    `"trailmark"`). For months the adapter read `source` first and
    stored the literal string `"semble"` as the function body. Always
    `raw.get("content") or raw.get("body") or raw.get("text")` --
-   NEVER `source`. See `audit_mcp.py:adapt_read_function`.
+   NEVER `source`. See `adapt_read_function`
+   (`aila/platform/mcp/adapters/audit_mcp.py:823`, body selection at `:885`).
 
 2. **`search_functions` returns `file_path: null` for ~half the
    indexed functions** (trailmark loses locations). The generic
    `_render_matches_dense` produces literal `?:?:` rows from these.
-   Use the specialized `adapt_search_functions` that renders the
-   actual fields (name, kind, cyclomatic_complexity).
+   `adapt_search_functions` (`adapters/audit_mcp.py:1234`, registered at
+   `adapters/registry.py:157`) renders the actual fields (name, kind,
+   cyclomatic_complexity) instead.
 
 3. **`search_constants`, `search_bitfields` return 0 results for
    patterns that exist in source.** Trailmark's index doesn't track
@@ -402,25 +388,34 @@ investigations. These rules are the operational lessons:
    `{file_path, start_line, end_line, content}` per result. They have
    their own adapters; do NOT fall through to generic JSON dump.
 
-5. **`read_lines` is a bridge-side virtual tool** -- no upstream MCP
-   endpoint. Bridge resolves `index_id → root_path` via
-   `/tools/list_indexes` then reads the file slice from disk. Use
-   this when the agent has a precise `(file_path, start, end)` and
-   needs verbatim source bypassing all indexers.
+5. **`read_lines` is a middleware-side virtual tool** -- no upstream MCP
+   endpoint. `AuditMcpMiddleware` injects it into the tool catalog
+   (`aila/platform/mcp/middleware/audit.py:1245`), resolves
+   `index_id → root_path` from a cached `list_indexes` call
+   (`audit.py:1621`), and reads the file slice from disk. Use this
+   when the agent has a precise `(file_path, start, end)` and needs
+   verbatim source bypassing all indexers.
 
-6. **No per-tool-call truncation.** All `_MAX_OBS_*` caps are set to
-   100MB. Per-value caps were causing silent body truncation; the
-   policy now is full content stored, render layer decides display.
+6. **Observable previews are capped at 32 KiB; raw responses are not.**
+   `MAX_OBS_DUMP_CHARS = 32 * 1024` (`adapters/_shared.py:207`) bounds
+   what an adapter writes into observables (`_MAX_OBS_READ_FUNCTION` /
+   `_MAX_OBS_SEARCH` in `adapters/audit_mcp.py:263,1081` alias it). The
+   earlier 100MB ceiling made "bounded" meaningless and bloated
+   `case_state_json`. The full raw response still lives in the message
+   store for the operator UI (`_shared.py:203-206`).
 
 ### Workflow / cursor mechanism
 
-1. **`__crashed__` cursors persist forever** unless explicitly
-   cleared. The `/re-enqueue` handler now wipes them for the target
-   investigation. Standalone reaper for orphans across the whole
-   table not yet shipped -- operator can `DELETE FROM
-   workflow_state_cursor WHERE current_state = '__crashed__' AND NOT
-   EXISTS (SELECT 1 FROM taskrecord t WHERE t.id = run_id AND
-   t.status IN ('queued','running','waiting'))` to bulk-clean.
+1. **Reserved terminal cursors (`__crashed__`, `__failed__`,
+   `__cancelled__`, `__succeeded__`) are reaped by the worker.** The
+   worker reaper cron (every minute, `aila/platform/tasks/worker.py:354`) calls
+   `sweep_orphan_crashed_cursors` (`aila/platform/tasks/cursor_reaper.py:67`),
+   which clears these cursors once their `run_id` has no active
+   `TaskRecord`. A cursor can still sit until the next sweep tick, so
+   operators who need an immediate clear run the same predicate by hand:
+   `DELETE FROM workflow_state_cursor WHERE current_state = '__crashed__'
+   AND NOT EXISTS (SELECT 1 FROM taskrecord t WHERE t.id = run_id AND
+   t.status IN ('queued','running','waiting'))`.
 
 2. **`safe_exc_message()` redacts to class name** per Phase 178
    security policy. The cursor row stores ONLY `"UnboundLocalError"`
@@ -443,9 +438,9 @@ investigations. These rules are the operational lessons:
 
 1. **Sibling rejections don't auto-propagate.** Each branch's
    case_state is private. Halvar will keep h1 live forever even
-   after Maddie + Renzo reject it. The `_render_sibling_consensus`
-   directive at `vuln_researcher.py` injects an explicit
-   `_directive.sibling_consensus_rejection` observable when 2+
+   after Maddie + Renzo reject it. `inject_sibling_consensus`
+   (`aila/platform/agents/sibling_consensus.py:17`) writes an explicit
+   `_directive.sibling_consensus_rejection` observable (`:80`) when 2+
    siblings reject an id this branch still has live.
 
 2. **Operator messages need ACK.** The agent emits
@@ -454,19 +449,28 @@ investigations. These rules are the operational lessons:
    operator messages re-fire on every turn within the wall-clock
    TTL (24h).
 
-3. **Idempotency: every LLM call is request-keyed**. Cache table
-   `llm_idempotency_cache` (migration 061) stores responses by
-   sha256(investigation_id, branch_id, turn_number, prompt_hash).
+3. **Idempotency: every agent-turn LLM call is request-keyed**. Cache
+   table `llm_idempotency_cache` (migration 061) stores responses by
+   `make_request_key(investigation_id, branch_id, turn_number,
+   prompt_hash)` (`aila/platform/llm/idempotency_cache.py:74`).
    Retries replay the cached decision instead of re-paying for
-   Claude. Caller-supplied keys live in `vuln_researcher.run_turn`.
+   Claude. The key is built and looked up once per turn in
+   `AgentTurnRunnerBase.run_turn` (`aila/platform/agents/turn_runner.py:1051`),
+   shared by vr and malware.
 
 4. **Agent self-bloats observables.** They invent scratchpad keys
    like `sibling_renzo_h7`, `mandatory_next`, `critic_open_question`.
-   `absorb()` caps agent-set obs at 10/turn + 50 total; tool-prefix
-   keys (audit_mcp:*, rea:*, re_analytics:*, _directive.*) are never
-   evicted. `render_case_model` partitions tool readings (shown
-   unlimited, capped at 80 display) from agent scratchpad (capped
-   at 15 display).
+   `absorb()` (`aila/platform/services/reasoning.py:455`) accepts at
+   most 10 new agent-set keys per turn and evicts the oldest agent-set
+   keys past `reasoning_max_agent_keys_total` (default 150,
+   `reasoning.py:77`; config-resolved at `:661`). Keys with a
+   `_TOOL_PREFIXES` prefix (`audit_mcp:`/`.`, `rea:`/`.`,
+   `reverser_belt:`/`.`, `android_mcp:`/`.`, `_directive.`, `_recall.`,
+   `_ledger.`; `reasoning.py:55-65`) cannot be written by the agent and
+   are never evicted. `render_case_model` (`reasoning.py:716`) no longer
+   applies display caps: it indexes every tool reading, renders every
+   agent scratchpad key in full, and the context assembler sizes the
+   live section against `platform.reasoning_context_budget_tokens`.
 
 ### Operations
 
@@ -503,14 +507,33 @@ condition can re-fire after the agent ignores the first one). To
 add a new rule: write `_detect_X` + `_derive_X_correction` in
 `auto_steering.py` and branch in `maybe_post_auto_steering`.
 
-### Cost tracking known-broken
+### Cost tracking
 
-`VRInvestigationRecord.cost_actual_usd` shows $0 forever. The
-aggregator in `api_router._compute_live_investigation_cost` joins
-`LLMCostRecord.run_id == TaskRecord.id` -- but `run_id` is actually
-the workflow `RunRecord.id` (DurableStateMachine run instance),
-not the ARQ TaskRecord id. The correct join needs an extra hop
-through `workflow_run_records`. Not yet fixed.
+`LLMCostRecord.run_id` for an agent turn is the investigation id, not
+a `TaskRecord` or workflow `RunRecord` id: `AgentTurnRunnerBase.run_turn`
+passes `run_id=self.investigation_id` to the engine
+(`aila/platform/agents/turn_runner.py:1106`). The live total is therefore
+a direct filter, with no extra join hop:
+`compute_live_investigation_cost`
+(`aila/platform/services/investigation_cost.py:34`) sums
+`LLMCostRecord.cost_usd` where `run_id == investigation_id`
+(`investigation_cost.py:50`); the vr, malware, and template detail
+endpoints call it.
+
+The stored `cost_actual_usd` column is also materialized on write:
+`persist_cost_record` calls `accrue_investigation_cost` in the same
+session as the cost-record insert (`aila/platform/llm/cost.py:406-410`;
+`investigation_cost.py:67`), and migration `121_backfill_investigation_cost`
+backfilled older rows. Do not read the stored column as the only source of
+truth for a live gauge; use `compute_live_investigation_cost`.
+
+The real gap is attribution, not the join: an LLM call made without a
+`run_id` is recorded under the `_no_run` sentinel
+(`aila/platform/llm/cost.py:36,381`), is skipped by
+`accrue_investigation_cost` (`investigation_cost.py:86`), and is never
+budget-checked (`cost.py:127`). Such spend does not appear in any
+investigation total unless the caller threads the investigation id
+through as `run_id`.
 
 ### audit-mcp async-first runtime (commit 16cb963 in audit-mcp repo, 2026-05-28)
 

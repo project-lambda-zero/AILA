@@ -8,7 +8,7 @@ Remote, artifact-first digital forensics workbench. Connects to an Analyzer Mach
 
 ```
 Backend ───── Python 3 (FastAPI, SQLModel, SSH, LLM agents)
-Frontend ──── React (PatternFly + AILA design system, TanStack Query v5)
+Frontend ──── React console shell (plain CSS tokens, TanStack Query v5)
 Reasoning ─── strategy-neutral LLM investigator with closed-loop protocol
               (no hardcoded playbooks; the LLM is the strategist end-to-end)
 Pipeline ──── four workflow definitions (one dispatcher + three modes):
@@ -66,9 +66,6 @@ src/aila/modules/forensics/
 │                           dryrun_collection, windows tool install rewrites,
 │                           ghidra/ Java scripts for headless analysis)
 │
-└── frontend/               Co-located React UI (@aila/forensics-frontend
-                            pnpm workspace package: spec.ts, nav.ts,
-                            routes.tsx, 5 screens, 18 components, stories/)
 ```
 
 ---
@@ -425,12 +422,21 @@ The freeflow investigator is strategy-neutral by design. Replaces the prior stra
 
 ---
 
-## Frontend -- 5 Screens, 18 Components
+## Frontend -- Console Pages
 
-### Screens
+The module has no frontend directory. Forensics UI lives in the shared console shell (`frontend/`):
 
-| Screen                | Route                             | Purpose                                                                                      |
-| --------------------- | --------------------------------- | -------------------------------------------------------------------------------------------- |
+- Left rail: the `forensics` entry in `MODULES` (`frontend/src/console/nav.ts`) lists a single `projects` page. Every sub-resource is project-scoped, so opening a project raises the tabbed project-detail window.
+- Projects list: `forensics:projects`, a declarative `DataPage` config in `frontend/src/console/pages/configs.ts`.
+- New case: the `forensics-intake` wizard (`frontend/src/console/wizards/registry.ts`), rendered by `IntakeWizard` (configure, analyzer readiness, confirm).
+- Project window: `forensics:project`, `frontend/src/console/pages/forensics/ForensicsProjectPage.tsx`, with one component per tab under `pages/forensics/tabs/`.
+- API: `frontend/src/api/forensics.ts` (project rows), `forensicsRail.ts`, `forensicsReasoning.ts` (reasoning-graph replay).
+
+### Project tabs
+
+`overview`, `evidence`, `artifacts`, `leads`, `investigations`, `answers`, `write-ups`, `timeline`, `occurrences`, `directives`, `solid evidence`, `findings`, `suppressions`, `network`, `registry` (`TAB_DEFS` in `ForensicsProjectPage.tsx`). Network and registry analysis render in `tabs/structuredAnalysis.tsx`. Investigation drill-down is `InvestigationSubView.tsx`; reasoning replay is `ReasoningGraphReplay.tsx`.
+
+--------------------- | --------------------------------- | -------------------------------------------------------------------------------------------- |
 | **Projects List**     | `/forensics`                      | All forensics projects with status badges                                                    |
 | **New Project**       | `/forensics/new`                  | Wizard: select Analyzer Machine, check tool readiness, name project, pick evidence directory |
 | **Project Dashboard** | `/forensics/projects/:id`         | Free-flow chat, investigation progress, agent activity feed                                  |

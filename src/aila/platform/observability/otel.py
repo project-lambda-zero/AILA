@@ -195,6 +195,7 @@ def gen_ai_span(
     agent_name: str | None = None,
     system: str = GEN_AI_SYSTEM_AILA,
     run_id: str | None = None,
+    module_id: str | None = None,
     attributes: dict[str, Any] | None = None,
 ) -> Iterator[SpanHandle]:
     """Yield a :class:`SpanHandle` scoped to one GenAI operation.
@@ -213,6 +214,12 @@ def gen_ai_span(
             it explicitly.
         run_id: Workflow / task run id. Recorded as ``aila.run_id`` to
             correlate spans with the platform's own audit trail.
+        module_id: Id of the module runtime that owns the work, or the
+            ``_no_module`` sentinel for work outside any module. Recorded
+            as ``aila.module_id`` so traces can be filtered per module
+            (#287). Passed by the caller because this package must stay
+            importable without the LLM package (``aila.platform.llm``
+            imports it).
         attributes: Extra key/value pairs the caller wants tagged on
             the span at start time. Additional attributes may still be
             added afterwards through :meth:`SpanHandle.set_attribute`
@@ -252,6 +259,8 @@ def gen_ai_span(
         span_attrs["aila.task_type"] = task_type
     if run_id:
         span_attrs["aila.run_id"] = run_id
+    if module_id:
+        span_attrs["aila.module_id"] = module_id
     if attributes:
         span_attrs.update(attributes)
 

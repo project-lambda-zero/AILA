@@ -1098,6 +1098,7 @@ class AgentTurnRunnerBase:
                     prompt_content_hash=system_prompt_hash,
                     prompt_version=resolved_prompt_version,
                     canary_key=loaded_prompt.canary_key,
+                    module_id=self._MODULE_ID or None,
                 ):
                     decision = await self._engine.decide_next_turn(
                         task_type=task_type,

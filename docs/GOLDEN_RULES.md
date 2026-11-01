@@ -48,22 +48,23 @@ encode the same shape are rejected. See `docs/MODULE_STANDARD.md`
 - Modules own: domain logic, module-specific contracts/tools/services,
   reports, workflow.
 - Platform never imports from `aila.modules.*`.
-- Modules never import from each other (Python OR frontend; pnpm strict mode
-  fails the install if a module imports a package it did not declare).
+- Modules never import from each other. Module UI lives in the shell
+  (`frontend/`), where each module's pages stay under their own
+  `frontend/src/console/pages/<module>/` directory.
 
 Audit rules `import_boundary` and `api_imports_module_internals` enforce the
 Python side at CI time.
 
 ### 6. Frontend dep ownership
 
-- Every bare import in a module's frontend MUST be declared in that
-  module's `package.json` (`dependencies`, `peerDependencies`, or
-  `devDependencies`).
+- The frontend is one pnpm workspace package, `@aila/shell`
+  (`frontend/package.json`). Every bare import in `frontend/src` MUST be
+  declared there (`dependencies` or `devDependencies`); pnpm strict mode fails
+  on undeclared imports.
 - Shared versions go through pnpm catalogs in `pnpm-workspace.yaml`, never
-  as literal versions in a module package.
-- The shell never imports from a module-specific dep that no other shell
-  code uses (e.g. `@dnd-kit/*` is owned by `@aila/vulnerability-frontend`,
-  not the shell). See `docs/FRONTEND_MODULE_STANDARD.md`.
+  as literal versions in `frontend/package.json`.
+- No new UI framework, router, or styling convention without updating
+  `docs/FRONTEND_MODULE_STANDARD.md` in the same change.
 
 ---
 

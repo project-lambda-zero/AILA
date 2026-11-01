@@ -10,6 +10,7 @@ and the post-completion proposer hooks.
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 from types import SimpleNamespace
 from typing import Any
@@ -24,6 +25,10 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
     VRTargetRecord,
     VRWorkspaceRecord,
+)
+from aila.platform.agents.outcome_dispatcher import (
+    ClaimVerificationHook,
+    FinalizeAggregateResult,
 )
 from aila.platform.contracts.enums import InvestigationStatus
 from aila.platform.uow import UnitOfWork
@@ -278,6 +283,77 @@ async def test_proposer_hooks_fire_when_bound() -> None:
     )
 
     assert fired == [f"pattern:{inv_id}", f"playbook:{inv_id}"]
+
+
+async def _aggregate_kwargs(
+    monkeypatch: pytest.MonkeyPatch, dispatcher_cls: type | None,
+) -> dict[str, Any]:
+    """Drive a COMPLETED emit and return the kwargs the aggregate was called with.
+
+    ``dispatcher_cls`` replaces the stub dispatcher on the bindings;
+    ``None`` keeps ``_bindings``' stub, which declares no hook.
+    """
+    inv_id, br_id = await _seed(InvestigationStatus.COMPLETED)
+    seen: dict[str, Any] = {}
+
+    async def _fake_aggregate(
+        investigation_id: str, **kwargs: Any,
+    ) -> FinalizeAggregateResult:
+        seen.update(kwargs)
+        return FinalizeAggregateResult(investigation_id=investigation_id)
+
+    monkeypatch.setattr(
+        "aila.platform.agents.outcome_dispatcher."
+        "finalize_investigation_aggregate",
+        _fake_aggregate,
+    )
+    bindings = _bindings(_FakeQueue(), _DEFAULT_CAPS)
+    if dispatcher_cls is not None:
+        bindings = dataclasses.replace(
+            bindings, outcome_dispatcher_cls=dispatcher_cls,
+        )
+    handler = state_investigation_emit(bindings, InvestigationStateHooks())
+
+    await handler(
+        {"investigation_id": inv_id, "branch_id": br_id,
+         "exit_reason": "status_locked:completed", "outcome_id": None},
+        SimpleNamespace(),
+    )
+    return seen
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_aggregate_gets_the_polarity_of_the_bound_dispatcher_hook(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _polarity(kind: str) -> str:
+        return "positive" if kind == "proven_widget" else "inconclusive"
+
+    async def _verify(_packet: dict[str, Any]) -> dict[str, Any]:
+        return {"verdict": "confirmed"}
+
+    class _HookedDispatcher:
+        claim_verification = ClaimVerificationHook(
+            polarity=_polarity, verify_evidence=_verify,
+        )
+
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+    seen = await _aggregate_kwargs(monkeypatch, _HookedDispatcher)
+
+    # The emit chokepoint reads the polarity off the bound dispatcher
+    # class; the platform holds no module polarity of its own.
+    assert seen["polarity_fn"] is _polarity
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_aggregate_gets_no_polarity_from_a_dispatcher_without_a_hook(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen = await _aggregate_kwargs(monkeypatch, None)
+
+    assert seen["polarity_fn"] is None
 
 
 @pytest.mark.usefixtures("test_db")

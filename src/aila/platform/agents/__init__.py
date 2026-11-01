@@ -35,10 +35,12 @@ from aila.platform.agents.observation import (
     record_observation,
 )
 from aila.platform.agents.outcome_dispatcher import (
+    ClaimVerificationHook,
     FinalizeAggregateResult,
     OutcomeDispatcherBase,
     OutcomeDispatcherError,
     OutcomeDispatchResult,
+    OutcomePolarityFn,
     PromotedFinding,
     finalize_investigation_aggregate,
     handle_adjudication_refuted,
@@ -67,6 +69,7 @@ __all__ = [
     "BranchManagerError",
     "BranchOpResult",
     "BranchPool",
+    "ClaimVerificationHook",
     "ClaimVerifierAgentBase",
     "FALSIFIER_PERSONA",
     "FalsifierAgent",
@@ -77,6 +80,7 @@ __all__ = [
     "OutcomeDispatchResult",
     "OutcomeDispatcherBase",
     "OutcomeDispatcherError",
+    "OutcomePolarityFn",
     "PromotedFinding",
     "RefutationPacket",
     "finalize_investigation_aggregate",

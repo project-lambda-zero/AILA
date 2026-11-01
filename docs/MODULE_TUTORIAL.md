@@ -337,152 +337,59 @@ uvicorn aila.api.app:app --host 0.0.0.0 --port 8000 --reload
 
 ## Step 11: Add a frontend page (optional)
 
-Each module that contributes UI is its own pnpm workspace package living at
-`src/aila/modules/<module_id>/frontend/`. The shell imports it by package
-name, so it must declare a `package.json` and `tsconfig.json` before any
-`.ts`/`.tsx` files compile.
+A module does not ship its own frontend package. The UI is the single
+`@aila/shell` SPA in `frontend/`, and a module surface is registered inside it.
+Mirror the existing wiring for `malware` or `forensics`.
 
-Use `src/aila/modules/hello_world/frontend/` as the canonical reference.
-
-**`frontend/package.json`** -- workspace package metadata. Name follows the
-`@aila/<module>-frontend` (kebab-case) convention:
-
-```json
-{
-  "name": "@aila/my-module-frontend",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "main": "./spec.ts",
-  "types": "./spec.ts",
-  "exports": { ".": "./spec.ts" },
-  "scripts": {
-    "type-check": "tsc --noEmit",
-    "clean": "rm -rf node_modules"
-  },
-  "peerDependencies": {
-    "react": "catalog:react19",
-    "@tanstack/react-query": "catalog:query"
-  },
-  "devDependencies": {
-    "@aila/typescript-config": "workspace:*",
-    "@types/react": "catalog:react19",
-    "typescript": "catalog:"
-  }
-}
-```
-
-Add any module-specific deps under `dependencies` (with `catalog:<group>`
-references where a catalog entry exists). Add shell-owned framework / data
-/ design-system packages under `peerDependencies`. See
-`docs/FRONTEND_MODULE_STANDARD.md` for the full dep-ownership matrix.
-
-**`frontend/tsconfig.json`** -- extends the shared module config and points
-`@/`, `@app/`, `@platform/` aliases back at the shell:
-
-```json
-{
-  "extends": "@aila/typescript-config/react-module",
-  "compilerOptions": {
-    "baseUrl": ".",
-    "paths": {
-      "@/*": ["../../../../../frontend/src/*"],
-      "@app/*": ["../../../../../frontend/src/app/*"],
-      "@platform/*": ["../../../../../frontend/src/platform/*"]
-    }
-  },
-  "include": ["**/*.ts", "**/*.tsx"]
-}
-```
-
-**`frontend/spec.ts`** -- module UI contribution. The shell imports this
-file via the package's `main` field:
+**1. Add the module to the left rail** -- append a `ModuleDef` to `MODULES` in
+`frontend/src/console/nav.ts`. A page id is its label with spaces replaced by
+`-`:
 
 ```typescript
-import { lazy } from "react";
-import type { ModuleFrontendSpec } from "@platform/extension-registry/types";
-
-const MyModulePage = lazy(() => import("./MyModulePage"));
-
-export const frontendSpec = {
-  moduleId: "my_module",
-  nav: [{
-    id: "my_module.home",
-    slot: "sidebar.main" as const,
-    label: "My Module",
-    to: "/my_module",
-    order: 100,
-  }],
-  routes: [{
-    id: "my_module.home",
-    path: "/my_module",
-    title: "My Module",
-    nav: true,
-    slot: "page.full" as const,
-    page: MyModulePage,
-    breadcrumb: "My Module",
-  }],
-} satisfies ModuleFrontendSpec;
-```
-
-**`frontend/MyModulePage.tsx`** -- page component using platform design
-tokens:
-
-```tsx
-import { PageFrame } from "@app/layout/PageFrame";
-import { AilaCard } from "@platform/ui/AilaCard";
-
-export default function MyModulePage() {
-  return (
-    <PageFrame title="My Module">
-      <AilaCard>
-        <p className="text-text">My module is working.</p>
-      </AilaCard>
-    </PageFrame>
-  );
-}
-```
-
-Use platform tokens: `bg-base`, `bg-surface`, `text-text`, `text-text-muted`,
-`border-border`. No custom CSS files. No hardcoded hex colors.
-
-**Register the package with the shell** -- add the new workspace dependency
-to `frontend/package.json` so the shell can import it by name:
-
-```json
 {
-  "dependencies": {
-    "@aila/my-module-frontend": "workspace:*"
-  }
-}
+  id: "my_module",
+  label: "my module",
+  noun: "records",
+  pages: [page("records")],
+},
 ```
 
-…and add the corresponding entry to
-`frontend/src/platform/extension-registry/loadModuleSpecs.ts`:
+**2. Register the page** -- the registry key is `<module id>:<page id>`
+(`my_module:records`). For a plain list, add a declarative config to
+`PAGE_CONFIGS` in `frontend/src/console/pages/configs.ts`; the shell renders it
+with `DataPage` automatically:
 
-```ts
-import { frontendSpec as myModuleSpec } from "@aila/my-module-frontend";
+```typescript
+"my_module:records": {
+  title: "my_module \u00b7 records",
+  endpoint: "/my_module/records",
+  columns: [c("name"), c("status"), c("created_at", "created")],
+},
 ```
 
-**Wire Tailwind v4 scanning** -- Tailwind's content scan starts from the
-directory containing `frontend/src/styles/globals.css` and ignores
-`node_modules/`, so classes used only inside a module file get no CSS
-generated unless you add an explicit `@source` directive. Add one line per
-module right after the `@import "tailwindcss";` block:
+For custom behavior, write a component under
+`frontend/src/console/pages/my_module/`, import it with `lazy(...)` in
+`frontend/src/console/pages/registry.tsx`, and add it to `BESPOKE` under the
+same key. The component takes `ModulePageProps`
+(`frontend/src/console/contract.ts`) and renders inside `<ConsoleWindow>`;
+the shell owns the window chrome.
 
-```css
-@source "../../../src/aila/modules/my_module/frontend/**/*.{ts,tsx}";
-```
+**3. Add API hooks if the page is bespoke** -- put response types and
+`useQuery` hooks in `frontend/src/api/` (see `hooks.ts` for the pattern). Page
+components never call `fetch()` directly.
 
-Already wired for `vr`, `vulnerability`, `forensics`, and `hello_world`.
-
-**Run `pnpm install`** -- relinks the workspace so the shell can resolve the
-new package and pnpm strict mode validates every bare import:
+**4. Verify**:
 
 ```bash
-pnpm install
-pnpm --filter @aila/my-module-frontend run type-check
+pnpm --filter @aila/shell run type-check
+pnpm --filter @aila/shell run lint
 ```
+
+No `package.json`, `tsconfig.json`, or `pnpm install` step is needed for a
+module. Any new third-party dependency goes into `frontend/package.json`
+through a catalog entry in `pnpm-workspace.yaml`. See
+`docs/FRONTEND_MODULE_STANDARD.md` for wizards, widgets, and the full page
+model.
 
 ---
 
@@ -510,15 +417,14 @@ pnpm --filter @aila/my-module-frontend run type-check
 
 11. **`session.add()` on a row that may already exist** -- the second call raises an `IntegrityError`. Use `session.merge()` for INSERT-or-UPDATE on the primary key.
 
-12. **Adding a bare import in a module frontend without declaring it in the module `package.json`** -- pnpm strict mode rejects the install. Add the import to `dependencies`, `peerDependencies`, or `devDependencies` as appropriate.
+12. **Adding a frontend bare import without declaring it** -- pnpm strict mode rejects undeclared imports. Add the dependency to `frontend/package.json` via a catalog entry.
 
-13. **Importing `react-router-dom`** -- React Router v7 collapsed both packages into `react-router`. Every import in this codebase uses `react-router`.
+13. **Nav entry with no registry entry** -- a page listed in `MODULES` (`frontend/src/console/nav.ts`) that has no `PAGE_CONFIGS` or `BESPOKE` entry under `<module>:<page-id>` opens nothing. Register both in the same change.
 
-14. **Literal versions in a module `package.json`** -- shared deps must reference catalog entries (`"react": "catalog:react19"`); literals only for genuinely module-private deps.
+14. **Literal versions in `frontend/package.json`** -- shared deps must reference catalog entries (`"react": "catalog:react19"`).
 
-15. **Forgetting the Tailwind `@source` directive for a new module** -- Tailwind v4 generates no CSS for classes it cannot see. Add the `@source` line to `frontend/src/styles/globals.css` when you ship the module.
+15. **Editing `pnpm-lock.yaml` by hand** -- the file regenerates on every `pnpm install`. Edit `pnpm-workspace.yaml` or a `package.json` instead and re-run install.
 
-16. **Editing `pnpm-lock.yaml` by hand** -- the file regenerates on every `pnpm install`. Edit `pnpm-workspace.yaml` or a `package.json` instead and re-run install.
 ---
 
 ## File Checklist
@@ -536,7 +442,7 @@ pnpm --filter @aila/my-module-frontend run type-check
 | `reporting/` | Yes | Report generation (stub OK) |
 | `api_router.py` | Optional | FastAPI router factory |
 | `db_models/` | Optional | SQLModel tables + Alembic migration |
-| `frontend/` | Optional | React page + ModuleFrontendSpec |
+| (shell) `frontend/src/console/` | Optional | Rail entry in `nav.ts` + page entry in `pages/` (outside the module directory) |
 
 ---
 

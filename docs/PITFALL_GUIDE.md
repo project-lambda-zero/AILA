@@ -509,52 +509,7 @@ If a broad catch is genuinely required (top-level worker loop, callback boundary
 
 ---
 
-## 22. CSS Variables Inside SVG `fill` / `stroke`
-
-**Source:** `.claude/CLAUDE.md` mistake #4 (frontend).
-
-**Symptom:** Recharts series render with no color, or fall back to the SVG default black/grey. Theme switches do not update the chart.
-
-**Mistake:**
-
-```tsx
-<Bar dataKey="count" fill="var(--color-accent)" />  // SVG ignores the var() reference
-```
-
-**Fix:** Resolve the variable with `getComputedStyle` via the `useThemeChartColors()` hook and pass the resolved value:
-
-```tsx
-const colors = useThemeChartColors();
-<Bar dataKey="count" fill={colors.accent} />
-```
-
-The hook reads computed values from the document root, so it tracks `data-theme` changes correctly.
-
----
-
-## 23. Tailwind v4 Arbitrary Values With `h-[…]`, `bg-[#…]`
-
-**Source:** `.claude/CLAUDE.md` mistake #5 (frontend).
-
-**Symptom:** `class="h-[720px] bg-[#131313]"` renders with the default height/background; Tailwind v4 silently emits no CSS for these.
-
-**Mistake:**
-
-```tsx
-<div className="h-[720px] bg-[#131313]" />
-```
-
-**Fix:** Use an inline `style` for one-off literal values, or add a token:
-
-```tsx
-<div className="bg-surface" style={{ height: 720 }} />
-```
-
-Arbitrary values that should be reused belong in the design system, not inline.
-
----
-
-## 24. Schema Changes Without Alembic
+## 22. Schema Changes Without Alembic
 
 **Source:** `.claude/CLAUDE.md` mistake #6.
 
@@ -578,7 +533,7 @@ Runtime `create_all()` is allowed only inside test fixtures that build a throwaw
 
 ---
 
-## 25. Worker Bytecode Cache Staleness
+## 23. Worker Bytecode Cache Staleness
 
 **Source:** `.claude/CLAUDE.md` mistake #8.
 
@@ -597,7 +552,7 @@ If a traceback references stale line numbers, clear `__pycache__` directories un
 
 ---
 
-## 26. Pydantic Models Passed As Task Kwargs
+## 24. Pydantic Models Passed As Task Kwargs
 
 **Source:** `.claude/CLAUDE.md` mistake #9.
 
@@ -623,7 +578,7 @@ The workflow engine validates kwargs at runtime and raises `TypeError` if a non-
 
 ---
 
-## 27. `session.add()` on a Possibly-Existing Row
+## 25. `session.add()` on a Possibly-Existing Row
 
 **Source:** `.claude/CLAUDE.md` mistake #10.
 
@@ -649,15 +604,15 @@ await session.commit()
 
 ---
 
-## 28. Module Frontend Bare Import Not Declared in `package.json`
+## 26. Frontend Bare Import Not Declared in `package.json`
 
 **Source:** `.claude/CLAUDE.md` mistake #11.
 
-**Symptom:** `pnpm install` fails with "missing peer dependencies" or "ERR_PNPM_UNDECLARED_DEPENDENCY". `tsc --noEmit` flags an unresolved import.
+**Symptom:** `pnpm install` fails with "ERR_PNPM_UNDECLARED_DEPENDENCY", or `tsc --noEmit` flags an unresolved import.
 
-**Mistake:** Adding `import { Foo } from "some-pkg"` inside a module frontend file without listing `some-pkg` in that module's `package.json`.
+**Mistake:** Adding `import { Foo } from "some-pkg"` inside `frontend/src` without listing `some-pkg` in `frontend/package.json`. The frontend is a single workspace package (`@aila/shell`); there are no per-module frontend packages.
 
-**Fix:** pnpm strict mode rejects undeclared imports at install time. Decide which section the import belongs to (per the dep ownership matrix in `FRONTEND_MODULE_STANDARD.md`) and declare it:
+**Fix:** Declare the dependency in `frontend/package.json` through a catalog entry in `pnpm-workspace.yaml`:
 
 ```json
 {
@@ -671,49 +626,29 @@ Then `pnpm install` to relink.
 
 ---
 
-## 29. Importing `react-router-dom`
-
-**Source:** `.claude/CLAUDE.md` mistake #12.
-
-**Symptom:** Module type-check fails with "Cannot find module 'react-router-dom'", or runtime fails because the package isn't installed.
-
-**Mistake:**
-
-```ts
-import { useNavigate } from "react-router-dom";
-```
-
-**Fix:** React Router v7 unified `react-router-dom` and `react-router` into the single `react-router` package. Every import in this codebase comes from `react-router`:
-
-```ts
-import { useNavigate } from "react-router";
-```
-
----
-
-## 30. Literal Versions in Module `package.json`
+## 27. Literal Versions in `frontend/package.json`
 
 **Source:** `.claude/CLAUDE.md` mistake #13.
 
-**Symptom:** Two modules pin different versions of the same dep; pnpm hoists both; bundle doubles in size; runtime type mismatches when two `react` copies meet.
+**Symptom:** Versions of shared packages drift between `frontend/package.json`, `packages/typescript-config`, and `tools/oxlint`; two copies of `react` or `typescript` end up installed.
 
 **Mistake:**
 
 ```json
-{ "peerDependencies": { "react": "19.2.4" } }
+{ "dependencies": { "react": "19.2.7" } }
 ```
 
 **Fix:** Every shared dep references a pnpm catalog entry from `pnpm-workspace.yaml`:
 
 ```json
-{ "peerDependencies": { "react": "catalog:react19" } }
+{ "dependencies": { "react": "catalog:react19" } }
 ```
 
-Only a dep that no other workspace package consumes is allowed a literal version, and even then prefer adding it to a catalog so a future second consumer cannot drift.
+Add a new package to a catalog first, then reference it.
 
 ---
 
-## 31. Hand-Editing `pnpm-lock.yaml`
+## 28. Hand-Editing `pnpm-lock.yaml`
 
 **Source:** `.claude/CLAUDE.md` mistake #14.
 
@@ -725,34 +660,7 @@ Only a dep that no other workspace package consumes is allowed a literal version
 
 ---
 
-## 32. Missing `@source` Directive for a New Module's Tailwind Classes
-
-**Source:** `.claude/CLAUDE.md` mistake #15 (frontend).
-
-**Symptom:** Tailwind classes used only inside a module's frontend (e.g. `bottom-6 right-6 z-[60]` on a floating pill) generate no CSS rules. The element renders with no `bottom`/`right` set and anchors at flow position instead of viewport.
-
-**Cause:** Tailwind v4 scans content starting from the directory containing the entry CSS file (`frontend/src/styles/globals.css` → `frontend/src/`). Module frontends live at `src/aila/modules/<id>/frontend/`, reached only via pnpm symlinks under `node_modules/@aila/*` that Tailwind ignores by default.
-
-**Fix:** Add one `@source` line per module to `frontend/src/styles/globals.css`, right after the Tailwind import:
-
-```css
-@import "tailwindcss";
-@source "../../../src/aila/modules/<your_module>/frontend/**/*.{ts,tsx}";
-```
-
-Already wired for: `vr`, `vulnerability`, `forensics`, `hello_world`. When you copy `_template/` to start a new module, add the `@source` line in the same change.
-
-Verify with a curl against the dev server:
-
-```bash
-curl -s http://localhost:3000/src/styles/globals.css | grep "\.your-new-class"
-```
-
-If the rule is present, Tailwind is scanning the module correctly.
-
----
-
-## 33. Auto-Steering Messages Look Identical to Operator Messages
+## 29. Auto-Steering Messages Look Identical to Operator Messages
 
 **Source:** `src/aila/modules/vr/agents/auto_steering.py`.
 

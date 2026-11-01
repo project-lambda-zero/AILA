@@ -105,10 +105,11 @@ def make_verify_step(
 
     Args:
         config_provider: LLMConfigProvider for threshold/model config reads.
-        inner_call: Async callable that issues a single LLM call WITHOUT
-            triggering the pipeline. Wired to
+        inner_call: Async callable that issues one nested LLM call through
+            the pipeline without the gate and verify steps. Wired to
             :meth:`AilaLLMClient._inner_call` so cost tracking + persistence
-            fire on the verifier's tokens (fix §100).
+            fire on the verifier's tokens (fix §100) and the second opinion
+            is sealed like the primary call (#289).
         emitter: Optional EventEmitter for audit logging.
 
     Returns:
@@ -171,7 +172,9 @@ def make_verify_step(
         # Call second model with ORIGINAL messages (blind -- no first model output).
         # §100: route through AilaLLMClient._inner_call so the verifier's
         # tokens land in the same cost ledger as the primary call. The inner
-        # call still bypasses the pipeline by design (no recursive verify).
+        # call runs the nested pipeline (classify, validate, seal) without the
+        # gate and verify steps, so there is no recursive verify and the second
+        # opinion is sealed like any other model call.
         try:
             verify_routing = LLMRouting(
                 model_id=verify_model,

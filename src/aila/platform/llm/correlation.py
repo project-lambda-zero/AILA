@@ -7,6 +7,10 @@ that produced it. Threading it as a ContextVar avoids passing the ids through
 every call signature (AilaLLMClient, tool executors, bridges), and it
 propagates across ``await`` within the same task, so a value set around a
 turn reaches the awaited cost-record and MCP-log writes.
+
+The module runtime that owns the work (#287) rides the same scope as a
+separate ContextVar so nested scopes opened by module helpers, which restate
+only the join keys, keep the module attribution of the enclosing turn.
 """
 from __future__ import annotations
 
@@ -16,16 +20,26 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 
 __all__ = [
+    "NO_MODULE",
     "CorrelationContext",
     "bind_user_id",
     "correlation_scope",
     "current_canary_key",
     "current_join_keys",
+    "current_module_id",
     "current_prompt_content_hash",
     "current_prompt_version",
     "current_user_id",
+    "resolve_run_id",
     "user_id_scope",
 ]
+
+# Module attribution recorded on the LLM cost row, the ``gen_ai`` span and the
+# ``llm.call.completed`` event for a call made outside any module runtime
+# (platform-owned work, API-triggered calls, scripts). A sentinel rather than
+# NULL or an empty string so a per-module cost or trace filter can select
+# "no module" explicitly instead of conflating it with a missing value.
+NO_MODULE: str = "_no_module"
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +70,16 @@ _user_id: ContextVar[str | None] = ContextVar(
     "aila_llm_user_id", default=None,
 )
 
+# #287 module attribution ContextVar. Same lifecycle argument as ``_user_id``:
+# the module runtime that owns a turn is not part of the per-turn join keys,
+# and the module helpers that open nested ``correlation_scope`` blocks (report
+# writers, collectors) restate only investigation/branch/turn. Keeping it
+# separate means those nested scopes inherit the enclosing module instead of
+# silently resetting it to :data:`NO_MODULE`.
+_module_id: ContextVar[str | None] = ContextVar(
+    "aila_llm_module_id", default=None,
+)
+
 
 def current_join_keys() -> tuple[str | None, str | None, int | None]:
     """Return ``(investigation_id, branch_id, turn_number)`` for the current context.
@@ -68,6 +92,33 @@ def current_join_keys() -> tuple[str | None, str | None, int | None]:
     if corr is None:
         return (None, None, None)
     return (corr.investigation_id, corr.branch_id, corr.turn_number)
+
+
+def current_module_id() -> str:
+    """Return the id of the module runtime driving the current call (#287).
+
+    :data:`NO_MODULE` when no module runtime is in scope. Never None and never
+    empty, so the cost-record writer, the ``gen_ai`` span and the
+    ``llm.call.completed`` event all stamp the same value without a per-site
+    None guard.
+    """
+    return _module_id.get() or NO_MODULE
+
+
+def resolve_run_id(run_id: str | None) -> str | None:
+    """Return ``run_id``, or the ambient investigation id when the caller passed none.
+
+    The cost ledger attributes per-investigation spend by
+    ``run_id == investigation_id`` (``compute_live_investigation_cost``). A
+    model call made inside an investigation's correlation scope that omits
+    ``run_id`` would land under the ``_no_run`` sentinel and vanish from that
+    total (#288), so the LLM client resolves every call's run id through this
+    function. None only for a genuinely global call: no explicit id and no
+    ambient investigation.
+    """
+    if run_id:
+        return run_id
+    return current_join_keys()[0] or None
 
 
 def current_prompt_content_hash() -> str | None:
@@ -121,11 +172,18 @@ def correlation_scope(
     prompt_content_hash: str | None = None,
     prompt_version: str | None = None,
     canary_key: str | None = None,
+    module_id: str | None = None,
 ) -> Iterator[None]:
     """Set the ambient correlation for the duration of the block.
 
     Restores the prior value on exit so a following turn (or unrelated work
     on the same task) does not inherit stale ids.
+
+    The join keys and prompt stamps replace the enclosing scope wholesale.
+    ``module_id`` does not: None (or empty) keeps the enclosing scope's module
+    attribution, so a nested scope that restates only the join keys stays
+    attributed to the module that owns the turn. A non-empty value overrides
+    it for the block (#287).
     """
     token = _correlation.set(
         CorrelationContext(
@@ -137,9 +195,12 @@ def correlation_scope(
             canary_key=canary_key,
         ),
     )
+    module_token = _module_id.set(module_id) if module_id else None
     try:
         yield
     finally:
+        if module_token is not None:
+            _module_id.reset(module_token)
         _correlation.reset(token)
 
 

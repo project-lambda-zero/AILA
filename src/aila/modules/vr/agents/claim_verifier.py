@@ -839,12 +839,13 @@ async def verify_evidence(packet: dict) -> dict:
 
     Instantiates :class:`ClaimVerifierAgent` from the packet and
     delegates to its instance-level ``verify_evidence``. Kept as a
-    plain module attribute so
-    :func:`aila.platform.agents.outcome_dispatcher._load_verify_evidence_fn`
-    can import it verbatim -- an instance method resolves to a
-    descriptor at module scope and would silently ImportError inside
-    the dispatchers lazy loader, permanently disabling the
-    pre-dispatch verifier gate for every positive outcome.
+    plain module attribute because the VR ``OutcomeDispatcher`` binds it
+    as the ``verify_evidence`` of its ``claim_verification`` hook
+    (``agents/outcome_dispatcher.py``, resolved per call to avoid the
+    ``claim_verifier`` <-> ``outcome_dispatcher`` import cycle) -- an
+    instance method resolves to a descriptor at module scope and would
+    raise ``ImportError`` there instead of running the pre-dispatch
+    verifier gate for every positive outcome.
 
     The packet contract is the one the dispatchers
     ``_build_evidence_packet`` writes: ``investigation_id`` lives under

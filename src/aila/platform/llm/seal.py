@@ -386,6 +386,19 @@ def make_seal_step(
                     if raw is not None:
                         drift_score = float(raw)
 
+            # A nested call (gate consensus retry, verify second opinion) never
+            # runs a gate step of its own -- the outer call's gate scores it --
+            # so no gate score exists. Score the raw response with the gate's
+            # own self-report extractor so the nested call still feeds the
+            # drift tracker (#289) instead of being invisible to it.
+            nested = bool(ctx.get("nested_call"))
+            if nested:
+                from .gate import extract_confidence
+
+                drift_score = extract_confidence(
+                    response_content, response.finish_reason or "",
+                )
+
             if drift_score > 0:
                 target_name = ctx.get("target_name", "") or ctx.get("run_id", "")
                 tracker = ConfidenceDriftTracker()
@@ -420,10 +433,15 @@ def make_seal_step(
             # this is inert outside a live canary rollout (and
             # record_canary_signal itself no-ops when no canary is active).
             # Best effort -- a failure never breaks the seal step.
+            #
+            # The signal is per turn: every sample bumps the canary's
+            # ``signal_count`` (the minimum-traffic promotion gate), so a
+            # nested consensus / verify call must not feed it -- it would
+            # inflate traffic and report a call-level cost as the turn's.
             from .correlation import current_canary_key
 
             canary_key = current_canary_key()
-            if canary_key:
+            if canary_key and not nested:
                 try:
                     from aila.platform.lifecycle.controller import (
                         AgentLifecycleController,

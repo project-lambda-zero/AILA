@@ -5,13 +5,15 @@ from itertools import islice
 from typing import Any
 
 from ..contracts._common import utc_now as utc_now
+from ..runtime.tools import ToolProtocol
 
 
-class Tool:
-    """Base class for platform tools.
+class Tool(ToolProtocol):
+    """The single concrete base class for every platform and module tool.
 
-    Provides the name/description/forward interface that ToolProtocol
-    expects. Platform and module tools inherit from this.
+    Explicitly subclasses ToolProtocol (the contract ToolRegistry enforces), so
+    name, description, and forward() are declared once in the Protocol and
+    this class only supplies the defaults. Subclasses override all three.
     """
 
     name: str = ""

@@ -25,7 +25,8 @@ class LLMCostRecord(TeamScopedMixin, SQLModel, table=True):
     """Durable per-call LLM cost record.
 
     Written by: persist_cost_record() called from AilaLLMClient._call_with_retry()
-    after every successful LLM call.
+    and AilaLLMClient._inner_call() (gate consensus, verify) after every
+    successful LLM call.
     Consumed by: cost reporting endpoints (Plan 175-03), budget alerting
     (Plan 175-02), pre-scan estimation (Plan 175-03).
 
@@ -59,6 +60,12 @@ class LLMCostRecord(TeamScopedMixin, SQLModel, table=True):
     # (API path) or by callers that opt in via ``user_id_scope``. Indexed
     # so the admin /llm-log ``user=`` filter is a direct index scan.
     user_id: str | None = Field(default=None, index=True)
+    # #287 module attribution: the module runtime that drove this call, so
+    # cost can be sliced per module. :func:`persist_cost_record` stamps
+    # ``current_module_id()``, which is the ``_no_module`` sentinel for a call
+    # made outside any module runtime. NULL only on rows written before
+    # migration 145. Indexed for the per-module cost filter.
+    module_id: str | None = Field(default=None, index=True)
     # #39 observability join keys: correlate a cost record back to the
     # investigation, branch, and turn that produced it. Nullable -- calls
     # outside an agent turn (scoring, report generation) leave them unset.

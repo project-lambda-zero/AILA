@@ -9,6 +9,12 @@ Steps write results into the ctx dict. Registration happens at platform
 startup via pipeline.register("classify", fn).
 
 When no steps are registered, pipeline is a transparent pass-through.
+
+Nested calls (``run(nested=True)``) are the model calls a step issues itself --
+gate consensus retries and the verify second opinion, both routed through
+``AilaLLMClient._inner_call``. They run the same pipeline minus
+:data:`NESTED_SKIPPED_STEPS`, so every one of them is still classified,
+validated and sealed.
 """
 
 from __future__ import annotations
@@ -34,6 +40,17 @@ StepFn = Callable[[dict[str, Any], list[dict[str, Any]], LLMRouting], Awaitable[
 PRE_CALL_STEPS: tuple[str, ...] = ("classify",)
 POST_CALL_STEPS: tuple[str, ...] = ("validate", "gate", "verify", "seal")
 _KNOWN_STEPS: frozenset[str] = frozenset(PRE_CALL_STEPS + POST_CALL_STEPS)
+
+# Steps a nested call (``run(nested=True)``) does NOT run. These are exactly the
+# steps that issue model calls of their own through ``AilaLLMClient._inner_call``
+# (gate consensus retries, verify second opinion): a nested call re-entering
+# either would recurse without bound. The OUTER call's gate already scores and
+# majority-votes every consensus response and its verify step compares the
+# second opinion, so those checks apply once per decision instead of being
+# re-run per nested call. Every other step (classify, validate, seal) runs,
+# which is what keeps a nested call from being an unsealed model call.
+NESTED_SKIPPED_STEPS: frozenset[str] = frozenset({"gate", "verify"})
+
 
 class PipelineRunner:
     """Fixed-order middleware pipeline for LLM calls."""
@@ -102,6 +119,7 @@ class PipelineRunner:
         call_kwargs: dict[str, Any],
         run_id: str = "",
         team_id: str = "",
+        nested: bool = False,
     ) -> tuple[Any, dict[str, Any]]:
         """Execute the pipeline: pre-call steps, call, post-call steps.
 
@@ -115,6 +133,13 @@ class PipelineRunner:
             team_id: Optional team identifier for cost record scoping, threaded
                 into ctx so consensus/verify inner calls attribute their spend
                 to the same team as the primary call.
+            nested: True for a model call issued by a pipeline step (gate
+                consensus retry, verify second opinion) through
+                ``AilaLLMClient._inner_call``. Skips
+                :data:`NESTED_SKIPPED_STEPS` so the call cannot recurse into
+                the step that issued it, and sets ``ctx["nested_call"]`` so
+                steps with per-turn semantics (the seal step's canary signal)
+                can tell a nested call from the turn's own call.
 
         Returns:
             Tuple of (response, ctx) where ctx is the pipeline context dict.
@@ -124,6 +149,10 @@ class PipelineRunner:
             "run_id": run_id,
             "team_id": team_id,
         }
+        skipped: frozenset[str] = frozenset()
+        if nested:
+            ctx["nested_call"] = True
+            skipped = NESTED_SKIPPED_STEPS
 
         if not self._steps:
             response = await call_fn(**call_kwargs)
@@ -133,6 +162,8 @@ class PipelineRunner:
             phase="pre_call", task_type=task_type, default=PRE_CALL_STEPS,
         )
         for step_name in pre_steps:
+            if step_name in skipped:
+                continue
             await self._run_step(step_name, ctx, messages, routing)
 
         response = await call_fn(**call_kwargs)
@@ -142,6 +173,8 @@ class PipelineRunner:
             phase="post_call", task_type=task_type, default=POST_CALL_STEPS,
         )
         for step_name in post_steps:
+            if step_name in skipped:
+                continue
             await self._run_step(step_name, ctx, messages, routing)
 
         # Re-read: gate step may have replaced ctx["response"] (D-15, Phase 119).

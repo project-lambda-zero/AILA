@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 from httpx import AsyncClient
@@ -177,13 +176,16 @@ async def test_get_tool_detail_no_inputs_attr(
     app = client._transport.app  # type: ignore[attr-defined]
     registry = app.state.platform.runtime.tool_registry
 
-    # MagicMock without inputs attribute set
-    bare_tool = MagicMock()
-    bare_tool.name = "bare_tool"
-    bare_tool.description = "No inputs"
-    del bare_tool.inputs
-    del bare_tool.output_type
-    registry.register("platform.bare_tool", bare_tool)
+    # Real ToolProtocol double that lacks inputs/output_type attrs
+    @dataclass
+    class _BareTool:
+        name: str = "bare_tool"
+        description: str = "No inputs"
+
+        def forward(self, **kwargs: Any) -> Any:
+            return {}
+
+    registry.register("platform.bare_tool", _BareTool())
 
     resp = await client.get(
         "/tools/platform.bare_tool",

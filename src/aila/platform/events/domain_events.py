@@ -38,7 +38,7 @@ from pydantic import BaseModel, Field
 
 from ..contracts import JsonObject
 from ..contracts._common import utc_now
-from ..llm.correlation import current_join_keys
+from ..llm.correlation import NO_MODULE, current_join_keys
 
 __all__ = [
     "ConfigChanged",
@@ -122,12 +122,18 @@ class ConfigChangedPayload(BaseModel):
 
 
 class LlmCallCompletedPayload(BaseModel):
-    """Payload for llm.call.completed events."""
+    """Payload for llm.call.completed events.
+
+    ``module_id`` names the module runtime that drove the call (#287), or
+    ``_no_module`` for a call made outside any module runtime. The default
+    keeps events serialised by a process that predates the field decodable.
+    """
 
     model: str
     tokens: int
     cost: float
     duration: float
+    module_id: str = NO_MODULE
 
 
 class ModuleWorkflowStartedPayload(BaseModel):

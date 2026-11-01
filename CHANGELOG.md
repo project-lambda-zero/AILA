@@ -5,6 +5,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.4] - 2026-11-02 -- LLM call-path attribution and audit hardening, boundary + tool-base cleanup
+
+### Added
+
+- `module_id` attribution across the LLM call path: a dedicated correlation ContextVar (`current_module_id`, sentinel `_no_module`), a new nullable `llm_cost_records.module_id` column (migration `145_llm_cost_module_id`, indexed), the `aila.module_id` span attribute, and `module_id` on the `llm.call.completed` event. The agent turn runner stamps its module id into the correlation scope so every in-module call is attributable.
+- `ClaimVerificationHook` on the platform outcome dispatcher: modules inject their outcome-kind polarity and claim-verify callable via their bound dispatcher class. The platform base no longer references any module package.
+
+### Changed
+
+- Nested LLM calls (`_inner_call`, used by consensus and verify) now run the classify, validate, and seal pipeline steps and open a `gen_ai` span, so every consensus or verify response produces an `AuditSealRecord`, feeds the drift tracker, records a cost row, and emits the completion event. Gate and verify steps are skipped for nested calls by design to avoid unbounded recursion; replay-journal and canary-signal accounting are likewise excluded.
+- In-investigation LLM calls now resolve `run_id` from the ambient investigation scope when not passed explicitly, so consensus and verify spend is counted against the investigation instead of the `_no_run` bucket. Per-investigation live cost now reconciles with the sum of its `LLMCostRecord` rows.
+- The two tool base abstractions are collapsed to one: `platform/tools/_common.py` `Tool` is the single concrete base and explicitly implements `ToolProtocol`; `ToolRegistry.register` rejects objects that do not satisfy the protocol.
+
+### Fixed
+
+- Boundary violation: `platform/agents/outcome_dispatcher.py` no longer imports `aila.modules.vr` (contracts or claim verifier), even deferred. VR binds its polarity and verifier through the hook; malware runs without one, unchanged.
+- Documentation drift corrected across `.claude/CLAUDE.md` and `docs/`: the stale `@platform_task` `__name__`-collision note (registration is module-qualified), the `re_analytics` -> `reverser_belt` rename and retired port references, and the obsolete "cost tracking known-broken" note (the join is correct; the real gap was unattributed `_no_run` calls, now closed).
+
 ## [0.6.3] - 2026-10-31 -- native-MCP reverse-engineering arsenal (REA + reverser-belt)
 
 ### Added

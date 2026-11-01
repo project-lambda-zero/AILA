@@ -24,6 +24,7 @@ from aila.platform.llm.budget_alert import check_monthly_budget
 from aila.platform.llm.client import AilaLLMClient
 from aila.platform.llm.config import LLMRouting
 from aila.platform.llm.errors import BudgetExceededError
+from aila.platform.llm.pipeline import PipelineRunner
 
 # ---------------------------------------------------------------------------
 # Test doubles: registry + session
@@ -154,6 +155,10 @@ def _new_client_stub() -> AilaLLMClient:
     # over-budget test asserts the pre-flight raises first, so a bare mock
     # here is sufficient.
     client._client_pool = MagicMock()
+    # _inner_call runs the nested pipeline. With no steps registered the
+    # runner is a transparent pass-through to ``_single_call``, which keeps
+    # these tests about the budget pre-flight only.
+    client._pipeline = PipelineRunner(MagicMock())
     return client
 
 
@@ -248,6 +253,12 @@ class TestInnerCallPreflightBudgetCheck:
                 "aila.platform.llm.cost.persist_cost_record",
                 AsyncMock(return_value=None),
             ),
+            # _inner_call records through the shared outcome helper, which
+            # raises the missing-pricing notice for an unpriced model.
+            patch(
+                "aila.platform.llm.cost.emit_missing_pricing_notification",
+                AsyncMock(return_value=None),
+            ),
         ):
             response = await client._inner_call(
                 routing=_routing(),
@@ -285,6 +296,12 @@ class TestInnerCallPreflightBudgetCheck:
             ),
             patch(
                 "aila.platform.llm.cost.persist_cost_record",
+                AsyncMock(return_value=None),
+            ),
+            # _inner_call records through the shared outcome helper, which
+            # raises the missing-pricing notice for an unpriced model.
+            patch(
+                "aila.platform.llm.cost.emit_missing_pricing_notification",
                 AsyncMock(return_value=None),
             ),
         ):
@@ -330,6 +347,12 @@ class TestInnerCallPreflightBudgetCheck:
             ),
             patch(
                 "aila.platform.llm.cost.persist_cost_record",
+                AsyncMock(return_value=None),
+            ),
+            # _inner_call records through the shared outcome helper, which
+            # raises the missing-pricing notice for an unpriced model.
+            patch(
+                "aila.platform.llm.cost.emit_missing_pricing_notification",
                 AsyncMock(return_value=None),
             ),
         ):

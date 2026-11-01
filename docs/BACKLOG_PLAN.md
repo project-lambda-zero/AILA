@@ -224,7 +224,7 @@ outcome_dispatcher). Strictly ordered 1->7.
 6. `OutcomeDispatcherBase` -- fix TOCTOU (`outcome_dispatcher:215-244`) with
    `SELECT FOR UPDATE` + same-UoW `dispatch_status='claimed'`; migration if the
    enum lacks `claimed`.
-7. `AgentTurnRunner` capstone -- VR gains the empty-rationale reject-to-abstain
+7. `AgentTurnRunnerBase` capstone (`src/aila/platform/agents/turn_runner.py:146`) -- VR gains the empty-rationale reject-to-abstain
    downgrade; modules collapse to `wiring.py`. Ship last.
 Risk: turn-runner extraction can break per-module submit-gate ordering (keep
 `submit_gates` an ordered module-controlled list). All VR `os.environ` reads move

@@ -28,7 +28,7 @@ from a code-reviewer agent.
 | Lint | `python -m ruff check src/aila/` | Clean. Per-file ignores in `pyproject.toml` are intentional; new code must not extend them. |
 | Honesty audit | `python -m aila.tools.honesty_audit src/aila --whitelist honesty_whitelist.py` | Zero findings. Catches structural dishonesty (mirroring constants, forwarding wrappers, fake managers, eager `api_router` imports in `module.py`, bare `except Exception`, missing `__all__`, direct DB-driver imports). |
 | Security scan | `make security-scan` (= `pip-audit` + `bandit`) | Zero unaddressed advisories on production deps. Documented exceptions go in `pyproject.toml [tool.bandit]` or a per-finding `# nosec` with justification. |
-| Frontend typecheck | `pnpm -r run type-check` (or `make typecheck`) | Clean across `@aila/shell` and every `@aila/<module>-frontend` workspace member. |
+| Frontend typecheck | `pnpm -r run type-check` (or `make typecheck`) | Clean for `@aila/shell`, the single frontend package. |
 | Frontend build | `pnpm --filter @aila/shell run build` | Exits 0; emits the single SPA bundle. |
 | Lockfile drift | `pnpm install --frozen-lockfile` | Exits 0. Catches `package.json` ↔ `pnpm-lock.yaml` drift before CI does. |
 
@@ -62,7 +62,7 @@ Test conduct:
 | Rule | How to verify |
 |------|---------------|
 | Platform does not import from `aila.modules.*` | `python -m aila.tools.honesty_audit` plus a manual `grep` if you added a new import. |
-| Modules do not import from each other (Python or frontend) | Python: honesty audit. Frontend: `pnpm install` fails on undeclared bare imports in strict mode. |
+| Modules do not import from each other (Python or frontend) | Python: honesty audit. Frontend: module UI lives in the shell, and `pnpm install` fails on undeclared bare imports in strict mode. |
 | Module config goes through `ConfigRegistry`, not `os.getenv` | Search the module for `os.getenv` / `os.environ.get`. Allowed cases: the platform `app.py`, `cli.py`, `_dotenv.py`, and the `argon2` / `redis` / `openai` provider plumbing that resolves credentials. Module code paths use `await registry.get("<module_id>", "<key>")` with a registered schema. |
 | Multi-step behaviour is an explicit state machine | The module exposes a `workflow.py` (or `workflow/` package) that names states and transitions. Long if/elif chains over `status` strings are a red flag. |
 | All DDL goes through Alembic | A new column, table, or index requires a versioned file under `src/aila/alembic/versions/`. No `metadata.create_all()` outside test fixtures. No runtime `CREATE TABLE`. |
@@ -84,11 +84,10 @@ Test conduct:
 | LLM calls | Route through `AilaLLMClient` (`platform.llm.client`) with a routing `task_type`. Modules never instantiate `openai.AsyncOpenAI` directly. |
 | Task functions | Decorated with `@platform_task`. All kwargs JSON-serializable (Pydantic models pass `.model_dump(mode="json")`). |
 | Task results | Surface results through the module's own result table (`vr_findings`, `scan_findings`, …). The historical `TaskRecord.result_path` column was dropped by migration 126 (#144); the file-path pattern is retired. |
-| Frontend imports | Every bare import declared in the module's `package.json`. Shared deps reference `pnpm-workspace.yaml` catalogs (`catalog:react19`, `catalog:router`, …), never literal versions for shared packages. |
-| Frontend router | Import from `react-router` only. `react-router-dom` is gone -- v7 unified the package. |
-| Frontend Tailwind | If the module ships UI, add `@source "../../../src/aila/modules/<id>/frontend/**/*.{ts,tsx}";` to `frontend/src/styles/globals.css`. Tailwind v4 scans relative to that file and won't pick up classes in module dirs otherwise. |
-| Frontend Tailwind arbitrary values | `h-[720px]`, `bg-[#131313]` and similar arbitrary-value classes do NOT generate CSS in Tailwind v4. Use inline `style={{ height: 720 }}` for arbitrary numerics. |
-| Frontend chart colors | Recharts `fill` attributes on SVG elements do not resolve `var(--color-*)`. Pull computed colors via the `useThemeChartColors()` hook, not raw CSS-var strings. |
+| Frontend imports | Every bare import declared in `frontend/package.json`. Shared deps reference `pnpm-workspace.yaml` catalogs (`catalog:react19`, `catalog:query`, ...), never literal versions. |
+| Frontend registration | A module UI is a `MODULES` entry in `frontend/src/console/nav.ts` plus a `PAGE_CONFIGS` entry (`frontend/src/console/pages/configs.ts`) or `BESPOKE` entry (`frontend/src/console/pages/registry.tsx`) for every rail page. No nav entry without a registry entry. |
+| Frontend styling | Plain CSS custom properties from `frontend/src/styles/globals.css` plus `css()` inline styles; no CSS framework, no hardcoded hex colors in new components. |
+| Frontend data access | Page components call the backend only through `frontend/src/api/` hooks (`apiFetch`); no raw `fetch()` in pages. |
 
 ---
 
@@ -130,8 +129,8 @@ Test conduct:
 [ ] LLMCostRecord pricing configured for any new model_id
 [ ] No new os.getenv in module code (search src/aila/modules/<name>/)
 [ ] No new bare except Exception in module code
-[ ] No import of react-router-dom (use react-router only)
-[ ] Tailwind @source line present in frontend/src/styles/globals.css for any new module UI
+[ ] Every new nav page has a registry entry (nav.ts <-> pages/registry.tsx / configs.ts)
+[ ] pnpm --filter @aila/shell run lint   (if frontend changed)
 [ ] No new direct DB-driver imports (asyncpg / psycopg / sqlite3 / create_engine)
 [ ] Affected docs updated in the same PR
 ```
@@ -143,14 +142,14 @@ Test conduct:
 Carry-overs callers may hit while the gates above stay green. Document
 per-module exposure in the PR if the change touches these areas:
 
-- **VR cost gauge** -- `VRInvestigationRecord.cost_actual_usd` is not
-  written by the LLM client. The aggregator
-  `_compute_live_investigation_cost()` joins
-  `LLMCostRecord.run_id == TaskRecord.id`, but `run_id` actually holds
-  the workflow `RunRecord.id` (the DurableStateMachine run instance),
-  not the ARQ `TaskRecord.id`. The correct fix is an extra hop through
-  `workflow_run_records`; until that lands, the budget gauge
-  underreports for VR investigations. See `docs/LLM_INTEGRATION.md`.
+- **Unattributed LLM spend** -- An agent turn threads the investigation
+  id as `LLMCostRecord.run_id` (`src/aila/platform/agents/turn_runner.py:1106`),
+  `compute_live_investigation_cost`
+  (`src/aila/platform/services/investigation_cost.py:34`) sums on it, and
+  `persist_cost_record` accrues the stored `cost_actual_usd` column
+  (`src/aila/platform/llm/cost.py:406-410`). An LLM call made without a
+  `run_id` is recorded under the `_no_run` sentinel and is excluded from
+  every investigation total and budget check. See `docs/LLM_INTEGRATION.md`.
 - **Restricted-behavior env values** -- `.env.example` ships `transparent`
   for `AILA_PLATFORM_LLM_PIPELINE_CLASSIFY_RESTRICTED_BEHAVIOR_*`. The
   resolver only recognises `redact`; any other value (including

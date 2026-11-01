@@ -18,7 +18,6 @@ Platform
   └── calls      module.build_runtime(context)    # per request
   └── calls      runtime.handle(request)          # execution
   └── mounts     module.route_specs()             # HTTP routes
-  └── loads      frontend/spec.ts                 # UI registration
 ```
 
 The module folder name **is** the module ID. It must match `^[a-z][a-z0-9_]*$`.
@@ -43,16 +42,10 @@ src/aila/modules/<module_id>/
 │   └── __init__.py              # Module-specific service classes
 ├── reporting/
 │   └── __init__.py              # Report filtering, row serialization
-└── frontend/
-    ├── spec.ts                  # Module registration contract
-    ├── routes.tsx               # React route definitions
-    ├── nav.ts                   # Sidebar nav entries
-    ├── types.ts                 # TypeScript interfaces
-    ├── queries.ts               # TanStack Query hooks
-    ├── mutations.ts             # TanStack Query mutations
-    └── screens/
-        └── MainPage.tsx         # Screen components
+
 ```
+
+The module has no `frontend/` directory. Its UI lives in the shell: `frontend/src/console/nav.ts` (rail entry), `frontend/src/console/pages/` (pages), `frontend/src/api/` (hooks and types).
 
 DB models (if needed): `db_models.py` or `db_models/` package.
 Alembic migration (if needed): `src/aila/alembic/versions/0NN_<module_id>_tables.py`.
@@ -570,301 +563,131 @@ async with async_session_scope() as session:
 
 ## 13. Frontend: Module Registration
 
-```typescript
-// src/aila/modules/mymod/frontend/spec.ts
-import { nav } from "./nav";
-import { routes } from "./routes";
-
-export const frontendSpec = {
-  moduleId: "mymod",
-  nav,
-  routes,
-};
-```
+A module has no frontend directory or package. Its UI is registered inside the single `@aila/shell` SPA (`frontend/`), in two places.
 
 ```typescript
-// src/aila/modules/mymod/frontend/nav.ts
-export const nav = [
-  {
-    id: "mymod.main",
-    label: "My Module",
-    to: "/mymod",
-    order: 60,  // sidebar position
-  },
-];
+// frontend/src/console/nav.ts -- add a ModuleDef to MODULES
+{
+  id: "mymod",
+  label: "my module",
+  noun: "records",
+  pages: [page("records"), page("reports")],   // page id = label with spaces -> "-"
+},
 ```
+
+Each `page("<label>")` resolves to the registry key `mymod:<page-id>` (for example `mymod:records`). A rail entry without a registry entry is a dead link.
+
+```typescript
+// frontend/src/console/pages/configs.ts -- declarative list page (DataPage)
+"mymod:records": {
+  title: "mymod \u00b7 records",
+  endpoint: "/mymod/records",
+  columns: [c("name"), c("status"), c("created_at", "created")],
+  filters: [{ name: "status", label: "status", type: "select" }],
+},
+```
+
+`frontend/src/console/pages/registry.tsx` wraps every `PAGE_CONFIGS` entry in `DataPage` automatically. A page that needs custom behavior is a component under `frontend/src/console/pages/<module>/`, lazily imported in `registry.tsx` and added to `BESPOKE` under the same key:
 
 ```tsx
-// src/aila/modules/mymod/frontend/routes.tsx
-import { lazy } from "react";
-const MainPage = lazy(() => import("./screens/MainPage"));
-
-export const routes = [
-  {
-    path: "/mymod",
-    element: <MainPage />,
-  },
-  {
-    path: "/mymod/:itemId",
-    element: <DetailPage />,
-  },
-];
+const MyModPage = lazy(() => import("./mymod/MyModPage"));
+// ...
+"mymod:reports": { title: "mymod \u00b7 reports", render: (p) => <MyModPage {...p} /> },
 ```
+
+Create/edit forms for `DataPage` rows are specified in `frontend/src/console/pages/formSpecs.ts`. Guided flows are entries in `WIZARDS` (`frontend/src/console/wizards/registry.ts`). See `docs/FRONTEND_MODULE_STANDARD.md`.
 
 ---
 
 ## 14. Frontend: TypeScript Types
 
+Response types and narrowing helpers live in `frontend/src/api/` (`types.ts` for shared shapes, a per-area file such as `forensics.ts` or `vulnerability.ts` for module-specific ones, `parse.ts` for `asRecord` / `readStr` / `readNum` / `readArray`). `apiFetch<T>` unwraps the `{ data: ... }` envelope; `apiFetchEnvelope<T>` returns the whole envelope when you need sibling metadata such as pagination totals.
+
 ```typescript
-// src/aila/modules/mymod/frontend/types.ts
-
-// Mirror the backend Pydantic contract EXACTLY.
-// Field names must match what the API returns after translation.
-// Backend: db column "criticality" → API field "severity" → TS "severity"
-
-export interface ThingResult {
-  id: number | null;
-  target: string;
-  result: string;
-  score: number | null;
-  created_at: string | null;
-}
-
-export interface PaginatedThingsResponse {
-  items: ThingResult[];
-  total: number;
-  page: number;
-  page_size: number;
-  pages: number;
-}
-
-export interface ThingsQueryParams {
-  page: number;
-  pageSize: number;
-  target?: string;
-  sortBy: "score" | "created_at" | "target";
-  order: "asc" | "desc";
+// frontend/src/api/mymod.ts
+export interface MyModRecord {
+  id: string;
+  name: string;
+  status: "pending" | "running" | "done" | "failed";
+  created_at: string;
 }
 ```
+
+Keep each interface in lockstep with the Pydantic contract in `contracts/`; the JSON payload is untrusted, so narrow it at the boundary (`parse.ts`) instead of asserting.
 
 ---
 
 ## 15. Frontend: TanStack Query Hooks
 
+Reads and writes go through react-query hooks in `frontend/src/api/`, never raw `fetch()` in a page component.
+
 ```typescript
-// src/aila/modules/mymod/frontend/queries.ts
+// frontend/src/api/mymod.ts
 import { useQuery } from "@tanstack/react-query";
-import { authorizedRequestJson } from "@platform/api/http";
-import type { PaginatedThingsResponse, ThingsQueryParams } from "./types";
 
-// Envelope wrapper -- all backend responses are DataEnvelope<T>
-interface Envelope<T> { data: T; }
+import { apiFetch } from "./client";
 
-export function useThings(params: ThingsQueryParams) {
+export function useMyModRecords() {
   return useQuery({
-    queryKey: ["mymod", "things", params],
-    queryFn: async () => {
-      const search = new URLSearchParams({
-        page: String(params.page),
-        page_size: String(params.pageSize),
-        sort_by: params.sortBy,
-        order: params.order,
-        ...(params.target ? { target: params.target } : {}),
-      });
-      const res = await authorizedRequestJson<Envelope<PaginatedThingsResponse>>(
-        `/mymod/things?${search}`
-      );
-      return res.data;
-    },
+    queryKey: ["mymod", "records"],
+    queryFn: () => apiFetch<MyModRecord[]>("/mymod/records?limit=100"),
+    staleTime: 15_000,
   });
 }
 ```
 
-**Mutation:**
-
-```typescript
-// src/aila/modules/mymod/frontend/mutations.ts
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { authorizedRequestJson } from "@platform/api/http";
-
-export function useUpdateThing() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ id, status }: { id: number; status: string }) => {
-      const res = await authorizedRequestJson<Envelope<ThingResult>>(
-        `/mymod/things/${id}`,
-        { method: "PATCH", body: JSON.stringify({ status }) }
-      );
-      return res.data;
-    },
-    onSuccess: () => {
-      // Invalidate so list refetches
-      qc.invalidateQueries({ queryKey: ["mymod", "things"] });
-    },
-  });
-}
-```
-
-**TanStack Query v5 rules:**
-- `onError` DOES NOT work in `defaultOptions` in v5 -- it silently does nothing. Error state comes from `isError` + `error` on each hook.
-- `onSuccess` on `useQuery` is deprecated -- use `select` or handle in component.
-- For mutations: `onSuccess`, `onError` in `useMutation` options work fine.
-- Query key is an array. `["mymod", "things", params]` → invalidating `["mymod", "things"]` clears all paginated variants.
+For writes use `useMutation` + `useQueryClient` and invalidate by key prefix (`void qc.invalidateQueries({ queryKey: ["mymod", "records"] })`) so every variant of the list refetches. Pages built on `DataPage` get list fetching, pagination, and invalidation from `data/useDataRows.ts` and `api/mutations.ts` with no hook of their own.
 
 ---
 
-## 16. Frontend: Screen Component Pattern
+## 16. Frontend: Page Component Pattern
+
+A bespoke page receives `ModulePageProps` (`frontend/src/console/contract.ts`) and renders inside the shell's window primitive. It does not draw its own title bar.
 
 ```tsx
-// src/aila/modules/mymod/frontend/screens/MainPage.tsx
-import { useState } from "react";
-import { AilaCard } from "@/components/aila/AilaCard";
-import { AilaBadge } from "@/components/aila/AilaBadge";
-import { AilaTable } from "@/components/aila/AilaTable";
-import { LoadingSkeleton } from "@/components/aila/LoadingSkeleton";
-import { useThings } from "../queries";
-import type { ThingsQueryParams } from "../types";
+// frontend/src/console/pages/mymod/MyModPage.tsx
+import type { JSX } from "react";
 
-export default function MainPage() {
-  // URL-driven filter state
-  const [params, setParams] = useState<ThingsQueryParams>({
-    page: 1,
-    pageSize: 25,
-    sortBy: "created_at",
-    order: "desc",
-  });
+import { useMyModRecords } from "../../../api/mymod";
+import type { ModulePageProps } from "../../contract";
+import { css } from "../../css";
+import { ConsoleWindow } from "../../window";
 
-  const { data, isLoading, isError, error } = useThings(params);
-
-  // ── Loading ──────────────────────────────────────────────────────────────
-  if (isLoading) {
-    return (
-      <div className="flex flex-col gap-2 p-4">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <LoadingSkeleton key={i} />
-        ))}
-      </div>
-    );
-  }
-
-  // ── Error ────────────────────────────────────────────────────────────────
-  if (isError) {
-    return (
-      <AilaCard className="border-critical/40 bg-critical/5 m-4">
-        <p className="text-sm text-critical">{error.message}</p>
-      </AilaCard>
-    );
-  }
-
-  const items = data?.items ?? [];
-  const total = data?.total ?? 0;
-
-  // ── Empty state ──────────────────────────────────────────────────────────
-  // NEVER show mock data. NEVER hide the empty state.
-  if (items.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 text-muted text-sm">
-        No results yet.
-      </div>
-    );
-  }
-
-  // ── Content ──────────────────────────────────────────────────────────────
+export default function MyModPage(p: ModulePageProps): JSX.Element {
+  const { data, isLoading, isError, error } = useMyModRecords();
   return (
-    <div className="flex flex-col gap-4 p-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-display text-lg font-semibold">My Module</h1>
-        <span className="text-muted text-sm">{total} total</span>
-      </div>
-
-      <AilaTable
-        data={items}
-        columns={[
-          {
-            accessorKey: "target",
-            header: "Target",
-            cell: ({ row }) => (
-              <span className="font-mono text-sm">{row.original.target}</span>
-            ),
-          },
-          {
-            accessorKey: "score",
-            header: "Score",
-            cell: ({ row }) => (
-              <span className="tabular-nums text-sm">
-                {row.original.score?.toFixed(2) ?? "--"}
-              </span>
-            ),
-          },
-        ]}
-      />
-
-      {/* Pagination */}
-      <div className="flex items-center justify-between text-sm text-muted">
-        <span>
-          Page {params.page} of {data?.pages ?? 1}
-        </span>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setParams(p => ({ ...p, page: p.page - 1 }))}
-            disabled={params.page <= 1}
-            className="px-3 py-1 border border-border rounded-sm disabled:opacity-40"
-          >
-            Prev
-          </button>
-          <button
-            onClick={() => setParams(p => ({ ...p, page: p.page + 1 }))}
-            disabled={params.page >= (data?.pages ?? 1)}
-            className="px-3 py-1 border border-border rounded-sm disabled:opacity-40"
-          >
-            Next
-          </button>
-        </div>
-      </div>
-    </div>
+    <ConsoleWindow
+      id={p.windowId}
+      kind="page"
+      title={p.title}
+      isFullscreen={p.isFullscreen}
+      isFocused={p.isFocused}
+      onFocus={p.onFocus}
+      onClose={p.onBack}
+      onMinimize={p.onMinimize}
+      onToggleFullscreen={p.onToggleFullscreen}
+    >
+      {isLoading && <div style={css("padding:16px;color:var(--text-faint);")}>loading&#8230;</div>}
+      {isError && <div style={css("padding:16px;")}>{error.message}</div>}
+      {data && data.length === 0 && <div style={css("padding:16px;")}>no records yet</div>}
+      {data?.map((r) => <div key={r.id}>{r.name}</div>)}
+    </ConsoleWindow>
   );
 }
 ```
+
+The chrome wiring above mirrors `frontend/src/console/pages/VulnerabilityPage.tsx`; `ConsoleWindowProps` is in `frontend/src/console/window/types.ts`. Every data-fetching component handles loading, error, and honest empty states.
 
 ---
 
 ## 17. Frontend: Design System Rules
 
-**Components to use (not raw HTML):**
+- Style with the CSS custom properties in `frontend/src/styles/globals.css` (for example `var(--text-faint)`, `var(--font-mono)`) and inline styles built with `css()` from `frontend/src/console/css.ts`. Never hardcode hex colors in new code.
+- There is no CSS framework: no utility classes, no Tailwind, no component library. Reuse the shell primitives: `ConsoleWindow`, `DataPage`, `WizardShell`, `frontend/src/console/pages/badges.tsx` (severity/status/workflow badges).
+- Use `var(--font-mono)` for technical identifiers (hostnames, CVE IDs, package names, hashes).
+- Themes are `[data-theme]` blocks in `globals.css`, registered in `frontend/src/theme.ts`.
+- Severity sort order (apply whenever displaying severity):
 
-| Need | Component |
-|------|-----------|
-| Card container | `AilaCard` |
-| Severity badge | `AilaBadge severity="critical|high|medium|low"` |
-| Data table | `AilaTable` (TanStack Table v8 wrapper) |
-| Loading placeholder | `LoadingSkeleton` |
-| Charts | `AilaChart` |
-
-**CSS variables (always use these -- never hardcode hex):**
-
-| Variable | Use |
-|----------|-----|
-| `--color-accent` | Primary action color (neon magenta in synthwave) |
-| `--color-critical` | Critical severity |
-| `--color-high` | High severity |
-| `--color-medium` | Medium severity |
-| `--color-low` | Low severity |
-| `--color-surface` | Card background |
-| `--color-elevated` | Elevated surface (hover state backgrounds) |
-| `--color-border` | Default border |
-| `--color-muted` | De-emphasized text |
-
-**Typography:**
-- `font-display` → Syne -- headlines only
-- `font-sans` → Space Grotesk -- body text (default)
-- `font-mono` → Fira Code -- CVE IDs, hostnames, package names, scores, code
-
-**Spacing and radius:**
-- Corners: `rounded-sm` (2px) for badges, `rounded` (4px) for cards -- NEVER `rounded-lg` or `rounded-full`
-- Elevation: border-based (`border border-border`, `border-elevated`) -- NO `shadow-*` classes (D-06)
-- Hover: `hover:bg-elevated/50` for row hover, `hover:border-border-hover` for card hover
-
-**Severity sort order** (always apply when displaying severity):
 ```typescript
 const SEVERITY_ORDER = { critical: 0, high: 1, medium: 2, low: 3, info: 4 };
 items.sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 5) - (SEVERITY_ORDER[b.severity] ?? 5));
@@ -900,23 +723,19 @@ items.sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 5) - (SEVERITY_ORDER[b.sever
 
 1. **No mock data** -- ever. Empty state = honest empty state with real message, not a greyed-out fake table.
 
-2. **URL is state for filters** -- use search params, not component state or context, for anything that should survive navigation or sharing.
+2. **TanStack Query v5 onError** -- `defaultOptions.onError` is silently ignored. Error state comes from `isError` + `error` on each hook/mutation.
 
-3. **TanStack Query v5 onError** -- `defaultOptions.onError` is silently ignored. Error state comes from `isError` + `error` on each hook/mutation.
+3. **All API calls through `frontend/src/api/`** -- no raw `fetch()` in page components; use `apiFetch` / `apiFetchEnvelope` inside hooks.
 
-4. **All API calls through hooks** -- no raw `fetch()` in screen components. All calls in `queries.ts` or `mutations.ts`.
+4. **Invalidate by prefix after mutations** -- `qc.invalidateQueries({ queryKey: ["mymod", "records"] })` clears all paginated variants.
 
-5. **Invalidate by prefix after mutations** -- `qc.invalidateQueries({ queryKey: ["mymod", "things"] })` clears all paginated variants.
+5. **`response_model=DataEnvelope[T]` must match the TypeScript response type** -- if you change one, change the other.
 
-6. **No `shadow-*` classes** -- border-based elevation only (D-06).
+6. **Three required states on every data-fetching component** -- loading, error, empty (honest text). Never skip any of them.
 
-7. **No `rounded-lg` or `rounded-full`** -- 2px or 4px only (D-05 arcade aesthetic).
+7. **Monospace for technical identifiers** -- hostnames, CVE IDs, package names, hashes use `var(--font-mono)`.
 
-8. **`response_model=DataEnvelope[T]` must match `Envelope<T>` in TypeScript** -- if you change one, change the other.
-
-9. **Three required states on every data-fetching component** -- loading (skeleton), error (message), empty (honest text). Never skip any of them.
-
-10. **Monospace for technical identifiers** -- hostnames, CVE IDs, package names, hashes → `font-mono`.
+8. **Register in the shell, not in the module** -- a module UI is a `MODULES` entry plus page entries in `frontend/src/console/`; never edit `App.tsx` or `LeftRail.tsx` to special-case a module.
 
 ---
 
@@ -978,8 +797,9 @@ pytest tests/ -k "<module_id>" -x
 # Apply migration
 alembic upgrade head
 
-# Type-check frontend (workspace-wide; for one module: pnpm --filter @aila/<module>-frontend run type-check)
+# Type-check and lint the frontend
 pnpm -r run type-check
+pnpm --filter @aila/shell run lint
 ```
 
 ---

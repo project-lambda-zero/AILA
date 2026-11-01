@@ -174,13 +174,15 @@ class InvestigationStateBindings:
     record_experience: Callable[..., Awaitable[None]] | None = None
     # Aggregation-spine wiring (issue .run/issues/19_aggregation_spine.md).
     # ``branch_pool_factory(investigation_id)`` returns the per-module
-    # :class:`aila.platform.agents.branch_pool.BranchPool` binding
-    # (:class:`aila.modules.vr.agents.branch_manager.BranchManager` on VR)
-    # so :func:`aila.platform.agents.outcome_dispatcher.finalize_investigation_aggregate`
+    # :class:`aila.platform.agents.branch_pool.BranchPool` binding (VR's
+    # ``BranchManager``) so
+    # :func:`aila.platform.agents.outcome_dispatcher.finalize_investigation_aggregate`
     # can invoke merge()/promote() on duplicate-signature branch pairs and
-    # promote the strongest positive. ``falsifier_factory()`` returns an
-    # :class:`aila.platform.agents.falsifier.FalsifierAgent` for the
-    # adversarial refute leg. Both optional -- modules that leave them
+    # promote the strongest positive. "Positive" is the polarity of the
+    # ``claim_verification`` hook bound on ``outcome_dispatcher_cls``; a
+    # dispatcher with no hook promotes nothing. ``falsifier_factory()``
+    # returns an :class:`aila.platform.agents.falsifier.FalsifierAgent`
+    # for the adversarial refute leg. Both optional -- modules that leave them
     # unset let the aggregate skeleton still run its scan + settled_claim
     # writes but skip the merge/promote/falsifier legs. Guarded at the
     # emit chokepoint so a factory raise never crashes the terminal.

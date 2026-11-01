@@ -5,16 +5,18 @@ binary-analysis servers. Each entry lists its upstream source, license,
 wire transport, domain, maintainer status, and how to register it in AILA's
 MCP instance catalog.
 
-## In-tree servers (the AILA baseline)
+## Built-in servers (the AILA baseline)
 
-`rea` and `re_analytics` are the two binary-analysis MCP servers shipped in
-the repository. They are the canonical binary reverse-engineering surface
-and do not need a catalog registration to function; `rea` is declared in
-`SERVER_SPECS` (transport `stdio`, command from `REA_MCP_COMMAND`), and
-`re_analytics` is an AILA-owned stdio server (`python -m
-aila.platform.re_analytics`) preserving every ida-headless tool REA does
-not provide. Every entry below is an external candidate, evaluated as a
-possible complement or replacement.
+`rea` and `reverser_belt` are the two binary-analysis MCP servers AILA
+ships specs for. They are the canonical binary reverse-engineering surface
+and do not need a catalog registration to function; both are declared in
+`SERVER_SPECS` (`src/aila/platform/mcp/server_specs.py`, transport `stdio`).
+`rea` takes its command from `REA_MCP_COMMAND`. `reverser_belt` is the
+external `reverser_belt_mcp` package (repository `ida-headless-mcp-exp`)
+run as `python -m reverser_belt_mcp.server`, overridable with
+`REVERSER_BELT_MCP_COMMAND`; it replaces the archived ida-headless server
+and owns every analytic REA lacks. Every entry below is an external
+candidate, evaluated as a possible complement or replacement.
 
 ## Registering an external server in AILA
 
@@ -127,9 +129,10 @@ auth, and namespacing tools. They are not registered as catalog servers.
 nuclei, nmap, sqlmap, ffuf, Shodan, Exploit-DB, Velociraptor, and YARA
 have no vendor-maintained MCP server. The recommended path is a thin
 in-house wrapper exposing the CLI or REST surface over stdio, following
-the `re_analytics` pattern (frozen `ToolDef` dataclasses, real
-implementations, honest `limitations` fields, `isError` with an install
-hint when a dependency is missing).
+the `reverser_belt` pattern (a standalone MCP server package spawned over
+stdio per AILA process, registered as a `ServerSpec`, with real
+implementations and `isError` plus an install hint when a dependency is
+missing).
 
 ## Excluded
 
