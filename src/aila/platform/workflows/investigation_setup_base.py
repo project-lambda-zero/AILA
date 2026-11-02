@@ -99,7 +99,6 @@ class InvestigationStateBindings:
     outcome_model: type[Any] | None = None
     task_fn: Callable[..., Awaitable[Any]] | None = None
     track: str | None = None
-    run_turn: Callable[..., Awaitable[Any]] | None = None
     config_source: Any = None
     persona_siblings: tuple[Any, ...] = field(default_factory=tuple)
     # loop-state (Phase 4b) inputs -- optional until the loop binds them.
