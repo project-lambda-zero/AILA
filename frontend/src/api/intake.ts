@@ -254,7 +254,7 @@ export interface TargetIngestionSpecPayload {
   download_url?: string | null;
 }
 
-/** Mirrors VRProjectCreate -- the VR_NDAY_V1 project-create body. */
+/** Mirrors VRProjectCreate -- the n-day project-create body. */
 export interface VRProjectCreatePayload {
   name: string;
   workspace_id: string;
@@ -280,8 +280,8 @@ export interface CreatedVRProject {
   created_at?: string | null;
 }
 
-/** POST /vr/projects -- creates an n-day project and starts the VR_NDAY_V1
- * workflow (setup -> research -> poc_development -> advisory -> response_emit).
+/** POST /vr/projects -- creates an n-day project and submits the
+ * VR_INVESTIGATE_HUB investigation (run_vr_investigate) seeded with the CVE.
  * The router materializes the target ingestion spec into vr_targets rows, so
  * no separate target-create call is needed. */
 export function useCreateVrProject(): UseMutationResult<

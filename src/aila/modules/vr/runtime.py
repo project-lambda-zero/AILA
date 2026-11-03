@@ -5,12 +5,12 @@ via ModuleContext. It validates the incoming payload as a VRProjectCreate so
 the platform routing system can confirm capability match, but it does NOT run
 the durable workflow inline.
 
-VR n-day analysis is a long-running pipeline (setup -> research -> PoC ->
-advisory -> emit) that can take hours. Holding an HTTP request open for that
-duration is incorrect: the workflow is triggered exclusively through the task
-queue from ``POST /vr/projects`` (see ``api_router.py``), which submits the
-``run_vr_nday`` platform task. The task wrapper owns ``DurableStateMachine``
-execution; this runtime only confirms the request is well-formed.
+VR investigations are long-running (hours). Holding an HTTP request open for
+that duration is incorrect: the workflow is triggered exclusively through the
+task queue from ``POST /vr/projects`` (see ``api_router.py``), which submits the
+``run_vr_investigate`` hub task (``VR_INVESTIGATE_HUB``). The task wrapper owns
+``DurableStateMachine`` execution; this runtime only confirms the request is
+well-formed.
 """
 from __future__ import annotations
 
@@ -57,7 +57,7 @@ class VRRuntime:
 
         payload = VRProjectCreate.model_validate(request.payload or {})
         _log.info(
-            "vr.nday request validated run_id=%s name=%s -- workflow trigger via POST /vr/projects",
+            "vr.create_project request validated run_id=%s name=%s -- workflow trigger via POST /vr/projects",
             request.run_id, payload.name,
         )
 
@@ -65,7 +65,7 @@ class VRRuntime:
             run_id=request.run_id,
             action_id=request.action_id,
             message=(
-                f"VR n-day analysis for {payload.name!r} accepted. "
+                f"VR project {payload.name!r} accepted. "
                 "Use POST /vr/projects to create a project and trigger the workflow."
             ),
             module_payload=None,

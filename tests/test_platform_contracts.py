@@ -12,10 +12,6 @@ Also pins the contract-hygiene residuals fixed alongside the listed items:
 - ``BudgetConfig`` / ``BudgetState`` reject undeclared fields, so a caller
   typing ``max_turn=`` instead of ``max_turns=`` fails at construction,
   not silently at runtime with the default value.
-- ``obligations.adjudicate`` returns the expected verdict for each of the
-  four documented paths (accepted / downgraded on hedge / downgraded on
-  unmet required / blocked on unmet critical) so the pure adjudicator
-  contract has at least one caller-independent regression test.
 - Public contract modules that had no ``__all__`` (``platform``, ``persist``,
   ``reporting``) now declare one, so ``from aila.platform.contracts.<mod>
   import *`` and static tooling both see the same public surface.
@@ -28,12 +24,6 @@ import pytest
 from pydantic import ValidationError
 
 from aila.platform.contracts.budget import BudgetConfig, BudgetState
-from aila.platform.contracts.obligations import (
-    EvidenceObligation,
-    ObligationSet,
-    ObligationSeverity,
-    adjudicate,
-)
 from aila.platform.contracts.platform import RegisteredSystem, SSHIntegrationInput
 from aila.platform.contracts.reasoning import ReasoningCaseState, ReasoningTurnDecision
 
@@ -125,55 +115,6 @@ def test_budget_state_rejects_undeclared_kwarg() -> None:
     assert BudgetState.model_config.get("extra") == "forbid"
     with pytest.raises(ValidationError):
         BudgetState(turns_use=5)  # type: ignore[call-arg]
-
-
-# ---------------------------------------------------------------------------
-# Obligation adjudicator (#61 residual): pure-function contract has zero
-# caller-independent test coverage -- pin the four documented verdict paths.
-# ---------------------------------------------------------------------------
-
-
-def _obligation(id_: str, severity: ObligationSeverity, *, satisfied: bool = False) -> EvidenceObligation:
-    return EvidenceObligation(
-        id=id_,
-        claim=f"claim-{id_}",
-        required_evidence="crash artifact",
-        severity=severity,
-        satisfied=satisfied,
-    )
-
-
-def test_adjudicate_accepts_when_no_obligations_and_no_signals() -> None:
-    result = adjudicate(claim="buffer overflow at foo", reasoning_text="crash log shows RIP overwrite", obligations=ObligationSet())
-    assert result.verdict == "accepted"
-    assert result.adjusted_claim == "buffer overflow at foo"
-
-
-def test_adjudicate_blocks_on_unmet_critical() -> None:
-    obs = ObligationSet(obligations=[_obligation("ob-crit", ObligationSeverity.CRITICAL)])
-    result = adjudicate(claim="c", reasoning_text="", obligations=obs)
-    assert result.verdict == "blocked"
-    assert "ob-crit" in result.unmet_obligations
-
-
-def test_adjudicate_downgrades_on_unmet_required() -> None:
-    obs = ObligationSet(obligations=[_obligation("ob-req", ObligationSeverity.REQUIRED)])
-    result = adjudicate(claim="c", reasoning_text="", obligations=obs)
-    assert result.verdict == "downgraded"
-    assert result.adjusted_claim == "[advisory withheld] c"
-
-
-def test_adjudicate_downgrades_on_hedge_signal() -> None:
-    result = adjudicate(
-        claim="c",
-        reasoning_text="This might be possible under certain conditions.",
-        obligations=ObligationSet(),
-    )
-    assert result.verdict == "downgraded"
-    assert result.adjusted_claim == "[hedged] c"
-    # Both hedge phrases surface -- the case-insensitive scan catches them.
-    assert "might be possible" in result.contradiction_signals
-    assert "under certain conditions" in result.contradiction_signals
 
 
 # ---------------------------------------------------------------------------

@@ -116,7 +116,6 @@ from aila.platform.prompts.seeds import (
     VR_APK_STATIC_TEXT,
     VR_MASVS_TEXT,
     VR_NARRATIVE_TEXT,
-    VR_NDAY_TEXT,
     VR_SYNTHESIS_TEXT,
 )
 from aila.platform.prompts.version_store import PromptVersionStore
@@ -4645,7 +4644,7 @@ async def seed_prompt_versions() -> int:
     promotion stays an explicit RFC-10 lifecycle action.
 
     Also seeds the RFC-09 rule-58 migration keys: the VR-owned narrative,
-    n-day, synthesis, and per-check/per-control seed templates lifted out
+    synthesis, and per-check/per-control seed templates lifted out
     of module-level ``_*_PROMPT*`` literals, plus the platform-owned
     claim-verifier extractor + verdict prompts (dedup-safe: the malware
     module seeds the same platform keys, ``register`` deduplicates by
@@ -4676,10 +4675,9 @@ async def seed_prompt_versions() -> int:
 
     # RFC-09 rule-58 migration keys: bodies are the platform prompt seeds
     # extracted from the now-removed versioned ``.md`` files (narrative,
-    # n-day, synthesis, apk-static seed template, masvs seed template).
+    # synthesis, apk-static seed template, masvs seed template).
     migration_entries: tuple[tuple[str, str], ...] = (
         ("vr/narrative/base", VR_NARRATIVE_TEXT),
-        ("vr/nday/base", VR_NDAY_TEXT),
         ("vr/synthesis/base", VR_SYNTHESIS_TEXT),
         ("vr/apk_static_seed/base", VR_APK_STATIC_TEXT),
         ("vr/masvs_seed/base", VR_MASVS_TEXT),

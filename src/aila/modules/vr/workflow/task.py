@@ -57,7 +57,6 @@ from aila.modules.vr.reporting.poc_writer import PocWriter
 from aila.modules.vr.services import TargetAnalysisService
 from aila.modules.vr.services.followup_discovery import maybe_spawn_vr_followup
 from aila.modules.vr.services.fuzz_service import FuzzCampaignService
-from aila.modules.vr.workflow.definitions import VR_NDAY_V1
 from aila.modules.vr.workflow.definitions_hub import VR_INVESTIGATE_HUB
 from aila.platform.contracts import utc_now
 from aila.platform.services.factory import ServiceFactory
@@ -80,9 +79,9 @@ from aila.platform.uow import UnitOfWork
 # + TimeoutException + TransportError + ProtocolError). Anything else
 # fails fast.
 #
-# Mirrors ``definitions._TRANSPORT_TRANSIENT`` (which controls per-STATE
-# retries inside the workflow engine); this tuple controls per-TASK
-# retries at the ARQ layer (the outer envelope around the engine run).
+# This tuple controls per-TASK retries at the ARQ layer (the outer envelope
+# around the engine run); per-STATE retries are declared on the workflow
+# definitions themselves.
 _TASK_TRANSIENT: tuple[type[BaseException], ...] = (
     OSError,
     TimeoutError,
@@ -104,29 +103,9 @@ __all__ = [
     "run_vr_claim_verifier",
     "run_vr_investigate",
     "run_vr_narrative",
-    "run_vr_nday",
     "run_vr_outcome_dispatch",
     "run_vr_synthesis",
 ]
-
-
-@platform_task(
-    track="vr",
-    module_id="vr",
-    max_tries=2,
-    timeout_s=10800.0,  # 3 hours -- covers full setup -> research -> PoC -> advisory
-    # fix §141 -- explicit retriable_on so the ARQ-level retry only
-    # fires on transports that legitimately flap (the same shape as
-    # VR_NDAY_V1's _TRANSPORT_TRANSIENT, mirrored here at task level).
-    retriable_on=_TASK_TRANSIENT,
-    definition=VR_NDAY_V1,
-)
-async def run_vr_nday(
-    ctx: TaskContext,
-    **kwargs: Any,
-) -> dict[str, Any]:
-    """Seed -- platform dispatch handles workflow execution via VR_NDAY_V1."""
-    ...
 
 
 @platform_task(

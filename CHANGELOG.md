@@ -5,6 +5,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.5] - 2026-11-03 -- n-day runs on the VR investigation hub; malware reports cite every verified claim
+
+### Changed
+
+- `POST /vr/projects` and dispatcher follow-up n-day investigations now submit a `VR_INVESTIGATE_HUB` investigation (`run_vr_investigate`) seeded with the CVE, so CVE intel resolves. When the project has a patched binary, the reverser-belt middleware opens it as a second binary handle for `diff_binary`, so the hub's patch-diff audit compares vulnerable and patched builds. The hub stages project binaries for its PoC phase; without a PoC executor host, PoC runs fall back to the analysis workstation. Mobile n-day targets run the hub without a diff. `POST /vr/projects` previously failed at submit with an unresolved task reference.
+- The tool pre-dispatch hook now receives `tool_name`, so module executors can correct arguments per tool.
+- Malware narratives receive every verified claim with its verifier verdict and evidence references, and the narrative prompt requires each verified claim to be cited with its evidence; claims that are not established render in a separate block and are not presented as findings. Claim-verifier preconditions carry evidence references from the probes that ran.
+- The malware narrative and the canonical-outcome upsert both use the newest non-superseded canonical outcome, so the report reflects the row new submissions merge into.
+
+### Removed
+
+- The dedicated VR n-day pipeline (`VR_NDAY_V1`, `NdayResearcher`, `run_vr_nday`, and its setup, research, PoC-development, advisory, and response-emit states), its prompt seed, contracts, and the n-day stall-recovery branch. No `vr.nday.v1` work was in flight.
+- The platform obligation contract (`aila.platform.contracts.obligations`); the n-day researcher was its only caller.
+- VR config keys `nday_max_turns`, `nday_tool_time_seconds`, `poc_max_attempts`, `poc_reliability_target`, `poc_timeout_seconds`, and `poc_memory_limit_mb`.
+- `vr_findings.advisory_json` and `vr_findings.obligations_json` (migration `146_drop_vr_finding_nday_columns`); only the removed advisory step wrote them. The `N_DAY` investigation kind is retained.
+- The unused `InvestigationStateBindings.run_turn` field.
+
+### Added
+
+- `docs/rfc/RFC-290-agent-loop-consolidation.md`: design for consolidating the VR and malware researcher render helpers behind a module-binding contract.
+
 ## [0.6.4] - 2026-11-02 -- LLM call-path attribution and audit hardening, boundary + tool-base cleanup
 
 ### Added

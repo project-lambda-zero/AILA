@@ -78,7 +78,7 @@ A few invariants the schema is forced to maintain:
 - **A `VRTarget` always belongs to a `VRProject`.** No floating targets.
 - **A `VRHypothesis` always belongs to a `VRTarget`** (even cross-target patterns are modeled as a *hypothesis on the project*, expressed by a target with `kind = PROJECT_VIRTUAL` -- see §3.2).
 - **A `VRCrash` always belongs to a `VRFuzzingCampaign`.** Crashes that come from manual triggers, not fuzzing, get a synthetic "manual" campaign per target so the foreign-key always holds.
-- **A `VRExploit` references either `crash_id` xor `nday_task_id`** -- exactly one of the two is non-NULL. Enforced as a `CHECK` constraint, not application logic.
+- **A `VRExploit` references a `crash_id`.** The dedicated n-day pipeline was retired in 0.6.5; n-day work reaches the same outcome tables through `VR_INVESTIGATE_HUB`.
 - **A `VRAdvisory` references at least one `VRExploit`** (or, for non-exploitable but reportable findings, at least one `VRCrash` with `triage_state='not_exploitable_disclosed'`).
 - **A `VRDisclosure` is 1:1 with a `VRAdvisory`.** The advisory is the body of the report; the disclosure record is the coordination state with the vendor.
 - **`VREvidenceNode.target_id` is nullable** (project-level nodes like CHAIN, PATTERN have NULL). `VREvidenceNode.project_id` is **not** nullable.
@@ -865,61 +865,7 @@ class VRDisclosureRecord(TeamScopedMixin, SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 ```
 
-```python
-# src/aila/modules/vulnerability_research/db_models/nday.py
-from __future__ import annotations
-
-from datetime import datetime
-from uuid import uuid4
-
-from sqlalchemy import CheckConstraint, Column, DateTime, Index, Text
-from sqlmodel import Field, SQLModel
-
-from aila.platform.contracts._common import utc_now
-from aila.storage.mixins import TeamScopedMixin
-
-NDAY_STATES = (
-    "researching", "patch_found", "root_caused",
-    "poc_developing", "poc_working", "advisory_written",
-)
-
-
-class VRNdayTaskRecord(TeamScopedMixin, SQLModel, table=True):
-    """One CVE being researched for an N-day PoC.
-
-    Distinct from VRTarget -- an N-day task identifies *which CVE in which
-    upstream codebase*; the actual binary built for PoC execution is still
-    a VRTarget under the same project.
-
-    `target_id` becomes non-NULL once a build of the vulnerable version is
-    available locally and registered as a target.
-    """
-
-    __tablename__ = "vr_nday_tasks"
-    __table_args__ = (
-        CheckConstraint(
-            f"state IN ({', '.join(repr(s) for s in NDAY_STATES)})",
-            name="ck_vr_nday_state",
-        ),
-        Index("ix_vr_nday_project_id", "project_id"),
-        Index("ix_vr_nday_cve_id", "cve_id"),
-        Index("ix_vr_nday_state", "state"),
-    )
-
-    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    project_id: str = Field(index=True)
-    cve_id: str = Field(max_length=32)
-    upstream_project: str = Field(max_length=255)
-    state: str = Field(default="researching")
-    advisory_url: str = Field(default="", sa_column=Column(Text))
-    patch_commit: str = Field(default="", max_length=128)
-    pre_patch_ref: str = Field(default="", max_length=128)
-    target_id: str | None = Field(default=None, index=True)
-    root_cause_md: str = Field(default="", sa_column=Column(Text))
-    notes: str = Field(default="", sa_column=Column(Text))
-    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
-    updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
-```
+N-day investigations have no dedicated table. `POST /vr/projects` writes a `VRProjectRecord` (`cve_id`, `patched_target_id`, `analysis_system_id`, `poc_system_id`) plus its target rows, and submits a `VR_INVESTIGATE_HUB` investigation (`run_vr_investigate`) against them. The retired `vr_nday_tasks` table and its state machine are gone.
 
 ### 3.4 Evidence graph and obligations
 

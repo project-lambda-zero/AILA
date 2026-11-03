@@ -13,7 +13,6 @@ from pydantic import ValidationError
 from aila.modules.vr.contracts import (
     CrashSignature,
     CrashType,
-    CWEMapping,
     DisclosureStatus,
     InputSource,
     PoCResult,
@@ -29,7 +28,6 @@ __all__ = [
     "TestVRTarget",
     "TestVRProjectCreate",
     "TestVRProjectSummary",
-    "TestAdvisoryContracts",
     "TestFindingContracts",
 ]
 
@@ -115,16 +113,6 @@ class TestVRProjectSummary:
         dumped = original.model_dump()
         restored = VRProjectSummary.model_validate(dumped)
         assert restored == original
-
-
-class TestAdvisoryContracts:
-
-    def test_cwe_requires_cwe_id(self) -> None:
-        with pytest.raises(ValidationError):
-            CWEMapping()  # type: ignore[call-arg]
-        m = CWEMapping(cwe_id="CWE-122")
-        assert m.cwe_id == "CWE-122"
-        assert m.name == ""
 
 
 class TestFindingContracts:

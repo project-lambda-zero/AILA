@@ -1053,7 +1053,7 @@ class TestAgentLlmChatBypass:
         """client = ServiceFactory().llm_client; client.chat(...) is a bypass."""
         src = _write(
             tmp_path,
-            "aila/modules/vr/agents/nday_researcher.py",
+            "aila/modules/vr/agents/vuln_researcher.py",
             "async def f():\n"
             "    client = ServiceFactory().llm_client\n"
             "    return await client.chat(task_type='x', messages=[])\n",

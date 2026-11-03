@@ -19,8 +19,8 @@ Two gaps remain:
 1. The two production researchers duplicate a large block of prompt and
    tool-spec render helpers. About eleven helper bodies are byte-identical and a
    further fifteen differ only in module-specific data.
-2. Four agent loops run off the base: `NdayResearcher`
-   (`src/aila/modules/vr/agents/nday_researcher.py:206`), `DanteAgent`
+2. Four agent loops run off the base: the VR n-day researcher (deleted in
+   0.6.5; n-day runs through `VR_INVESTIGATE_HUB`), `DanteAgent`
    (`src/aila/platform/agents/dante/agent.py:358`),
    `state_forensics_panel_loop`
    (`src/aila/modules/forensics/workflow/panel/loop.py:203`), and
@@ -56,7 +56,7 @@ Non-goals:
 |---|---|---|---|
 | `DanteAgent.respond()` | yes (`src/aila/platform/runtime/orchestrator.py:173-176`) | carve out | One-shot request-scoped completion (`agent.py:380-505`). No turn loop, no branch state, no tools, no idempotency. `run_turn`'s pipeline does not apply. |
 | `state_forensics_panel_loop` | opt-in only (`src/aila/modules/forensics/workflow/panel/definitions.py:82-85`) | defer | Stub loop; submits on turn 1 (`loop.py:291-317`). No tests reference it (R23). Nothing to consolidate until it has real behavior. |
-| `NdayResearcher.research()` | yes (`src/aila/modules/vr/workflow/states/research.py:26`) | carve out; fix R6/R7 separately | Decision source is raw chat JSON, exit is budget-or-adjudication, no branching, no quorum. Structurally unlike `run_turn`. Has two correctness bugs (R6, R7) and zero characterization tests. |
+| n-day researcher `research()` | yes (`src/aila/modules/vr/workflow/states/research.py:26`) | carve out; fix R6/R7 separately. Deleted in 0.6.5; n-day runs through `VR_INVESTIGATE_HUB`. | Decision source is raw chat JSON, exit is budget-or-adjudication, no branching, no quorum. Structurally unlike `run_turn`. Has two correctness bugs (R6, R7) and zero characterization tests. |
 | `HonestInvestigator` (forensics INV) | yes (`src/aila/modules/forensics/workflow/states/freeflow.py:219`) | carve out for #290 | Its unresolved-hypotheses gate is NOT a parity copy of VR/MWR (answer-text citation escape at `investigator.py:1330-1335`, in-memory counter `:1343`, returns a reason string, cap `0` disables). SSH tool dispatch, not `ToolExecutor`. A straight dedupe is impossible; see decision 7. |
 
 Conclusion: the "migrate the loops" half of #290 resolves to carve-outs. The
@@ -150,12 +150,15 @@ R16 (prompt-store monkeypatch targets). The full table (R1-R25) lives in the
 scoping notes attached to issue #290.
 
 Spin-off correctness bugs found while scoping (NOT caused by this RFC):
+
+> Note (0.6.5): the n-day researcher was deleted; n-day runs through `VR_INVESTIGATE_HUB`. The line references below describe the pre-deletion code.
+
 - R6: NDAY blocked-submit leak -- a rejected, unadjudicated claim can be
-  reported `status=completed` (`nday_researcher.py:358,368,553-558`;
-  `research.py:50-51`).
+  reported `status=completed` (deleted n-day researcher, pre-0.6.5 lines
+  358,368,553-558; `research.py:50-51`).
 - R7: NDAY does not catch `LLMError` / `LLMCancelledError`
-  (`nday_researcher.py:266`; `research.py:49` has no try). An LLM error escapes
-  the state.
+  (deleted n-day researcher, pre-0.6.5 line 266; `research.py:49` has no try).
+  An LLM error escapes the state.
 
 ## 7. Decisions required before the behavior-touching work
 

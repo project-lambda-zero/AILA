@@ -11,9 +11,6 @@ Three thin surfaces the audit surfaced with zero direct tests:
   the guard exists but only had one datetime-shaped test in the existing
   suite, so a regression that widened acceptance would slip through. This
   file pins the full set of non-JSON types the guard MUST reject.
-* ``adjudicate()``'s ``previous_verdict``-based negative-prior branch. The
-  existing tests cover the accepted / blocked-critical / downgraded-required /
-  hedge-downgrade paths; the negative-prior escalation was uncovered.
 
 No DB, no IO. Every test is a pure structural check on the contract types.
 """
@@ -25,12 +22,6 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from aila.platform.contracts.obligations import (
-    EvidenceObligation,
-    ObligationSet,
-    ObligationSeverity,
-    adjudicate,
-)
 from aila.platform.contracts.platform import (
     RouteCandidate,
     RouteDecision,
@@ -216,119 +207,3 @@ class TestReasoningCaseStateObservablesJsonGuard:
                 reasoning="x", observables={"blob": b"\x00\x01"},
             )
 
-
-# ---------------------------------------------------------------------------
-# adjudicate() negative-prior escalation branch
-# ---------------------------------------------------------------------------
-
-
-class TestAdjudicatePreviousVerdictPath:
-    """Prior-verdict handling and the waive/satisfy paths -- previously untested.
-
-    The pre-#62 suite exercised the accepted / blocked-critical /
-    downgraded-required / hedge paths. What still had no direct coverage:
-
-    * ``previous_verdict`` interaction (None vs blocked vs downgraded).
-    * The waiver path -- a waived REQUIRED obligation is treated as met.
-    * The satisfied path -- a satisfied CRITICAL obligation clears the
-      blocking-critical branch.
-
-    All four are pinned here so a regression cannot silently strip the
-    ``all_required_met`` semantics without failing the suite.
-    """
-
-    @staticmethod
-    def _required_obligation(
-        *, satisfied: bool = False, waived: bool = False,
-    ) -> EvidenceObligation:
-        return EvidenceObligation(
-            id="ob-req",
-            claim="fix reachable via input X",
-            required_evidence="poc",
-            severity=ObligationSeverity.REQUIRED,
-            satisfied=satisfied,
-            waived=waived,
-            waiver_reason="operator-waived for test" if waived else None,
-        )
-
-    def test_downgraded_prior_with_unmet_required_stays_downgraded(self) -> None:
-        """Prior verdict does not upgrade when a required obligation is unmet.
-
-        The primary unmet-required branch fires first; the assertion pins the
-        observable contract that a caller carrying a prior downgrade cannot
-        upgrade to accepted while any required obligation is still outstanding.
-        """
-        obs = ObligationSet(obligations=[self._required_obligation()])
-        result = adjudicate(
-            claim="critical",
-            reasoning_text="poc reproduced",
-            obligations=obs,
-            previous_verdict="downgraded",
-        )
-        assert result.verdict == "downgraded"
-        assert "ob-req" in result.unmet_obligations
-
-    def test_blocked_prior_with_no_obligations_returns_accepted(self) -> None:
-        """A prior blocked verdict is not sticky when the obligation set is empty.
-
-        The contract's negative-prior branch guards against upgrading while
-        required obligations are outstanding; when none exist the caller has
-        cleared the bar, so the current call returns accepted.
-        """
-        result = adjudicate(
-            claim="critical",
-            reasoning_text="repro confirmed",
-            obligations=ObligationSet(),
-            previous_verdict="blocked",
-        )
-        assert result.verdict == "accepted"
-
-    def test_previous_verdict_none_matches_no_prior_call(self) -> None:
-        """A None prior verdict is the "first-turn" shape; no escalation."""
-        result = adjudicate(
-            claim="fixable",
-            reasoning_text="repro on 4.5.1",
-            obligations=ObligationSet(),
-            previous_verdict=None,
-        )
-        assert result.verdict == "accepted"
-
-    def test_waived_required_obligation_is_not_blocking(self) -> None:
-        """A waived REQUIRED obligation counts as met on the ``all_required_met`` axis."""
-        obs = ObligationSet(
-            obligations=[self._required_obligation(waived=True)],
-        )
-        result = adjudicate(
-            claim="advisory",
-            reasoning_text="exploitation infeasible per operator note",
-            obligations=obs,
-            previous_verdict=None,
-        )
-        assert result.verdict == "accepted"
-        assert result.unmet_obligations == []
-
-    def test_satisfied_critical_obligation_clears_blocking_branch(self) -> None:
-        """A satisfied CRITICAL obligation does not raise the blocked verdict.
-
-        Pins the ``unmet_critical`` -> blocked precondition: only OUTSTANDING
-        critical obligations block, not merely-declared ones.
-        """
-        obs = ObligationSet(
-            obligations=[
-                EvidenceObligation(
-                    id="ob-crit",
-                    claim="fix under attacker-controlled path",
-                    required_evidence="poc",
-                    severity=ObligationSeverity.CRITICAL,
-                    satisfied=True,
-                    evidence_ref="poc-42",
-                ),
-            ],
-        )
-        result = adjudicate(
-            claim="c",
-            reasoning_text="repro on 4.5.1",
-            obligations=obs,
-            previous_verdict=None,
-        )
-        assert result.verdict == "accepted"

@@ -41,7 +41,7 @@ Pages are windows opened by the shell. Keys are `vr:<page-id>`. The rail entries
 | `vr:fuzz-campaigns` | `DataPage` + `FuzzCampaignDetail` | Accordion with telemetry chart (`FuzzTelemetryChart`, `GET /vr/fuzz/campaigns/{id}/telemetry`), target proposals (accept/reject), and crashes with triage actions. |
 | `vr:xray` | `XRayPage` | The per-investigation analysis workspace (section 2). |
 | `vr:new-target` | `UploadForm module="vr"` | Upload a source or binary target. |
-| `vr:new-project` | `NdayProjectForm` | N-day reproduction: binds workspace, vulnerable target, optional patched build, CVE, analysis workstation, optional PoC executor; drives `POST /vr/projects`. |
+| `vr:new-project` | `NdayProjectForm` | N-day reproduction: binds workspace, vulnerable target, optional patched build, CVE, analysis workstation, optional PoC executor; drives `POST /vr/projects`, which submits a `VR_INVESTIGATE_HUB` investigation seeded with the CVE. |
 
 Wizards reachable from the chat `+ open wizard` picker are defined in `frontend/src/console/wizards/registry.ts`: `vr-intake` (new investigation, via `IntakeWizard`) and `vr-upload` (opens `vr:new-target`).
 

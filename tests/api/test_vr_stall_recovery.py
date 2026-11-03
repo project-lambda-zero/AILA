@@ -13,7 +13,7 @@ Test matrix (9 seeded fixtures, one comprehensive assertion phase):
   B: variant_hunt / running / 6 active branches / idle / no live task
      → 6 submits (whole fan-out fits in default cap=6)
   C: n_day / running / has branches / idle
-     → 1 submit (inv-level, no branch_id -- nday owns branches)
+     → 1 submit (inv-level, no branch_id -- hub resolves the primary branch)
   D: audit / running / 1 active branch / idle / **live task present**
      → 0 submits (skipped -- in-flight task blocks recovery)
   E: audit / paused / pause_reason='operator' / idle
@@ -312,7 +312,7 @@ async def test_stall_recovery_full_matrix() -> None:
         f"B expected 6 branches, got {by_inv[inv_b]!r}"
     )
 
-    # C: n_day → 1 submit, branch_id=None (nday body owns branches)
+    # C: n_day → 1 submit, branch_id=None (hub resolves the primary branch)
     assert inv_c in by_inv
     assert by_inv[inv_c] == [None], (
         f"C n_day should produce inv-level submit, got {by_inv[inv_c]!r}"

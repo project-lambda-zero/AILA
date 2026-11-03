@@ -864,6 +864,7 @@ class ClaimVerifierAgentBase:
                     "ok": ok,
                     "error": raw.get("error") if not ok else None,
                     "raw": raw,
+                    "citation": f"{tool_name}({json.dumps(args, sort_keys=True, default=str)})",
                 }
             except (OSError, RuntimeError, TimeoutError) as exc:
                 return {
@@ -933,11 +934,30 @@ class ClaimVerifierAgentBase:
         # exactly what the verdict LLM returned.
         verdict_parsed = await self._apply_verdict_quorum_override(verdict_parsed)
 
-        # Stage 4: persist verifier_report on canonical outcome
+        # Stage 4: persist verifier_report on canonical outcome. Each
+        # precondition's evidence_refs are the successful probe calls that
+        # produced its raw output -- deterministic provenance, never
+        # LLM-invented. A precondition whose probe was refused, failed, or
+        # never ran carries no refs.
+        citation_by_id = {
+            r.get("id"): r["citation"]
+            for r in probe_results
+            if r.get("ok") and r.get("citation")
+        }
+        verdict_preconditions = [
+            {
+                **p.model_dump(),
+                "evidence_refs": (
+                    [{"kind": "verifier_probe", "ref": citation_by_id[p.id]}]
+                    if p.id in citation_by_id else []
+                ),
+            }
+            for p in verdict_parsed.preconditions
+        ]
         verifier_report = {
             "verdict": verdict_parsed.verdict,
             "confidence": verdict_parsed.confidence,
-            "preconditions": [p.model_dump() for p in verdict_parsed.preconditions],
+            "preconditions": verdict_preconditions,
             "counter_evidence": verdict_parsed.counter_evidence,
             "summary": verdict_parsed.summary,
             "probes_run": len(probe_results),
