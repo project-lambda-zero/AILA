@@ -1,6 +1,6 @@
 # RFC-290 -- Agent-loop consolidation and a module-binding orchestrator contract
 
-Status: Draft (design settled; implementation staged and gated on the decisions in section 7).
+Status: Implemented (0.6.5 and 0.6.6). See section 8 for what landed.
 Issue: #290. Depends on: #286 (landed -- the `ClaimVerificationHook` module seam).
 
 ## 1. Problem
@@ -131,12 +131,15 @@ Formalize around the existing seam rather than inventing a parallel one:
   (`investigation_loop_base.py:344-347`) as the one loop seam.
 - Keep the #286 `ClaimVerificationHook` on the dispatcher class
   (`outcome_dispatcher.py:244`). Do NOT duplicate it on the researcher (R20).
-- Introduce a `ModuleAgentBinding` descriptor (frozen dataclass in
-  `src/aila/platform/agents/module_binding.py`) that a module constructs once and
-  that supplies the parameterized render descriptors from section 4.2 plus the
-  gate prose (section 4.1). The researcher reads it; `create_module` is not
-  changed (bindings remain module-level constants imported by `definitions_hub`,
-  matching current wiring at `vr/workflow/definitions_hub.py:36-51`).
+- The unresolved-hypotheses gate lives on the base
+  (`AgentTurnRunnerBase._maybe_reject_submit_with_unresolved_hypotheses`); a
+  module binds its LLM-facing prose through the `_unresolved_hyp_gate_prose`
+  class attribute (an `UnresolvedHypGateProse`) and its cap through
+  `_load_turn_config`. A researcher with no prose
+  bound keeps the allow-everything default.
+- No separate `ModuleAgentBinding` descriptor was introduced. The section 4.2
+  helpers it would have carried stayed module-local (section 8), so a
+  descriptor would have had no consumers.
 
 This keeps platform import discipline (R22): no `aila.modules` import lands in
 `src/aila/platform/agents/`.
@@ -191,10 +194,17 @@ PR, with the behavior questions handled separately and visibly.
 ## 8. Staged delivery
 
 1. (done) Remove the dead `InvestigationStateBindings.run_turn` field.
-2. Add `prompt_sections.py` + byte-identity characterization tests; lift the
-   section 4.1 verbatim helpers; update the test importers (scoping map section
-   2.6); honesty audit green.
-3. Lift the section 4.2 parameterized helpers behind `ModuleAgentBinding`.
-4. Land the behavior decisions from section 7 that the operator approves, each
-   as its own commit with its own test.
-5. File the NDAY R6/R7 fixes as a separate issue with characterization tests.
+2. (done) `src/aila/platform/agents/prompt_sections.py` holds the section 4.1
+   helpers (`format_param`, `outcome_payload`, `PROMPT_CONFIDENCE_RANK`, the
+   operator-messages / active-directives / pattern / retrieved-knowledge /
+   available-tools sections, `load_prompt_seed_from_file`); VR, malware and the
+   template use it. The unresolved-hyp gate control flow moved to the base.
+   `tests/platform/agents/test_prompt_sections_byte_identity.py` pins the
+   rendered output against a snapshot captured before the lift.
+3. (resolved: kept local) The section 4.2 helpers -- target snapshot, prior
+   submissions, sibling context, applicable servers, `_fetch_tool_specs`,
+   prompt key / load -- diverge enough that a shared version would either change
+   rendered bytes or need more parameters than two readable copies.
+4. (done) Behavior decisions: malware evidence citation and superseded filtering
+   shipped in 0.6.5.
+5. (done) The NDAY bugs are moot: the n-day pipeline was removed in 0.6.5.

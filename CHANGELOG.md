@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.6] - 2026-11-03 -- shared researcher prompt sections and submit gate
+
+### Changed
+
+- The prompt sections that the VR, malware, and template researchers rendered from duplicated code (operator messages, active directives, patterns, retrieved knowledge, available tools, tool parameters, outcome payload, confidence rank, prompt seed loading) now come from one platform module, `platform/agents/prompt_sections.py`. Rendered prompts are byte-identical to the previous output, pinned by a snapshot test, so cached agent decisions keep matching.
+- The unresolved-hypotheses submit gate runs from `AgentTurnRunnerBase`; each module supplies its directive prose and cap. Gate counters and directive keys are unchanged, and per-module caps keep their defaults.
+- RFC-290 is marked implemented; the module-specific helpers that remain in each researcher, and why, are recorded in the RFC.
+
 ## [0.6.5] - 2026-11-03 -- n-day runs on the VR investigation hub; malware reports cite every verified claim
 
 ### Changed
