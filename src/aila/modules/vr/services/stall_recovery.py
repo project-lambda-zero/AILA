@@ -1,9 +1,9 @@
 """VR binding of the platform stall-recovery sweep.
 
 Binds the platform generic to VR's investigations + branches tables, the
-VR sweepable-kind set (with ``n_day`` marked as a single-submit kind so
-the sweep skips branch fan-out for it), the VR env-var prefix, and the
-VR task submitter.
+VR sweepable-kind set, the VR env-var prefix, and the VR task submitter.
+Every hub investigation kind, including ``n_day``, recovers per active
+branch.
 
 ``_default_submit_fn`` stays module-side because it imports the VR-owned
 task function (``run_vr_investigate``, the hub for every investigation
@@ -57,12 +57,6 @@ _SWEEPABLE_KINDS: tuple[str, ...] = (
     "audit", "discovery", "variant_hunt", "triage", "n_day",
 )
 
-# Kinds whose submit carries only the investigation id -- the sweep skips
-# branch fan-out. The hub task resolves the primary branch from the DB
-# for ``n_day``, so the sweep hands it only the investigation id.
-_SINGLE_SUBMIT_KINDS: tuple[str, ...] = ("n_day",)
-
-
 async def _default_submit_fn(
     inv_kind: str,
     inv_id: str,
@@ -78,8 +72,9 @@ async def _default_submit_fn(
     from aila.modules.vr._task_queue import default_task_queue
     from aila.modules.vr.workflow.task import run_vr_investigate
 
+    del inv_kind  # SubmitFn positional contract; every VR kind routes through run_vr_investigate
     kwargs: dict[str, object] = {"investigation_id": inv_id}
-    if inv_kind != "n_day" and branch_id:
+    if branch_id:
         kwargs["branch_id"] = branch_id
 
     task_queue = default_task_queue()
@@ -105,7 +100,6 @@ _stall_sweep_bound = partial(
     _platform_sweep,
     submit_fn=_default_submit_fn,
     sweepable_kinds=_SWEEPABLE_KINDS,
-    single_submit_kinds=_SINGLE_SUBMIT_KINDS,
     env_prefix="AILA_VR_STALL_RECOVERY",
     investigations_table="vr_investigations",
     branches_table="vr_investigation_branches",

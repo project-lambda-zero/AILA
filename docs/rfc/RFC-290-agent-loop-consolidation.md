@@ -6,7 +6,7 @@ Issue: #290. Depends on: #286 (landed -- the `ClaimVerificationHook` module seam
 ## 1. Problem
 
 The shared per-turn agent framework is `AgentTurnRunnerBase.run_turn`
-(`src/aila/platform/agents/turn_runner.py:146`, pipeline `:881-1628`) plus the
+(`src/aila/platform/agents/turn_runner.py:162`, pipeline `:1032-1779`) plus the
 shared loop driver `state_investigation_loop`
 (`src/aila/platform/workflows/investigation_loop_base.py:245`) and the shared
 `ToolExecutor`. VR (`HonestVulnResearcher`,
@@ -56,13 +56,12 @@ Non-goals:
 |---|---|---|---|
 | `DanteAgent.respond()` | yes (`src/aila/platform/runtime/orchestrator.py:173-176`) | carve out | One-shot request-scoped completion (`agent.py:380-505`). No turn loop, no branch state, no tools, no idempotency. `run_turn`'s pipeline does not apply. |
 | `state_forensics_panel_loop` | opt-in only (`src/aila/modules/forensics/workflow/panel/definitions.py:82-85`) | defer | Stub loop; submits on turn 1 (`loop.py:291-317`). No tests reference it (R23). Nothing to consolidate until it has real behavior. |
-| n-day researcher `research()` | yes (`src/aila/modules/vr/workflow/states/research.py:26`) | carve out; fix R6/R7 separately. Deleted in 0.6.5; n-day runs through `VR_INVESTIGATE_HUB`. | Decision source is raw chat JSON, exit is budget-or-adjudication, no branching, no quorum. Structurally unlike `run_turn`. Has two correctness bugs (R6, R7) and zero characterization tests. |
+| n-day researcher `research()` | no (deleted in 0.6.5; `vr/workflow/states/research.py` no longer exists) | n/a (carve-out moot). N-day runs through `VR_INVESTIGATE_HUB`. | Was: decision source raw chat JSON, exit budget-or-adjudication, no branching, no quorum. Its R6/R7 bugs left with the code; no characterization tests were ever written. |
 | `HonestInvestigator` (forensics INV) | yes (`src/aila/modules/forensics/workflow/states/freeflow.py:219`) | carve out for #290 | Its unresolved-hypotheses gate is NOT a parity copy of VR/MWR (answer-text citation escape at `investigator.py:1330-1335`, in-memory counter `:1343`, returns a reason string, cap `0` disables). SSH tool dispatch, not `ToolExecutor`. A straight dedupe is impossible; see decision 7. |
 
 Conclusion: the "migrate the loops" half of #290 resolves to carve-outs. The
 value is in the render-helper consolidation and the binding contract. The NDAY
-bugs are real and are tracked below as spin-off fixes, gated on characterization
-tests.
+bugs were resolved by removing the n-day researcher in 0.6.5 (section 6).
 
 ## 4. Render-helper consolidation plan
 
@@ -77,6 +76,11 @@ tested at `tests/platform/agents/test_synthesis_runner_verifier_annotation.py:44
 
 Lift unchanged, re-export from each module for the pinned test imports (no
 shims -- the module name becomes a thin `from ... import ...`):
+
+The line ranges below are the pre-lift snapshot. The helpers now live in
+`src/aila/platform/agents/prompt_sections.py` under the names
+`render_operator_messages_section`, `render_active_directives_section`, and
+`format_param` (section 8, stage 2).
 
 | Helper | VR | Malware |
 |---|---|---|
@@ -114,7 +118,7 @@ stay behavior-identical per module.
 ### 4.4 Byte-identity guard
 
 Because the idempotency cache keys on `sha256(system + NUL + user)`
-(`turn_runner.py:1047-1053`, R3), every lift MUST keep rendered output
+(`turn_runner.py:1199-1204`, R3), every lift MUST keep rendered output
 byte-identical. The implementation adds a characterization test that renders a
 fixed decision/case_state through both the pre-lift and post-lift path and
 asserts equal bytes, for each lifted section, before the module copies are
@@ -152,16 +156,16 @@ called unbound on duck-typed `self` in tests), R15 (name-based honesty audit),
 R16 (prompt-store monkeypatch targets). The full table (R1-R25) lives in the
 scoping notes attached to issue #290.
 
-Spin-off correctness bugs found while scoping (NOT caused by this RFC):
+Spin-off correctness bugs found while scoping (NOT caused by this RFC). Both
+are resolved by the 0.6.5 removal of the n-day researcher; the line references
+describe the pre-deletion code and are kept only as history.
 
-> Note (0.6.5): the n-day researcher was deleted; n-day runs through `VR_INVESTIGATE_HUB`. The line references below describe the pre-deletion code.
-
-- R6: NDAY blocked-submit leak -- a rejected, unadjudicated claim can be
-  reported `status=completed` (deleted n-day researcher, pre-0.6.5 lines
+- R6 (resolved by removal): NDAY blocked-submit leak -- a rejected,
+  unadjudicated claim could be reported `status=completed` (pre-0.6.5 lines
   358,368,553-558; `research.py:50-51`).
-- R7: NDAY does not catch `LLMError` / `LLMCancelledError`
-  (deleted n-day researcher, pre-0.6.5 line 266; `research.py:49` has no try).
-  An LLM error escapes the state.
+- R7 (resolved by removal): NDAY did not catch `LLMError` /
+  `LLMCancelledError` (pre-0.6.5 line 266; `research.py:49` had no try). An
+  LLM error escaped the state.
 
 ## 7. Decisions required before the behavior-touching work
 
@@ -181,10 +185,9 @@ are explicit choices, not defaults the implementer may pick:
 6. Per-module unresolved-hyp cap defaults (R17): VR 10, MWR 3, INV 3. Keep.
 7. INV gate: adopt VR semantics (drop the answer-text escape, persist the
    counter) or document the divergence permanently.
-8. NDAY R6/R7: fix within #290 or as separate issues (recommended: separate,
-   gated on new characterization tests, R23).
-9. Add characterization tests for NDAY/DANTE/PANEL before any future migration
-   (R23) -- currently none exist.
+8. NDAY R6/R7 (resolved): moot after the 0.6.5 removal of the n-day researcher.
+9. Characterization tests for DANTE/PANEL before any future migration (R23) --
+   currently none exist. NDAY needs none; it has no code path left to migrate.
 
 Recommended posture for a pure consolidation: resolve 4, 5, 6 as "preserve
 behavior via parameterization"; defer 1, 2, 3, 7 as independent behavior changes;

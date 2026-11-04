@@ -28,6 +28,8 @@ import pytest
 from sqlmodel import select
 
 import aila.platform.llm.client as client_module
+from aila.platform.config import PlatformConfigSchema
+from aila.platform.config_base import _shared_registry
 from aila.platform.events.domain_events import LlmCallCompletedPayload
 from aila.platform.llm.client import AilaLLMClient
 from aila.platform.llm.config import LLMRouting
@@ -246,9 +248,17 @@ def test_resolve_run_id_prefers_explicit_then_ambient_investigation() -> None:
 @pytest.mark.usefixtures("test_db")
 async def test_investigation_ledgers_reconcile_across_every_call_path() -> None:
     """Summed cost rows == live investigation cost == CostTracker; global == _no_run."""
+    # Same registration the worker/CLI bootstrap performs (cli.py:239). Without
+    # it the process-wide registry has no platform schema and get_sync returns
+    # None for llm_max_retries when this test runs without earlier tests.
+    await _shared_registry().register("platform", PlatformConfigSchema)
+
     inv = f"inv-{uuid4().hex}"
     client = _make_client()
     client.cost_tracker = CostTracker(RunMemory(), _AsyncRegistry())  # type: ignore[arg-type]
+
+    async with UnitOfWork() as uow:
+        preexisting_ids = set((await uow.session.exec(select(LLMCostRecord.id))).all())
 
     in_investigation = [(100, 50), (40, 10), (7, 3)]
     global_call = (11, 5)
@@ -272,9 +282,10 @@ async def test_investigation_ledgers_reconcile_across_every_call_path() -> None:
         await client.chat("scoring", _MESSAGES)
 
     async with UnitOfWork() as uow:
-        rows = (await uow.session.exec(select(LLMCostRecord))).all()
+        all_rows = (await uow.session.exec(select(LLMCostRecord))).all()
         live_cost = await compute_live_investigation_cost(uow, inv)
 
+    rows = [r for r in all_rows if r.id not in preexisting_ids]
     in_inv = [r for r in rows if r.run_id == inv]
     no_run = [r for r in rows if r.run_id == "_no_run"]
     assert len(rows) == 4, "every call, nested included, writes exactly one cost row"

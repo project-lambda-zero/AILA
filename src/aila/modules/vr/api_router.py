@@ -446,7 +446,6 @@ def _finding_from_record(
         root_cause=record.root_cause or "",
         vulnerable_function=record.vulnerable_function or "",
         poc=poc,
-        advisory_id=None,
         disclosure_status=DisclosureStatus(record.disclosure_status),
         vendor_contact=record.vendor_contact,
         reported_at=record.reported_at.isoformat() if record.reported_at else None,

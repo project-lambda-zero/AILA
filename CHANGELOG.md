@@ -12,6 +12,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The prompt sections that the VR, malware, and template researchers rendered from duplicated code (operator messages, active directives, patterns, retrieved knowledge, available tools, tool parameters, outcome payload, confidence rank, prompt seed loading) now come from one platform module, `platform/agents/prompt_sections.py`. Rendered prompts are byte-identical to the previous output, pinned by a snapshot test, so cached agent decisions keep matching.
 - The unresolved-hypotheses submit gate runs from `AgentTurnRunnerBase`; each module supplies its directive prose and cap. Gate counters and directive keys are unchanged, and per-module caps keep their defaults.
 - RFC-290 is marked implemented; the module-specific helpers that remain in each researcher, and why, are recorded in the RFC.
+- Stall recovery submits n-day investigations once per active branch, the same as every other VR investigation kind. Previously n-day submitted once per investigation regardless of branch count.
+
+### Removed
+
+- The platform stall-recovery `single_submit_kinds` binding field and the `sweep_stalled_investigations` parameter of the same name. Module stall-recovery bindings no longer declare it.
+- `VRFinding.advisory_id` from the VR finding contract. The field was always `None`.
+- `obligations_json` from the project contract base, and the column itself from `vr_projects`, `malware_projects`, and `malware_findings` (migration `147_drop_project_obligations_json`).
+- The unused obligation residue left by the removed n-day pipeline: the VR `obligation.changed` event type and the budget `auto_waive_recommended_at` setting with its `should_waive_recommended` property.
 
 ## [0.6.5] - 2026-11-03 -- n-day runs on the VR investigation hub; malware reports cite every verified claim
 

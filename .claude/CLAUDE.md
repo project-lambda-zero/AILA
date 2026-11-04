@@ -172,7 +172,7 @@ Reasoning modules also carry `db_models/`, `config_schema.py`, and a `workflow/`
 
 ### Reasoning agents
 
-The shared per-branch turn loop lives in `src/aila/platform/agents/turn_runner.py`: `AgentTurnRunnerBase` (`turn_runner.py:146`, `run_turn` at `:881`). A module researcher subclasses it, sets the config class attributes (`_LOG_LABEL`, `_MODULE_ID`, ...), binds its module-level helpers, and overrides the behavior hooks. `HonestVulnResearcher` (`modules/vr/agents/vuln_researcher.py:175`), `HonestMalwareResearcher` (`modules/malware/agents/malware_researcher.py:227`), and the template researcher (`modules/_template/agents/researcher.py`) are the subclasses. Forensics does not use it: its panel loop is a separate minimal handler (`modules/forensics/workflow/panel/loop.py`).
+The shared per-branch turn loop lives in `src/aila/platform/agents/turn_runner.py`: `AgentTurnRunnerBase` (`turn_runner.py:162`, `run_turn` at `:1032`). A module researcher subclasses it, sets the config class attributes (`_LOG_LABEL`, `_MODULE_ID`, ...), binds its module-level helpers, and overrides the behavior hooks. `HonestVulnResearcher` (`modules/vr/agents/vuln_researcher.py:180`), `HonestMalwareResearcher` (`modules/malware/agents/malware_researcher.py:233`), and the template researcher (`modules/_template/agents/researcher.py`) are the subclasses. Forensics does not use it: its panel loop is a separate minimal handler (`modules/forensics/workflow/panel/loop.py`).
 
 Tool dispatch is per module. The shared pieces are `ToolExecutorHelpersBase` (`platform/agents/tool_executor.py:93`: message persistence, circuit breaker, observable merge) and the dispatch primitives in `platform/agents/tool_execution.py` (`ToolExecutionResult`, `parse_command`, `classify_contract_error`). Each module defines its own `ToolExecutor(ToolExecutorHelpersBase)` with its own `_AGENT_ALLOWED_SERVERS` allowlist (`modules/vr/agents/tool_executor.py:78,125`, `modules/malware/agents/tool_executor.py:589,618`, `modules/_template/agents/tool_executor.py:41,53`).
 
@@ -197,7 +197,7 @@ Multi-step behavior uses staged workflows with named states, not nested conditio
 ### 5. Respect ownership boundaries
 - Platform owns: routing, runtime, services, contracts, tools, task queue
 - Modules own: domain logic, module-specific contracts/tools/services, reports, workflow
-- Platform never imports from `aila.modules.*`
+- Platform never imports from `aila.modules.*`, except module discovery/loading (`src/aila/platform/modules/builtin.py` `_import_modules_package`) and the worker's platform-task bootstrap (`src/aila/platform/tasks/worker.py`, the `import aila.modules` near line 635). Those two sites only scan the package and register its modules; they do not reach into module internals.
 - Modules never import from each other (Python)
 
 ### 6. Frontend dep ownership
@@ -455,7 +455,7 @@ investigations. These rules are the operational lessons:
    prompt_hash)` (`aila/platform/llm/idempotency_cache.py:74`).
    Retries replay the cached decision instead of re-paying for
    Claude. The key is built and looked up once per turn in
-   `AgentTurnRunnerBase.run_turn` (`aila/platform/agents/turn_runner.py:1051`),
+   `AgentTurnRunnerBase.run_turn` (`aila/platform/agents/turn_runner.py:1199-1204`),
    shared by vr and malware.
 
 4. **Agent self-bloats observables.** They invent scratchpad keys
@@ -512,7 +512,7 @@ add a new rule: write `_detect_X` + `_derive_X_correction` in
 `LLMCostRecord.run_id` for an agent turn is the investigation id, not
 a `TaskRecord` or workflow `RunRecord` id: `AgentTurnRunnerBase.run_turn`
 passes `run_id=self.investigation_id` to the engine
-(`aila/platform/agents/turn_runner.py:1106`). The live total is therefore
+(`aila/platform/agents/turn_runner.py:1258`). The live total is therefore
 a direct filter, with no extra join hop:
 `compute_live_investigation_cost`
 (`aila/platform/services/investigation_cost.py:34`) sums
