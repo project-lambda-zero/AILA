@@ -206,4 +206,3 @@ class TestReasoningCaseStateObservablesJsonGuard:
             ReasoningTurnDecision(
                 reasoning="x", observables={"blob": b"\x00\x01"},
             )
-

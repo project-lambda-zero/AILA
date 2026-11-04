@@ -962,7 +962,6 @@ and crashes on conflict; `merge()` does INSERT-or-UPDATE keyed on the PK.
 | `cvss_vector` | VARCHAR(128) |  |
 | `cvss_score` | FLOAT |  |
 | `cwe_id` | VARCHAR(16) |  |
-| `advisory_json` | TEXT |  |
 | `disclosure_status` | VARCHAR(32) | indexed, NOT NULL, default=undisclosed |
 | `vendor_contact` | TEXT |  |
 | `reported_at` | DATETIME |  |
@@ -970,7 +969,6 @@ and crashes on conflict; `merge()` does INSERT-or-UPDATE keyed on the PK.
 | `assigned_cve_id` | VARCHAR(32) |  |
 | `patch_version` | VARCHAR(64) |  |
 | `evidence_refs_json` | TEXT |  |
-| `obligations_json` | TEXT |  |
 | `created_at` | DATETIME | NOT NULL, default=<function utc_now at 0x000000003DFC2660> |
 | `updated_at` | DATETIME | NOT NULL, default=<function utc_now at 0x000000003DFC2480> |
 
@@ -1257,7 +1255,6 @@ and crashes on conflict; `merge()` does INSERT-or-UPDATE keyed on the PK.
 | `status` | VARCHAR(32) | indexed, NOT NULL, default=created |
 | `created_by` | VARCHAR(64) | indexed |
 | `budget_json` | TEXT | default={} |
-| `obligations_json` | TEXT | default={} |
 | `created_at` | DATETIME | NOT NULL, default=<function utc_now at 0x000000003E160900> |
 | `updated_at` | DATETIME | NOT NULL, default=<function utc_now at 0x000000003E1607C0> |
 | `cve_id` | VARCHAR(32) | indexed |
@@ -1571,7 +1568,6 @@ and crashes on conflict; `merge()` does INSERT-or-UPDATE keyed on the PK.
 | `status` | VARCHAR(32) | indexed, NOT NULL, default=created |
 | `created_by` | VARCHAR(64) | indexed |
 | `budget_json` | TEXT | default={} |
-| `obligations_json` | TEXT | default={} |
 | `created_at` | DATETIME | NOT NULL, default=<function utc_now at 0x000000003DE6BF60> |
 | `updated_at` | DATETIME | NOT NULL, default=<function utc_now at 0x000000003DEB0040> |
 

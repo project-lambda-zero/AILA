@@ -21,10 +21,9 @@ class VRFindingRecord(SQLModel, table=True):
     A finding is the durable artifact of a confirmed crash or vulnerability:
     triage metadata (signature, root cause, vulnerable function), reproduction
     evidence (PoC code, ASAN report), classification (CVSS, CWE), and
-    coordinated-disclosure tracking. Free-form structured payloads (advisory
-    body, evidence references) are stored as JSON text so the Pydantic
-    contracts in ``contracts/finding.py`` and ``contracts/advisory.py`` remain
-    the source of truth for shape.
+    coordinated-disclosure tracking. Evidence references are stored as JSON
+    text so the Pydantic contract in ``contracts/finding.py`` remains the
+    source of truth for shape.
     """
 
     __tablename__ = "vr_findings"

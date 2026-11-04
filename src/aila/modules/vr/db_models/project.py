@@ -3,7 +3,7 @@
 Per D-53: target identity moved to VRTargetRecord (M3.T-1). VRProjectRecord
 now holds only project-scoped fields. The shared columns (id, name,
 target_id, analysis_system_id, context_notes, status, created_by,
-budget_json, obligations_json, created_at, updated_at) live on the
+budget_json, created_at, updated_at) live on the
 platform ``ProjectRecordBase`` (RFC-01). This concrete keeps VR-only
 residue: ``cve_id``, ``patched_target_id`` (differential analysis FK to
 vr_targets), and ``poc_system_id`` (PoC machine assignment).

@@ -102,7 +102,6 @@ class VRFinding(BaseModel):
     root_cause: str = ""
     vulnerable_function: str = ""
     poc: PoCResult | None = None
-    advisory_id: str | None = None
 
     # Disclosure tracking (D-04)
     disclosure_status: DisclosureStatus = DisclosureStatus.UNDISCLOSED

@@ -14,10 +14,10 @@ from types import SimpleNamespace
 
 from aila.modules.vr.agents.vuln_researcher import (
     HonestVulnResearcher,
-    _outcome_payload,
     _terminal_outcome_kind,
 )
 from aila.modules.vr.contracts import OutcomeKind
+from aila.platform.agents.prompt_sections import outcome_payload
 from aila.platform.contracts.reasoning import (
     Hypothesis,
     ReasoningCaseState,
@@ -170,7 +170,7 @@ class TestSiblingOpenHypGateCampaignLaunchExempt:
         ]
         fake_self = SimpleNamespace(
             _terminal_outcome_kind=_terminal_outcome_kind,
-            _outcome_payload=_outcome_payload,
+            _outcome_payload=outcome_payload,
             _clear_sibling_open_hyp_gate_state=(
                 HonestVulnResearcher._clear_sibling_open_hyp_gate_state
             ),

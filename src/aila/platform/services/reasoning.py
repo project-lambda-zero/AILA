@@ -720,7 +720,7 @@ class CyberReasoningEngine:
         NOT rendered here as normal observables.
 
         * ``_directive.*``: the top-level prompt section
-          ``_render_active_directives_section`` (in vuln_researcher)
+          ``render_active_directives_section`` (platform prompt_sections)
           lifts those to PROMPT POSITION 2 so the agent sees them
           before any framing. Rendering them here too would duplicate
           the block lower in the prompt, splitting the agent's

@@ -272,28 +272,9 @@ drafting --[script compiles]--> testing --[1+ successful run]--> working --[reli
 
 Per Metis: `testing -> working` requires *evidence between turns*. An LLM cannot self-promote an exploit by re-reading the same run logs.
 
-### 2.9 N-day task lifecycle
+### 2.9 N-day routing (no separate lifecycle)
 
-```
-researching --[advisory + commit refs collected]--> patch_found --[diff understood]--> root_caused
-                                                                                            |
-                                                                                            v
-                                                                                       poc_developing
-                                                                                            |
-                                                                                            v
-                                                                                       poc_working --> advisory_written
-```
-
-| state | meaning |
-|---|---|
-| `researching` | CVE picked, public advisories being scraped, related commits being identified. |
-| `patch_found` | The patch commit is identified and the *pre*-patch source is locatable. |
-| `root_caused` | The bug is understood at the source level; pre-patch reproduction conditions are known. |
-| `poc_developing` | Exploit being written against the pre-patch build. |
-| `poc_working` | PoC reliably reproduces against pre-patch; correctly fails against post-patch (the negative test). |
-| `advisory_written` | Internal write-up complete; if customer-facing, eligible for disclosure pipeline. |
-
-N-day tasks share a state machine with research-mode `VRExploit` only conceptually -- they each have their own state column because the milestones are different. A single `state` enum that mixes both makes neither legible. This is the answer to open question 7 in `03_EXPLOIT_AUTOMATION.md`: **two state machines, separate tables, separate workflows; no shared `mode` flag.**
+The dedicated N-day task table and its state machine were retired in 0.6.5. `POST /vr/projects` (`src/aila/modules/vr/api_router.py`, `run_vr_investigate` at `:1089`, `:1159-1178`) creates a `VRProjectRecord` with `cve_id`, `patched_target_id`, `analysis_system_id`, and `poc_system_id`, then creates an investigation via `create_nday_investigation` and submits it to the `VR_INVESTIGATE_HUB` workflow (`src/aila/modules/vr/workflow/definitions_hub.py:783`). No `researching` / `patch_found` / `root_caused` / `poc_working` progression exists in code.
 
 ### 2.10 Disclosure lifecycle
 
@@ -962,72 +943,7 @@ class VREvidenceEdgeRecord(TeamScopedMixin, SQLModel, table=True):
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
 ```
 
-```python
-# src/aila/modules/vulnerability_research/db_models/obligation.py
-from __future__ import annotations
-
-from datetime import datetime
-from uuid import uuid4
-
-from sqlalchemy import CheckConstraint, Column, DateTime, Index, Text
-from sqlmodel import Field, SQLModel
-
-from aila.platform.contracts._common import utc_now
-from aila.storage.mixins import TeamScopedMixin
-
-OBLIGATION_STATES = ("open", "satisfied", "invalidated", "operator_overridden")
-OBLIGATION_KINDS = (
-    "reproducer_required",
-    "reliability_sweep",
-    "primitive_proof",
-    "mitigation_bypass_proof",
-    "negative_test_against_patched",
-    "coverage_evidence",
-    "isolated_repro_environment",
-    "advisory_writeup_review",
-)
-
-
-class VRObligationRecord(TeamScopedMixin, SQLModel, table=True):
-    """An evidence obligation gating a claim.
-
-    `anchor_node_id` is the node whose progression the obligation gates.
-    `discharged_by_node_id` is the node whose creation satisfied the
-    obligation (NULL while open).
-
-    The adjudicator queries this table for `state='open'` rows on any node
-    in the chain of a finding before allowing `confirmed_vulnerability` or
-    `advisory_ready` transitions.
-    """
-
-    __tablename__ = "vr_obligations"
-    __table_args__ = (
-        CheckConstraint(
-            f"state IN ({', '.join(repr(s) for s in OBLIGATION_STATES)})",
-            name="ck_vr_obligation_state",
-        ),
-        CheckConstraint(
-            f"kind IN ({', '.join(repr(s) for s in OBLIGATION_KINDS)})",
-            name="ck_vr_obligation_kind",
-        ),
-        Index("ix_vr_obligations_anchor", "anchor_node_id"),
-        Index("ix_vr_obligations_state", "state"),
-        Index("ix_vr_obligations_project_id", "project_id"),
-    )
-
-    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
-    project_id: str = Field(index=True)
-    anchor_node_id: str
-    kind: str
-    description: str = Field(sa_column=Column(Text))
-    state: str = Field(default="open")
-    discharged_by_node_id: str | None = Field(default=None)
-    discharged_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
-    operator_override_user_id: str | None = Field(default=None, max_length=64)
-    operator_override_reason: str = Field(default="", sa_column=Column(Text))
-    created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
-    updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
-```
+The obligation system was removed in 0.6.5 (`docs/BACKLOG_PLAN.md:85-88`). No `vr_obligations` table exists in the live schema, and no migration in `src/aila/alembic/versions/` references it. Migration 146 dropped the `vr_findings` advisory and obligations columns; migration 147 dropped `obligations_json` from the project tables.
 
 ### 3.5 What is *not* its own table
 

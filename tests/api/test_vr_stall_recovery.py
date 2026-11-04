@@ -12,8 +12,8 @@ Test matrix (9 seeded fixtures, one comprehensive assertion phase):
      → 3 submits (one per active branch, all with branch_id)
   B: variant_hunt / running / 6 active branches / idle / no live task
      → 6 submits (whole fan-out fits in default cap=6)
-  C: n_day / running / has branches / idle
-     → 1 submit (inv-level, no branch_id -- hub resolves the primary branch)
+  C: n_day / running / 1 active branch / idle
+     → 1 submit (one per active branch, with branch_id)
   D: audit / running / 1 active branch / idle / **live task present**
      → 0 submits (skipped -- in-flight task blocks recovery)
   E: audit / paused / pause_reason='operator' / idle
@@ -255,9 +255,9 @@ async def test_stall_recovery_full_matrix() -> None:
         for p in ("halvar", "noor", "maddie", "yuki", "renzo", "wei")
     ]
 
-    # ── C: n_day / running / has branches (sweep ignores branches)
+    # ── C: n_day / running / 1 active branch (fans out like any kind)
     inv_c = await _seed_inv(target_id, kind="n_day", status="running")
-    await _seed_branch(inv_c, status="active", persona_voice="halvar")
+    c_branch = await _seed_branch(inv_c, status="active", persona_voice="halvar")
 
     # ── D: audit / running / 1 active branch / LIVE TASK present
     inv_d = await _seed_inv(target_id, kind="audit", status="running")
@@ -312,10 +312,10 @@ async def test_stall_recovery_full_matrix() -> None:
         f"B expected 6 branches, got {by_inv[inv_b]!r}"
     )
 
-    # C: n_day → 1 submit, branch_id=None (hub resolves the primary branch)
+    # C: n_day / 1 active branch → 1 submit, branch_id=that branch
     assert inv_c in by_inv
-    assert by_inv[inv_c] == [None], (
-        f"C n_day should produce inv-level submit, got {by_inv[inv_c]!r}"
+    assert by_inv[inv_c] == [c_branch], (
+        f"C n_day should fan out per active branch, got {by_inv[inv_c]!r}"
     )
 
     # D: live task → SKIPPED entirely

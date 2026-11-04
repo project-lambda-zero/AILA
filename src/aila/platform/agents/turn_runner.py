@@ -47,7 +47,10 @@ from aila.platform.agents.turn_helpers import (
 )
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.enums import BranchStatus, SenderKind
-from aila.platform.contracts.reasoning import ReasoningTurnDecision
+from aila.platform.contracts.reasoning import (
+    ReasoningCaseState,
+    ReasoningTurnDecision,
+)
 from aila.platform.llm.correlation import correlation_scope
 from aila.platform.llm.errors import LLMError
 from aila.platform.llm.idempotency_cache import (
@@ -60,7 +63,7 @@ from aila.platform.services.ledger import LedgerPermissionError, LedgerService
 from aila.platform.services.oracle import Oracle, OracleError
 from aila.platform.uow import UnitOfWork
 
-__all__ = ["AgentTurnResult", "AgentTurnRunnerBase"]
+__all__ = ["AgentTurnResult", "AgentTurnRunnerBase", "UnresolvedHypGateProse"]
 
 _log = logging.getLogger(__name__)
 
@@ -143,6 +146,19 @@ class AgentTurnResult:
     terminal: bool = False
 
 
+@dataclass(frozen=True)
+class UnresolvedHypGateProse:
+    """Per-module prose for the unresolved-hypothesis submit gate.
+
+    ``headline`` opens the rejection directive. ``action`` is the paragraph
+    that names the attempted action; it takes a ``{count}`` placeholder for
+    the number of unresolved live hypotheses.
+    """
+
+    headline: str
+    action: str
+
+
 class AgentTurnRunnerBase:
     """Per-branch reasoning-turn runner shared by the module researchers.
 
@@ -155,6 +171,10 @@ class AgentTurnRunnerBase:
     # Config -- every subclass sets these (declared for readers; the
     # runner reads them off ``self`` at call time).
     _LOG_LABEL: ClassVar[str] = "agent"
+    # Per-module prose for the unresolved-hypothesis submit gate. ``None``
+    # disables the gate (the template path), so a module that does not bind
+    # it is unaffected.
+    _unresolved_hyp_gate_prose: ClassVar[UnresolvedHypGateProse | None] = None
     # RFC-08: optional per-module hook (bound by the researcher subclass) that
     # writes a signed experience pattern when a sibling review vote flips
     # quorum to a terminal verdict on THIS (inline-dispatch) path. Default
@@ -769,18 +789,149 @@ class AgentTurnRunnerBase:
         return decision
 
     def _maybe_reject_submit_with_unresolved_hypotheses(
-        self, *, decision: Any, case_state: Any, turn_number: int,
-    ) -> Any:
-        """Gate a terminal submit while this branch has live hypotheses.
+        self,
+        *,
+        decision: ReasoningTurnDecision,
+        case_state: ReasoningCaseState,
+        turn_number: int,
+    ) -> ReasoningTurnDecision:
+        """Intercept any terminal submit emitted while live hypotheses
+        remain unresolved.
 
-        Default: allow. VR and malware override to force each live
-        hypothesis to be explicitly rejected or folded into the
-        answer's supported evidence before the branch may submit.
+        A hypothesis is resolved by this turn when it appears in
+        ``decision.rejected[]`` with the same id. Anything in
+        ``case_state.hypotheses`` whose id is not in that set is an
+        unresolved live hypothesis.
+
+        Three-way outcome:
+          - Pass: clear directive + counter, return original decision.
+          - Reject (under cap): convert to non-terminal placeholder,
+            inject directive into case_state.observables.
+          - Force-through (over cap): stamp payload with audit advisory
+            and return the submit.
+
+        Default (no ``_unresolved_hyp_gate_prose`` bound): allow. The
+        per-module prose and ``self._unresolved_hyp_reject_cap`` come from
+        the researcher subclass.
 
         Issue #168.
         """
-        del case_state, turn_number
-        return decision
+        prose = self._unresolved_hyp_gate_prose
+        if prose is None:
+            return decision
+
+        live_ids = [h.id for h in case_state.hypotheses if h.id]
+        newly_rejected_ids = {r.id for r in decision.rejected if r.id}
+        unresolved = [hid for hid in live_ids if hid not in newly_rejected_ids]
+
+        if not unresolved:
+            # Passes the gate. Clear any prior rejection counter so a
+            # later regression on the same branch starts fresh.
+            case_state.observables.pop(
+                "_unresolved_hyp_submit_rejected_count", None,
+            )
+            case_state.observables.pop(
+                "_directive.unresolved_hyp_submit_rejected", None,
+            )
+            return decision
+
+        prior_rejects = int(
+            case_state.observables.get("_unresolved_hyp_submit_rejected_count", 0) or 0,
+        )
+        new_reject_count = prior_rejects + 1
+
+        # Compact hypothesis listing for the directive (cap at 10 to
+        # keep the prompt section bounded; agent can see the rest in
+        # the regular case_model rendering).
+        hyp_by_id = {h.id: h for h in case_state.hypotheses if h.id}
+        unresolved_lines: list[str] = []
+        for hid in unresolved[:10]:
+            h = hyp_by_id.get(hid)
+            claim = (h.claim if h else "")[:140]
+            unresolved_lines.append(f"  - {hid}: {claim}")
+        if len(unresolved) > 10:
+            unresolved_lines.append(f"  ... and {len(unresolved) - 10} more")
+        unresolved_block = "\n".join(unresolved_lines)
+
+        if new_reject_count > self._unresolved_hyp_reject_cap:
+            _log.warning(
+                "unresolved_hyp submit FORCED THROUGH after %d rejections "
+                "inv=%s branch=%s turn=%d -- payload retained %d unresolved "
+                "hypothesis ids: %s",
+                prior_rejects, self.investigation_id, self.branch_id,
+                turn_number, len(unresolved), ",".join(unresolved[:20]),
+            )
+            payload = decision.payload or {}
+            new_payload = dict(payload)
+            new_payload["unresolved_hypotheses_at_submit_advisory"] = {
+                "count": len(unresolved),
+                "ids": unresolved[:50],
+                "forced_through_after_rejects": prior_rejects,
+            }
+            case_state.observables.pop(
+                "_directive.unresolved_hyp_submit_rejected", None,
+            )
+            case_state.observables.pop(
+                "_unresolved_hyp_submit_rejected_count", None,
+            )
+            return decision.model_copy(update={"payload": new_payload})
+
+        _log.info(
+            "unresolved_hyp submit REJECTED inv=%s branch=%s turn=%d "
+            "rejects=%d/%d -- %d live hypotheses unresolved",
+            self.investigation_id, self.branch_id, turn_number,
+            new_reject_count, self._unresolved_hyp_reject_cap, len(unresolved),
+        )
+
+        case_state.observables["_unresolved_hyp_submit_rejected_count"] = new_reject_count
+        case_state.observables["_directive.unresolved_hyp_submit_rejected"] = (
+            f"{prose.headline}"
+            f"Rejection {new_reject_count}/{self._unresolved_hyp_reject_cap} on this branch.\n"
+            "\n"
+            f"{prose.action.format(count=len(unresolved))}"
+            "\n"
+            "UNRESOLVED LIVE HYPOTHESES:\n"
+            f"{unresolved_block}\n"
+            "\n"
+            "REQUIRED for your next decision: for EACH unresolved id above,\n"
+            "EITHER\n"
+            "  (a) add it to `decision.rejected[]` with a `reason` that cites\n"
+            "      the concrete evidence (file:line, tool output, or another\n"
+            "      hypothesis's rejection) that disproves it. The standard\n"
+            "      'rejected' schema is {id, claim, reason}.\n"
+            "  (b) fold it into your submission's `answer` + `provenance` as\n"
+            "      supporting evidence (the finding IS this hypothesis,\n"
+            "      confirmed). Cite the hypothesis id verbatim in your answer\n"
+            "      so the reader can trace what your finding claims to settle.\n"
+            "\n"
+            "Then re-emit `action: submit` with the cleaned state. ALL live\n"
+            "hypotheses must be reachable from (a) OR (b) on the same turn as\n"
+            "the submit.\n"
+            "\n"
+            f"After {self._unresolved_hyp_reject_cap} rejections on this branch the\n"
+            "submit is FORCED THROUGH with unresolved_hypotheses_at_submit_\n"
+            "advisory stamped on the payload listing the surviving ids. The\n"
+            "operator will audit those entries. Don't burn through your\n"
+            "safety budget when the fix is mechanical."
+        )
+
+        payload = decision.payload or {}
+        rejected_command_text = (
+            "[HYPOTHESIS GATE: submit rejected - see "
+            "_directive.unresolved_hyp_submit_rejected]\n"
+            "Original submit attempt:\n"
+            + (payload.get("answer") or "(no answer)")[:1000]
+        )
+        return decision.model_copy(update={
+            "action": "tool_run",
+            "command": "",
+            "answer": rejected_command_text,
+            "payload": {
+                **payload,
+                "_unresolved_hyp_gate_rejected": True,
+                "_unresolved_hyp_gate_reject_count": new_reject_count,
+            },
+        })
 
     def _maybe_reject_no_finding_while_sibling_open_hyp(
         self,
