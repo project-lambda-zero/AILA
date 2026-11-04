@@ -99,7 +99,6 @@ HONESTY_WHITELIST = [
     # load time. Tested via the OutcomeDispatcher patch_assessment_report
     # path. Inline `# noqa: PLC0415` is required to silence ruff.
     ("vr/_task_queue.py", "default_task_queue", "noqa"),
-    ("vr/_task_queue.py", "enqueue_vr_nday", "noqa"),
     ("vr/_task_queue.py", "enqueue_downstream_target_stages", "noqa"),
     # Category (b): same lazy-import pattern in the malware module's
     # outcome dispatcher. _dispatch_sub_investigation defers the
@@ -228,7 +227,6 @@ HONESTY_WHITELIST = [
     ("hello_world/module.py", "placeholder_return", "returns empty"),
     ("forensics/module.py", "placeholder_return", "returns empty"),
     ("vr/module.py", "placeholder_return", "returns empty"),
-    ("vr/agents/nday_researcher.py", "placeholder_return", "returns empty"),
 
     # Category (f): Alembic baseline stamp -- upgrade/downgrade are intentionally empty
     # because the baseline migration just stamps the version, no DDL needed.
@@ -338,11 +336,6 @@ HONESTY_WHITELIST = [
     ("workflow/states/collectors/memory.py", "except_return_default", "silently hides failures"),
     ("workflow/states/collectors/memory_enrich.py", "except_return_default", "silently hides failures"),
     ("workflow/states/collectors/network.py", "except_return_default", "silently hides failures"),
-
-    # VR n-day researcher: structured-output JSON extraction. Failure means
-    # the LLM produced unparseable text; the caller treats None as "no
-    # submission" and the surrounding retry / scoring pipeline owns logging.
-    ("vr/agents/nday_researcher.py", "except_return_default", "silently hides failures"),
 
     # vulnerability adapters: cache lookups & advisory fetch fallbacks.
     # arch.py: SQLAlchemyError on DB cache read → empty cache map (cold start).
@@ -679,6 +672,12 @@ HONESTY_WHITELIST = [
     ("llm/prompt_layout.py", "add_mutable", "consider inlining"),
     ("llm/prompt_layout.py", "build", "consider inlining"),
 
+    # Category (g): rule do_nothing_wrapper. WorkflowServices protocol
+    # (platform/workflows/types.py) mandates a ``build(run_id)`` classmethod
+    # on every services bundle; VRWorkflowServices.build is that contract's
+    # implementation, not a forwarding wrapper.
+    ("vr/workflow/services.py", "build", "consider inlining"),
+
     # Category: rule 68 content_slice_truncation. RFC #149 auto-patch.
     # These two caps bound LLM-SYNTHESIS PROMPT INPUT, not stored or
     # retrieved knowledge. root_cause[:8000] and the source-context
@@ -702,42 +701,35 @@ HONESTY_WHITELIST = [
 
     # ------------------------------------------------------------------
     # VR-truth issue #13/#14/#249 W13 -- finalize + verifier gate spine
-    # in platform/agents/outcome_dispatcher.py. The two loaders lazily
-    # import the VR polarity helper and the VR claim verifier's
-    # verify_evidence; the ``except (ImportError, AttributeError)``
-    # branch returns None so non-VR modules (malware / forensics) that
-    # have no verifier deployed skip the gate silently and fall through
-    # to the prior dispatch behaviour. Also intentional: fail-safe
-    # allow when the verifier itself raises so a broken adversarial
-    # pass never permanently blocks a module dispatch.
+    # in platform/agents/outcome_dispatcher.py. The verifier gate and the
+    # aggregate's polarity read are driven by the ClaimVerificationHook a
+    # module binds on its dispatcher class (issue #286), so the file
+    # imports no module and needs no module-contract entry. What remains
+    # is intentional:
+    # * the three inline PLC0415 silencers (contract_net, shared_claims,
+    #   falsifier) sit on platform-internal imports deferred to break
+    #   service <-> dispatcher import cycles. They are keyed by line
+    #   number: renumber them whenever the dispatcher gains or loses
+    #   lines above them.
+    # * _decode_payload_json degrades an unparseable payload_json to an
+    #   empty dict -- the row is still dispatchable and the handler owns
+    #   the required-field check.
+    # * the verifier gate fails safe to "allow" when the verifier itself
+    #   raises, so a broken adversarial pass never permanently blocks a
+    #   module dispatch.
     # ------------------------------------------------------------------
-    ("platform/agents/outcome_dispatcher.py",
-     "aila.modules.vr.contracts.outcome",
-     "use module contracts"),
-    ("platform/agents/outcome_dispatcher.py",
-     "aila.modules.vr.agents.claim_verifier",
-     "use module contracts"),
-    ("platform/agents/outcome_dispatcher.py",
-     "inline '# noqa' comment on line 554",
-     "documented justification"),
-    ("platform/agents/outcome_dispatcher.py",
-     "inline '# noqa' comment on line 570",
-     "documented justification"),
-    ("platform/agents/outcome_dispatcher.py",
-     "inline '# noqa' comment on line 826",
-     "documented justification"),
     ("platform/agents/outcome_dispatcher.py",
      "inline '# noqa' comment on line 853",
      "documented justification"),
     ("platform/agents/outcome_dispatcher.py",
-     "inline '# noqa' comment on line 1076",
+     "inline '# noqa' comment on line 880",
+     "documented justification"),
+    ("platform/agents/outcome_dispatcher.py",
+     "inline '# noqa' comment on line 1104",
      "documented justification"),
     ("platform/agents/outcome_dispatcher.py",
      "except returns empty default",
      "silently hides failures"),
-    ("platform/agents/outcome_dispatcher.py",
-     "_load_verify_evidence_fn",
-     "RFC-07"),
 
     # ------------------------------------------------------------------
     # VR-truth issue #13/#14/#249 W13 -- the finalize FalsifierAgent

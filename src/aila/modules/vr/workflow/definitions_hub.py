@@ -18,7 +18,7 @@ binds it per investigation only after an operator smoke.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlmodel import select
 
@@ -29,7 +29,6 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
 )
 from aila.modules.vr.services.index_readiness import vr_index_readiness
-from aila.modules.vr.workflow.definitions import _build_services
 from aila.modules.vr.workflow.states.investigation_emit import (
     state_investigation_emit,
 )
@@ -56,6 +55,9 @@ from aila.platform.workflows.phase_graph import (
 )
 from aila.platform.workflows.types import HandlerFn
 
+if TYPE_CHECKING:
+    from aila.platform.workflows.types import WorkflowServices
+
 __all__ = ["VR_HUB_PHASES", "VR_INVESTIGATE_HUB"]
 
 # Scoped phase turn caps -- tightly bounded so single phases do not
@@ -65,6 +67,14 @@ _AUDIT_PHASE_MAX_TURNS = 20
 _BINARY_PHASE_MAX_TURNS = 25
 _HARDENING_PHASE_MAX_TURNS = 15
 _POC_DEV_MAX_TURNS = 20
+
+
+async def _build_services(run_id: str) -> WorkflowServices:
+    """Lazy construction of VRWorkflowServices to avoid import cycles."""
+    from aila.modules.vr.workflow.services import VRWorkflowServices
+
+    return await VRWorkflowServices.build(run_id)
+
 
 _POC_DEV_DIRECTIVE = (
     "POC DEVELOPMENT PHASE. Objective: turn a confirmed exploitable "

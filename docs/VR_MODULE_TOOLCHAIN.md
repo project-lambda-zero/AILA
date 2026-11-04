@@ -30,13 +30,13 @@ Layer 0: Target Environment
 
 ## What VR actually drives today
 
-AILA's VR module reaches the layers above through two HTTP MCP servers, two stdio MCP servers, and one in-process retriever, mediated by the module's bridge tools (audit_mcp bridge, rea / re_analytics bridges, android_mcp bridge).
+AILA's VR module reaches the layers above through two HTTP MCP servers, two stdio MCP servers, and one in-process retriever, mediated by the module's bridge tools (audit_mcp bridge, rea / reverser_belt bridges, android_mcp bridge).
 
 | Server | Port | Surface | Owner |
 |---|---|---|---|
 | **audit-mcp** | 18822 | 58+ tools (verify against `GET /tools` for the live count): source graph (Trailmark) + semantic search (semble) + SARIF correlation | source-code targets |
 | **rea** | stdio (per-process child) | core binary RE: decompile / disassemble / xrefs / call graphs / segments / strings / bytes (Ghidra provider) | binary targets |
-| **re_analytics** | stdio (in-tree) | archived ida-headless tool surface REA lacks: capa, crypto constants, API-hash resolution, dataflow, emulation, patching | binary targets |
+| **reverser_belt** | stdio (per-process child; external package `reverser_belt_mcp`) | scanner suite REA lacks, 84 tools in the static catalog: capa, crypto constants, API-hash resolution, dataflow, emulation, SMT proofs, patching, YARA generation | binary targets |
 | **android-mcp** | 18823 | 13 tool wrappers (apktool / jadx / androguard / MobSF / drozer / qark / AndroBugs / LIEF / YARA / apksigner / objection / frida / adb) + 4 composite handlers (`verify_capabilities`, `classify_behavior`, `compute_risk_score`, `find_secrets`) | Android APK targets |
 | **semble** | embedded inside audit-mcp | Model2Vec + BM25 + RRF code-chunk retriever | semantic search backend |
 
@@ -262,7 +262,6 @@ transport previously refused them at startup with a hard `RuntimeError`.
 
 | Tool | What it does | Why it doesn't exist |
 |---|---|---|
-| **IDA Headless MCP v2** | Purpose-built MCP for VR: batch decompile, pattern search across all functions, xref chains, struct recovery, diff two binaries | Existing IDA MCP is interactive, not batch-analysis oriented. |
 | **Fuzzing Campaign Manager** | Orchestrate multi-instance AFL++ with corpus sync, coverage tracking, crash dedup, plateau detection, auto-pivot | Individual tools exist but no unified orchestrator that an LLM can drive. |
 | **Exploit Test Runner** | Compile PoC, run against target, verify crash/exploit, report result | Manual process today. Needs sandboxing (target might crash the workstation). |
 | **Evidence Pack Builder** | Assemble bounded context for LLM turns from IDA output, crash reports, source code, traces | Our Metis-inspired bounded evidence pack concept. No existing tool does this. |

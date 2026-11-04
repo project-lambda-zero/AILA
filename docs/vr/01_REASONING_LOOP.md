@@ -939,7 +939,7 @@ The sections above are the original design exploration. The module that shipped 
 
 ### 8.bis.1 Six personas, not three
 
-Section 9 used to file a single-vs-split-LLM question as open. It's settled -- see the persona table in §9.2. The reasoning loop ALWAYS runs through `HonestVulnResearcher.run_turn()` in `src/aila/modules/vr/agents/vuln_researcher.py`, parameterised by the per-branch `persona_voice`. Six branches deliberate in parallel; `claim_verifier.py` plus a synthesis agent reduce their outcomes to one finding.
+Section 9 used to file a single-vs-split-LLM question as open. It's settled -- see the persona table in §9.2. The reasoning loop ALWAYS runs through `HonestVulnResearcher.run_turn()` (`src/aila/modules/vr/agents/vuln_researcher.py:180`), which is inherited from the shared `AgentTurnRunnerBase.run_turn` (`src/aila/platform/agents/turn_runner.py:1032`) and parameterised by the per-branch `persona_voice`. Six branches deliberate in parallel; `claim_verifier.py` plus a synthesis agent reduce their outcomes to one finding.
 
 ### 8.bis.2 Auto-steering (in addition to the watchdog)
 
@@ -1039,11 +1039,16 @@ Eliminates a class of "tool never matches anything" loops.
 
 ### 8.bis.16 absorb() caps on agent-set observables
 
-`absorb()` caps agent-set observables at 10 per turn + 50 total.
-Tool-prefix keys (`audit_mcp:*`, `rea:*`, `re_analytics:*`, `_directive.*`)
-are never evicted. `render_case_model` partitions tool readings
-(shown unlimited, capped at 80 display) from agent scratchpad
-(capped at 15 display).
+`absorb()` (`src/aila/platform/services/reasoning.py:455`) accepts at most
+10 new agent-set observables per turn and evicts the oldest agent-set keys
+past `reasoning_max_agent_keys_total` (default 150, `reasoning.py:77`).
+Keys with a `_TOOL_PREFIXES` prefix (`audit_mcp:`/`.`, `rea:`/`.`,
+`reverser_belt:`/`.`, `android_mcp:`/`.`, `_directive.`, `_recall.`,
+`_ledger.`; `reasoning.py:55-65`) cannot be written by the agent and are
+never evicted. `render_case_model` (`reasoning.py:716`) applies no display
+caps: it indexes every tool reading and renders tool readings and agent
+scratchpad keys in full, with the context assembler sizing the live
+section against `platform.reasoning_context_budget_tokens`.
 
 ---
 

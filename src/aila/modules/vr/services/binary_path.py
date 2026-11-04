@@ -21,6 +21,7 @@ from sqlmodel import select as _select
 
 from aila.modules.vr.db_models import (
     VRInvestigationRecord,
+    VRProjectRecord,
     VRTargetRecord,
 )
 from aila.platform.uow import UnitOfWork
@@ -29,6 +30,7 @@ __all__ = [
     "TARGET_PATH_DESCRIPTOR_KEYS",
     "binary_path_from_target",
     "resolve_investigation_binary_path",
+    "resolve_investigation_patched_binary_path",
     "resolve_target_binary_path",
 ]
 
@@ -116,6 +118,48 @@ async def resolve_investigation_binary_path(investigation_id: str) -> str:
     except (OSError, RuntimeError, ValueError, TypeError) as exc:
         _log.info(
             "resolve_investigation_binary_path: failed for inv=%s (%s: %s)",
+            investigation_id, type(exc).__name__, exc,
+            exc_info=True,
+        )
+        return ""
+    if not isinstance(descriptor, dict):
+        descriptor = {}
+    if not isinstance(handles, dict):
+        handles = {}
+    return binary_path_from_target(descriptor, handles)
+
+
+async def resolve_investigation_patched_binary_path(investigation_id: str) -> str:
+    """Resolve an investigation's project patched target to its local binary path.
+
+    Walks investigation -> project -> ``patched_target_id``. Returns "" when
+    the investigation has no project, the project has no patched target, or
+    the patched target has no bound artifact.
+    """
+    try:
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                _select(VRInvestigationRecord).where(
+                    VRInvestigationRecord.id == investigation_id,
+                ),
+            )).first()
+            if inv is None or not inv.project_id:
+                return ""
+            project = (await uow.session.exec(
+                _select(VRProjectRecord).where(VRProjectRecord.id == inv.project_id),
+            )).first()
+            if project is None or not project.patched_target_id:
+                return ""
+            target = (await uow.session.exec(
+                _select(VRTargetRecord).where(VRTargetRecord.id == project.patched_target_id),
+            )).first()
+            if target is None:
+                return ""
+            descriptor = json.loads(target.descriptor_json or "{}")
+            handles = json.loads(target.mcp_handles_json or "{}")
+    except (OSError, RuntimeError, ValueError, TypeError) as exc:
+        _log.info(
+            "resolve_investigation_patched_binary_path: failed for inv=%s (%s: %s)",
             investigation_id, type(exc).__name__, exc,
             exc_info=True,
         )

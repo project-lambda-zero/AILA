@@ -49,13 +49,6 @@ __all__ = [
 # ``kind = ANY(:kinds)`` filter simply matches nothing.
 _SWEEPABLE_KINDS: tuple[str, ...] = ()
 
-# Template ships no kinds that own their own branch lifecycle -- the
-# NDay-style single-submit dispatch VR uses does not exist here. A
-# copier adds any single-submit kinds their module's task body owns
-# internally (see vr's ``("n_day",)`` for the concrete shape).
-_SINGLE_SUBMIT_KINDS: tuple[str, ...] = ()
-
-
 async def _default_submit_fn(
     inv_kind: str,
     inv_id: str,
@@ -97,7 +90,6 @@ sweep_stalled_investigations = partial(
     _platform_sweep,
     submit_fn=_default_submit_fn,
     sweepable_kinds=_SWEEPABLE_KINDS,
-    single_submit_kinds=_SINGLE_SUBMIT_KINDS,
     env_prefix="AILA_TEMPLATE_STALL_RECOVERY",
     investigations_table="template_investigations",
     branches_table="template_investigation_branches",

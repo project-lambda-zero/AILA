@@ -16,7 +16,6 @@ from aila.storage.registry import ConfigRegistry
 
 __all__ = [
     "default_task_queue",
-    "enqueue_vr_nday",
     "enqueue_downstream_target_stages",
 ]
 
@@ -32,40 +31,6 @@ def default_task_queue() -> Any:
 # Module-level reference used by OutcomeDispatcher when no test-injected
 # factory is supplied. Tests pass their own factory via the constructor.
 _default_task_queue_factory_ref = default_task_queue
-
-
-async def enqueue_vr_nday(
-    task_queue: Any,
-    *,
-    source_outcome_id: str,
-    patch_descriptor: dict[str, Any],
-    assessment: dict[str, Any],
-    parent_investigation_id: str,
-    target_id: str,
-    team_id: str | None,
-) -> Any:
-    """Submit the VR N-day workflow with the engine's patch assessment.
-
-    Returns whatever ``task_queue.submit()`` returns (a TaskHandle in
-    production, a fake in tests). The kwargs are JSON-serializable per
-    the platform-task contract.
-    """
-    from .workflow.task import run_vr_nday
-
-    return await task_queue.submit(
-        track="vr",
-        fn=run_vr_nday,
-        kwargs={
-            "source_outcome_id": source_outcome_id,
-            "patch_descriptor": patch_descriptor,
-            "assessment": assessment,
-            "parent_investigation_id": parent_investigation_id,
-            "target_id": target_id,
-        },
-        user_id="system",
-        group_id="vr_dispatcher",
-        team_id=team_id,
-    )
 
 
 async def enqueue_downstream_target_stages(

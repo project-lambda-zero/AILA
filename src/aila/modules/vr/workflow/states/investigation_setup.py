@@ -27,6 +27,7 @@ from aila.modules.vr.services.cve_intel_resolver import (
 )
 from aila.modules.vr.services.knowledge_scope import vr_knowledge_namespaces
 from aila.modules.vr.services.pattern_store import PatternStore
+from aila.modules.vr.services.target_staging import stage_investigation_binaries
 from aila.platform.agents.branch_pool import (
     _strip_directives_from_state,
     _strip_rejected_from_state,
@@ -492,6 +493,7 @@ _SETUP_BINDINGS = InvestigationStateBindings(
 _SETUP_HOOKS = InvestigationStateHooks(
     resolve_cve_intel=_resolve_cve_intel,
     resolve_retrieved_knowledge=_resolve_retrieved_knowledge,
+    stage_target_binaries=stage_investigation_binaries,
 )
 
 # The setup handler is the platform factory bound to VR's models + hook.

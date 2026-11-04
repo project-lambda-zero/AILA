@@ -63,20 +63,21 @@ __all__ = ["VRModule", "create_module"]
 _log = logging.getLogger(__name__)
 
 MODULE_ID = Path(__file__).parent.name
-NDAY_ACTION_ID = action_id_for(MODULE_ID, "write_nday_poc")
+CREATE_PROJECT_ACTION_ID = action_id_for(MODULE_ID, "create_project")
 SEED_VERSION = "1.0"
 
 
 class VRModule(ModuleProtocol):
     """ModuleProtocol implementation for offensive vulnerability research.
 
-    Owns N-day PoC development against compiled binaries: tool registration
-    for the IDA Pro bridge and PoC sandbox, durable workflow construction,
-    and disclosure-status tracking on findings.
+    Owns vulnerability research against compiled binaries and source: tool
+    registration for the REA and reverser_belt MCP bridges and the PoC
+    sandbox, durable workflow construction (VR_INVESTIGATE_HUB), and
+    disclosure-status tracking on findings.
     """
 
     module_id = MODULE_ID
-    nday_action_id = NDAY_ACTION_ID
+    create_project_action_id = CREATE_PROJECT_ACTION_ID
 
     def reasoning_strategies(self) -> list[ReasoningStrategyDeclaration]:
         """Reasoning strategy families this module owns (RFC-05 d)."""
@@ -163,7 +164,7 @@ class VRModule(ModuleProtocol):
         return [
             ModuleCapabilityProfile(
                 module_id=self.module_id,
-                action_id=self.nday_action_id,
+                action_id=self.create_project_action_id,
                 description=CAPABILITY_DESCRIPTION,
                 tools=list(ALL_TOOL_KEYS),
                 examples=list(CAPABILITY_EXAMPLES),
@@ -247,7 +248,7 @@ class VRModule(ModuleProtocol):
         del context
         return VRRuntime(
             module_id=self.module_id,
-            action_id=self.nday_action_id,
+            action_id=self.create_project_action_id,
             capability_profiles=self.capability_profiles(),
         )
 
@@ -585,8 +586,8 @@ def _register_vr_periodic_sweeps() -> None:
     # BaseException and slips past all of them. This sweep finds
     # investigations stuck in status=running (or created if the
     # first enqueue was lost) with zero in-flight tasks, then re-
-    # enqueues run_vr_investigate (or run_vr_nday for n_day kind)
-    # per active branch. See services/stall_recovery.py for the
+    # enqueues run_vr_investigate per active branch (n-day investigations
+    # included; they run through the same hub task). See services/stall_recovery.py for the
     # full rate-model rationale + env-tuning knobs.
     #
     # Cron interval is the same 1-minute reaper tick as every other

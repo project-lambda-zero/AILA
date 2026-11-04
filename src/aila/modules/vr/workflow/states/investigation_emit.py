@@ -65,7 +65,7 @@ _cfg = ModuleConfigReader("vr")
 
 # The emit handler is the platform factory bound to VR's models + agents.
 # Built lazily on first call: the synthesis / verifier / investigate task
-# functions live in vr.workflow.task, which imports vr.workflow.definitions
+# functions live in vr.workflow.task, which imports vr.workflow.definitions_hub
 # (which imports this state module), so a module-level task import would be
 # circular. First-call build defers them to a point where every module is
 # fully imported.

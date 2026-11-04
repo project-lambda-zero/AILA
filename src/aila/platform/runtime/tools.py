@@ -3,14 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol, TypeVar, runtime_checkable
 
+__all__ = ["ToolAccess", "ToolProtocol", "ToolRegistry", "ToolScope"]
+
 
 @runtime_checkable
 class ToolProtocol(Protocol):
     """The minimum interface any platform-registered tool must satisfy.
 
     Defines name, description, and forward() as the standard tool contract.
-    Platform tools inherit from Tool base class; this Protocol allows
-    testing with simple mock objects without inheritance.
+    ``aila.platform.tools._common.Tool`` is the single concrete base that
+    explicitly subclasses this Protocol; every platform and module tool
+    inherits from it. ToolRegistry.register() verifies conformance at runtime,
+    so simple mock objects with the same three members are also accepted.
     """
 
     name: str
@@ -95,8 +99,14 @@ class ToolRegistry:
         """Register a tool under the given key.
 
         Raises ValueError if the key is already taken, preventing silent overwrites
-        of platform tools by module tools or vice versa.
+        of platform tools by module tools or vice versa. Raises TypeError if tool
+        does not satisfy ToolProtocol (name, description, forward).
         """
+        if not isinstance(tool, ToolProtocol):
+            raise TypeError(
+                f"Tool {key!r} ({type(tool).__name__}) does not satisfy ToolProtocol: "
+                "it must provide name, description, and forward()."
+            )
         if key in self._tools:
             raise ValueError(f"Tool key {key!r} is already registered.")
         self._tools[key] = tool

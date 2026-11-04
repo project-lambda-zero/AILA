@@ -99,7 +99,6 @@ class InvestigationStateBindings:
     outcome_model: type[Any] | None = None
     task_fn: Callable[..., Awaitable[Any]] | None = None
     track: str | None = None
-    run_turn: Callable[..., Awaitable[Any]] | None = None
     config_source: Any = None
     persona_siblings: tuple[Any, ...] = field(default_factory=tuple)
     # loop-state (Phase 4b) inputs -- optional until the loop binds them.
@@ -174,13 +173,15 @@ class InvestigationStateBindings:
     record_experience: Callable[..., Awaitable[None]] | None = None
     # Aggregation-spine wiring (issue .run/issues/19_aggregation_spine.md).
     # ``branch_pool_factory(investigation_id)`` returns the per-module
-    # :class:`aila.platform.agents.branch_pool.BranchPool` binding
-    # (:class:`aila.modules.vr.agents.branch_manager.BranchManager` on VR)
-    # so :func:`aila.platform.agents.outcome_dispatcher.finalize_investigation_aggregate`
+    # :class:`aila.platform.agents.branch_pool.BranchPool` binding (VR's
+    # ``BranchManager``) so
+    # :func:`aila.platform.agents.outcome_dispatcher.finalize_investigation_aggregate`
     # can invoke merge()/promote() on duplicate-signature branch pairs and
-    # promote the strongest positive. ``falsifier_factory()`` returns an
-    # :class:`aila.platform.agents.falsifier.FalsifierAgent` for the
-    # adversarial refute leg. Both optional -- modules that leave them
+    # promote the strongest positive. "Positive" is the polarity of the
+    # ``claim_verification`` hook bound on ``outcome_dispatcher_cls``; a
+    # dispatcher with no hook promotes nothing. ``falsifier_factory()``
+    # returns an :class:`aila.platform.agents.falsifier.FalsifierAgent`
+    # for the adversarial refute leg. Both optional -- modules that leave them
     # unset let the aggregate skeleton still run its scan + settled_claim
     # writes but skip the merge/promote/falsifier legs. Guarded at the
     # emit chokepoint so a factory raise never crashes the terminal.
@@ -198,6 +199,10 @@ class InvestigationStateHooks:
     """
 
     resolve_cve_intel: Callable[[str], Awaitable[list[dict[str, Any]]]] | None = None
+    # Per-module target staging, run before the setup UoW. Receives the
+    # investigation id; VR uses it to place the project's binaries on the
+    # analysis workstation so the tool layer can resolve them. Unset -> no-op.
+    stage_target_binaries: Callable[[str], Awaitable[None]] | None = None
     # RFC-12 read loop: resolve prior knowledge (audit memos, findings,
     # strategy descriptors) for the RETRIEVED prompt tier. Takes the
     # investigation question + target scope as keyword args and returns a
@@ -276,17 +281,19 @@ def state_investigation_setup(
         """
         # fix §297 -- was \`del services\` (orphaning the bag). The handler
         # signature is fixed by HandlerFn; keep the bag accessible so
-        # downstream code paths can reach \`services.llm_client\` /
-        # \`services.config\` etc. The current setup-time operations
-        # (CVE intel resolver, KnowledgeService-backed pattern_store) own
-        # their own dependencies because the module workflow-services bag does not yet
-        # carry a \`knowledge\` field; once it does, switch PatternStore
-        # construction below to \`PatternStore(knowledge=services.knowledge)\`.
+        # downstream code paths can reach `services.llm_client` etc. The
+        # current setup-time operations (CVE intel resolver,
+        # KnowledgeService-backed pattern_store) own their own dependencies
+        # because the module workflow-services bag does not yet carry a
+        # `knowledge` field; once it does, switch PatternStore construction
+        # below to `PatternStore(knowledge=services.knowledge)`.
         _ = services  # held for future wiring; no-op today, NOT \`del\`.
 
         investigation_id = str(input.get("investigation_id") or "")
         if not investigation_id:
             raise ValueError("investigation_setup: missing investigation_id")
+        if hooks.stage_target_binaries is not None:
+            await hooks.stage_target_binaries(investigation_id)
 
         # When set, we are a sibling task spawned by the primary's setup --
         # skip the auto-spawn block and just hydrate the named branch.

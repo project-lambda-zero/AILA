@@ -36,7 +36,10 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
 )
 from aila.modules.vr.services.analysis_system import resolve_investigation_integration
-from aila.modules.vr.services.binary_path import resolve_investigation_binary_path
+from aila.modules.vr.services.binary_path import (
+    resolve_investigation_binary_path,
+    resolve_investigation_patched_binary_path,
+)
 from aila.modules.vr.services.knowledge_scope import vr_knowledge_namespaces
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.modules.vr.tools.dynamic_analysis import (
@@ -297,7 +300,8 @@ class ToolExecutor(ToolExecutorHelpersBase):
         return "vr"
 
     async def _pre_dispatch_correct_args(
-        self, investigation_id: str, server_id: str, args: dict[str, Any],
+        self, investigation_id: str, server_id: str, tool_name: str,
+        args: dict[str, Any],
     ) -> dict[str, Any]:
         # Auto-correct an audit_mcp index_id placeholder (saves a 30s+ LLM
         # round-trip that would return "Unknown index" / a missing kwarg).
@@ -305,16 +309,25 @@ class ToolExecutor(ToolExecutorHelpersBase):
             return await self._maybe_correct_index_id(investigation_id, args)
         # Binary bridges (rea / reverser_belt) open targets by ABSOLUTE LOCAL
         # PATH. Inject the investigation's artifact path SERVER-SIDE so the
-        # agent never supplies or forges it. The ReaMiddleware consumes the
-        # kwarg for target affinity; reverser_belt receives it as a real tool
-        # argument. Fail-open: an unresolved path leaves args untouched and
-        # the tool surfaces its own "target not bound" error.
+        # agent never supplies or forges it. Both binary middlewares consume
+        # the kwarg for target affinity; reverser_belt also consumes the
+        # patched path for diff_binary. Agent path kwargs are always dropped.
+        # Fail-open: an unresolved path leaves the kwarg unset and the tool
+        # surfaces its own "target not bound" error.
         if server_id in ("rea", "reverser_belt"):
+            scoped = {
+                k: v for k, v in args.items()
+                if k not in ("target_path", "patched_target_path")
+            }
             target_path = await self._resolve_target_path(investigation_id)
-            if not target_path:
-                return args
-            scoped = {k: v for k, v in args.items() if k != "target_path"}
-            scoped["target_path"] = target_path
+            if target_path:
+                scoped["target_path"] = target_path
+            if server_id == "reverser_belt" and tool_name == "diff_binary":
+                patched_path = await resolve_investigation_patched_binary_path(
+                    investigation_id,
+                )
+                if patched_path:
+                    scoped["patched_target_path"] = patched_path
             return scoped
         # Issue #245: inject the investigation's SSH integration SERVER-SIDE so
         # the agent can never point the PoC runner at another workstation. Any

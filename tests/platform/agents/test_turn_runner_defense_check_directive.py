@@ -55,6 +55,9 @@ class _CapturedCaseState(Exception):
 class _SubmittingEngine:
     """Returns a terminal submit decision so the gate chain fires."""
 
+    def set_pending_retrieved_sections(self, sections: Any) -> None:
+        del sections
+
     async def decide_next_turn(self, **_kwargs: Any) -> ReasoningTurnDecision:
         return ReasoningTurnDecision(
             reasoning="claim ready",

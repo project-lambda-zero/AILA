@@ -271,8 +271,7 @@ Rate limits:
 - API router routes: `src/aila/modules/vr/api_router.py` (search for
   `masvs-audit`, `masvs-report`, `masvs-audit-aggregate`)
 - Parent reconciler: `src/aila/modules/vr/masvs/parent_reconciler.py`
-- Frontend UI: `src/aila/modules/vr/frontend/screens/TargetDetailPage.tsx`
-  (`MasvsAuditCard`, `MasvsProgressCard`, `MasvsReportCard`,
-  `MasvsControlTable`)
-- Frontend mutation: `src/aila/modules/vr/frontend/mutations.ts`
-  (`useMasvsAudit`, `MASVS_DEFAULT_CHILD_BUDGET_USD`)
+- Frontend UI: the "masvs audit" action button on the VR target detail
+  page (`frontend/src/console/pages/VRTargetDetail.tsx:290`, POST to
+  `<target base>/masvs-audit`) and the `masvs_audit` investigation kind in
+  the intake wizard (`frontend/src/console/intake/config.ts:72,95-96`).

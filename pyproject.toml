@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aila"
-version = "0.6.3"
+version = "0.6.6"
 description = "Modular AI security platform with pluggable analysis modules."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -509,12 +509,12 @@ ignore = [
 "src/aila/modules/malware/services/investigation_reconciler.py" = ["PLC0415"]
 "src/aila/modules/forensics/services/investigation_reconciler.py" = ["PLC0415"]
 "src/aila/modules/vr/services/target_analysis.py" = ["PLC0415"]
-"src/aila/modules/vr/workflow/definitions.py" = ["PLC0415"]
+"src/aila/modules/vr/workflow/definitions_hub.py" = ["PLC0415"]
 "src/aila/modules/vr/workflow/finalize.py" = ["PLC0415"]
 "src/aila/modules/vr/workflow/states/investigation_emit.py" = ["PLC0415"]
 "src/aila/modules/vr/workflow/states/investigation_loop.py" = ["PLW0603"]
 "src/aila/modules/vr/workflow/states/investigation_setup.py" = ["PLC0415", "PLW0603"]
-"src/aila/modules/vr/workflow/task.py" = ["F401", "PLC0415"]
+"src/aila/modules/vr/workflow/task.py" = ["PLC0415"]
 "src/aila/modules/vulnerability/adapters/arch.py" = ["PLC0415"]
 "src/aila/modules/vulnerability/adapters/ghsa.py" = ["PLC0415", "BLE001"]
 "src/aila/modules/vulnerability/agents/scoring/agent.py" = ["BLE001"]

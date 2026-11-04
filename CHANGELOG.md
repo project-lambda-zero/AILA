@@ -5,6 +5,61 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.6] - 2026-11-03 -- shared researcher prompt sections and submit gate
+
+### Changed
+
+- The prompt sections that the VR, malware, and template researchers rendered from duplicated code (operator messages, active directives, patterns, retrieved knowledge, available tools, tool parameters, outcome payload, confidence rank, prompt seed loading) now come from one platform module, `platform/agents/prompt_sections.py`. Rendered prompts are byte-identical to the previous output, pinned by a snapshot test, so cached agent decisions keep matching.
+- The unresolved-hypotheses submit gate runs from `AgentTurnRunnerBase`; each module supplies its directive prose and cap. Gate counters and directive keys are unchanged, and per-module caps keep their defaults.
+- RFC-290 is marked implemented; the module-specific helpers that remain in each researcher, and why, are recorded in the RFC.
+- Stall recovery submits n-day investigations once per active branch, the same as every other VR investigation kind. Previously n-day submitted once per investigation regardless of branch count.
+
+### Removed
+
+- The platform stall-recovery `single_submit_kinds` binding field and the `sweep_stalled_investigations` parameter of the same name. Module stall-recovery bindings no longer declare it.
+- `VRFinding.advisory_id` from the VR finding contract. The field was always `None`.
+- `obligations_json` from the project contract base, and the column itself from `vr_projects`, `malware_projects`, and `malware_findings` (migration `147_drop_project_obligations_json`).
+- The unused obligation residue left by the removed n-day pipeline: the VR `obligation.changed` event type and the budget `auto_waive_recommended_at` setting with its `should_waive_recommended` property.
+
+## [0.6.5] - 2026-11-03 -- n-day runs on the VR investigation hub; malware reports cite every verified claim
+
+### Changed
+
+- `POST /vr/projects` and dispatcher follow-up n-day investigations now submit a `VR_INVESTIGATE_HUB` investigation (`run_vr_investigate`) seeded with the CVE, so CVE intel resolves. When the project has a patched binary, the reverser-belt middleware opens it as a second binary handle for `diff_binary`, so the hub's patch-diff audit compares vulnerable and patched builds. The hub stages project binaries for its PoC phase; without a PoC executor host, PoC runs fall back to the analysis workstation. Mobile n-day targets run the hub without a diff. `POST /vr/projects` previously failed at submit with an unresolved task reference.
+- The tool pre-dispatch hook now receives `tool_name`, so module executors can correct arguments per tool.
+- Malware narratives receive every verified claim with its verifier verdict and evidence references, and the narrative prompt requires each verified claim to be cited with its evidence; claims that are not established render in a separate block and are not presented as findings. Claim-verifier preconditions carry evidence references from the probes that ran.
+- The malware narrative and the canonical-outcome upsert both use the newest non-superseded canonical outcome, so the report reflects the row new submissions merge into.
+
+### Removed
+
+- The dedicated VR n-day pipeline (`VR_NDAY_V1`, `NdayResearcher`, `run_vr_nday`, and its setup, research, PoC-development, advisory, and response-emit states), its prompt seed, contracts, and the n-day stall-recovery branch. No `vr.nday.v1` work was in flight.
+- The platform obligation contract (`aila.platform.contracts.obligations`); the n-day researcher was its only caller.
+- VR config keys `nday_max_turns`, `nday_tool_time_seconds`, `poc_max_attempts`, `poc_reliability_target`, `poc_timeout_seconds`, and `poc_memory_limit_mb`.
+- `vr_findings.advisory_json` and `vr_findings.obligations_json` (migration `146_drop_vr_finding_nday_columns`); only the removed advisory step wrote them. The `N_DAY` investigation kind is retained.
+- The unused `InvestigationStateBindings.run_turn` field.
+
+### Added
+
+- `docs/rfc/RFC-290-agent-loop-consolidation.md`: design for consolidating the VR and malware researcher render helpers behind a module-binding contract.
+
+## [0.6.4] - 2026-11-02 -- LLM call-path attribution and audit hardening, boundary + tool-base cleanup
+
+### Added
+
+- `module_id` attribution across the LLM call path: a dedicated correlation ContextVar (`current_module_id`, sentinel `_no_module`), a new nullable `llm_cost_records.module_id` column (migration `145_llm_cost_module_id`, indexed), the `aila.module_id` span attribute, and `module_id` on the `llm.call.completed` event. The agent turn runner stamps its module id into the correlation scope so every in-module call is attributable.
+- `ClaimVerificationHook` on the platform outcome dispatcher: modules inject their outcome-kind polarity and claim-verify callable via their bound dispatcher class. The platform base no longer references any module package.
+
+### Changed
+
+- Nested LLM calls (`_inner_call`, used by consensus and verify) now run the classify, validate, and seal pipeline steps and open a `gen_ai` span, so every consensus or verify response produces an `AuditSealRecord`, feeds the drift tracker, records a cost row, and emits the completion event. Gate and verify steps are skipped for nested calls by design to avoid unbounded recursion; replay-journal and canary-signal accounting are likewise excluded.
+- In-investigation LLM calls now resolve `run_id` from the ambient investigation scope when not passed explicitly, so consensus and verify spend is counted against the investigation instead of the `_no_run` bucket. Per-investigation live cost now reconciles with the sum of its `LLMCostRecord` rows.
+- The two tool base abstractions are collapsed to one: `platform/tools/_common.py` `Tool` is the single concrete base and explicitly implements `ToolProtocol`; `ToolRegistry.register` rejects objects that do not satisfy the protocol.
+
+### Fixed
+
+- Boundary violation: `platform/agents/outcome_dispatcher.py` no longer imports `aila.modules.vr` (contracts or claim verifier), even deferred. VR binds its polarity and verifier through the hook; malware runs without one, unchanged.
+- Documentation drift corrected across `.claude/CLAUDE.md` and `docs/`: the stale `@platform_task` `__name__`-collision note (registration is module-qualified), the `re_analytics` -> `reverser_belt` rename and retired port references, and the obsolete "cost tracking known-broken" note (the join is correct; the real gap was unattributed `_no_run` calls, now closed).
+
 ## [0.6.3] - 2026-10-31 -- native-MCP reverse-engineering arsenal (REA + reverser-belt)
 
 ### Added

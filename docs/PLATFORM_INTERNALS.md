@@ -219,12 +219,15 @@ Values: `transparent` (log classification, don't block), `restrictive` (block on
 
 ### Cost tracking
 
-Every LLM call records token usage in `CostRecord`:
-- `prompt_tokens`, `completion_tokens`, `total_tokens`
-- `estimated_cost_usd` (derived from model pricing table)
+Every LLM call records token usage in `LLMCostRecord` (table `llm_cost_records`, `src/aila/platform/llm/cost_record.py:24,39`), written by `persist_cost_record` (`src/aila/platform/llm/cost.py`):
+- `prompt_tokens`, `completion_tokens`
+- `cost_usd` (derived from the model pricing table)
 - `task_type`, `run_id`, `model_id`
+- `investigation_id`, `branch_id`, `turn_number` (nullable correlation keys for agent turns)
 
-Accessible via `GET /admin/cost` (Cost Intelligence page).
+`run_id` for an agent turn is the investigation id (`src/aila/platform/agents/turn_runner.py:1258`), so an investigation's live total is `compute_live_investigation_cost` (`src/aila/platform/services/investigation_cost.py:34`), a direct sum filtered on `run_id`. `persist_cost_record` also increments the stored `cost_actual_usd` column on the owning investigation row via `accrue_investigation_cost` (`src/aila/platform/llm/cost.py:406-410`). A call with no `run_id` is stored under the `_no_run` sentinel (`cost.py:36`) and is not budget-checked.
+
+Accessible via `GET /cost/runs/{run_id}`, `GET /cost/history`, and `GET /cost/roi` (`src/aila/api/routers/cost.py`).
 
 ---
 
@@ -318,7 +321,7 @@ See `docs/WORKFLOW_GUIDE.md` for the full handler contract, StateSpec configurat
 
 ## Layer 8: Cyber Reasoning Engine
 
-`CyberReasoningEngine` in `platform/services/reasoning.py`. Multi-turn LLM reasoning protocol used inside workflow state handlers (currently by forensics and vr).
+`CyberReasoningEngine` in `platform/services/reasoning.py`. Multi-turn LLM reasoning protocol used inside workflow state handlers (currently by vr, malware, and forensics).
 
 See `docs/WORKFLOW_GUIDE.md` (Cyber Reasoning Engine section) for the turn loop, case state merging, evidence graphs, domain profiles, and operator steering.
 
@@ -344,6 +347,12 @@ Workflow state handler (e.g., state_freeflow)
 
 The engine owns the protocol (prompt framing, JSON extraction, hypothesis tracking, evidence graph construction). The module owns the domain (which tools to run, how to interpret output, when to stop).
 
+### Agent turn runner and tool executor
+
+The per-branch turn loop shared by the reasoning modules is `AgentTurnRunnerBase` (`src/aila/platform/agents/turn_runner.py:162`, entry point `run_turn` at `:1032`). One call loads branch state, builds the prompt, calls the LLM through the request-keyed idempotency cache (`:1199-1204`), absorbs the decision through `CyberReasoningEngine`, persists the message / branch / outcome rows, runs the draft-review workflow, and applies the pre-submit gates. A module researcher subclasses it, sets the class attributes (`_LOG_LABEL`, `_MODULE_ID`, `_result_cls`, ...), and supplies the module-specific instance methods; the subclasses are `HonestVulnResearcher` (`src/aila/modules/vr/agents/vuln_researcher.py:180`), `HonestMalwareResearcher` (`src/aila/modules/malware/agents/malware_researcher.py:233`), and the scaffold in `src/aila/modules/_template/agents/researcher.py`. Forensics does not subclass it; its panel loop is a separate handler (`src/aila/modules/forensics/workflow/panel/loop.py`).
+
+Tool dispatch is not centralized in one executor class. The shared pieces are `ToolExecutorHelpersBase` (`src/aila/platform/agents/tool_executor.py:93`: message persistence, circuit breaker, observable merge) and the dispatch primitives in `src/aila/platform/agents/tool_execution.py` (`ToolExecutionResult`, `parse_command`, `classify_contract_error`). Each module defines its own `ToolExecutor(ToolExecutorHelpersBase)` and its own `_AGENT_ALLOWED_SERVERS` allowlist (vr: `src/aila/modules/vr/agents/tool_executor.py:78,125`; malware: `src/aila/modules/malware/agents/tool_executor.py:589,618`).
+
 ---
 
 ## Layer 9: Storage
@@ -359,7 +368,7 @@ Key tables and who owns them:
 | `workflowauditrecord` | Platform | Audit trail: every state transition with timing and output. |
 | `taskrecord` | Platform | Task queue: status, fn_path, kwargs, depends_on, heartbeat. |
 | `auditsealrecord` | Platform | LLM audit seals: SHA-256 hash of prompt + response. |
-| `costrecord` | Platform | LLM cost tracking: tokens, model, estimated USD. |
+| `llm_cost_records` | Platform | LLM cost tracking (`LLMCostRecord`): tokens, model, `cost_usd`, `run_id`, investigation/branch/turn correlation keys. |
 | `configentryrecord` | Platform | Runtime config: namespace + key + value (env var override). |
 | `managedsystemrecord` | Platform | SSH targets: name, host, username, port, credentials. |
 | `latestfindingrecord` | Vulnerability | Materialized findings: one row per (host, package, CVE). |
@@ -382,30 +391,18 @@ Large outputs (finding rows, summary narratives) are stored as `ReportArtifactRe
 
 ---
 
-## Layer 10: Frontend Extension
+## Layer 10: Frontend (console shell)
 
-Modules contribute UI via `ModuleFrontendSpec`:
+The frontend is one SPA (`@aila/shell`, `frontend/`). Modules do not ship UI packages; a module's UI is a set of pages and wizards registered inside the shell:
 
-```typescript
-interface ModuleFrontendSpec {
-  moduleId: string;
-  nav?: NavContribution[];       // sidebar entries
-  routes?: RouteContribution[];  // page routes
-  panels?: PanelContribution[];  // injected panels (system detail, finding detail)
-  widgets?: WidgetContribution[]; // dashboard widgets
-}
-```
-
-The platform shell (`AppShell`, `AppSidebar`, `router.tsx`) discovers all module specs at boot via `loadModuleFrontendSpecs()` and merges their contributions into the app structure. No platform code changes needed to add a module's UI.
+- **Navigation.** `MODULES: ModuleDef[]` in `frontend/src/console/nav.ts` lists each module's id, label, noun, and pages.
+- **Pages.** `PAGE_REGISTRY` in `frontend/src/console/pages/registry.tsx` maps `<moduleId>:<pageId>` to a renderer: declarative `DataPage` entries built from `PAGE_CONFIGS` (`frontend/src/console/pages/configs.ts`) plus lazy-loaded bespoke pages in the `BESPOKE` map. Pages receive `ModulePageProps` (`frontend/src/console/contract.ts`).
+- **Wizards and widgets.** `resolveWizard` (`frontend/src/console/wizards/registry.ts`) and `WIDGET_CATALOG` (`frontend/src/console/widgets/catalog.tsx`).
+- **Data.** Typed API calls and TanStack Query hooks live in `frontend/src/api/`.
 
 ### Design system
 
-All module UI uses the platform design system:
-- CSS variables: `var(--color-base)`, `var(--color-surface)`, `var(--color-accent)`, `var(--color-text)`, `var(--color-border)`
-- Tailwind tokens: `bg-base`, `bg-surface`, `bg-elevated`, `text-text`, `text-text-muted`, `text-accent`, `border-border`
-- Components: `AilaCard`, `AilaBadge`, `EmptyState`, `PageFrame`, shadcn
-
-No custom CSS files. No hardcoded hex colors. No Tailwind v4 arbitrary values (they don't generate CSS).
+Styling is plain CSS in `frontend/src/styles/globals.css`: `--aila-*` custom properties (for example `--aila-bg`, `--aila-cream`, `--aila-pink`) defined on `:root` and overridden per `[data-theme="<slug>"]` block (theme slugs come from `frontend/src/theme.ts`). Components apply them through inline styles, usually via the `css()` helper in `frontend/src/console/css.ts`. There is no Tailwind or utility-class framework.
 
 ---
 

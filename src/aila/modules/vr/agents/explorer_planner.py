@@ -33,7 +33,7 @@ The wave-3 slice decouples the two roles inside the same VR loop:
   folds it into the next-action selection by injecting a
   ``_directive.explorer_top_lead`` observable that the researcher's
   prompt already renders (see
-  :func:`~aila.modules.vr.agents.vuln_researcher._render_active_directives_section`).
+  :func:`~aila.platform.agents.prompt_sections.render_active_directives_section`).
   The directive names the lateral target + explains WHY it is distinct
   from the current hypothesis; the researcher then decides whether to
   fold it into ``tool_run`` / a fresh hypothesis / a variant-hunt
@@ -100,7 +100,7 @@ _PROMPT_HYPOTHESIS_BUDGET: int = 1200
 _PROMPT_LEDGER_BUDGET: int = 1600
 
 # Observable key the planner writes into ``case_state.observables``.
-# The VR ``_render_active_directives_section`` helper lifts every
+# The platform ``render_active_directives_section`` helper lifts every
 # ``_directive.*`` value into the prompt's PROMPT POSITION 2 slot
 # right under operator steering -- the researcher's next turn sees
 # the lead as a labelled directive block.

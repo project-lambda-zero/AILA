@@ -28,6 +28,12 @@ Subclass contract (see :class:`OutcomeDispatcherBase`):
                                  caller records the failure and retries.
     ``_log_label``               log-line prefix used for RESULT / FAILED
                                  lines.
+    ``claim_verification``       OPTIONAL :class:`ClaimVerificationHook`
+                                 the module binds so positive outcomes are
+                                 verified before dispatch and the finalize
+                                 aggregate can pick the strongest positive.
+                                 ``None`` (default) disables both. See
+                                 "Claim verification" below.
 
 * Overridable hooks
     ``_dispatch_state_guard(row)``    optional pre-claim guard passed to
@@ -52,6 +58,20 @@ Subclass contract (see :class:`OutcomeDispatcherBase`):
                                       investigation to COMPLETED, purge
                                       ARQ jobs).
 
+* Claim verification
+    Platform code never imports a module package, so the pre-dispatch
+    verifier gate and the finalize aggregate's polarity read are driven
+    entirely by the :class:`ClaimVerificationHook` a module hands in.
+    The hook is bound as the ``claim_verification`` class attribute on
+    the module's dispatcher subclass -- the object the module already
+    registers with the platform (``outcome_dispatcher_cls`` on the
+    investigation state bindings, ``_outcome_dispatcher_cls`` on the
+    claim-verifier base). Binding it on the class means it holds in every
+    process that can run a dispatch (API, ARQ worker, tests) with no
+    dependence on which process ran the module factory. A module with no
+    verifier leaves the default ``None``: no gate, and the aggregate
+    promotes nothing because no outcome kind has a positive polarity.
+
 The dispatch skeleton also folds two invariants shared by both modules:
 
 * A missing outcome (``claim.found=False``) returns SKIPPED with reason
@@ -69,6 +89,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, ClassVar
@@ -86,10 +107,12 @@ from aila.platform.services.outcome_dispatch import (
 from aila.platform.uow import UnitOfWork
 
 __all__ = [
+    "ClaimVerificationHook",
     "FinalizeAggregateResult",
     "OutcomeDispatchResult",
     "OutcomeDispatcherBase",
     "OutcomeDispatcherError",
+    "OutcomePolarityFn",
     "PromotedFinding",
     "finalize_investigation_aggregate",
     "handle_adjudication_refuted",
@@ -163,6 +186,42 @@ class OutcomeDispatchResult:
     reason: str = ""
 
 
+# ``outcome_kind -> "positive" | "negative" | "inconclusive"`` for one
+# module's outcome kinds. Receives the kind's string value (a module's
+# ``OutcomeKind`` StrEnum member is accepted as-is).
+OutcomePolarityFn = Callable[[str], str]
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimVerificationHook:
+    """Module-owned claim verification the platform calls but never imports.
+
+    A module that can check a positive claim before it ships downstream
+    binds one instance as ``claim_verification`` on its
+    :class:`OutcomeDispatcherBase` subclass. The platform owns the gate
+    (:meth:`OutcomeDispatcherBase._verify_before_dispatch`) and the
+    finalize aggregate (:func:`finalize_investigation_aggregate`); the
+    module owns what "positive" means for its outcome kinds and how a
+    claim is checked.
+
+    ``polarity``
+        :data:`OutcomePolarityFn` over the module's outcome kinds. Only
+        ``"positive"`` outcomes are gated before dispatch, and the
+        finalize aggregate promotes the strongest ``"positive"`` one.
+    ``verify_evidence``
+        ``await verify_evidence(packet)`` returns the verdict dict. The
+        packet is the one :meth:`OutcomeDispatcherBase._build_evidence_packet`
+        builds: ``{claim, index_id, case_state, citations, tool_calls}``.
+        Dispatch proceeds only when ``verdict["verdict"] == "confirmed"``;
+        any other value blocks it as SKIPPED with
+        ``verifier_blocked:<verdict>``. A verifier that raises is logged
+        and treated as a fail-safe allow.
+    """
+
+    polarity: OutcomePolarityFn
+    verify_evidence: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
 class OutcomeDispatcherBase:
     """Shared dispatch skeleton for module outcome dispatchers.
 
@@ -180,6 +239,9 @@ class OutcomeDispatcherBase:
     # Subclass optional -- defaults documented above.
     _catch_handler_errors: ClassVar[bool] = False
     _log_label: ClassVar[str] = "outcome_dispatcher"
+    # Public (no underscore): the emit chokepoint reads it off the bound
+    # dispatcher class to hand the aggregate the module's polarity.
+    claim_verification: ClassVar[ClaimVerificationHook | None] = None
 
     def _dispatch_state_guard(self, row: Any) -> str | None:
         """Optional pre-claim guard. Default: allow every found row.
@@ -215,27 +277,23 @@ class OutcomeDispatcherBase:
         """Inline verifier gate for approved positive outcomes (issue #13/#14/#249 W13).
 
         Returns ``None`` to allow dispatch, or an ``OutcomeDispatchResult``
-        (SKIPPED / FAILED) to block. Default implementation asks the VR
-        module's polarity helper whether the outcome kind is
-        ``"positive"``; for positive kinds it lazily imports the VR
-        claim verifier's ``verify_evidence`` and refuses dispatch when
-        the verdict is not ``confirmed``. Non-VR modules -- where
-        neither import resolves -- fall through to the caller (fail
-        safe to the prior behaviour). Any verifier error is logged and
-        treated as a fail-safe allow so a broken adversarial pass does
-        not permanently block a module dispatch.
+        (SKIPPED / FAILED) to block. The gate is driven entirely by the
+        module-injected :attr:`claim_verification` hook: a module that
+        binds none is never gated. With a hook bound, ``hook.polarity``
+        decides whether the outcome kind asserts a positive finding; a
+        positive kind goes through ``hook.verify_evidence`` and dispatch
+        is refused unless the verdict is ``confirmed``. Any verifier
+        error is logged and treated as a fail-safe allow so a broken
+        adversarial pass does not permanently block a module dispatch.
         """
-        polarity_fn = _load_outcome_polarity_fn()
-        if polarity_fn is None:
+        hook = self.claim_verification
+        if hook is None:
             return None
         try:
-            polarity = polarity_fn(outcome_kind)
+            polarity = hook.polarity(outcome_kind)
         except (RuntimeError, ValueError, TypeError, LookupError):
             polarity = None
         if polarity != "positive":
-            return None
-        verify_fn = _load_verify_evidence_fn()
-        if verify_fn is None:
             return None
         packet = await self._build_evidence_packet(
             outcome_kind=outcome_kind,
@@ -245,7 +303,7 @@ class OutcomeDispatcherBase:
             outcome_row=outcome_row,
         )
         try:
-            verdict = await verify_fn(packet)
+            verdict = await hook.verify_evidence(packet)
         except (RuntimeError, ValueError, TypeError, OSError,
                 LookupError, AttributeError, ImportError) as exc:
             _log.warning(
@@ -282,17 +340,17 @@ class OutcomeDispatcherBase:
         """Default evidence-packet shape passed to the verifier.
 
         Modules may override to add per-kind ``case_state`` / tool-call
-        provenance. The shape is the one the sibling Verifier task
-        publishes: ``{claim, index_id, case_state, citations, tool_calls}``.
+        provenance. This is the packet contract
+        :attr:`ClaimVerificationHook.verify_evidence` receives:
+        ``{claim, index_id, case_state, citations, tool_calls}``.
 
         ``claim`` is the finding text (positive-polarity outcomes carry it
         under ``answer`` / ``claim`` / ``summary`` / ``headline_verdict``).
         ``index_id`` is the audit-mcp index bound to the investigation's
-        target; VR resolves it from the primary target's ``mcp_handles_json``
-        via a lazy import so the platform base does not depend on the VR
-        module surface. Both are required by
-        :func:`aila.modules.vr.agents.claim_verifier.verify_evidence`
-        (returns ``{"status": "skipped"}`` when either is absent).
+        target; it is passed through from the outcome payload only, and the
+        module's verifier resolves it from the investigation's target when
+        the payload carries none. A verifier that needs both ``claim`` and
+        ``index_id`` skips the check when either is absent.
         """
         citations = list(payload.get("evidence_refs") or [])
         if not citations and outcome_row is not None:
@@ -310,10 +368,9 @@ class OutcomeDispatcherBase:
             or ""
         )
         # ``index_id`` is passed through from the outcome payload only.
-        # When it is absent the vr claim verifier's module-level
-        # ``verify_evidence`` resolves it from the investigation target
-        # handles -- that db_models lookup stays in the vr module so the
-        # platform base never imports ``aila.modules.vr`` internals.
+        # When it is absent the module's verifier resolves it from the
+        # investigation target handles -- that db_models lookup stays in
+        # the module so the platform base never reaches into one.
         index_id = str(payload.get("index_id") or "").strip()
         return {
             "claim": str(claim_text),
@@ -397,13 +454,13 @@ class OutcomeDispatcherBase:
         outcome_row = await self._load_outcome_row(outcome_id)
 
         # Issue #13 (success contrast) + #14 (adjudication source).
-        # Positive-polarity outcomes gate on the VR claim verifier
-        # before the module handler ships them downstream. A verdict
-        # other than ``confirmed`` blocks the dispatch as SKIPPED with
+        # Positive-polarity outcomes gate on the module's injected claim
+        # verifier (``claim_verification``) before the module handler
+        # ships them downstream. A verdict other than ``confirmed``
+        # blocks the dispatch as SKIPPED with
         # ``verifier_blocked:<verdict>`` so a refuted-but-approved
-        # finding never leaves the platform boundary. Non-VR modules
-        # (malware / forensics) have no verifier import and skip the
-        # gate silently.
+        # finding never leaves the platform boundary. A module that
+        # binds no hook (malware, the template scaffold) skips the gate.
         gate_result = await self._verify_before_dispatch(
             outcome_kind=resolved_kind,
             outcome_id=outcome_id,
@@ -542,39 +599,6 @@ class OutcomeDispatcherBase:
 # Finalize / aggregate spine (issue #19 -- aggregation_spine, #13, #14).
 # --------------------------------------------------------------------
 
-def _load_outcome_polarity_fn() -> Any | None:
-    """Lazy import of the VR polarity helper (platform -> module cycle safe).
-
-    Contract locked with sibling Main: ``outcome_polarity(kind)`` returns
-    ``"positive" | "negative" | "inconclusive"``. Non-VR modules that
-    have no ``vr.contracts.outcome`` on the path silently disable the
-    verifier gate here (returning ``None``); the caller falls through.
-    """
-    try:
-        from aila.modules.vr.contracts.outcome import (  # noqa: PLC0415
-            outcome_polarity as _fn,
-        )
-    except (ImportError, AttributeError):
-        return None
-    return _fn
-
-
-def _load_verify_evidence_fn() -> Any | None:
-    """Lazy import of the VR claim verifier's ``verify_evidence``.
-
-    Sibling Verifier task owns the concrete implementation on
-    ``aila.modules.vr.agents.claim_verifier``. Absence disables the
-    gate silently -- the caller retains prior behaviour.
-    """
-    try:
-        from aila.modules.vr.agents.claim_verifier import (  # noqa: PLC0415
-            verify_evidence as _fn,
-        )
-    except (ImportError, AttributeError):
-        return None
-    return _fn
-
-
 def _confidence_rank(value: str | None) -> int:
     return _CONFIDENCE_RANK.get(str(value or "").lower(), 0)
 
@@ -647,7 +671,7 @@ async def finalize_investigation_aggregate(
     branch_pool: Any | None = None,
     falsifier: Any | None = None,
     ledger: LedgerService | None = None,
-    polarity_fn: Any | None = None,
+    polarity_fn: OutcomePolarityFn | None = None,
     session: Any = None,
     branch_model: type | None = None,
     reap_ttl_seconds: float = _FINALIZE_REAP_TTL_SECONDS,
@@ -681,6 +705,12 @@ async def finalize_investigation_aggregate(
        re-proposing settled claims).
     5. Also write ``settled_claim`` markers for every outcome the
        aggregator considered settled (approved with a verdict).
+
+    ``polarity_fn`` is the module's outcome-kind polarity, i.e. the
+    ``polarity`` of the :class:`ClaimVerificationHook` bound on its
+    dispatcher class. Without one no outcome counts as positive, so the
+    strongest-positive selection (steps 3-4) finds nothing to refute or
+    promote and only the merge, settle, reap and coverage legs run.
 
     Every branch_pool / falsifier call is guarded: a failure on one
     branch pair or one adversarial pass does not abort the whole
@@ -728,10 +758,7 @@ async def finalize_investigation_aggregate(
                 )
 
     # 2. Pick the strongest positive.
-    resolved_polarity_fn = polarity_fn or _load_outcome_polarity_fn()
-    strongest, supporting = _select_strongest_positive(
-        groups, resolved_polarity_fn,
-    )
+    strongest, supporting = _select_strongest_positive(groups, polarity_fn)
 
     # 3. Falsifier pass.
     if strongest is not None and falsifier is not None:
@@ -1007,15 +1034,16 @@ def _distinct_branch_pairs(rows: list[Any]) -> list[tuple[str, str]]:
 
 def _select_strongest_positive(
     groups: dict[str, list[Any]],
-    polarity_fn: Any | None,
+    polarity_fn: OutcomePolarityFn | None,
 ) -> tuple[Any | None, list[Any]]:
     """Pick the strongest positive outcome across all groups.
 
     Returns ``(strongest_row, supporting_rows)`` where supporting rows
     are the same-signature outcomes that back the promoted one.
     Without a polarity function every outcome is treated as
-    inconclusive -- the aggregator declines to promote to avoid
-    shipping a non-VR module claim as a positive.
+    inconclusive -- the aggregator declines to promote rather than
+    ship a claim from a module that never declared which of its
+    outcome kinds are positive.
     """
     if polarity_fn is None:
         return None, []

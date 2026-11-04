@@ -1,18 +1,16 @@
 /**
  * NdayProjectForm -- the n-day CVE reproduction surface. Opens as a bespoke
  * registry page (`vr:new-project`) from the CVE registry ("reproduce" on a row
- * or "+ new") and drives the existing VR_NDAY_V1 flow via POST /vr/projects:
- *
- *   setup -> research -> poc_development -> advisory -> response_emit
+ * or "+ new") and drives POST /vr/projects, which submits a VR_INVESTIGATE_HUB
+ * investigation (run_vr_investigate) seeded with the CVE.
  *
  * The operator binds a workspace, the vulnerable target (an already-ingested
  * binary, a git repo, or a download url), an optional patched build for
- * differential PoC validation, a CVE (picked from the /vr/cves registry or
- * entered manually), the IDA analysis workstation, and -- optionally -- a PoC
- * executor host. When no executor host is bound the form states plainly that
- * PoC development is reported as `untested`; research + advisory still run.
- * Every field maps 1:1 to a declared field on VRProjectCreate; there is no
- * fabricated payload.
+ * differential validation, a CVE (picked from the /vr/cves registry or
+ * entered manually), the analysis workstation, and -- optionally -- a PoC
+ * executor host. Without an executor host, PoC runs fall back to the analysis
+ * workstation. Every field maps 1:1 to a declared field on VRProjectCreate;
+ * there is no fabricated payload.
  */
 
 import { Fragment, useEffect, useMemo, useState } from "react";
@@ -273,7 +271,7 @@ export default function NdayProjectForm(props: WindowChromeProps & EntityBinding
   const cveRows = cves.data ?? [];
   const busy = createProject.isPending;
   const noSystems = !systems.isLoading && systemRows.length === 0;
-  const pocUntested = pocSystemId === "";
+  const noPocExecutor = pocSystemId === "";
 
   // Idempotent defaults once the lists arrive.
   useEffect(() => {
@@ -358,7 +356,7 @@ export default function NdayProjectForm(props: WindowChromeProps & EntityBinding
         onChange={(e: ChangeEvent<HTMLSelectElement>): void => onChange(e.target.value)}
         style={selectStyle}
       >
-        {allowNone ? <option value="">{"\u2014 none (poc untested) \u2014"}</option> : null}
+        {allowNone ? <option value="">{"\u2014 none (uses analysis workstation) \u2014"}</option> : null}
         {systemRows.map((s) => (
           <option key={s.id} value={String(s.id)}>
             {s.name} {"\u00b7"} {s.host}
@@ -393,7 +391,7 @@ export default function NdayProjectForm(props: WindowChromeProps & EntityBinding
           color: "var(--text-muted)",
         }}
       >
-        POST /vr/projects {"\u2192"} VR_NDAY_V1
+        POST /vr/projects {"\u2192"} VR_INVESTIGATE_HUB
       </span>
       <span style={{ flex: 1 }} />
     </>
@@ -434,7 +432,7 @@ export default function NdayProjectForm(props: WindowChromeProps & EntityBinding
                 )}
               >
                 <div style={css("font-size:11px;letter-spacing:0.14em;text-transform:uppercase;color:var(--status-ok);")}>
-                  {"n-day project created \u00b7 VR_NDAY_V1 started"}
+                  {"n-day project created \u00b7 VR_INVESTIGATE_HUB started"}
                 </div>
                 <div style={css("display:grid;grid-template-columns:130px 1fr;gap:5px 12px;font-size:11.5px;")}>
                   <span style={css("color:var(--text-faint);")}>id</span>
@@ -450,9 +448,9 @@ export default function NdayProjectForm(props: WindowChromeProps & EntityBinding
                     </>
                   ) : null}
                 </div>
-                {pocUntested ? (
+                {noPocExecutor ? (
                   <div style={css("font-size:11px;color:var(--status-warn);word-break:break-word;")}>
-                    {"no poc executor host was bound: poc development will be reported as `untested`. bind an executor host and re-run to develop a live poc."}
+                    {"no poc executor host was bound: poc runs fall back to the analysis workstation."}
                   </div>
                 ) : null}
               </div>
@@ -599,9 +597,9 @@ export default function NdayProjectForm(props: WindowChromeProps & EntityBinding
                     <span style={labelStyle}>poc executor host (optional)</span>
                     {systemSelect(pocSystemId, setPocSystemId, true)}
                   </label>
-                  {pocUntested && !noSystems ? (
+                  {noPocExecutor && !noSystems ? (
                     <div style={css("font-size:11px;color:var(--status-warn);word-break:break-word;")}>
-                      {"no poc executor host selected: research + advisory run, but poc development is reported as `untested` until an executor host is bound."}
+                      {"no poc executor host selected: poc runs fall back to the analysis workstation."}
                     </div>
                   ) : null}
                 </div>

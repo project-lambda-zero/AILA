@@ -47,8 +47,7 @@ class VREventType(StrEnum):
     FUZZ_CRASH_CONFIRMED = "fuzz.crash_confirmed"
     FUZZ_COVERAGE_DELTA = "fuzz.coverage_delta"
 
-    # Obligation / disclosure events
-    OBLIGATION_CHANGED = "obligation.changed"
+    # Disclosure events
     DISCLOSURE_STATE_CHANGED = "disclosure.state_changed"
 
     # Operator-driven events

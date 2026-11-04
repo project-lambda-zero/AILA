@@ -51,9 +51,6 @@ def test_vr_migrated_prompts_load_from_registry() -> None:
     from aila.modules.vr.agents.narrative_agent import (
         _load_system_prompt as vr_narrative_prompt,
     )
-    from aila.modules.vr.agents.nday_researcher import (
-        _load_system_prompt as vr_nday_prompt,
-    )
     from aila.modules.vr.agents.synthesis_agent import (
         _load_system_prompt as vr_synthesis_prompt,
     )
@@ -62,9 +59,6 @@ def test_vr_migrated_prompts_load_from_registry() -> None:
 
     assert vr_narrative_prompt().startswith(
         "You are the narrative writer for the AILA vulnerability-research",
-    )
-    assert vr_nday_prompt().startswith(
-        "You are an autonomous N-day vulnerability researcher.",
     )
     assert vr_synthesis_prompt().startswith(
         "You are the synthesiser for a vulnerability-research deliberation ",
@@ -113,9 +107,6 @@ async def test_vr_seed_registers_rule58_migration_keys() -> None:
     from aila.modules.vr.agents.narrative_agent import (
         _load_system_prompt as vr_narrative_prompt,
     )
-    from aila.modules.vr.agents.nday_researcher import (
-        _load_system_prompt as vr_nday_prompt,
-    )
     from aila.modules.vr.agents.synthesis_agent import (
         _load_system_prompt as vr_synthesis_prompt,
     )
@@ -130,7 +121,6 @@ async def test_vr_seed_registers_rule58_migration_keys() -> None:
 
     expected: tuple[tuple[str, str], ...] = (
         ("vr/narrative/base", vr_narrative_prompt()),
-        ("vr/nday/base", vr_nday_prompt()),
         ("vr/synthesis/base", vr_synthesis_prompt()),
         ("vr/apk_static_seed/base", apk_seed()),
         ("vr/masvs_seed/base", masvs_seed()),

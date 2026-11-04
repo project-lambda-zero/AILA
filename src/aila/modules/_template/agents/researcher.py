@@ -37,6 +37,7 @@ from aila.modules._template.services.outcome_review import (
     evaluate_quorum,
     upsert_review,
 )
+from aila.platform.agents.prompt_sections import outcome_payload
 from aila.platform.agents.turn_runner import (
     AgentTurnResult,
     AgentTurnRunnerBase,
@@ -473,22 +474,6 @@ def _terminal_outcome_kind(
     return TemplateOutcomeKind.ASSESSMENT_REPORT
 
 
-def _outcome_payload(decision: ReasoningTurnDecision) -> dict[str, Any]:
-    """Build the outcome payload dict written to the outcome row."""
-    base: dict[str, Any] = {
-        "answer": decision.answer or "",
-        "reasoning": decision.reasoning,
-        "provenance": decision.provenance.model_dump(mode="json"),
-        "contract": (
-            decision.contract.model_dump(mode="json")
-            if decision.contract else None
-        ),
-    }
-    for k, v in (decision.payload or {}).items():
-        base[k] = v
-    return base
-
-
 async def _upsert_canonical_outcome(
     *,
     uow: Any,
@@ -639,7 +624,7 @@ TemplateResearcher._decision_to_message_payload = staticmethod(
     _decision_to_message_payload,
 )
 TemplateResearcher._terminal_outcome_kind = staticmethod(_terminal_outcome_kind)
-TemplateResearcher._outcome_payload = staticmethod(_outcome_payload)
+TemplateResearcher._outcome_payload = staticmethod(outcome_payload)
 TemplateResearcher._upsert_canonical_outcome = staticmethod(
     _upsert_canonical_outcome,
 )

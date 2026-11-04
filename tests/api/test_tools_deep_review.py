@@ -13,9 +13,8 @@ FILE-09: every function read, every branch tested, zero dead code.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 from httpx import AsyncClient
@@ -232,13 +231,18 @@ async def test_get_tool_detail_non_dict_inputs(
     app = client._transport.app  # type: ignore[attr-defined]
     registry = app.state.platform.runtime.tool_registry
 
-    # Create a tool-like mock with inputs set to a non-dict value
-    non_dict_tool = MagicMock()
-    non_dict_tool.name = "non_dict_tool"
-    non_dict_tool.description = "Tool with list inputs"
-    non_dict_tool.inputs = ["not", "a", "dict"]
-    non_dict_tool.output_type = "json"
-    registry.register("test.non_dict_inputs", non_dict_tool)
+    # Real ToolProtocol double whose inputs attr is a non-dict value
+    @dataclass
+    class _NonDictInputsTool:
+        name: str = "non_dict_tool"
+        description: str = "Tool with list inputs"
+        inputs: Any = field(default_factory=lambda: ["not", "a", "dict"])
+        output_type: str = "json"
+
+        def forward(self, **kwargs: Any) -> Any:
+            return {}
+
+    registry.register("test.non_dict_inputs", _NonDictInputsTool())
 
     resp = await client.get(
         "/tools/test.non_dict_inputs",

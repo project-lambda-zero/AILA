@@ -56,7 +56,7 @@ must depend on platform abstractions, never on each other.
 
 **`contracts/`** defines the typed boundary between the platform and
 modules: `ModuleProtocol`, `ModuleRuntime`, `ModuleRouteSpec`, request
-and response envelopes, frontend extension specs. Anything crossing the
+and response envelopes. Anything crossing the
 platform/module line is declared here.
 
 **`modules/`** is the module loader and registry. It discovers modules,
@@ -129,8 +129,11 @@ src/aila/modules/<module_id>/
   reporting/        # Report generation
   api_router.py     # Optional - router factory
   db_models/        # Optional - module-owned SQLModel tables
-  frontend/         # Optional - React components
+  agents/           # Reasoning modules - researcher + tool executor
 ```
+
+A module has no UI code of its own. Its pages are registered in the single
+React shell (`frontend/src/console/nav.ts`, `frontend/src/console/pages/registry.tsx`).
 
 The boundary rules are non-negotiable:
 
@@ -140,15 +143,16 @@ The boundary rules are non-negotiable:
   goes through platform services, events, or tool calls.
 - **Modules register through `create_module()`.** This factory returns a
   `ModuleProtocol` implementation that exposes the module's runtime,
-  route specs, tools, and frontend spec.
+  route specs, and tools.
 - **Routes register via `route_specs()`.** Each module declares its
   HTTP surface as `ModuleRouteSpec` instances; the platform mounts
   them onto the FastAPI app.
 - **Tools register via `register_tools()`.** Tool keys must be prefixed
   with the module id so registration and dispatch are unambiguous.
-- **Frontend extends via `ModuleFrontendSpec`.** Modules contribute nav
-  entries, routes, panels, and widgets through this spec; the React
-  shell composes them at boot.
+- **The frontend is one shell.** Module pages are registered in the
+  React shell itself (`MODULES` in `frontend/src/console/nav.ts`,
+  `PAGE_REGISTRY` in `frontend/src/console/pages/registry.tsx`); the
+  backend module exposes only its HTTP surface.
 
 ## Data Flow
 
@@ -258,25 +262,12 @@ patching it.
 - **`ModuleRouteSpec`** declares HTTP routes a module owns. The
   platform mounts the resulting router onto the FastAPI app under a
   module-scoped prefix.
-- **`ModuleFrontendSpec`** is the frontend extension surface:
-  ```typescript
-  interface ModuleFrontendSpec {
-    moduleId: string;
-    nav?: NavContribution[];        // sidebar entries
-    routes?: RouteContribution[];   // page routes
-    panels?: PanelContribution[];   // injected panels (system detail, etc)
-    widgets?: WidgetContribution[]; // dashboard widgets
-  }
-  ```
-- **`NavContribution`** adds entries to the React shell's sidebar.
-- **`RouteContribution`** registers a top-level page route, mounted by
-  the shell's router.
-- **`PanelContribution`** injects a module-owned panel into a known
-  host surface (e.g. the system detail view).
-- **`WidgetContribution`** contributes a dashboard widget.
 
-The shell discovers these contributions at boot and composes the UI;
-modules never reach into the shell directly.
+There is no frontend extension spec. The React shell owns navigation and
+page resolution: `MODULES` (`frontend/src/console/nav.ts`) lists each
+module's pages and `PAGE_REGISTRY` (`frontend/src/console/pages/registry.tsx`)
+maps `<moduleId>:<pageId>` to a renderer. The backend modules never reach
+into the shell.
 
 ## Constraints
 

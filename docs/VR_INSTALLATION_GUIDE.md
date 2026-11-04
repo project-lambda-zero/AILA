@@ -19,7 +19,7 @@ Complete setup guide for the AILA Vulnerability Research module. Covers infrastr
 | Service | Role | Default URL |
 |---|---|---|
 | **audit-mcp** | Source code indexing, semantic search, function reading | `http://127.0.0.1:18822` |
-| **rea** + **re_analytics** | Binary decompilation, function analysis (optional -- only for binary targets); stdio children spawned per AILA process, no URL | `stdio://rea`, `stdio://re_analytics` |
+| **rea** + **reverser_belt** | Binary decompilation, function analysis, scanner suite (optional -- only for binary targets); stdio children spawned per AILA process, no URL | `stdio://rea`, `stdio://reverser_belt` |
 | **android-mcp** | Android APK audit: apktool, jadx, androguard, MobSF, signing checks, native-lib hardening (optional -- only for `android_apk` targets) | `http://127.0.0.1:18823` |
 
 **LLM provider (at least one required):**
@@ -140,7 +140,7 @@ The audit-mcp server provides:
 - Function reading (by name or file:line range)
 - Cross-reference analysis
 
-### 3.2 rea + re_analytics (optional -- for binary targets)
+### 3.2 rea + reverser_belt (optional -- for binary targets)
 
 Only needed if you analyze compiled binaries (ELF, PE, Mach-O).
 
@@ -150,11 +150,17 @@ Only needed if you analyze compiled binaries (ELF, PE, Mach-O).
   Point `REA_MCP_COMMAND` at your install (shlex-split argv, forward
   slashes). `start.sh` exports working defaults for `REA_MCP_COMMAND`,
   `GHIDRA_INSTALL_DIR`, `JAVA_HOME`, and `REA_ANALYSIS_PROVIDER=ghidra`.
-- **re_analytics** -- in-tree (`src/aila/platform/re_analytics`), launched
-  automatically as `python -m aila.platform.re_analytics`. Preserve of
-  the archived ida-headless tool surface (capa, crypto, dataflow,
-  emulation, patching) under the same tool / argument names, keyed by
-  `target_path` (absolute local binary path).
+- **reverser_belt** -- the standalone reverser-belt-mcp server (package
+  `reverser_belt_mcp`, repository `ida-headless-mcp-exp`; Kuna decompiler
+  backend). It replaces the archived ida-headless server and owns the
+  scanner surface REA lacks (capa, crypto, dataflow, emulation, SMT
+  proofs, patching). AILA spawns it as a stdio child per process with the
+  default argv `python -m reverser_belt_mcp.server`
+  (`src/aila/platform/mcp/server_specs.py:142`), so the package must be
+  importable in AILA's interpreter (`pip install -e <checkout>`; Kuna and
+  angr must also be installed). Override the argv with
+  `REVERSER_BELT_MCP_COMMAND`. The binary is addressed by the
+  server-injected absolute `target_path`.
 
 Requires a JDK (Ghidra provider) on the same host.
 
@@ -216,9 +222,10 @@ AUDIT_MCP_THREAD_POOL_LIMIT=64
 # forever and starve every query that touches the index.
 AUDIT_MCP_SEMBLE_BUILD_TIMEOUT_S=7200
 
-# rea + re_analytics (optional, stdio children spawned per process;
+# rea + reverser_belt (optional, stdio children spawned per process;
 # nothing to start manually). REA_MCP_COMMAND is a shlex-split argv
-# (forward slashes); start.sh exports these defaults.
+# (forward slashes); start.sh exports these defaults. Optionally override
+# the reverser_belt argv with REVERSER_BELT_MCP_COMMAND.
 REA_MCP_COMMAND=C:/tools/node/node.exe C:/tools/rea/node_modules/rea-agents/scripts/rea.mjs mcp
 GHIDRA_INSTALL_DIR=C:/tools/ghidra
 JAVA_HOME=C:/tools/jdk
@@ -268,10 +275,10 @@ bash start.sh
 This starts all services:
 - audit-mcp server (port 18822)
 - AILA backend (uvicorn, port 8000)
-- AILA workers (one per queue: default, vr, vulnerability, forensics)
+- AILA workers (one per queue: default, vr, vulnerability, forensics, malware)
 - AILA frontend (Vite dev server, port 3000)
 
-rea / re_analytics need no launch step -- each AILA process spawns its
+rea / reverser_belt need no launch step -- each AILA process spawns its
 own stdio child (see section 3.2).
 
 `start.sh` does **not** currently spawn android-mcp -- the operator
@@ -471,7 +478,7 @@ conn.close()
                     │  6 branches    tool calls      findings     │
                     │  (H/N/M/Y/R/W) (audit-mcp)    patterns     │
                     │                (rea /         disclosures  │
-                    │                 re_analytics)              │
+                    │                 reverser_belt)             │
                     │                (android-mcp)               │
                     └──────────────────────────────────────────────┘
 ```
@@ -589,7 +596,7 @@ python -m aila worker -q vr
 
 **Fix**: Check the browser console for the error. Common causes:
 - Unknown `status` value from backend (fixed by adding fallback defaults)
-- Missing `ogl` dependency (run `pnpm install`)
+- Missing dependency after pulling (run `pnpm install`)
 - Stale Vite cache (delete `frontend/node_modules/.vite/` and restart)
 
 ### Three sources of truth for "is this task active"
@@ -599,14 +606,18 @@ python -m aila worker -q vr
 SKIP path coordinates all three. New drift paths are landmines --
 inspect all three before claiming a task is running or stuck.
 
-### Cost tracking known-broken
+### Cost tracking
 
-`VRInvestigationRecord.cost_actual_usd` reports `$0` for every
-investigation. The aggregator joins `LLMCostRecord.run_id ==
-TaskRecord.id`, but `run_id` is actually the workflow `RunRecord.id`
-(DurableStateMachine run instance), not the ARQ TaskRecord id.
-Correct join requires an extra hop through `workflow_run_records`.
-Not yet fixed; do not treat the gauge as authoritative.
+The agent-turn LLM calls carry the investigation id as
+`LLMCostRecord.run_id` (`src/aila/platform/agents/turn_runner.py:1258`), and
+the investigation's live cost is the direct sum
+`compute_live_investigation_cost`
+(`src/aila/platform/services/investigation_cost.py:34`). The stored
+`cost_actual_usd` column is also accrued on each cost-record insert
+(`src/aila/platform/llm/cost.py:406-410`). LLM calls made without a
+`run_id` are recorded under the `_no_run` sentinel and never roll into an
+investigation total; to find such spend, check `LLMCostRecord` rows with `run_id = '_no_run'` and the nullable
+`investigation_id` / `branch_id` / `turn_number` columns.
 
 ### Cursor reaper sweeps all four terminal states
 

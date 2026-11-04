@@ -27,45 +27,6 @@ class VRConfigSchema(ModuleConfigBase):
     override is needed.
     """
 
-    nday_max_turns: int = Field(
-        default=30,
-        ge=5,
-        le=100,
-        description="Maximum agent turns per N-day PoC investigation loop.",
-    )
-    nday_tool_time_seconds: float = Field(
-        default=14400.0,
-        ge=300.0,
-        description=(
-            "Wall-clock budget for the N-day agent's tool-use phase, in seconds. "
-            "Default 4 hours accommodates long IDA analysis and PoC iteration."
-        ),
-    )
-    poc_max_attempts: int = Field(
-        default=3,
-        ge=1,
-        le=10,
-        description="Maximum PoC build/run iterations before giving up.",
-    )
-    poc_reliability_target: str = Field(
-        default="5/5",
-        description=(
-            "Required PoC reliability ratio (successful_runs/total_runs) before "
-            "the PoC is considered acceptance-ready."
-        ),
-    )
-    poc_timeout_seconds: float = Field(
-        default=30.0,
-        ge=5.0,
-        le=300.0,
-        description="Per-execution timeout for PoC binary runs.",
-    )
-    poc_memory_limit_mb: int = Field(
-        default=2048,
-        ge=256,
-        le=16384,
-        description="Memory cap for sandboxed PoC execution, in megabytes.",
-    )
     poc_workspace_max_age_minutes: int = Field(
         default=60,
         ge=1,

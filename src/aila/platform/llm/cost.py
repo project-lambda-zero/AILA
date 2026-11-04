@@ -346,8 +346,15 @@ async def persist_cost_record(
     When registry is None (backward-compatible callers), the budget check is
     skipped entirely.
 
+    The row also carries the ambient join keys, prompt stamps, user id and
+    ``current_module_id()`` (``_no_module`` outside any module runtime), read
+    from the correlation ContextVars at write time.
+
     Args:
-        run_id: Run identifier; defaults to "_no_run" when None.
+        run_id: Run identifier; defaults to "_no_run" when None. The LLM
+            client resolves a call made inside an investigation to that
+            investigation's id before it reaches here (#288), so the sentinel
+            is left for genuinely global calls.
         model_id: The model identifier used for the call.
         task_type: The task_type routing key (e.g. "scoring").
         team_id: Team identifier for RLS scoping; may be None for admin calls.
@@ -361,6 +368,7 @@ async def persist_cost_record(
     try:
         from aila.platform.llm.correlation import (
             current_join_keys,
+            current_module_id,
             current_prompt_content_hash,
             current_prompt_version,
             current_user_id,
@@ -383,6 +391,7 @@ async def persist_cost_record(
             task_type=task_type or "",
             team_id=team_id,
             user_id=_uid,
+            module_id=current_module_id(),
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             cost_usd=cost_usd,

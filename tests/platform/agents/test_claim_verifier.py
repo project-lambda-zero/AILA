@@ -829,6 +829,91 @@ def _install_run_seams(
 @pytest.mark.parametrize("cfg", ALL_CONFIGS, ids=[c.label for c in ALL_CONFIGS])
 class TestRunHappyPath:
     @pytest.mark.asyncio
+    async def test_run_attaches_successful_probe_citation_to_precondition(
+        self, cfg: _Config, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        canonical = _CanonicalRow(
+            outcome_id="oc-refs",
+            payload=cfg.canonical_payload,
+            outcome_kind=cfg.example_verifiable_kind,
+        )
+        extracted = json.dumps({
+            "preconditions": [{
+                "id": "P1", "rank": 1,
+                "claim": "load-bearing", "if_refuted_then": "dies",
+                "refutation_signature": "zero matches",
+                "probe": {"tool": "audit_mcp.search_source",
+                          "args": {"q": "foo", "path": "$INDEX_ID/src/x.c"}},
+            }],
+        })
+        # P1 is backed by the probe that ran; P2 names no probe, so it
+        # must come back with no evidence refs rather than invented ones.
+        verdict = json.dumps({
+            "verdict": "inconclusive",
+            "confidence": 0.5,
+            "preconditions": [
+                {"id": "P1", "claim": "load-bearing", "result": "true",
+                 "evidence": "match at x.c:1"},
+                {"id": "P2", "claim": "unprobed", "result": "unknown",
+                 "evidence": ""},
+            ],
+            "counter_evidence": "",
+            "summary": "one precondition probed",
+        })
+        _install_run_seams(
+            cfg.agent_cls(investigation_id="inv-refs"),
+            monkeypatch,
+            canonical=canonical,
+            canonical_kind=cfg.example_verifiable_kind,
+            extractor_response=_FakeLLMResponse(extracted),
+            verdict_response=_FakeLLMResponse(verdict),
+            probe_responses={
+                "search_source": {
+                    "status": "ok",
+                    "matches": [{"file_path": "x.c", "line": 1, "text": "foo"}],
+                },
+            },
+        )
+        agent = cfg.agent_cls(investigation_id="inv-refs")
+        _install_run_seams(
+            agent,
+            monkeypatch,
+            canonical=canonical,
+            canonical_kind=cfg.example_verifiable_kind,
+            extractor_response=_FakeLLMResponse(extracted),
+            verdict_response=_FakeLLMResponse(verdict),
+            probe_responses={
+                "search_source": {
+                    "status": "ok",
+                    "matches": [{"file_path": "x.c", "line": 1, "text": "foo"}],
+                },
+            },
+        )
+
+        result = await agent.run()
+
+        assert result["status"] == "ok"
+        assert _FakeUoW._shared_session is not None
+        # The same canonical row object is added more than once; dedupe by
+        # identity as the confirmed-verdict test does.
+        verifier_adds = {
+            id(a): a for a in _FakeUoW._shared_session.added
+            if "verifier_report" in json.loads(getattr(a, "payload_json", "{}") or "{}")
+        }
+        assert len(verifier_adds) == 1
+        report = json.loads(next(iter(verifier_adds.values())).payload_json)["verifier_report"]
+        assert report["probes_succeeded"] == 1
+        by_id = {p["id"]: p for p in report["preconditions"]}
+
+        p1_refs = by_id["P1"]["evidence_refs"]
+        assert len(p1_refs) == 1
+        assert p1_refs[0]["kind"] == "verifier_probe"
+        assert "search_source(" in p1_refs[0]["ref"]
+        assert '"q": "foo"' in p1_refs[0]["ref"]
+
+        assert by_id["P2"]["evidence_refs"] == []
+
+    @pytest.mark.asyncio
     async def test_run_writes_verifier_report_with_confirmed_verdict(
         self, cfg: _Config, monkeypatch: pytest.MonkeyPatch,
     ) -> None:

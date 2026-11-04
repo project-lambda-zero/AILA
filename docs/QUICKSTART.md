@@ -26,7 +26,7 @@ PostgreSQL and Redis must be running locally on their default ports (`5432` and 
 | audit-mcp | `18822` | `vr` module (all source-repo targets); can also feed `vulnerability` intel workflows | [github.com/project-lambda-zero/audit-mcp](https://github.com/project-lambda-zero/audit-mcp) |
 | android-mcp | `18823` | `vr` audits against `android_apk` targets (MASVS L1/L2 pipeline) | [github.com/project-lambda-zero/android-mcp](https://github.com/project-lambda-zero/android-mcp) |
 
-Binary reverse engineering no longer uses a standalone HTTP server: REA (`rea-agents`, Ghidra provider) runs as an MCP-STDIO child spawned per AILA process (argv from `REA_MCP_COMMAND`), and the in-tree `re_analytics` server (`python -m aila.platform.re_analytics`, also stdio) preserves the archived ida-headless tool surface. Both are needed for `vr` binary targets and all `malware` investigations; see section 4 below for setup.
+Binary reverse engineering no longer uses a standalone HTTP server: REA (`rea-agents`, Ghidra provider) runs as an MCP-STDIO child spawned per AILA process (argv from `REA_MCP_COMMAND`), and the `reverser_belt` server (package `reverser_belt_mcp`, `python -m reverser_belt_mcp.server`, also stdio) serves the scanner surface REA lacks and replaces the archived ida-headless server. Both are needed for `vr` binary targets and all `malware` investigations; see section 4 below for setup.
 
 All MCP servers run alongside AILA on the same host (or reachable over the network). The platform, `vulnerability`, `forensics`, and `hello_world` modules do NOT require any MCP. See section 4 below for install + start.
 
@@ -67,7 +67,7 @@ pip install -e ".[dev]"
 corepack enable && pnpm install
 ```
 
-The frontend is a pnpm workspace at the repo root; `pnpm install` wires up `@aila/shell`, `@aila/typescript-config`, and the five module packages (`@aila/forensics-frontend`, `@aila/hello-world-frontend`, `@aila/malware-frontend`, `@aila/vr-frontend`, `@aila/vulnerability-frontend`) in one pass.
+The frontend is a pnpm workspace at the repo root; `pnpm install` wires up `@aila/shell` (the single SPA, which holds every module's UI), `@aila/typescript-config`, and `@aila/oxlint-config` in one pass.
 
 > **Verify the venv is activated**: `which uvicorn` should print a path inside `.venv/bin/`. If it prints `~/.local/bin/uvicorn` or `/usr/bin/uvicorn`, your venv is not active and uvicorn will fail to import `aila` (because system Python doesn't have it installed).
 Or:
@@ -133,7 +133,7 @@ Skip this section if you only want the platform, `vulnerability`, `forensics`, a
 
 Each MCP is a separate HTTP server (audit-mcp, android-mcp). Install and run each one in its own terminal or under your process supervisor of choice. The AILA backend and workers connect over HTTP using the URLs from `.env`.
 
-### REA + re_analytics (binary reverse engineering)
+### REA + reverser_belt (binary reverse engineering)
 
 Required for `malware`; required for `vr` on binary targets.
 
@@ -144,7 +144,15 @@ npm install -g rea-agents        # or a pinned local install
 export REA_MCP_COMMAND="C:/tools/node/node.exe C:/tools/rea/node_modules/rea-agents/scripts/rea.mjs mcp"
 ```
 
-The `re_analytics` server is in-tree (`src/aila/platform/re_analytics`) and launches automatically as `python -m aila.platform.re_analytics`; it preserves every archived ida-headless tool REA does not provide (capa, crypto, dataflow, emulation, patching) under the same tool and argument names, taking `target_path` (absolute local binary path) instead of a binary id.
+`reverser_belt` is a separate repository (`ida-headless-mcp-exp`, package `reverser_belt_mcp`; Kuna decompiler backend, capa, crypto, emulation, taint, SMT proofs, patching). AILA spawns it as a stdio child per process (default argv `python -m reverser_belt_mcp.server` in the current interpreter), so install it into the same environment as AILA (Kuna and angr must also be installed; see the comment block in `start.sh`):
+
+```bash
+pip install -e <path-to-ida-headless-mcp-exp-checkout>
+# optional override of the spawn argv (shlex-split, forward slashes):
+export REVERSER_BELT_MCP_COMMAND="python -m reverser_belt_mcp.server"
+```
+
+Setting `REVERSER_BELT_MCP_URL` (or the `reverser_belt_mcp_url` config key) to an http(s) URL points AILA at a shared instance instead. Tool calls address the binary by the server-injected absolute `target_path`; the platform opens it on the server and supplies the `binary_id` itself.
 
 ### audit-mcp
 
@@ -230,8 +238,8 @@ If the backend health endpoint returns 200 and the frontend renders the login pa
 The default worker subscribes to the `default` queue. Module-heavy workloads (vulnerability scans, forensics analyses) are dispatched to dedicated queues so they can be scaled independently. Run additional workers per queue track:
 
 ```bash
-python -m aila worker -q vr                  # vulnerability research (needs audit-mcp; rea + re_analytics for binary targets; android-mcp for APKs)
-python -m aila worker -q malware             # malware reverse engineering (needs rea + re_analytics)
+python -m aila worker -q vr                  # vulnerability research (needs audit-mcp; rea + reverser_belt for binary targets; android-mcp for APKs)
+python -m aila worker -q malware             # malware reverse engineering (needs rea + reverser_belt)
 python -m aila worker -q vulnerability       # vulnerability scans (CVE, scoring, remediation)
 python -m aila worker -q forensics           # DFIR investigations, evidence analysis
 ```
