@@ -11,7 +11,6 @@ from aila.platform.contracts.evidence_graph import (
 )
 from aila.platform.contracts.hypothesis import HypothesisProjection, HypothesisState
 
-from .advisory import CVSSVector, CWEMapping, VRAdvisory
 from .apk_static import (
     ApkStaticAuditAggregate,
     ApkStaticAuditDispatchResponse,
@@ -163,8 +162,6 @@ __all__ = [
     "CVERecordSummary",
     "MemoInvalidationEvent",
     "VRCVERecordCreate",
-    "CVSSVector",
-    "CWEMapping",
     "CrashSignature",
     "CrashType",
     "DisclosureStatus",
@@ -218,7 +215,6 @@ __all__ = [
     "TargetStatus",
     "TargetTag",
     "TargetTagSource",
-    "VRAdvisory",
     "VRBranchSummary",
     "VRFinding",
     "VRFuzzCampaignCreate",

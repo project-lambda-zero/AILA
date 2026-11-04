@@ -331,12 +331,6 @@ Registered by the VR module via `VRConfigSchema`. All keys are settable via
 | Key | Type | Purpose |
 |-----|------|---------|
 | `llm_model` | str | LLM model id used by every VR agent (empty falls back to the platform default) |
-| `nday_max_turns` | int | Turn cap for the n-day researcher agent |
-| `nday_tool_time_seconds` | float | Per-tool timeout for the n-day researcher |
-| `poc_max_attempts` | int | Max PoC generation attempts per finding |
-| `poc_reliability_target` | str | Required PoC reliability class |
-| `poc_timeout_seconds` | float | Wall-clock ceiling for a single PoC run |
-| `poc_memory_limit_mb` | int | Memory ceiling for a single PoC run (MB) |
 | `ssh_command_timeout_seconds` | float | Timeout for individual SSH commands on the analysis host |
 | `audit_mcp_url` | str | Base URL for the audit-mcp indexer bridge |
 | `android_mcp_url` | str | Base URL for the android-mcp bridge |

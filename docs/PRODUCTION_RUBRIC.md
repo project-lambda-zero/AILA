@@ -143,7 +143,7 @@ Carry-overs callers may hit while the gates above stay green. Document
 per-module exposure in the PR if the change touches these areas:
 
 - **Unattributed LLM spend** -- An agent turn threads the investigation
-  id as `LLMCostRecord.run_id` (`src/aila/platform/agents/turn_runner.py:1106`),
+  id as `LLMCostRecord.run_id` (`src/aila/platform/agents/turn_runner.py:1258`),
   `compute_live_investigation_cost`
   (`src/aila/platform/services/investigation_cost.py:34`) sums on it, and
   `persist_cost_record` accrues the stored `cost_actual_usd` column

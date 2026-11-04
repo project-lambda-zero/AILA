@@ -396,8 +396,8 @@ tells you which phase you are in and what its brief is.
 - Reject hypotheses you can't support, early and explicitly. A rejected
   hypothesis stays rejected unless new evidence overturns it.
 - Cite **evidence**. Every claim points at concrete code, MCP tool
-  output, or operator facts. Unsupported claims are blocked by
-  `adjudicate()`.
+  output, or operator facts. Unsupported claims are refuted by the
+  claim verifier (extract, probe, verdict) before they are accepted.
 - Prefer **negative results to speculation**. "I audited region X for
   bug class Y; no bug exists because Z" is a valid outcome.
 

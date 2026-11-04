@@ -23,6 +23,7 @@ from typing import Any
 
 from aila.platform.mcp.mcp_session import McpSession
 from aila.platform.mcp.middleware.reverser_belt import (
+    REVERSER_BELT_PATCHED_TARGET_KWARG,
     REVERSER_BELT_TARGET_KWARG,
     ReverserBeltMiddleware,
 )
@@ -213,3 +214,83 @@ class TestMissingTarget:
 
         assert r["status"] == "error"
         assert "open_binary" not in client.actions()
+
+
+class TestDiffBinary:
+    async def test_opens_both_sides_and_forwards_only_handles(self) -> None:
+        session = _StateSession()
+        client = _FakeClient(session)
+        mw = _middleware()
+
+        r = await mw.forward(client, "diff_binary", {
+            REVERSER_BELT_TARGET_KWARG: "/vuln.bin",
+            REVERSER_BELT_PATCHED_TARGET_KWARG: "/patched.bin",
+        })
+
+        assert r["status"] == "ready"
+        assert session.state["belt_binaries"] == {"/vuln.bin": "b_1", "/patched.bin": "b_2"}
+        assert client.payloads_for("diff_binary") == [
+            {"binary_id_old": "b_1", "binary_id_new": "b_2"},
+        ]
+
+    async def test_agent_supplied_raw_inputs_never_forwarded(self) -> None:
+        session = _StateSession()
+        client = _FakeClient(session)
+        mw = _middleware()
+
+        await mw.forward(client, "diff_binary", {
+            REVERSER_BELT_TARGET_KWARG: "/vuln.bin",
+            REVERSER_BELT_PATCHED_TARGET_KWARG: "/patched.bin",
+            "binary_id_old": "b_evil_old",
+            "binary_id_new": "b_evil_new",
+            "path": "/etc/passwd",
+            "binary_id": "b_evil",
+            "extra": 1,
+        })
+
+        assert client.payloads_for("diff_binary") == [
+            {"binary_id_old": "b_1", "binary_id_new": "b_2"},
+        ]
+        assert "/etc/passwd" not in session.state["belt_binaries"]
+        for _action, payload in client.calls:
+            assert REVERSER_BELT_TARGET_KWARG not in payload
+            assert REVERSER_BELT_PATCHED_TARGET_KWARG not in payload
+
+    async def test_missing_patched_path_errors_without_reusing_old(self) -> None:
+        session = _StateSession()
+        client = _FakeClient(session)
+        mw = _middleware()
+
+        r = await mw.forward(client, "diff_binary", {
+            REVERSER_BELT_TARGET_KWARG: "/vuln.bin",
+        })
+
+        assert r["status"] == "error"
+        assert "open_binary" not in client.actions()
+        assert "diff_binary" not in client.actions()
+
+    async def test_missing_target_path_errors(self) -> None:
+        session = _StateSession()
+        client = _FakeClient(session)
+        mw = _middleware()
+
+        r = await mw.forward(client, "diff_binary", {
+            REVERSER_BELT_PATCHED_TARGET_KWARG: "/patched.bin",
+        })
+
+        assert r["status"] == "error"
+        assert "open_binary" not in client.actions()
+        assert "diff_binary" not in client.actions()
+
+    async def test_non_diff_tool_never_forwards_patched_path(self) -> None:
+        session = _StateSession()
+        client = _FakeClient(session)
+        mw = _middleware()
+
+        await mw.forward(client, "list_functions", {
+            REVERSER_BELT_TARGET_KWARG: "/vuln.bin",
+            REVERSER_BELT_PATCHED_TARGET_KWARG: "/patched.bin",
+        })
+
+        assert session.state["belt_binaries"] == {"/vuln.bin": "b_1"}
+        assert client.payloads_for("list_functions") == [{"binary_id": "b_1"}]

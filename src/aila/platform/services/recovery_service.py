@@ -22,7 +22,7 @@ into one path without dropping guarantees:
   ``running`` / ``stalled`` rows past the idle threshold with no live
   ``taskrecord``. Execution is a rate-limited fan-out submit through
   the module's plain ``submit_fn``: one task per active branch, or one
-  inv-level submit for kinds that own their own branch lifecycle.
+  inv-level submit when the investigation has no active branch.
   Cursor state is intentionally ignored at eligibility time.
 * :attr:`RecoveryStrategy.STUCK_HEAL` -- handles the narrower ``running``
   rows that ALSO have no resumable ``workflow_state_cursor``. Execution
@@ -186,7 +186,7 @@ class RecoveryStrategy(enum.StrEnum):
     """Which recovery path applies to an eligible row.
 
     ``STALL_REENQUEUE`` -- direct rate-limited submit (fan-out per active
-    branch, or one inv-level submit for single-submit kinds).
+    branch, or one inv-level submit when no branch is active).
 
     ``STUCK_HEAL`` -- full :func:`reenqueue_investigation` reset plus a
     durable resilience recovery event.
@@ -215,7 +215,6 @@ class StallBinding:
 
     submit_fn: SubmitFn
     sweepable_kinds: tuple[str, ...]
-    single_submit_kinds: tuple[str, ...]
     env_prefix: str
     branches_table: str
     idle_minutes: int | None = None
@@ -555,24 +554,6 @@ async def _execute_stall(
             )
 
     submits = 0
-
-    if inv_kind in binding.single_submit_kinds:
-        # Single inv-level submit; the submitter routes this kind to a
-        # task body that owns its own branch lifecycle.
-        if remaining_cap <= 0:
-            return RecoveryOutcome(
-                inv_id=inv_id, strategy=RecoveryStrategy.STALL_REENQUEUE,
-                status="no_op", kind=inv_kind,
-            )
-        if await _safe_submit(
-            binding.submit_fn, inv_kind, inv_id, None, team_id, result,
-        ):
-            submits = 1
-        return RecoveryOutcome(
-            inv_id=inv_id, strategy=RecoveryStrategy.STALL_REENQUEUE,
-            status="recovered" if submits else "skipped_error",
-            submits=submits, kind=inv_kind,
-        )
 
     branches = await _fetch_active_branches(
         branches_table=binding.branches_table, inv_id=inv_id,

@@ -609,7 +609,7 @@ inspect all three before claiming a task is running or stuck.
 ### Cost tracking
 
 The agent-turn LLM calls carry the investigation id as
-`LLMCostRecord.run_id` (`src/aila/platform/agents/turn_runner.py:1106`), and
+`LLMCostRecord.run_id` (`src/aila/platform/agents/turn_runner.py:1258`), and
 the investigation's live cost is the direct sum
 `compute_live_investigation_cost`
 (`src/aila/platform/services/investigation_cost.py:34`). The stored

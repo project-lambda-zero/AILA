@@ -672,10 +672,11 @@ class ToolExecutorHelpersBase:
         return None
 
     async def _pre_dispatch_correct_args(
-        self, investigation_id: str, server_id: str, args: dict[str, Any],
+        self, investigation_id: str, server_id: str, tool_name: str,
+        args: dict[str, Any],
     ) -> dict[str, Any]:
         """Correct dispatch args before the bridge call. Default: identity."""
-        del investigation_id, server_id
+        del investigation_id, server_id, tool_name
         return args
 
     def _augment_tool_error(
@@ -1211,7 +1212,7 @@ class ToolExecutorHelpersBase:
         # Pre-dispatch arg correction (module hook; VR corrects an
         # audit_mcp index_id placeholder, other modules no-op).
         args = await self._pre_dispatch_correct_args(
-            investigation_id, server_id, args,
+            investigation_id, server_id, tool_name, args,
         )
         # Pre-call HARD-BLOCK of identical repeat failures, when the module
         # enables it (hard_block_limit not None). Refuses the dispatch after

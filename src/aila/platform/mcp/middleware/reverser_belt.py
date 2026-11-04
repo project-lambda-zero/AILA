@@ -11,10 +11,13 @@ middleware is the MCP-layer adapter between the two conventions:
   opened (``open_binary`` once per path, cached on the session) and
   rewrites the call to carry the resulting ``binary_id``. ``target_path``
   is never forwarded.
-* ``open_binary`` itself passes ``path`` straight through; tools that take
-  neither a handle nor a path (``worker_status``, ``list_binaries``,
-  ``miasm_simplify_expression``, the ``diff_*`` / ``cross_binary_*``
-  pair-of-handles tools) forward unchanged.
+* ``open_binary`` itself passes ``path`` straight through.
+* ``diff_binary`` opens two targets: ``target_path`` (original) and
+  ``patched_target_path`` (patched), and forwards them as
+  ``binary_id_old`` / ``binary_id_new``.
+* Tools that take neither a handle nor a path (``worker_status``,
+  ``list_binaries``, ``miasm_simplify_expression``, ``diff_function``,
+  ``diff_survey``, ``cross_binary_similarity``) forward unchanged.
 * The backend queues analysis on a worker and answers ``status: pending``
   (or ``queued`` / ``running``) until it finishes. This middleware
   re-issues the call on a bounded wall-clock budget until it lands
@@ -37,7 +40,11 @@ if TYPE_CHECKING:
     from aila.platform.mcp.client import McpClient
     from aila.platform.mcp.server_specs import ServerSpec
 
-__all__ = ["REVERSER_BELT_TARGET_KWARG", "ReverserBeltMiddleware"]
+__all__ = [
+    "REVERSER_BELT_PATCHED_TARGET_KWARG",
+    "REVERSER_BELT_TARGET_KWARG",
+    "ReverserBeltMiddleware",
+]
 
 _log = logging.getLogger(__name__)
 
@@ -45,14 +52,16 @@ _log = logging.getLogger(__name__)
 # binary_id here and never forwarded to the server.
 REVERSER_BELT_TARGET_KWARG = "target_path"
 
+REVERSER_BELT_PATCHED_TARGET_KWARG = "patched_target_path"
+
 _STATE_BINARIES = "belt_binaries"   # path -> binary_id
 _STATE_OPEN_LOCKS = "belt_open_locks"  # path -> asyncio.Lock
 # Tools that must NOT be handle-rewritten (open by path, or take no
-# single target handle).
+# single target handle). diff_binary is handled explicitly in forward().
 _PASSTHROUGH = frozenset({
     "open_binary", "close_binary", "list_binaries", "worker_status",
     "get_generation", "miasm_simplify_expression",
-    "diff_binary", "diff_function", "diff_survey", "cross_binary_similarity",
+    "diff_function", "diff_survey", "cross_binary_similarity",
 })
 _PENDING_STATES = frozenset({"pending", "queued", "running"})
 _READY_STATES = frozenset({"ready", "completed", "ok"})
@@ -93,12 +102,16 @@ class ReverserBeltMiddleware:
         if not action:
             return {"status": "ready", "tools": await self.list_tool_specs(client)}
         target = kwargs.pop(REVERSER_BELT_TARGET_KWARG, None)
+        patched = kwargs.pop(REVERSER_BELT_PATCHED_TARGET_KWARG, None)
         payload = {k: v for k, v in kwargs.items() if k != REVERSER_BELT_TARGET_KWARG}
 
         if action == "open_binary":
             if "path" not in payload and isinstance(target, str) and target:
                 payload["path"] = target
             return await self._call_with_poll(client, action, payload)
+
+        if action == "diff_binary":
+            return await self._forward_diff_binary(client, target, patched)
 
         if action not in _PASSTHROUGH and await self._accepts_binary_id(client, action):
             if not isinstance(target, str) or not target:
@@ -115,6 +128,41 @@ class ReverserBeltMiddleware:
             payload.setdefault("binary_id", binary_id)
 
         return await self._call_with_poll(client, action, payload)
+
+    async def _forward_diff_binary(
+        self,
+        client: McpClient,
+        old_path: Any,
+        new_path: Any,
+    ) -> dict[str, Any]:
+        """Open both sides and forward only ``binary_id_old`` / ``binary_id_new``.
+
+        ``target_path`` is the original (old) binary; ``patched_target_path``
+        is the patched (new) binary. Both are server-injected; the upstream
+        payload is rebuilt from the two handles so no agent-supplied kwarg
+        (raw path, handle, or extra key) reaches the server.
+        """
+        if not isinstance(old_path, str) or not old_path:
+            return {
+                "status": "error",
+                "error": "Unreachable: reverser_belt.diff_binary needs a target_path",
+            }
+        if not isinstance(new_path, str) or not new_path:
+            return {
+                "status": "error",
+                "error": (
+                    "Unreachable: reverser_belt.diff_binary needs a "
+                    "patched_target_path (no patched binary bound to this investigation)"
+                ),
+            }
+        old_id = await self._ensure_open(client, old_path)
+        if isinstance(old_id, dict):
+            return old_id
+        new_id = await self._ensure_open(client, new_path)
+        if isinstance(new_id, dict):
+            return new_id
+        payload = {"binary_id_old": old_id, "binary_id_new": new_id}
+        return await self._call_with_poll(client, "diff_binary", payload)
 
     async def _accepts_binary_id(self, client: McpClient, action: str) -> bool:
         if self._handle_tools is None:

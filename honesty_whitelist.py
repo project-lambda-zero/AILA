@@ -99,7 +99,6 @@ HONESTY_WHITELIST = [
     # load time. Tested via the OutcomeDispatcher patch_assessment_report
     # path. Inline `# noqa: PLC0415` is required to silence ruff.
     ("vr/_task_queue.py", "default_task_queue", "noqa"),
-    ("vr/_task_queue.py", "enqueue_vr_nday", "noqa"),
     ("vr/_task_queue.py", "enqueue_downstream_target_stages", "noqa"),
     # Category (b): same lazy-import pattern in the malware module's
     # outcome dispatcher. _dispatch_sub_investigation defers the
@@ -228,7 +227,6 @@ HONESTY_WHITELIST = [
     ("hello_world/module.py", "placeholder_return", "returns empty"),
     ("forensics/module.py", "placeholder_return", "returns empty"),
     ("vr/module.py", "placeholder_return", "returns empty"),
-    ("vr/agents/nday_researcher.py", "placeholder_return", "returns empty"),
 
     # Category (f): Alembic baseline stamp -- upgrade/downgrade are intentionally empty
     # because the baseline migration just stamps the version, no DDL needed.
@@ -338,11 +336,6 @@ HONESTY_WHITELIST = [
     ("workflow/states/collectors/memory.py", "except_return_default", "silently hides failures"),
     ("workflow/states/collectors/memory_enrich.py", "except_return_default", "silently hides failures"),
     ("workflow/states/collectors/network.py", "except_return_default", "silently hides failures"),
-
-    # VR n-day researcher: structured-output JSON extraction. Failure means
-    # the LLM produced unparseable text; the caller treats None as "no
-    # submission" and the surrounding retry / scoring pipeline owns logging.
-    ("vr/agents/nday_researcher.py", "except_return_default", "silently hides failures"),
 
     # vulnerability adapters: cache lookups & advisory fetch fallbacks.
     # arch.py: SQLAlchemyError on DB cache read → empty cache map (cold start).
@@ -678,6 +671,12 @@ HONESTY_WHITELIST = [
     ("llm/prompt_layout.py", "add_immutable", "consider inlining"),
     ("llm/prompt_layout.py", "add_mutable", "consider inlining"),
     ("llm/prompt_layout.py", "build", "consider inlining"),
+
+    # Category (g): rule do_nothing_wrapper. WorkflowServices protocol
+    # (platform/workflows/types.py) mandates a ``build(run_id)`` classmethod
+    # on every services bundle; VRWorkflowServices.build is that contract's
+    # implementation, not a forwarding wrapper.
+    ("vr/workflow/services.py", "build", "consider inlining"),
 
     # Category: rule 68 content_slice_truncation. RFC #149 auto-patch.
     # These two caps bound LLM-SYNTHESIS PROMPT INPUT, not stored or

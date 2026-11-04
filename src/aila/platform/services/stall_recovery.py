@@ -78,7 +78,6 @@ async def sweep_stalled_investigations(
     *,
     submit_fn: SubmitFn,
     sweepable_kinds: tuple[str, ...],
-    single_submit_kinds: tuple[str, ...],
     env_prefix: str,
     investigations_table: str,
     branches_table: str,
@@ -100,10 +99,6 @@ async def sweep_stalled_investigations(
             tests override with a capture-style mock.
         sweepable_kinds: kinds the sweep handles. Rows whose kind is
             not in this tuple are ignored at the SQL level.
-        single_submit_kinds: subset of ``sweepable_kinds`` that own
-            their own branch lifecycle. Rows with these kinds get one
-            inv-level submit; no branch fan-out. Empty tuple for
-            modules with no such kinds.
         env_prefix: env-var prefix. ``<PREFIX>_LIMIT`` overrides
             ``rate_per_tick``; ``<PREFIX>_IDLE_MIN`` overrides
             ``idle_minutes``.
@@ -126,7 +121,6 @@ async def sweep_stalled_investigations(
         stall=StallBinding(
             submit_fn=submit_fn,
             sweepable_kinds=sweepable_kinds,
-            single_submit_kinds=single_submit_kinds,
             env_prefix=env_prefix,
             branches_table=branches_table,
             idle_minutes=idle_minutes,

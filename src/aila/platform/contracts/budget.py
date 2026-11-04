@@ -31,7 +31,6 @@ class BudgetConfig(BaseModel):
 
     max_turns: int = 30
     max_tool_time_seconds: float = 14400.0  # 4 hours
-    auto_waive_recommended_at: float = 0.8  # waive RECOMMENDED obligations at 80% turns
     extension_turns: int = 15
     extension_tool_time_seconds: float = 7200.0  # 2 hours
     # A-priori estimate: dollars per turn used before any measured cost has
@@ -95,11 +94,6 @@ class BudgetState(BaseModel):
     def exhausted(self) -> bool:
         """True if either budget is fully consumed."""
         return self.turns_remaining <= 0 or self.tool_time_remaining_seconds <= 0.0
-
-    @property
-    def should_waive_recommended(self) -> bool:
-        """True when turn fraction >= auto-waive threshold."""
-        return self.turn_fraction >= self.config.auto_waive_recommended_at
 
     def record_turn(self) -> None:
         """Charge one turn against the turn budget."""

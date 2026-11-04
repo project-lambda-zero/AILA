@@ -20,7 +20,7 @@ no downstream consumer):
   PROFILE_SPEC_DRAFT      \u2192 KnowledgeService write under
                             ``vr.profile_spec.workspace.<id>``.
   PATCH_ASSESSMENT_REPORT \u2192 fan out variant_hunt children +
-                            (optionally) enqueue N-day workflow.
+                            (optionally) submit an N-day investigation.
   STRATEGY_DESCRIPTOR     \u2192 KnowledgeService write under
                             ``vr.strategy_descriptor.workspace.<id>``.
   CRASH_TRIAGE_REPORT     \u2192 KnowledgeService write under
@@ -51,7 +51,6 @@ from sqlmodel import select as _select
 
 from aila.modules.vr._task_queue import (
     default_task_queue,
-    enqueue_vr_nday,
 )
 from aila.modules.vr._task_queue import (
     default_task_queue as _build_default_task_queue,
@@ -69,6 +68,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
     VRInvestigationOutcomeRecord,
     VRInvestigationRecord,
+    VRProjectRecord,
     VRTargetRecord,
 )
 from aila.modules.vr.services.outcome_review import (
@@ -542,7 +542,7 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
 
         # fix §239 -- variant-hunt advisory now stamps every DIRECT_FINDING
         # outcome, not only kind=variant_hunt investigations. AUDIT and
-        # NDAY children were silently skipping the stamp; operators saw
+        # N-day children were silently skipping the stamp; operators saw
         # blank advisories on findings spawned through those paths. The
         # advisory remains informational -- `exhaustion_declared` when the
         # agent's answer text declares variants are dead/absent (regex
@@ -1338,6 +1338,60 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
             uow.session.add(row)
             await uow.session.commit()
 
+    async def _submit_nday_investigation(
+        self,
+        *,
+        parent_inv: VRInvestigationRecord,
+        target_row: VRTargetRecord,
+    ) -> str:
+        """Stage an N-day hub investigation for the parent's project and submit it.
+
+        The hub task resolves the target, the patched binary
+        (``project_id -> VRProjectRecord.patched_target_id``), and the analysis
+        workstation from persisted rows, so only the investigation id is
+        submitted. Returns the submitted task id.
+        """
+        from aila.modules.vr.services.investigation_hub import (
+            NDAY_DEFAULT_BUDGET_USD,
+            build_nday_question,
+            create_nday_investigation,
+        )
+        from aila.modules.vr.workflow.task import run_vr_investigate
+
+        project_id = str(parent_inv.project_id)
+        async with UnitOfWork() as uow:
+            project = (await uow.session.exec(
+                _select(VRProjectRecord).where(VRProjectRecord.id == project_id),
+            )).first()
+            if project is None:
+                raise ValueError(f"project {project_id} not found")
+            nday_inv = await create_nday_investigation(
+                uow.session,
+                target_id=target_row.id,
+                project_id=project.id,
+                team_id=parent_inv.team_id,
+                title=project.name,
+                initial_question=build_nday_question(
+                    project.cve_id, project.context_notes,
+                ),
+                cost_budget_usd=NDAY_DEFAULT_BUDGET_USD,
+                auto_pilot=True,
+                parent_investigation_id=parent_inv.id,
+            )
+            nday_investigation_id = nday_inv.id
+            await uow.session.commit()
+
+        task_queue = self._task_queue_factory()
+        handle = await task_queue.submit(
+            track="vr",
+            fn=run_vr_investigate,
+            kwargs={"investigation_id": nday_investigation_id},
+            user_id="system",
+            group_id="vr_dispatcher",
+            team_id=parent_inv.team_id,
+        )
+        return str(getattr(handle, "task_id", nday_investigation_id))
+
     async def _queue_poc_writer(
         self,
         *,
@@ -1573,7 +1627,7 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
         investigation_id: str,
         payload: dict[str, Any],
     ) -> OutcomeDispatchResult:
-        """PATCH_ASSESSMENT_REPORT → spawn variant_hunt children + (optionally) enqueue nday.
+        """PATCH_ASSESSMENT_REPORT → spawn variant_hunt children + (optionally) submit an N-day investigation.
 
         Two parallel paths, both run when their inputs are present:
 
@@ -1585,7 +1639,7 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
            the report and no follow-up audit ever happens.
 
         2. ``patch_descriptor`` ({vulnerable_ref, patched_ref, repo_url})
-           -- kick off the N-day workflow that materialises the
+           -- submit an N-day investigation that materialises the
            assessment into a finding + disclosure scaffold. Optional;
            skipped when the report is a pure patch-verification with no
            N-day disclosure path.
@@ -1643,17 +1697,16 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
                 except (ValueError, RuntimeError) as exc:
                     spawn_errors.append(f"{type(exc).__name__}:{exc}")
 
-        # Path 2: nday enqueue (optional -- only when patch_descriptor present).
+        # Path 2: N-day submit (optional -- only when patch_descriptor present).
         patch_descriptor = payload.get("patch_descriptor") or {}
-        assessment = payload.get("assessment") or {}
         nday_handle_id: str | None = None
         nday_error: str | None = None
         if isinstance(patch_descriptor, dict) and patch_descriptor:
-            # fix §265 -- explicit required-key check before enqueue. The
-            # nday workflow upstream blew up midway when any of these
+            # fix §265 -- explicit required-key check before submit. The
+            # N-day investigation upstream blew up midway when any of these
             # were absent; raise at the dispatcher so the outcome ends
             # up FAILED with a clear reason instead of silently leaving
-            # the nday queue empty + a half-touched assessment row.
+            # the N-day investigation unsubmitted + a half-touched assessment row.
             missing = [
                 k for k in ("vulnerable_ref", "patched_ref", "repo_url")
                 if not patch_descriptor.get(k)
@@ -1662,19 +1715,22 @@ class OutcomeDispatcher(OutcomeDispatcherBase):
                 raise ValueError(
                     f"patch_descriptor missing required keys: {missing}",
                 )
-            try:
-                handle = await enqueue_vr_nday(
-                    self._task_queue_factory(),
-                    source_outcome_id=outcome_id,
-                    patch_descriptor=patch_descriptor,
-                    assessment=assessment,
-                    parent_investigation_id=parent_inv.id,
-                    target_id=target_row.id,
-                    team_id=target_row.team_id,
+            # The patched target resolves through investigation -> project,
+            # so an N-day cannot run from a project-less investigation. The
+            # refusal is reported in ``reason`` like any other N-day failure.
+            if parent_inv.project_id is None:
+                nday_error = (
+                    f"ValueError:investigation {investigation_id} has no project; "
+                    "N-day requires the project's patched target"
                 )
-                nday_handle_id = handle.task_id
-            except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
-                nday_error = f"{type(exc).__name__}:{exc}"
+            else:
+                try:
+                    nday_handle_id = await self._submit_nday_investigation(
+                        parent_inv=parent_inv,
+                        target_row=target_row,
+                    )
+                except (OSError, TimeoutError, RuntimeError, ValueError) as exc:
+                    nday_error = f"{type(exc).__name__}:{exc}"
 
         # Both paths absent -- at least the verdict prose lands in the
         # outcome row; report it as DISPATCHED so the UI shows green.

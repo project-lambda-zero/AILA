@@ -1,13 +1,13 @@
 """VR binding of the platform stall-recovery sweep.
 
 Binds the platform generic to VR's investigations + branches tables, the
-VR sweepable-kind set (with ``n_day`` marked as a single-submit kind so
-the sweep skips branch fan-out for it), the VR env-var prefix, and the
-VR task submitter.
+VR sweepable-kind set, the VR env-var prefix, and the VR task submitter.
+Every hub investigation kind, including ``n_day``, recovers per active
+branch.
 
 ``_default_submit_fn`` stays module-side because it imports the VR-owned
-task functions (``run_vr_investigate`` + ``run_vr_nday``) with the
-``n_day`` dispatch branch. The imports are deferred so the sweep module
+task function (``run_vr_investigate``, the hub for every investigation
+kind including ``n_day``). The import is deferred so the sweep module
 can be imported from the worker boot path without pulling the module
 loader / task queue surface.
 
@@ -57,13 +57,6 @@ _SWEEPABLE_KINDS: tuple[str, ...] = (
     "audit", "discovery", "variant_hunt", "triage", "n_day",
 )
 
-# Kinds whose task body owns its own branch lifecycle -- the sweep
-# emits a single inv-level submit and skips branch fan-out. ``n_day``'s
-# task body manages its own internal branching, so the sweep hands it
-# only the investigation id.
-_SINGLE_SUBMIT_KINDS: tuple[str, ...] = ("n_day",)
-
-
 async def _default_submit_fn(
     inv_kind: str,
     inv_id: str,
@@ -77,28 +70,17 @@ async def _default_submit_fn(
     recovery-sweep import.
     """
     from aila.modules.vr._task_queue import default_task_queue
-    from aila.modules.vr.workflow.task import (
-        run_vr_investigate,
-        run_vr_nday,
-    )
+    from aila.modules.vr.workflow.task import run_vr_investigate
 
-    fn: Any
-    kwargs: dict[str, object]
-    if inv_kind == "n_day":
-        fn = run_vr_nday
-        # nday entry takes investigation_id only; the task body owns
-        # its own branch lifecycle internally.
-        kwargs = {"investigation_id": inv_id}
-    else:
-        fn = run_vr_investigate
-        kwargs = {"investigation_id": inv_id}
-        if branch_id:
-            kwargs["branch_id"] = branch_id
+    del inv_kind  # SubmitFn positional contract; every VR kind routes through run_vr_investigate
+    kwargs: dict[str, object] = {"investigation_id": inv_id}
+    if branch_id:
+        kwargs["branch_id"] = branch_id
 
     task_queue = default_task_queue()
     await task_queue.submit(
         track="vr",
-        fn=fn,
+        fn=run_vr_investigate,
         kwargs=kwargs,
         user_id="system",
         group_id="vr_stall_recovery",
@@ -118,7 +100,6 @@ _stall_sweep_bound = partial(
     _platform_sweep,
     submit_fn=_default_submit_fn,
     sweepable_kinds=_SWEEPABLE_KINDS,
-    single_submit_kinds=_SINGLE_SUBMIT_KINDS,
     env_prefix="AILA_VR_STALL_RECOVERY",
     investigations_table="vr_investigations",
     branches_table="vr_investigation_branches",

@@ -82,13 +82,10 @@ Remaining:
    `Field(discriminator="kind")` on the union; set `kind` at each producer.
    `module_payload` is response-only (not persisted) -> no data migration. Check
    the frontend types if it consumes the payload shape.
-2. **#61-3 obligation enforcement** (L / design) -- `obligations.adjudicate()`
-   is called only by `nday_researcher`; 5/6 modules never enforce evidence
-   obligations. Two honest options: (a) add a platform post-outcome
-   adjudication step in the workflow/runtime so every module enforces
-   obligations; (b) scope the obligation system honestly to nday and document
-   it. Recommend (a) as a non-blocking post-outcome hook; treat as its own
-   design pass. RISKY only if made a blocking gate mid-workflow.
+2. **#61-3 obligation enforcement** -- Closed in 0.6.5. The dedicated n-day
+   researcher and the platform obligation module were deleted. N-day projects
+   now run through `VR_INVESTIGATE_HUB`, so the proposed platform-wide
+   post-outcome obligation hook is no longer part of this backlog.
 
 ### #39 BUG: Observability and debug correlation -- L (mostly doable; one new component)
 Not truly blocked -- most of it is additive. Feeds #32 (record-replay) and #33
@@ -212,8 +209,8 @@ per-turn primitives (run_turn ~395 dup lines, tool_executor, auto_steering 746
 zero-drift dup lines, intent_classifier, branch_manager, claim_verifier,
 outcome_dispatcher). Strictly ordered 1->7.
 1. auto_steering + intent_classifier -> platform (mechanical zero-drift lift).
-2. `SiblingConsensusInjector` + `IdempotentLLMCall` -- adopt at 5 idempotency
-   BYPASS sites (`claim_verifier:582,677`, `nday_researcher:305`,
+2. `SiblingConsensusInjector` + `IdempotentLLMCall` -- adopt at 4 idempotency
+   BYPASS sites (`claim_verifier:582,677`,
    `synthesis_agent:201`, `pattern_extractor:152`); fold cache-store into the
    post-LLM UoW so it commits/rolls-back together (highest-risk fix).
 3. `BranchPool` -- cap via `ConfigRegistry` (retires VR `os.environ` at
@@ -224,7 +221,7 @@ outcome_dispatcher). Strictly ordered 1->7.
 6. `OutcomeDispatcherBase` -- fix TOCTOU (`outcome_dispatcher:215-244`) with
    `SELECT FOR UPDATE` + same-UoW `dispatch_status='claimed'`; migration if the
    enum lacks `claimed`.
-7. `AgentTurnRunnerBase` capstone (`src/aila/platform/agents/turn_runner.py:146`) -- VR gains the empty-rationale reject-to-abstain
+7. `AgentTurnRunnerBase` capstone (`src/aila/platform/agents/turn_runner.py:162`) -- VR gains the empty-rationale reject-to-abstain
    downgrade; modules collapse to `wiring.py`. Ship last.
 Risk: turn-runner extraction can break per-module submit-gate ordering (keep
 `submit_gates` an ordered module-controlled list). All VR `os.environ` reads move
@@ -450,8 +447,7 @@ Bank the current work first: merge PR #66 (0.2.1 -> 0.3.0) and authorize
 **Wave 5 -- capstone:**
 - #34 ADLC (needs #33 + #32 + #31 all landed)
 - #42 crypto (HKDF salt + rotation, after a DB backup) ; #45-4 JSONB (rework 3
-  consumers first) ; #51 sandbox runtime (operator infra decision) ; #61-3
-  obligation enforcement (design pass)
+  consumers first) ; #51 sandbox runtime (operator infra decision)
 
 ### Operator decisions this plan surfaces
 1. Merge PR #66 and authorize `make migrate` (072-076) before new stacks?
@@ -459,7 +455,7 @@ Bank the current work first: merge PR #66 (0.2.1 -> 0.3.0) and authorize
    unattended and multi-tenant deployment.
 3. #42 reject-by-default SSH host keys -- ship behind a default-off config flag now?
 4. #49 embedding dimension -- 1024 (re-embed sweep) or 384 (MiniLM)?
-5. #61-3 obligations -- platform-wide post-outcome enforcement, or honestly scope
-   to nday?
+5. ~~#61-3 obligations~~ -- Resolved in 0.6.5: the obligation module and its only
+   caller (the n-day researcher) were deleted; no platform-wide enforcement is planned.
 
 ---

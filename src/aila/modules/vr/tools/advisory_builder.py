@@ -2,7 +2,7 @@
 
 Loads CVSS templates and CWE mappings from the VR module's data files,
 applies caller-supplied overrides, and computes CVSS 3.1 base scores using
-the official FIRST formula. ``format_advisory`` renders a VRAdvisory-shaped
+the official FIRST formula. ``format_advisory`` renders an advisory-shaped
 dict suitable for downstream serialization.
 """
 from __future__ import annotations
@@ -131,11 +131,11 @@ class AdvisoryBuilderTool(Tool):
         }
 
     def format_advisory(self, finding: dict[str, Any]) -> dict:
-        """Render a VRAdvisory-shaped dict from a finding payload.
+        """Render an advisory-shaped dict from a finding payload.
 
         The caller supplies a flattened dict (crash_type, root_cause,
-        cvss, cwe, poc_reliability, affected_versions, ...). Output
-        matches the ``VRAdvisory`` contract field-by-field.
+        cvss, cwe, poc_reliability, affected_versions, ...). Output is a
+        plain dict of advisory fields with no separate contract model.
         """
         crash_type = str(finding.get("crash_type") or "")
         root_cause = str(finding.get("root_cause") or "")

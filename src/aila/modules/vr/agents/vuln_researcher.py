@@ -81,10 +81,20 @@ from aila.modules.vr.workflow.states.investigation_setup import (
     _resolve_retrieved_knowledge,
 )
 from aila.platform.agents.auto_steering import _normalize_acked_observable
+from aila.platform.agents.prompt_sections import (
+    PROMPT_CONFIDENCE_RANK,
+    load_prompt_seed_from_file,
+    outcome_payload,
+    render_active_directives_section,
+    render_available_tools_section,
+    render_operator_messages_section,
+    render_pattern_section,
+    render_retrieved_knowledge_section,
+)
 from aila.platform.agents.turn_helpers import (
     decode_case_state,
 )
-from aila.platform.agents.turn_runner import AgentTurnRunnerBase
+from aila.platform.agents.turn_runner import AgentTurnRunnerBase, UnresolvedHypGateProse
 from aila.platform.config_base import ModuleConfigReader
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.enums import PersonaVoice
@@ -98,11 +108,7 @@ from aila.platform.contracts.reasoning import (
 from aila.platform.llm.prompt_layout import (
     is_prompt_layout_enabled as _is_prompt_layout_enabled,
 )
-from aila.platform.mcp.adapters import (
-    KNOWN_TOOLS,
-    specialized_tools,
-)
-from aila.platform.mcp.adapters.known_tools import tools_for_language
+from aila.platform.mcp.adapters.known_tools import KNOWN_TOOLS, tools_for_language
 from aila.platform.mcp.adapters.registry import register_bridge_tools
 from aila.platform.mcp.bridges.knowledge import KnowledgeBridgeTool
 from aila.platform.mcp.call_log_record import McpCallLogRecord
@@ -116,7 +122,6 @@ from aila.platform.prompts.seeds import (
     VR_APK_STATIC_TEXT,
     VR_MASVS_TEXT,
     VR_NARRATIVE_TEXT,
-    VR_NDAY_TEXT,
     VR_SYNTHESIS_TEXT,
 )
 from aila.platform.prompts.version_store import PromptVersionStore
@@ -208,6 +213,20 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
 
     # ---- AgentTurnRunnerBase config + hooks (RFC-03 Phase 7) -----------
     _LOG_LABEL = "vuln_researcher"
+    _unresolved_hyp_gate_prose = UnresolvedHypGateProse(
+        headline=(
+            "*** GRACEFUL STOP BLOCKED - UNRESOLVED LIVE HYPOTHESES ***\n"
+        ),
+        action=(
+            "You are trying to STOP (submit) while {count} live "
+            "hypotheses are still unresolved. You CANNOT stop this "
+            "investigation until every live hypothesis is resolved -- "
+            "confirmed into the finding or rejected with evidence. A "
+            "dangling hypothesis means the panel has not actually settled "
+            "the question, and the operator cannot tell which claims your "
+            "finding addresses.\n"
+        ),
+    )
     _error_cls = VulnResearcherError
     _result_cls = VulnResearcherTurnResult
     _message_model = VRInvestigationMessageRecord
@@ -851,7 +870,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
 
         sections: list[ContextSection] = []
 
-        operator_section = _render_operator_messages_section(pending_ops)
+        operator_section = render_operator_messages_section(pending_ops)
         if operator_section:
             sections.append(ContextSection(
                 tier=ContextTier.PINNED,
@@ -860,7 +879,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                 droppable=False,
             ))
 
-        directive_section = _render_active_directives_section(case_state)
+        directive_section = render_active_directives_section(case_state)
         if directive_section:
             sections.append(ContextSection(
                 tier=ContextTier.PINNED,
@@ -897,7 +916,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                 ),
             ))
 
-        pattern_section = _render_pattern_section(patterns)
+        pattern_section = render_pattern_section(patterns)
         if pattern_section:
             sections.append(ContextSection(
                 tier=ContextTier.RECENT,
@@ -1189,151 +1208,6 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             # so a crash/coverage signal fires kill-criteria THIS turn.
             self._pending_fuzz_observables = pending_fuzz
             return messages[:10]
-
-    def _maybe_reject_submit_with_unresolved_hypotheses(
-        self,
-        *,
-        decision: ReasoningTurnDecision,
-        case_state: ReasoningCaseState,
-        turn_number: int,
-    ) -> ReasoningTurnDecision:
-        """Intercept any terminal_submit emitted while live hypotheses
-        remain unresolved.
-
-        A hypothesis is "resolved" by this turn when it appears in
-        ``decision.rejected[]`` with the same id. Anything in
-        ``case_state.hypotheses`` whose id isn't in that set is an
-        unresolved live hypothesis. Submitting with unresolved
-        hypotheses leaves the operator (or a downstream reviewer) to
-        guess which claims the finding actually addresses -- that's the
-        same trap the closure-discipline section of system_audit.md
-        warns against, made into a hard structural gate.
-
-        Same shape as ``_maybe_reject_variant_hunt_submit``:
-          - Pass: clear directive + counter, return original decision.
-          - Reject (under cap): convert to non-terminal placeholder,
-            inject directive into case_state.observables.
-          - Force-through (over cap): stamp payload with audit advisory
-            and return the submit.
-        """
-        live_ids = [h.id for h in case_state.hypotheses if h.id]
-        newly_rejected_ids = {r.id for r in decision.rejected if r.id}
-        unresolved = [hid for hid in live_ids if hid not in newly_rejected_ids]
-
-        if not unresolved:
-            # Passes the gate. Clear any prior rejection counter so a
-            # later regression on the same branch starts fresh.
-            case_state.observables.pop(
-                "_unresolved_hyp_submit_rejected_count", None,
-            )
-            case_state.observables.pop(
-                "_directive.unresolved_hyp_submit_rejected", None,
-            )
-            return decision
-
-        prior_rejects = int(
-            case_state.observables.get("_unresolved_hyp_submit_rejected_count", 0) or 0,
-        )
-        new_reject_count = prior_rejects + 1
-
-        # Compact hypothesis listing for the directive (cap at 10 to
-        # keep the prompt section bounded; agent can see the rest in
-        # the regular case_model rendering).
-        hyp_by_id = {h.id: h for h in case_state.hypotheses if h.id}
-        unresolved_lines: list[str] = []
-        for hid in unresolved[:10]:
-            h = hyp_by_id.get(hid)
-            claim = (h.claim if h else "")[:140]
-            unresolved_lines.append(f"  - {hid}: {claim}")
-        if len(unresolved) > 10:
-            unresolved_lines.append(f"  ... and {len(unresolved) - 10} more")
-        unresolved_block = "\n".join(unresolved_lines)
-
-        if new_reject_count > self._unresolved_hyp_reject_cap:
-            _log.warning(
-                "unresolved_hyp submit FORCED THROUGH after %d rejections "
-                "inv=%s branch=%s turn=%d -- payload retained %d unresolved "
-                "hypothesis ids: %s",
-                prior_rejects, self.investigation_id, self.branch_id,
-                turn_number, len(unresolved), ",".join(unresolved[:20]),
-            )
-            payload = decision.payload or {}
-            new_payload = dict(payload)
-            new_payload["unresolved_hypotheses_at_submit_advisory"] = {
-                "count": len(unresolved),
-                "ids": unresolved[:50],
-                "forced_through_after_rejects": prior_rejects,
-            }
-            case_state.observables.pop(
-                "_directive.unresolved_hyp_submit_rejected", None,
-            )
-            case_state.observables.pop(
-                "_unresolved_hyp_submit_rejected_count", None,
-            )
-            return decision.model_copy(update={"payload": new_payload})
-
-        _log.info(
-            "unresolved_hyp submit REJECTED inv=%s branch=%s turn=%d "
-            "rejects=%d/%d -- %d live hypotheses unresolved",
-            self.investigation_id, self.branch_id, turn_number,
-            new_reject_count, self._unresolved_hyp_reject_cap, len(unresolved),
-        )
-
-        case_state.observables["_unresolved_hyp_submit_rejected_count"] = new_reject_count
-        case_state.observables["_directive.unresolved_hyp_submit_rejected"] = (
-            "*** GRACEFUL STOP BLOCKED - UNRESOLVED LIVE HYPOTHESES ***\n"
-            f"Rejection {new_reject_count}/{self._unresolved_hyp_reject_cap} on this branch.\n"
-            "\n"
-            f"You are trying to STOP (submit) while {len(unresolved)} live "
-            "hypotheses are still unresolved. You CANNOT stop this "
-            "investigation until every live hypothesis is resolved -- "
-            "confirmed into the finding or rejected with evidence. A "
-            "dangling hypothesis means the panel has not actually settled "
-            "the question, and the operator cannot tell which claims your "
-            "finding addresses.\n"
-            "\n"
-            "UNRESOLVED LIVE HYPOTHESES:\n"
-            f"{unresolved_block}\n"
-            "\n"
-            "REQUIRED for your next decision: for EACH unresolved id above,\n"
-            "EITHER\n"
-            "  (a) add it to `decision.rejected[]` with a `reason` that cites\n"
-            "      the concrete evidence (file:line, tool output, or another\n"
-            "      hypothesis's rejection) that disproves it. The standard\n"
-            "      'rejected' schema is {id, claim, reason}.\n"
-            "  (b) fold it into your submission's `answer` + `provenance` as\n"
-            "      supporting evidence (the finding IS this hypothesis,\n"
-            "      confirmed). Cite the hypothesis id verbatim in your answer\n"
-            "      so the reader can trace what your finding claims to settle.\n"
-            "\n"
-            "Then re-emit `action: submit` with the cleaned state. ALL live\n"
-            "hypotheses must be reachable from (a) OR (b) on the same turn as\n"
-            "the submit.\n"
-            "\n"
-            f"After {self._unresolved_hyp_reject_cap} rejections on this branch the\n"
-            "submit is FORCED THROUGH with unresolved_hypotheses_at_submit_\n"
-            "advisory stamped on the payload listing the surviving ids. The\n"
-            "operator will audit those entries. Don't burn through your\n"
-            "safety budget when the fix is mechanical."
-        )
-
-        payload = decision.payload or {}
-        rejected_command_text = (
-            "[HYPOTHESIS GATE: submit rejected - see "
-            "_directive.unresolved_hyp_submit_rejected]\n"
-            "Original submit attempt:\n"
-            + (payload.get("answer") or "(no answer)")[:1000]
-        )
-        return decision.model_copy(update={
-            "action": "tool_run",
-            "command": "",
-            "answer": rejected_command_text,
-            "payload": {
-                **payload,
-                "_unresolved_hyp_gate_rejected": True,
-                "_unresolved_hyp_gate_reject_count": new_reject_count,
-            },
-        })
 
     def _confirmed_open_hypotheses(
         self,
@@ -3428,103 +3302,20 @@ def _render_sibling_context_section(
     return "\n".join(lines) + "\n"
 
 
-_PATTERN_SECTION_BUDGET = 3000
 
-
-def _render_pattern_section(patterns: list[dict[str, Any]]) -> str:
-    """Render reusable patterns from prior investigations (Knowledge
-    Transfer plan GA-41).
-
-    Patterns are extracted from completed investigations and surface
-    proven exploitation techniques, fuzzing strategies, search
-    heuristics, tool recipes, and triage rules. Without injecting them
-    into the per-turn prompt, every new investigation starts from zero
-    and the 1.7k+ patterns sitting in vr_patterns deliver no value.
-
-    Hard-caps the section at ``_PATTERN_SECTION_BUDGET`` chars so a
-    workspace with hundreds of relevant patterns doesn't blow the
-    prompt budget. Patterns are assumed to be pre-ranked by
-    ``PatternStore.applicable()`` so truncation drops the
-    lowest-relevance entries first.
-    """
-    if not patterns:
-        return ""
-    header = (
-        "# Applicable patterns from prior investigations\n\n"
-        "These patterns were extracted from successful prior investigations on\n"
-        "similar targets. Use them to guide your hypothesis formation and tool\n"
-        "selection -- they represent proven techniques.\n\n"
-    )
-    lines: list[str] = []
-    used = len(header)
-    for p in patterns:
-        title = str(p.get("summary") or "(untitled pattern)").strip()
-        kind = str(p.get("kind") or "unknown").strip()
-        body = str(p.get("body") or "").strip()
-        block = f"## Pattern: {title}\nKind: {kind}\n"
-        if body:
-            block += f"{body}\n"
-        block += "\n"
-        if used + len(block) > _PATTERN_SECTION_BUDGET:
-            # Truncate the last block to fit the remaining budget rather
-            # than dropping it entirely, so the agent at least sees the
-            # title + kind of the next-most-relevant pattern.
-            remaining = _PATTERN_SECTION_BUDGET - used
-            if remaining > 80:
-                lines.append(block[: remaining - 4] + "...\n")
-            break
-        lines.append(block)
-        used += len(block)
-    if not lines:
-        return ""
-    return header + "".join(lines)
-
-
-_RETRIEVED_SECTION_BUDGET: int = 4000
 
 
 def _render_retrieved_knowledge_section(hits: list[dict[str, Any]]) -> str:
-    """Render prior knowledge retrieved from the platform knowledge base for
-    the RFC-12 read loop.
-
-    Each hit is a compact dict ({namespace, content, score}) resolved at setup
-    from earlier investigations' audit memos, findings, and strategy notes on
-    similar targets. The content already passed the retrieval sanitize/classify
-    gate; it is still untrusted prior corpus, so the header tells the agent to
-    corroborate before relying on it. Bounded to ``_RETRIEVED_SECTION_BUDGET``
-    chars; hits are pre-ranked by relevance so truncation drops the weakest
-    first.
-    """
-    if not hits:
-        return ""
-    header = (
-        "# Retrieved prior knowledge\n\n"
-        "Audit memos, findings, and strategy notes retrieved from earlier\n"
-        "investigations on similar targets. This is untrusted prior context --\n"
-        "corroborate against the live target before relying on any claim.\n\n"
+    """Render RFC-12 prior knowledge under the VR section header."""
+    return render_retrieved_knowledge_section(
+        hits,
+        header=(
+            "# Retrieved prior knowledge\n\n"
+            "Audit memos, findings, and strategy notes retrieved from earlier\n"
+            "investigations on similar targets. This is untrusted prior context --\n"
+            "corroborate against the live target before relying on any claim.\n\n"
+        ),
     )
-    lines: list[str] = []
-    used = len(header)
-    for h in hits:
-        namespace = str(h.get("namespace") or "")
-        parts = namespace.split(".")
-        kind = parts[1] if len(parts) > 1 else (namespace or "knowledge")
-        score = h.get("score")
-        content = str(h.get("content") or "").strip()
-        if not content:
-            continue
-        score_str = f" (relevance {float(score):.2f})" if isinstance(score, (int, float)) else ""
-        block = f"## {kind}{score_str}\n{content}\n\n"
-        if used + len(block) > _RETRIEVED_SECTION_BUDGET:
-            remaining = _RETRIEVED_SECTION_BUDGET - used
-            if remaining > 80:
-                lines.append(block[: remaining - 4] + "...\n")
-            break
-        lines.append(block)
-        used += len(block)
-    if not lines:
-        return ""
-    return header + "".join(lines)
 
 
 def _render_cve_intel_section(entries: list[dict[str, Any]]) -> str:
@@ -3683,82 +3474,10 @@ def _reorder_sections_for_prompt_layout(
     return sorted(split, key=_sort_key)
 
 
-def _render_operator_messages_section(messages: list[dict[str, Any]]) -> str:
-    """Render pending operator messages as a markdown block for the prompt.
-
-    Empty when no messages -- caller concatenates unconditionally.
-    Framing is intentionally LOUD because this block ends up at the TOP
-    of the user prompt and overrides everything below it. Operator
-    steering is a hard override, not advisory; the agent treating it as
-    a suggestion is the bug the loud framing exists to prevent.
-    """
-    if not messages:
-        return ""
-    lines: list[str] = [
-        "# *** OPERATOR STEERING -- MANDATORY OVERRIDE ***",
-        "",
-        "The human operator sent these messages. They override the",
-        "default strategy, override your current hypothesis, and override",
-        "any prior tool-selection plan. Read each one, decide what action",
-        "it dictates, and make that your next move. Ignoring a steering",
-        "message is a contract violation.",
-        "",
-        "ACK CONTRACT: after you actually act on a steering message,",
-        "include its id in your decision's observables under the",
-        "reserved key `_acked_operator_messages` as a JSON list of",
-        "strings (one id per element). Acknowledged messages stop",
-        "appearing on subsequent turns. ONLY ACK after acting --",
-        "premature ACK loses the steering forever. fix §333 --",
-        "canonical shape is a list; the comma-separated string shape",
-        "is still accepted at read time for legacy case_state rows but",
-        "MUST NOT be emitted by new decisions.",
-        "Example: observables: {\"_acked_operator_messages\":",
-        "[\"<id1>\", \"<id2>\"]}",
-        "",
-    ]
-    for entry in messages:
-        intent = entry.get("intent") or "unclassified"
-        text = entry.get("text") or ""
-        msg_id = entry.get("id") or "?"
-        lines.append(f"- [id={msg_id} intent={intent}] {text}")
-    lines.append("")
-    lines.append("*** END OPERATOR STEERING ***")
-    lines.append("")
-    return "\n".join(lines) + "\n"
 
 
-def _render_active_directives_section(case_state: ReasoningCaseState) -> str:
-    """Render any ``_directive.*`` observables as a top-level prompt
-    section. Surfaces at PROMPT POSITION 2 (right under operator
-    steering, above # Investigation). Lifting these OUT of case_model
-    means the agent doesn't have to wade through target snapshot + CVE
-    intel + observables to find them -- they're attention-anchored at
-    the top.
 
-    Source of truth: ``case_state.observables`` keys starting with
-    ``_directive.``. Empty-string values are skipped (the clear path
-    set by tool_executor when the agent satisfies the directive).
-    Multiple directives can co-exist (e.g. ``_directive.pivot``,
-    ``_directive.cost_cap``); each renders as its own labelled block.
-    """
-    directives = {
-        k: v for k, v in case_state.observables.items()
-        if k.startswith("_directive.") and isinstance(v, str) and v.strip()
-    }
-    if not directives:
-        return ""
-    lines: list[str] = [
-        "# *** ACTIVE DIRECTIVES (MANDATORY -- act on these THIS TURN) ***",
-        "",
-    ]
-    for key, value in directives.items():
-        label = key[len("_directive."):]
-        lines.append(f"## directive: {label}")
-        lines.append(value.rstrip())
-        lines.append("")
-    lines.append("*** END DIRECTIVES ***")
-    lines.append("")
-    return "\n".join(lines) + "\n"
+
 
 
 _SOURCE_REPO_KINDS = frozenset({"source_repo"})
@@ -3953,24 +3672,7 @@ async def _fetch_tool_specs(
     return out
 
 
-def _format_param(param: dict[str, Any]) -> str:
-    """Render one parameter as ``name: type [required]`` or
-    ``name: type = <default>`` so the agent sees exact call shape.
-    """
-    name = param.get("name", "?")
-    ptype = param.get("type", "any")
-    if param.get("required"):
-        return f"{name}: {ptype} [required]"
-    if "default" in param:
-        default = param["default"]
-        # json.dumps handles strings/numbers/bools/null + escapes;
-        # truncate over-long defaults so a paragraph-sized default
-        # doesn't wreck the signature.
-        rendered = json.dumps(default)
-        if len(rendered) > 60:
-            rendered = rendered[:57] + "..."
-        return f"{name}: {ptype} = {rendered}"
-    return f"{name}: {ptype}"
+
 
 
 def _render_available_tools_section(
@@ -3979,85 +3681,14 @@ def _render_available_tools_section(
     primary_language: str | None = None,
     applicable_servers: set[str] | None = None,
 ) -> str:
-    """Render the catalog of MCP tools the engine may invoke this turn.
-
-    When ``tool_specs`` carries per-server schemas (fetched live from
-    each MCP server's ``GET /tools``), every applicable tool renders
-    as ``server.name(p1: type [required], p2: type = default)`` so
-    the agent sees the exact parameter names + types it must use.
-    When schemas are missing (catalog fetch failed), falls back to a
-    name-only listing from ``KNOWN_TOOLS`` so the prompt still works.
-
-    Servers irrelevant to the target's kind are SUPPRESSED with a
-    short note instead of listed -- the agent kept choosing
-    rea.list_procedures for a source_repo target because the
-    catalog showed every server unconditionally. Filtering at render
-    time prevents the wrong tool family from ever being the obvious
-    pick.
-
-    RFC-11 criterion 4: when ``applicable_servers`` is supplied by
-    the caller (the async prompt builder threads through the set
-    resolved by :func:`_fetch_tool_specs` -- which itself prefers
-    :func:`_applicable_servers_by_capability` over the static name
-    map), it wins over the fallback. Standalone callers (tests,
-    stock renders) that don't pass the kwarg keep the byte-identical
-    static-fallback rendering.
-    """
-    specialized = set(specialized_tools())
-    if applicable_servers is not None:
-        applicable = set(applicable_servers)
-    else:
-        applicable = set(_applicable_servers_for_kind(target_kind))
-    # RFC-12: the read-only knowledge bridge is listed on every kind.
-    applicable.add("knowledge")
-    specs_by_server = tool_specs or {}
-    parts: list[str] = ["# Available tools\n"]
-    if target_kind:
-        parts.append(
-            f"\nTarget kind: `{target_kind}` -- only servers applicable "
-            f"to this kind are listed below. Use the **exact** "
-            f"parameter names shown in each signature; the bridge "
-            f"rejects unknown kwargs.\n",
-        )
-    for server in sorted(KNOWN_TOOLS):
-        if server not in applicable:
-            # Silently skip -- listing "NOT APPLICABLE: rea"
-            # against a source_repo target just gives the agent a hook
-            # to think about binary tools it shouldn't be considering
-            # at all. Surfacing the binary servers on source-repo
-            # prompts was reported as wrong and is corrected here.
-            continue
-
-        live_specs = specs_by_server.get(server) or []
-        if live_specs:
-            parts.append(
-                f"\n## {server} ({len(live_specs)} tools -- live schema)\n\n",
-            )
-            for spec in sorted(live_specs, key=lambda s: s.get("name", "")):
-                tool_name = spec.get("name", "?")
-                full = f"{server}.{tool_name}"
-                marker = " [structured]" if full in specialized else ""
-                params = spec.get("params") or []
-                signature = ", ".join(_format_param(p) for p in params)
-                parts.append(f"- `{full}({signature})`{marker}\n")
-            parts.append("\n")
-        else:
-            # Catalog fetch failed -- fall back to a name-only listing
-            # using the static KNOWN_TOOLS registry filtered by
-            # primary_language (drops tools known-broken on this
-            # target's language, e.g. dead_code on C++). Agent will
-            # know which tools exist; it just won't see signatures.
-            tool_names = sorted(tools_for_language(server, primary_language))
-            parts.append(
-                f"\n## {server} ({len(tool_names)} tools -- "
-                f"schema unavailable)\n\n",
-            )
-            for name in tool_names:
-                full = f"{server}.{name}"
-                marker = " [structured]" if full in specialized else ""
-                parts.append(f"- `{full}`{marker}\n")
-            parts.append("\n")
-    return "".join(parts)
+    """Render the available-tools section using this module's server map."""
+    return render_available_tools_section(
+        target_kind,
+        tool_specs,
+        primary_language,
+        applicable_servers,
+        applicable_servers_for_kind=_applicable_servers_for_kind,
+    )
 
 
 
@@ -4151,32 +3782,7 @@ def _terminal_outcome_kind(decision: ReasoningTurnDecision) -> OutcomeKind:
 
 
 
-def _outcome_payload(decision: ReasoningTurnDecision) -> dict[str, Any]:
-    """Build the outcome row payload from the decision.
 
-    Merges the agent's structured ``decision.payload`` dict (which
-    carries affected_components, variant_hunt_orders, crash_type,
-    poc_code, etc. per the system_audit.md submission schema) with
-    the top-level answer / reasoning / provenance / contract fields.
-
-    The structured payload keys win on conflict so the agent's intent
-    is preserved.
-    """
-    base: dict[str, Any] = {
-        "answer": decision.answer or "",
-        "reasoning": decision.reasoning,
-        "provenance": decision.provenance.model_dump(mode="json"),
-        "contract": (
-            decision.contract.model_dump(mode="json") if decision.contract else None
-        ),
-    }
-    # Promote everything the agent supplied under `payload` to the
-    # top level so the dispatcher's payload.get('variant_hunt_orders')
-    # etc. lookups resolve.
-    structured = decision.payload or {}
-    for k, v in structured.items():
-        base[k] = v
-    return base
 
 
 _OUTCOME_KIND_RANK = {
@@ -4186,10 +3792,7 @@ _OUTCOME_KIND_RANK = {
     "assessment_report": 3,
     "audit_memo": 4,
 }
-_CONFIDENCE_RANK = {
-    "exact": 0, "strong": 1, "medium": 2,
-    "caveated": 3, "weak": 4, "unknown": 5,
-}
+
 
 
 def _canonical_evidence_refs_json(payload: dict[str, Any]) -> str:
@@ -4257,7 +3860,7 @@ async def _upsert_canonical_outcome(
       - variant_hunt_orders: union dedupe by title
       - poc_code: take new if existing is empty
       - outcome_kind: prefer more-specific via _OUTCOME_KIND_RANK
-      - confidence: keep highest via _CONFIDENCE_RANK
+      - confidence: keep highest via PROMPT_CONFIDENCE_RANK
       - answer: replace if new is ≥20% longer OR comes from a more-
         specific outcome_kind
       - panel_contributions: append every submission as
@@ -4467,8 +4070,8 @@ async def _upsert_canonical_outcome(
         existing.outcome_kind = new_outcome_kind
         changed = True
 
-    new_conf_rank = _CONFIDENCE_RANK.get(new_confidence, 9)
-    old_conf_rank = _CONFIDENCE_RANK.get(existing.confidence, 9)
+    new_conf_rank = PROMPT_CONFIDENCE_RANK.get(new_confidence, 9)
+    old_conf_rank = PROMPT_CONFIDENCE_RANK.get(existing.confidence, 9)
     if new_conf_rank < old_conf_rank:
         existing.confidence = new_confidence
         changed = True
@@ -4616,20 +4219,13 @@ _SEED_STRATEGY_FAMILIES: tuple[str, ...] = (
 
 def _load_prompt_seed_from_file(strategy_family: str, persona_voice: str | None = None) -> str:
     """Read a VR prompt from disk during seed time."""
-    leaf = strategy_family.rsplit(".", 1)[-1]
-    base_path = _PROMPT_DIR / f"system_{leaf}.md"
-    if not base_path.exists():
-        base_path = _PROMPT_DIR / "system_audit.md"
-    if not base_path.exists():
-        raise PromptNotFoundError(f"VR base prompt missing: {base_path}")
-    base = base_path.read_text(encoding="utf-8")
-    if not persona_voice:
-        return base
-    persona_path = _PROMPT_DIR / f"persona_{persona_voice.lower()}.md"
-    if not persona_path.exists():
-        return base
-    persona_prefix = persona_path.read_text(encoding="utf-8")
-    return f"{persona_prefix}\n\n---\n\n{base}"
+    return load_prompt_seed_from_file(
+        strategy_family,
+        persona_voice,
+        prompt_dir=_PROMPT_DIR,
+        fallback_base="system_audit.md",
+        error_label="VR base prompt missing",
+    )
 
 
 async def seed_prompt_versions() -> int:
@@ -4645,7 +4241,7 @@ async def seed_prompt_versions() -> int:
     promotion stays an explicit RFC-10 lifecycle action.
 
     Also seeds the RFC-09 rule-58 migration keys: the VR-owned narrative,
-    n-day, synthesis, and per-check/per-control seed templates lifted out
+    synthesis, and per-check/per-control seed templates lifted out
     of module-level ``_*_PROMPT*`` literals, plus the platform-owned
     claim-verifier extractor + verdict prompts (dedup-safe: the malware
     module seeds the same platform keys, ``register`` deduplicates by
@@ -4676,10 +4272,9 @@ async def seed_prompt_versions() -> int:
 
     # RFC-09 rule-58 migration keys: bodies are the platform prompt seeds
     # extracted from the now-removed versioned ``.md`` files (narrative,
-    # n-day, synthesis, apk-static seed template, masvs seed template).
+    # synthesis, apk-static seed template, masvs seed template).
     migration_entries: tuple[tuple[str, str], ...] = (
         ("vr/narrative/base", VR_NARRATIVE_TEXT),
-        ("vr/nday/base", VR_NDAY_TEXT),
         ("vr/synthesis/base", VR_SYNTHESIS_TEXT),
         ("vr/apk_static_seed/base", VR_APK_STATIC_TEXT),
         ("vr/masvs_seed/base", VR_MASVS_TEXT),
@@ -4731,7 +4326,7 @@ HonestVulnResearcher._fetch_tool_specs = staticmethod(_fetch_tool_specs)
 HonestVulnResearcher._load_prompt = staticmethod(_load_prompt)
 HonestVulnResearcher._decision_to_message_payload = staticmethod(_decision_to_message_payload)
 HonestVulnResearcher._terminal_outcome_kind = staticmethod(_terminal_outcome_kind)
-HonestVulnResearcher._outcome_payload = staticmethod(_outcome_payload)
+HonestVulnResearcher._outcome_payload = staticmethod(outcome_payload)
 HonestVulnResearcher._upsert_canonical_outcome = staticmethod(_upsert_canonical_outcome)
 HonestVulnResearcher._resolve_task_type = staticmethod(resolve_task_type)
 HonestVulnResearcher._evaluate_quorum = staticmethod(evaluate_quorum)

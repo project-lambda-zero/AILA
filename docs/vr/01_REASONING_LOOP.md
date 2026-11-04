@@ -939,7 +939,7 @@ The sections above are the original design exploration. The module that shipped 
 
 ### 8.bis.1 Six personas, not three
 
-Section 9 used to file a single-vs-split-LLM question as open. It's settled -- see the persona table in §9.2. The reasoning loop ALWAYS runs through `HonestVulnResearcher.run_turn()` (`src/aila/modules/vr/agents/vuln_researcher.py:175`), which is inherited from the shared `AgentTurnRunnerBase.run_turn` (`src/aila/platform/agents/turn_runner.py:881`) and parameterised by the per-branch `persona_voice`. Six branches deliberate in parallel; `claim_verifier.py` plus a synthesis agent reduce their outcomes to one finding.
+Section 9 used to file a single-vs-split-LLM question as open. It's settled -- see the persona table in §9.2. The reasoning loop ALWAYS runs through `HonestVulnResearcher.run_turn()` (`src/aila/modules/vr/agents/vuln_researcher.py:180`), which is inherited from the shared `AgentTurnRunnerBase.run_turn` (`src/aila/platform/agents/turn_runner.py:1032`) and parameterised by the per-branch `persona_voice`. Six branches deliberate in parallel; `claim_verifier.py` plus a synthesis agent reduce their outcomes to one finding.
 
 ### 8.bis.2 Auto-steering (in addition to the watchdog)
 

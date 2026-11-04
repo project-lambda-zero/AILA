@@ -21,17 +21,19 @@ from aila.modules.vr.agents.vuln_researcher import (
     _canonical_evidence_refs_json,
     _decision_to_message_payload,
     _fetch_tool_specs,
-    _format_param,
     _load_prompt,
     _mcp_family_rule_for_kind,
-    _outcome_payload,
     _prompt_key,
     _render_available_tools_section,
-    _render_operator_messages_section,
     _render_target_snapshot_section,
     _terminal_outcome_kind,
 )
 from aila.modules.vr.contracts import OutcomeConfidence, OutcomeKind, PayloadKind
+from aila.platform.agents.prompt_sections import (
+    format_param,
+    outcome_payload,
+    render_operator_messages_section,
+)
 from aila.platform.agents.turn_helpers import (
     decode_case_state,
     encode_case_state,
@@ -288,14 +290,14 @@ class TestOutcomePayload:
             confidence="strong",
             contract=ReasoningContract(answer_type="audit"),
         )
-        payload = _outcome_payload(d)
+        payload = outcome_payload(d)
         assert payload["answer"] == "ok"
         assert payload["reasoning"] == "r"
         assert payload["contract"]["answer_type"] == "audit"
 
     def test_no_contract(self) -> None:
         d = ReasoningTurnDecision(reasoning="r", action="submit", answer="x")
-        payload = _outcome_payload(d)
+        payload = outcome_payload(d)
         assert payload["contract"] is None
 
 
@@ -322,10 +324,10 @@ class TestPromptLoading:
 
 class TestRenderOperatorMessagesSection:
     def test_empty_returns_empty_string(self) -> None:
-        assert _render_operator_messages_section([]) == ""
+        assert render_operator_messages_section([]) == ""
 
     def test_single_message_includes_text_and_intent(self) -> None:
-        out = _render_operator_messages_section([
+        out = render_operator_messages_section([
             {"id": "m1", "text": "check JSPI base", "intent": "steering"},
         ])
         assert "check JSPI base" in out
@@ -333,13 +335,13 @@ class TestRenderOperatorMessagesSection:
         assert "OPERATOR STEERING" in out
 
     def test_unclassified_intent_default(self) -> None:
-        out = _render_operator_messages_section([
+        out = render_operator_messages_section([
             {"id": "m1", "text": "look at recv", "intent": ""},
         ])
         assert "intent=unclassified]" in out
 
     def test_multiple_messages_preserve_order(self) -> None:
-        out = _render_operator_messages_section([
+        out = render_operator_messages_section([
             {"id": "m1", "text": "first thought", "intent": "steering"},
             {"id": "m2", "text": "second thought", "intent": "correction"},
         ])
@@ -348,7 +350,7 @@ class TestRenderOperatorMessagesSection:
         assert "intent=correction]" in out
 
     def test_missing_text_doesnt_crash(self) -> None:
-        out = _render_operator_messages_section([{"id": "m1", "intent": "steering"}])
+        out = render_operator_messages_section([{"id": "m1", "intent": "steering"}])
         assert "intent=steering]" in out
 
 
@@ -393,11 +395,11 @@ class TestFormatParam:
     """Renders parameter signatures the agent must use verbatim."""
 
     def test_required_param(self) -> None:
-        out = _format_param({"name": "index_id", "type": "string", "required": True})
+        out = format_param({"name": "index_id", "type": "string", "required": True})
         assert out == "index_id: string [required]"
 
     def test_optional_with_default(self) -> None:
-        out = _format_param({
+        out = format_param({
             "name": "limit",
             "type": "integer",
             "required": False,
@@ -406,7 +408,7 @@ class TestFormatParam:
         assert out == "limit: integer = 100"
 
     def test_optional_string_default_is_quoted(self) -> None:
-        out = _format_param({
+        out = format_param({
             "name": "mode",
             "type": "string",
             "required": False,
@@ -416,12 +418,12 @@ class TestFormatParam:
         assert out == 'mode: string = "fast"'
 
     def test_optional_no_default(self) -> None:
-        out = _format_param({"name": "tag", "type": "string", "required": False})
+        out = format_param({"name": "tag", "type": "string", "required": False})
         assert out == "tag: string"
 
     def test_truncates_huge_defaults(self) -> None:
         big = "x" * 200
-        out = _format_param({
+        out = format_param({
             "name": "p", "type": "string", "required": False, "default": big,
         })
         # Cap is 60 chars (then "..."); prevents one runaway default from

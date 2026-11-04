@@ -606,7 +606,7 @@ check requires a real run id.
 
 For an agent turn, `LLMCostRecord.run_id` is the investigation id:
 `AgentTurnRunnerBase.run_turn` passes `run_id=self.investigation_id` to the
-engine (`src/aila/platform/agents/turn_runner.py:1106`). The live total is
+engine (`src/aila/platform/agents/turn_runner.py:1258`). The live total is
 therefore a direct filter, not a join through `TaskRecord` or
 `RunRecord`: `compute_live_investigation_cost`
 (`src/aila/platform/services/investigation_cost.py:34`) sums

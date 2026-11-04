@@ -171,14 +171,13 @@ class TestAgentPrimitiveReimplementationTurnRunner:
     def test_underscore_run_turn_not_flagged(self, tmp_path: Path) -> None:
         """``_run_turn`` is a legitimate module-private helper name.
 
-        The rule matches exact names; ``NdayResearcher._run_turn`` and
-        ``HonestInvestigator._run_turn`` are private helpers, not the
-        platform-owned ``run_turn`` method.
+        The rule matches exact names; ``HonestVulnResearcher._run_turn`` is a
+        private helper, not the platform-owned ``run_turn`` method.
         """
         src = _write(
             tmp_path,
-            "aila/modules/vr/agents/nday_researcher.py",
-            "class NdayResearcher:\n"
+            "aila/modules/vr/agents/vuln_researcher.py",
+            "class HonestVulnResearcher:\n"
             "    async def _run_turn(self, turn, prior):\n"
             "        del turn, prior\n"
             "        return {}\n",

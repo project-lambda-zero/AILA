@@ -6,6 +6,8 @@ integration tests once the workflow runs end-to-end against a real DB.
 """
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from aila.modules.vr.agents.outcome_dispatcher import (
@@ -198,10 +200,125 @@ class _FakeTaskQueue:
         return _FakeTaskHandle()
 
 
-def _patch_load(dispatcher: OutcomeDispatcher) -> AsyncMock:
+class _FakeExecResult:
+    def __init__(self, row: object | None) -> None:
+        self._row = row
+
+    def first(self) -> object | None:
+        return self._row
+
+
+class _FakeSession:
+    """Answers ``session.exec`` by queried model and bound id."""
+
+    def __init__(self, project: object, targets: dict[str, object]) -> None:
+        self._project = project
+        self._targets = targets
+
+    async def exec(self, statement: object) -> _FakeExecResult:
+        from aila.modules.vr.db_models import VRProjectRecord
+
+        entity = statement.column_descriptions[0]["entity"]  # type: ignore[attr-defined]
+        if entity is VRProjectRecord:
+            return _FakeExecResult(self._project)
+        bound_id = next(iter(statement.compile().params.values()))  # type: ignore[attr-defined]
+        return _FakeExecResult(self._targets.get(bound_id))
+
+    async def commit(self) -> None:
+        return None
+
+
+class _FakeUow:
+    def __init__(self, session: _FakeSession) -> None:
+        self.session = session
+
+    async def __aenter__(self) -> _FakeUow:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        return None
+
+
+@dataclass
+class _FakeProject:
+    id: str = "proj-x"
+    name: str = "CVE-2026-0001 patch audit"
+    cve_id: str | None = "CVE-2026-0001"
+    target_id: str = "tgt-x"
+    patched_target_id: str | None = "tgt-patched"
+    context_notes: str | None = None
+
+
+@dataclass
+class _FakeDescriptorTarget:
+    id: str
+    descriptor_json: str
+
+
+def _patch_nday_seam(
+    dispatcher: OutcomeDispatcher,
+    *,
+    project_id: str,
+    submit_error: Exception | None = None,
+) -> object:
+    """Patch the N-day DB/service seam so the real submit path runs.
+
+    Stubs the project and target rows, the N-day investigation creation,
+    and the integration resolver. The task queue is the dispatcher's
+    injected fake, so the submitted ``kwargs`` are asserted directly.
+    """
+    from contextlib import ExitStack
+
+    project = _FakeProject(id=project_id)
+    primary = _FakeDescriptorTarget(
+        id="tgt-x",
+        descriptor_json=json.dumps({
+            "input_source": "git_repo",
+            "target_class": "source",
+            "source_available": True,
+            "repo_url": "https://github.com/x/y",
+            "vulnerable_ref": "abc123",
+        }),
+    )
+    patched = _FakeDescriptorTarget(
+        id="tgt-patched",
+        descriptor_json=json.dumps({
+            "input_source": "git_repo",
+            "target_class": "source",
+            "source_available": True,
+            "repo_url": "https://github.com/x/y",
+            "patched_ref": "def456",
+        }),
+    )
+    session = _FakeSession(
+        project, {"tgt-x": primary, "tgt-patched": patched},
+    )
+
+    nday_inv = MagicMock(id="nday-inv-1")
+    create = AsyncMock(return_value=nday_inv)
+    if submit_error is not None:
+        fake_queue = MagicMock()
+        fake_queue.submit = AsyncMock(side_effect=submit_error)
+        dispatcher._task_queue_factory = lambda: fake_queue
+
+    stack = ExitStack()
+    stack.enter_context(patch(
+        "aila.modules.vr.agents.outcome_dispatcher.UnitOfWork",
+        return_value=_FakeUow(session),
+    ))
+    stack.enter_context(patch(
+        "aila.modules.vr.services.investigation_hub.create_nday_investigation",
+        new=create,
+    ))
+    return stack
+
+
+def _patch_load(
+    dispatcher: OutcomeDispatcher, *, project_id: str | None = None,
+) -> AsyncMock:
     """Replace _load_target_for_investigation with a fake returning known rows."""
     target = _FakeTarget()
-    inv = _FakeInvestigation()
+    inv = _FakeInvestigation(project_id=project_id)
     mock = AsyncMock(return_value=(target, inv))
     dispatcher._load_target_for_investigation = mock  # type: ignore[method-assign]
     return mock
@@ -382,6 +499,20 @@ class TestDispatchProfileSpecDraft:
         assert "missing_profile_name_or_spec" in result.reason
 
 
+class TestBuildNdayQuestion:
+    def test_cve_leads_then_notes(self) -> None:
+        from aila.modules.vr.services.investigation_hub import build_nday_question
+
+        assert build_nday_question("CVE-2024-1", "  look at parser  ") == (
+            "CVE-2024-1\n\nlook at parser"
+        )
+
+    def test_empty_when_no_cve_and_no_notes(self) -> None:
+        from aila.modules.vr.services.investigation_hub import build_nday_question
+
+        assert build_nday_question(None, "   ") == ""
+
+
 class TestDispatchPatchAssessmentReport:
     # _dispatch_patch_assessment_report was rewritten to run two
     # parallel paths (variant_hunt_orders spawn + optional nday
@@ -391,17 +522,14 @@ class TestDispatchPatchAssessmentReport:
     # src/aila/modules/vr/agents/outcome_dispatcher.py.
 
     @pytest.mark.asyncio
-    async def test_enqueues_vr_nday(self) -> None:
+    async def test_submits_hub_investigation_by_id(self) -> None:
         fake_queue = _FakeTaskQueue()
         d = OutcomeDispatcher(
             knowledge=_FakeKnowledge(),
             task_queue_factory=lambda: fake_queue,
         )
-        _patch_load(d)
-        with patch(
-            "aila.modules.vr.agents.outcome_dispatcher.enqueue_vr_nday",
-            new=AsyncMock(return_value=_FakeTaskHandle("task-nday-001")),
-        ) as enqueue_mock:
+        _patch_load(d, project_id="proj-x")
+        with _patch_nday_seam(d, project_id="proj-x"):
             result = await d._dispatch_patch_assessment_report(
                 "oc-3", "inv-x",
                 {
@@ -414,17 +542,38 @@ class TestDispatchPatchAssessmentReport:
                 },
             )
         assert result.dispatch_status == OutcomeDispatchStatus.DISPATCHED
-        # dispatch_target now encodes both paths:
+        # dispatch_target encodes both paths:
         # ``children=[<spawned_ids>];nday=<task_id>``. With no
         # variant_hunt_orders in the payload, spawned_children is [].
-        assert result.dispatch_target == "children=[];nday=task-nday-001"
-        assert "nday_task=task-nday-001" in result.reason
-        enqueue_mock.assert_awaited_once()
-        kwargs = enqueue_mock.await_args.kwargs
-        assert kwargs["source_outcome_id"] == "oc-3"
-        assert kwargs["patch_descriptor"]["vulnerable_ref"] == "abc123"
-        assert kwargs["target_id"] == "tgt-x"
-        assert kwargs["parent_investigation_id"] == "inv-x"
+        assert result.dispatch_target == "children=[];nday=task-001"
+        assert "nday_task=task-001" in result.reason
+        assert len(fake_queue.calls) == 1
+        call = fake_queue.calls[0]
+        from aila.modules.vr.workflow.task import run_vr_investigate
+
+        assert call["fn"] is run_vr_investigate
+        assert call["kwargs"] == {"investigation_id": "nday-inv-1"}
+
+    @pytest.mark.asyncio
+    async def test_nday_without_project_surfaces_in_reason(self) -> None:
+        # An investigation with no project cannot resolve its patched
+        # target, so the N-day is refused and the error is reported.
+        d = OutcomeDispatcher(
+            knowledge=_FakeKnowledge(),
+            task_queue_factory=lambda: _FakeTaskQueue(),
+        )
+        _patch_load(d)
+        result = await d._dispatch_patch_assessment_report(
+            "oc-3", "inv-x",
+            {"patch_descriptor": {
+                "vulnerable_ref": "x",
+                "patched_ref": "y",
+                "repo_url": "https://example.com/repo",
+            }},
+        )
+        assert result.dispatch_status == OutcomeDispatchStatus.DISPATCHED
+        assert "nday_error=" in result.reason
+        assert "no project" in result.reason
 
     @pytest.mark.asyncio
     async def test_no_patch_descriptor_falls_through_as_verdict_only(
@@ -461,11 +610,8 @@ class TestDispatchPatchAssessmentReport:
             knowledge=_FakeKnowledge(),
             task_queue_factory=lambda: _FakeTaskQueue(),
         )
-        _patch_load(d)
-        with patch(
-            "aila.modules.vr.agents.outcome_dispatcher.enqueue_vr_nday",
-            new=AsyncMock(side_effect=RuntimeError("redis down")),
-        ):
+        _patch_load(d, project_id="proj-x")
+        with _patch_nday_seam(d, project_id="proj-x", submit_error=RuntimeError("redis down")):
             result = await d._dispatch_patch_assessment_report(
                 "oc-3", "inv-x",
                 {"patch_descriptor": {

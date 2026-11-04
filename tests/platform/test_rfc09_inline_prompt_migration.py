@@ -336,37 +336,6 @@ def test_forensics_freeflow_prompt_assembles_from_base_plus_os_hint() -> None:
 
 
 # ---------------------------------------------------------------------------
-# VR advisory + PoC prompts: file-backed accessors match the migrated bytes.
-# ---------------------------------------------------------------------------
-
-
-def test_advisory_prompt_file_matches_loader() -> None:
-    from aila.modules.vr.workflow.states import advisory
-
-    body = advisory._load_narrative_prompt()
-    prompt_path = (
-        Path(advisory.__file__).resolve().parent.parent
-        / "prompts" / "system_advisory_narrative.md"
-    )
-    assert prompt_path.exists(), f"prompt file missing: {prompt_path}"
-    assert body == prompt_path.read_text(encoding="utf-8")
-    assert body.startswith("You are writing a coordinated-disclosure advisory")
-
-
-def test_poc_development_prompt_file_matches_loader() -> None:
-    from aila.modules.vr.workflow.states import poc_development
-
-    body = poc_development._load_system_prompt()
-    prompt_path = (
-        Path(poc_development.__file__).resolve().parent.parent
-        / "prompts" / "system_poc_development.md"
-    )
-    assert prompt_path.exists(), f"prompt file missing: {prompt_path}"
-    assert body == prompt_path.read_text(encoding="utf-8")
-    assert body.startswith("You write proof-of-concept exploits")
-
-
-# ---------------------------------------------------------------------------
 # Outer-scope preservation: content-hash stamping must NOT clobber an
 # investigation/branch/turn attribution the caller already established.
 # ---------------------------------------------------------------------------

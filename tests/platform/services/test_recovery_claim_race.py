@@ -212,7 +212,6 @@ async def test_stall_recovery_and_stuck_healer_double_submit_blocked(
     stall_task = sweep_stalled_investigations(
         submit_fn=_capture_submit,
         sweepable_kinds=("audit", "discovery", "variant_hunt", "triage", "n_day"),
-        single_submit_kinds=("n_day",),
         env_prefix="AILA_VR_STALL_RECOVERY",
         investigations_table="vr_investigations",
         branches_table="vr_investigation_branches",
@@ -302,7 +301,6 @@ async def test_stall_recovery_stalled_flip_is_the_claim(
         return await sweep_stalled_investigations(
             submit_fn=_capture_submit,
             sweepable_kinds=("audit",),
-            single_submit_kinds=(),
             env_prefix="AILA_VR_STALL_RECOVERY",
             investigations_table="vr_investigations",
             branches_table="vr_investigation_branches",

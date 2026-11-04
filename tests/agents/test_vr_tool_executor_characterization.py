@@ -425,3 +425,65 @@ def test_merge_and_report_eviction_no_overflow_evicts_nothing() -> None:
     )
     assert json.loads(new_json)["observables"] == {"a": "1", "b": "2"}
     assert evicted == {}
+
+
+@pytest.mark.asyncio
+async def test_pre_dispatch_diff_binary_injects_server_paths_and_drops_agent_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """diff_binary receives the server-resolved vulnerable and patched paths;
+    agent-supplied path kwargs are dropped and never reach the belt."""
+    import aila.modules.vr.agents.tool_executor as vr_executor
+
+    executor, _rea, _audit, _android = _make_executor()
+
+    async def _fake_target(_inv_id: str) -> str:
+        return "/vuln.bin"
+
+    async def _fake_patched(_inv_id: str) -> str:
+        return "/patched.bin"
+
+    monkeypatch.setattr(executor, "_resolve_target_path", _fake_target)
+    monkeypatch.setattr(
+        vr_executor, "resolve_investigation_patched_binary_path", _fake_patched,
+    )
+
+    out = await executor._pre_dispatch_correct_args(
+        "inv-1", "reverser_belt", "diff_binary",
+        {"target_path": "/evil", "patched_target_path": "/evil2", "extra": 1},
+    )
+
+    assert out == {
+        "target_path": "/vuln.bin",
+        "patched_target_path": "/patched.bin",
+        "extra": 1,
+    }
+
+
+@pytest.mark.asyncio
+async def test_pre_dispatch_non_diff_belt_tool_never_gets_patched_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only diff_binary is injected with patched_target_path; other belt tools
+    get the vulnerable target_path alone and any agent patched path is dropped."""
+    import aila.modules.vr.agents.tool_executor as vr_executor
+
+    executor, _rea, _audit, _android = _make_executor()
+
+    async def _fake_target(_inv_id: str) -> str:
+        return "/vuln.bin"
+
+    async def _must_not_resolve(_inv_id: str) -> str:
+        raise AssertionError("patched path resolved for a non-diff tool")
+
+    monkeypatch.setattr(executor, "_resolve_target_path", _fake_target)
+    monkeypatch.setattr(
+        vr_executor, "resolve_investigation_patched_binary_path", _must_not_resolve,
+    )
+
+    out = await executor._pre_dispatch_correct_args(
+        "inv-1", "reverser_belt", "list_functions",
+        {"patched_target_path": "/evil2"},
+    )
+
+    assert out == {"target_path": "/vuln.bin"}
