@@ -1,0 +1,4 @@
+[submodule "external/icuhub"]
+	path = external/icuhub
+	url = https://github.com/project-lambda-zero/icuhub.git
+	branch = main
