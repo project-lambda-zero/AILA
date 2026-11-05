@@ -45,6 +45,8 @@ AILA/
 │   ├── api/                      # FastAPI app, 28 routers, auth, middleware, schemas
 │   ├── storage/                  # SQLModel models, Alembic migrations, config registry
 │   └── alembic/                  # migration versions
+├── external/
+│   └── icuhub/                   # git submodule: ICUHUB integration hub (optional, see "ICUHUB" section)
 ├── tests/                        # pytest suite (test_e2e*.py require live infrastructure)
 └── docs/                         # canonical specs (MODULE_STANDARD, GOLDEN_RULES, etc.)
 ```
@@ -241,6 +243,22 @@ Multi-step behavior uses staged workflows with named states, not nested conditio
 13. **Using literal versions in module `package.json`** -- Shared deps (react, vite, tailwind, etc.) must reference catalog entries (`"react": "catalog:react19"`). Only module-specific deps that aren't shared may use literal versions, and even those should be added to a catalog if a second consumer appears.
 
 14. **Hand-editing `pnpm-lock.yaml`** -- Always re-run `pnpm install` to regenerate. The lockfile format is structured but not designed for manual edits.
+
+## ICUHUB (optional integration hub)
+
+ICUHUB is a standalone integration service (repo `project-lambda-zero/icuhub`, AGPL-3.0), included as the git submodule `external/icuhub`. It owns vendor connectors (SCM, CI/CD, scanners, SIEM, SOAR, EDR, WAF, DLP, CSPM/CNAPP, Kubernetes/OpenShift, ticketing, threat intel), the credential broker, external action policy and approvals, external-call audit, and OCSF/SARIF normalization. Plan and contract: `docs/rfc/RFC-296-icuhub-integration.md`; ICUHUB's own BRD/HLD/COMMATRIX: `external/icuhub/docs/`.
+
+Rules:
+
+1. **Optional.** AILA installs, tests, and runs without the submodule and without a running ICUHUB. `git submodule update --init external/icuhub` is only needed to read or work on ICUHUB.
+2. **Configured iff `platform.icuhub_url` is set** (ConfigRegistry, env `ICUHUB_URL`). No separate enabled flag. Unset means: no `icuhub` MCP server registered, no ICUHUB tools listed, no event subscriber, and features that need an integration record `icuhub_not_configured`.
+3. **No direct vendor calls for integrated vendors.** New enterprise tool integrations go into ICUHUB, never into `src/aila/`. No fallback from ICUHUB to a direct vendor client. The public advisory feeds in `modules/vulnerability/providers/` are domain data sources and stay in AILA (explicit allowlist in the RFC-296 boundary audit).
+4. **Never import ICUHUB source paths** (`external/icuhub/...`) from `src/aila/`. Consume ICUHUB only over its contract (REST `/v1`, MCP `/mcp`, `icuhub.*` events) and its published packages (`icuhub-schemas`, `icuhub-sdk`) once released.
+5. **Agents use MCP, deterministic steps use REST.** Agent tools arrive as `icuhub` server tools named `<connection_slug>.<operation>`. Workflow steps that must not be prompt-steered (for example opening the VR fix change request) call REST with an `Idempotency-Key`.
+6. **Correlation.** Every ICUHUB call carries `X-Correlation-Id` = investigation id (branch/turn in MCP `_meta`) so ICUHUB audit joins AILA's tool-call ledger.
+7. **`pending_approval` is a normal result**, not an error. AILA never auto-approves ICUHUB actions.
+8. **OCSF/SARIF standardization is mandatory.** Do not define a competing OCSF model in AILA; use `icuhub-schemas` when published.
+9. Bumping the submodule pin is a normal AILA change (CHANGELOG note, consumer tests once they exist).
 
 ## Verification Checklist
 
