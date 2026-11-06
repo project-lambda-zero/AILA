@@ -1001,7 +1001,7 @@ def set_provider_secret(
                 "algorithm": metadata["algorithm"],
                 "key_version": metadata["key_version"],
                 "hint": metadata["hint"],
-                "updated_at": metadata["updated_at"].isoformat(),
+                "updated_at": metadata["updated_at"],
             },
             indent=2,
         )
@@ -1040,7 +1040,7 @@ def list_provider_secrets() -> None:
                         "algorithm": item["algorithm"],
                         "key_version": item["key_version"],
                         "hint": item["hint"],
-                        "updated_at": item["updated_at"].isoformat(),
+                        "updated_at": item["updated_at"],
                     }
                     for item in metadata
                 ],
