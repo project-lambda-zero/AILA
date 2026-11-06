@@ -2162,6 +2162,13 @@ def create_vr_router() -> APIRouter:
             await uow.session.refresh(record)
             target_id = record.id
 
+        # A source_repo without repo_url is the archive-upload flow: the
+        # source does not exist yet, so ingestion would fail permanently and
+        # mark the target FAILED. POST /vr/targets/{id}/upload enqueues the
+        # run once the extracted archive is in place.
+        if body.kind == TargetKind.SOURCE_REPO and not body.descriptor.get("repo_url"):
+            return DataEnvelope(data=_target_summary(record))
+
         # Auto-enqueue backend ingestion (v0.4.5). Operator does not
         # have to click anything -- the dispatch starts immediately.
         try:
@@ -2865,10 +2872,13 @@ def create_vr_router() -> APIRouter:
         status_code=status.HTTP_202_ACCEPTED,
         summary=(
             "Upload a binary artifact for a native_binary / kernel_image / "
-            "hypervisor_image / apk / ipa / jar / dotnet_assembly target. "
-            "AILA stages the bytes on the local disk (REA opens targets by "
-            "absolute local path), stores the staged path in the target, "
-            "and re-triggers analysis."
+            "hypervisor_image / ipa / jar / dotnet_assembly target, or a "
+            "source archive (.zip, .tar.gz, .tgz, .tar) for a source_repo "
+            "target. Binaries are staged on the local disk (REA opens targets "
+            "by absolute local path). Source archives are extracted into the "
+            "shared staging volume and the extracted root becomes the target's "
+            "repo_url. Either way the staged path is stored and analysis "
+            "re-triggers."
         ),
     )
     @limiter.limit("10/minute")
@@ -2891,6 +2901,7 @@ def create_vr_router() -> APIRouter:
         upload_kinds = {
             "native_binary", "kernel_image", "kernel_module",
             "hypervisor_image", "ipa", "jar", "dotnet_assembly",
+            TargetKind.SOURCE_REPO.value,
         }
         async with UnitOfWork() as uow:
             row = (await uow.session.exec(
@@ -2909,6 +2920,7 @@ def create_vr_router() -> APIRouter:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Target kind {row.kind!r} does not accept uploads.",
                 )
+            is_source_archive = row.kind == TargetKind.SOURCE_REPO.value
 
         # 2) Buffer + stage the bytes on the LOCAL disk. REA opens targets
         #    by absolute local path, so unlike the retired HTTP-bridge flow
@@ -2924,7 +2936,18 @@ def create_vr_router() -> APIRouter:
 
         from aila.api.uploads import read_upload_bounded
 
+        from .services.source_archive import (
+            SourceArchiveError,
+            extract_source_archive,
+            is_supported_source_archive,
+        )
         from .services.target_staging import VR_UPLOAD_STAGING
+
+        if is_source_archive and not is_supported_source_archive(file.filename):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="source_repo uploads must be a .zip, .tar.gz, .tgz, or .tar archive.",
+            )
 
         upload_cap = await _cfg.get_int("upload_max_bytes")
         contents = await read_upload_bounded(file, upload_cap)
@@ -2940,10 +2963,39 @@ def create_vr_router() -> APIRouter:
                 detail=f"Failed to stage upload on local disk: {exc}",
             ) from exc
 
+        # 2b) Source archives are extracted under <staging>/<target>/src and
+        #     that directory becomes the target's repo_url. Extraction finishes
+        #     before any row is touched, so a rejected archive leaves the
+        #     target exactly as it was.
+        source_root: Path | None = None
+        if is_source_archive:
+            try:
+                source_root = extract_source_archive(
+                    staged_path,
+                    staging_dir / "src",
+                    max_uncompressed_bytes=await _cfg.get_int(
+                        "source_archive_max_uncompressed_bytes",
+                    ),
+                    max_members=await _cfg.get_int("source_archive_max_members"),
+                )
+            except SourceArchiveError as exc:
+                staged_path.unlink(missing_ok=True)
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=str(exc),
+                ) from exc
+            except OSError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to extract source archive on local disk: {exc}",
+                ) from exc
+
         # 3) Persist the staged path + upload metadata into the internal
         #    handles (operators only see "Ready" -- they don't see the path).
         import hashlib as _hashlib
         import json as _json
+
+        from .services.stage_tracker import parse_stages, save_target_stages
 
         async with UnitOfWork() as uow:
             row = (await uow.session.exec(
@@ -2960,9 +3012,39 @@ def create_vr_router() -> APIRouter:
                 "uploaded_filename": file.filename,
                 "uploaded_sha256": _hashlib.sha256(contents).hexdigest(),
             })
+            if source_root is not None:
+                # Ingestion handles describe the previous source; the re-run
+                # rewrites them, so drop them now to avoid stale reads.
+                for key in ("audit_mcp_index_id", "repo_url", "ref", "mcp_path"):
+                    handles.pop(key, None)
+                descriptor = _json.loads(row.descriptor_json or "{}")
+                descriptor["repo_url"] = str(source_root)
+                descriptor["source_archive"] = file.filename
+                row.descriptor_json = _json.dumps(descriptor)
+                row.analysis_state = AnalysisState.PENDING.value
+                row.analysis_state_message = None
+            previous_stages_json = row.analysis_stages_json
             row.mcp_handles_json = _json.dumps(handles)
             uow.session.add(row)
             await uow.session.commit()
+
+        if source_root is not None:
+            # Stage state is per-target and the new source invalidates every
+            # stage that ran against the old one. Reset each non-running stage
+            # to PENDING, leaving live workers' RUNNING stages alone (same
+            # rule as refresh_target_source).
+            from aila.platform.contracts.target_stages import StageState
+
+            stages = parse_stages(previous_stages_json)
+            for stage_name, status_obj in stages.all_stages():
+                if status_obj.state == StageState.RUNNING:
+                    continue
+                status_obj.state = StageState.PENDING
+                status_obj.error = None
+                status_obj.started_at = None
+                status_obj.completed_at = None
+                stages.set(stage_name, status_obj)
+            await save_target_stages(target_id, stages)
 
         # 4) Re-enqueue analysis so capability profile + ranking refresh.
         task_queue = get_task_queue("vr", request)

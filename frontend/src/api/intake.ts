@@ -148,7 +148,8 @@ export interface VRUploadResult {
 
 /** POST /vr/targets/{id}/upload -- attach a binary to an existing target row
  * (native_binary, kernel_image, kernel_module, hypervisor_image, ipa, jar,
- * dotnet_assembly). The APK path is a single-shot endpoint, `useUploadApkTarget`.
+ * dotnet_assembly) and source archives for source_repo (zip / tar.gz / tar).
+ * The APK path is a single-shot endpoint, `useUploadApkTarget`.
  */
 export function useUploadVrBinary(): UseMutationResult<
   VRUploadResult,

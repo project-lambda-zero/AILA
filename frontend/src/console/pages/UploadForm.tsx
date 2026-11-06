@@ -58,6 +58,7 @@ interface DescField {
 type KindMode =
   | "vr-apk"         // POST /vr/targets/upload-apk
   | "vr-upload"      // POST /vr/targets  ->  POST /vr/targets/{id}/upload
+  | "vr-source"      // archive: vr-upload flow; no archive: POST /vr/targets with repo_url
   | "vr-descriptor"  // POST /vr/targets  (JSON only)
   | "mal-upload"     // POST /malware/targets/upload
   | "mal-descriptor"; // POST /malware/targets  (JSON descriptor, no file)
@@ -105,9 +106,13 @@ const VR_KINDS: KindSpec[] = [
     key: "source_repo",
     label: "source repo",
     group: "source",
-    mode: "vr-descriptor",
+    mode: "vr-source",
+    file: {
+      accept: ".zip,.tar.gz,.tgz,.tar",
+      hint: "source archive of a git repo (zip / tar.gz / tar); or leave empty and give a repo url",
+    },
     descriptor: [
-      { name: "repo_url", label: "repo url", placeholder: "https://github.com/org/proj", required: true },
+      { name: "repo_url", label: "repo url", placeholder: "https://github.com/org/proj (required without an archive)", required: true },
       { name: "ref", label: "ref / branch", placeholder: "main" },
     ],
   },
@@ -372,10 +377,15 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
   };
 
   // Compute submit gating so the button reflects real completeness.
+  // A vr-source target with an archive attached takes its source from the
+  // archive, so the repo url is not required (and is not sent).
+  const archiveSelected = spec.mode === "vr-source" && file !== null;
+  const isRequiredField = (f: DescField): boolean => f.required === true && !archiveSelected;
   const descriptorReady = spec.descriptor.every(
-    (f) => !f.required || (descriptor[f.name] ?? "").trim() !== "",
+    (f) => !isRequiredField(f) || (descriptor[f.name] ?? "").trim() !== "",
   );
-  const wantsFile = spec.mode !== "vr-descriptor" && spec.mode !== "mal-descriptor";
+  const showsFile = spec.mode !== "vr-descriptor" && spec.mode !== "mal-descriptor";
+  const wantsFile = showsFile && spec.mode !== "vr-source";
   const canSubmit =
     !busy &&
     workspaceId.trim() !== "" &&
@@ -416,7 +426,7 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
       });
     }
     for (const f of spec.descriptor) {
-      if (f.required && (descriptor[f.name] ?? "").trim() === "") {
+      if (isRequiredField(f) && (descriptor[f.name] ?? "").trim() === "") {
         out.push({ label: f.label, reason: "required" });
       }
     }
@@ -494,7 +504,27 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
         onDone?.({ id: t.id, display_name: displayName, kind: spec.key });
         return;
       }
-      if (module === "vr" && spec.mode === "vr-descriptor") {
+      if (module === "vr" && spec.mode === "vr-source" && file) {
+        // The archive is the source; create with an empty descriptor so the
+        // backend does not start an ingestion against a missing source.
+        const t = await createVrTarget.mutateAsync({
+          workspace_id: workspaceId,
+          display_name: displayName,
+          kind: spec.key as VRTargetKind,
+          descriptor: {},
+          tags,
+        });
+        const u = await uploadVrBin.mutateAsync({ target_id: t.id, file });
+        setCreated({
+          id: t.id,
+          display_name: displayName,
+          kind: spec.key,
+          uploaded_filename: u.uploaded_filename,
+        });
+        onDone?.({ id: t.id, display_name: displayName, kind: spec.key });
+        return;
+      }
+      if (module === "vr" && (spec.mode === "vr-descriptor" || spec.mode === "vr-source")) {
         const desc: Record<string, unknown> = {};
         for (const f of spec.descriptor) {
           const v = (descriptor[f.name] ?? "").trim();
@@ -661,17 +691,25 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
     </div>
   );
 
-  const fileBlock: ReactNode = wantsFile ? (
+  const fileBlock: ReactNode = showsFile ? (
     <div style={css("display:flex;flex-direction:column;gap:6px;")}>
       <span style={css("display:flex;align-items:center;gap:6px;")}>
-        <span style={labelStyle}>{spec.mode === "vr-apk" ? "apk file" : "binary / sample"}</span>
+        <span style={labelStyle}>
+          {spec.mode === "vr-apk"
+            ? "apk file"
+            : spec.mode === "vr-source"
+              ? "source archive"
+              : "binary / sample"}
+        </span>
         <FieldHelp
           text={
             spec.mode === "vr-apk"
               ? "The APK to analyze. Uploaded in a single request and the server runs the APK_DECODE / JADX / STATIC_SUMMARY pipeline."
               : spec.mode === "vr-upload"
                 ? "The binary the backend stores under this target. The target row is created first, then the file is uploaded to that id."
-                : "The sample file. Uploaded in a single request to the malware ingest endpoint."
+                : spec.mode === "vr-source"
+                  ? "Optional. The archive is extracted on the shared staging volume and becomes the target's source. Without it, the repo url is cloned by the ingestion service."
+                  : "The sample file. Uploaded in a single request to the malware ingest endpoint."
           }
         />
       </span>
@@ -789,6 +827,10 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
           ? "single-shot POST /vr/targets/upload-apk"
           : spec.mode === "vr-upload"
             ? "POST /vr/targets \u2192 POST /vr/targets/{id}/upload"
+            : spec.mode === "vr-source"
+              ? file
+                ? "POST /vr/targets \u2192 POST /vr/targets/{id}/upload (source archive)"
+                : "POST /vr/targets (repo url)"
             : spec.mode === "vr-descriptor"
               ? "POST /vr/targets (descriptor only)"
               : spec.mode === "mal-descriptor"
@@ -823,7 +865,13 @@ export default function UploadForm(props: UploadFormProps): JSX.Element {
         }}
         onFinish={(): void => void onSubmit()}
         backLabel={created ? "close" : "cancel"}
-        finishLabel={spec.mode === "vr-descriptor" || spec.mode === "mal-descriptor" ? "create target" : "upload"}
+        finishLabel={
+          spec.mode === "vr-descriptor" ||
+          spec.mode === "mal-descriptor" ||
+          (spec.mode === "vr-source" && !file)
+            ? "create target"
+            : "upload"
+        }
         busy={busy}
         error={error}
         onRetry={(): void => void onSubmit()}

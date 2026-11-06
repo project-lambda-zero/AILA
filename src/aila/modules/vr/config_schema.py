@@ -491,6 +491,30 @@ class VRConfigSchema(ModuleConfigBase):
             "AILA_VR_UPLOAD_MAX_BYTES."
         ),
     )
+    source_archive_max_uncompressed_bytes: int = Field(
+        default=2 * 1024 * 1024 * 1024,  # 2 GiB
+        ge=1024 * 1024,
+        le=16 * 1024 * 1024 * 1024,  # hard ceiling 16 GiB
+        description=(
+            "Total uncompressed byte budget for a source-repository archive "
+            "uploaded to POST /vr/targets/{id}/upload (.zip, .tar.gz, .tgz, "
+            ".tar). Extraction aborts with HTTP 400 once the declared member "
+            "sizes exceed this budget, so a decompression bomb cannot fill "
+            "the shared staging volume. Env: "
+            "AILA_VR_SOURCE_ARCHIVE_MAX_UNCOMPRESSED_BYTES."
+        ),
+    )
+    source_archive_max_members: int = Field(
+        default=200_000,
+        ge=1,
+        le=5_000_000,
+        description=(
+            "Maximum number of archive entries (files and directories) "
+            "accepted from a source-repository archive upload. Extraction "
+            "aborts with HTTP 400 past this count. Env: "
+            "AILA_VR_SOURCE_ARCHIVE_MAX_MEMBERS."
+        ),
+    )
 
 
     # --- RFC-07 #31 stuck-investigation healer ---------------------------
