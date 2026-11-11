@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.29] - 2026-11-12 -- VR wave-two submit gates settle once per turn
+
+### Fixed
+
+- A VR positive submit that a wave-two gate forces through after its reject cap is no longer reversed by the fanout hook re-evaluating the same gate on the same turn.
+- Wave-two submit gates decide once per turn: a same-turn re-entry replays the original pass or rejection instead of re-running the gate and bumping its reject counter twice. Gates that have not decided on that turn still evaluate, and every gate evaluates again on the next turn.
+
 ## [0.6.28] - 2026-11-12 -- VR outcome summaries report live review votes
 
 ### Fixed

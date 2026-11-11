@@ -210,6 +210,12 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         # _consume_pending_operator_messages, merged into case_state by
         # _inject_promotion_directives before the kill-criteria scan.
         self._pending_fuzz_observables: dict[str, str] = {}
+        # Wave-2 submit decisions already settled by each gate, keyed by
+        # turn. In-memory only: the researcher lives for one branch run.
+        self._settled_wave2_gates: dict[str, int] = {}
+        # Rejection each gate returned on the turn it settled (turn, decision).
+        # Same-turn re-entry replays it instead of re-deciding.
+        self._wave2_rejections: dict[str, tuple[int, ReasoningTurnDecision]] = {}
 
     # ---- AgentTurnRunnerBase config + hooks (RFC-03 Phase 7) -----------
     _LOG_LABEL = "vuln_researcher"
@@ -2063,9 +2069,14 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             False,
         ):
             return decision
+        settled = self._settled_gate_result(
+            "positive_submit_refs", decision, turn_number,
+        )
+        if settled is not None:
+            return settled
         kind = self._terminal_outcome_kind(decision)
         if outcome_polarity(kind) != "positive":
-            self._clear_gate("positive_submit_refs", case_state)
+            self._clear_gate("positive_submit_refs", case_state, turn_number)
             return decision
         payload = decision.payload or {}
         refs = payload.get("evidence_refs") or []
@@ -2082,7 +2093,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             for h in confirmed
         )
         if has_refs and has_confirmed_cite:
-            self._clear_gate("positive_submit_refs", case_state)
+            self._clear_gate("positive_submit_refs", case_state, turn_number)
             return decision
         missing_bits: list[str] = []
         if not has_refs:
@@ -2141,10 +2152,15 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         """
         if not getattr(self, "_contradiction_gate_enabled", False):
             return decision
+        settled = self._settled_gate_result(
+            "contradiction_observable", decision, turn_number,
+        )
+        if settled is not None:
+            return settled
         kind = self._terminal_outcome_kind(decision)
         pol = outcome_polarity(kind)
         if pol == "positive":
-            self._clear_gate("contradiction_observable", case_state)
+            self._clear_gate("contradiction_observable", case_state, turn_number)
             return decision
         payload = decision.payload or {}
         raw_refs = payload.get("evidence_refs") or []
@@ -2165,7 +2181,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                 if isinstance(corr, str) and corr:
                     cited_keys.append(corr)
         if not cited_keys:
-            self._clear_gate("contradiction_observable", case_state)
+            self._clear_gate("contradiction_observable", case_state, turn_number)
             return decision
         contradicting: list[tuple[str, str]] = []
         for key in cited_keys:
@@ -2178,7 +2194,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                     contradicting.append((key, marker))
                     break
         if not contradicting:
-            self._clear_gate("contradiction_observable", case_state)
+            self._clear_gate("contradiction_observable", case_state, turn_number)
             return decision
         listing = "\n".join(
             f"  - {key} -> observable body contains '{marker}'"
@@ -2238,10 +2254,13 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         """
         if not getattr(self, "_tool_telemetry_crosscheck_enabled", False):
             return decision
+        settled = self._settled_gate_result("tool_telemetry", decision, turn_number)
+        if settled is not None:
+            return settled
         payload = decision.payload or {}
         cited_pairs = _extract_cited_tool_pairs(payload)
         if not cited_pairs:
-            self._clear_gate("tool_telemetry", case_state)
+            self._clear_gate("tool_telemetry", case_state, turn_number)
             return decision
         ran_pairs: set[tuple[str, str]] = set()
         async with UnitOfWork() as uow:
@@ -2259,7 +2278,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             {pair for pair in cited_pairs if pair not in ran_pairs},
         )
         if not missing:
-            self._clear_gate("tool_telemetry", case_state)
+            self._clear_gate("tool_telemetry", case_state, turn_number)
             return decision
         listing = "\n".join(
             f"  - {server}:{action}" for server, action in missing[:20]
@@ -2316,9 +2335,12 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         floor = int(getattr(self, "_tool_work_floor_probes", 0) or 0)
         if floor <= 0:
             return decision
+        settled = self._settled_gate_result("tool_work_floor", decision, turn_number)
+        if settled is not None:
+            return settled
         kind = self._terminal_outcome_kind(decision)
         if outcome_polarity(kind) != "positive":
-            self._clear_gate("tool_work_floor", case_state)
+            self._clear_gate("tool_work_floor", case_state, turn_number)
             return decision
         async with UnitOfWork() as uow:
             rows = (await uow.session.exec(
@@ -2333,7 +2355,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             if action in _REACHABILITY_PROBE_ACTIONS:
                 probe_count += 1
         if probe_count >= floor:
-            self._clear_gate("tool_work_floor", case_state)
+            self._clear_gate("tool_work_floor", case_state, turn_number)
             return decision
         directive_body = (
             "*** TOOL-WORK FLOOR -- POSITIVE SUBMIT UNDER-EVIDENCED ***\n"
@@ -2506,18 +2528,43 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             decision=decision, case_state=case_state, turn_number=turn_number,
         )
 
-    def _clear_gate(
-        self, gate: str, case_state: ReasoningCaseState,
-    ) -> None:
-        """Drop this gate's ``_gate.<name>.*`` observables (issue #248 L2).
+    def _settled_gate_result(
+        self, gate: str, decision: ReasoningTurnDecision, turn_number: int,
+    ) -> ReasoningTurnDecision | None:
+        """Return what a wave-2 gate already decided this turn, or ``None``
+        when the gate must evaluate.
 
-        Called on the pass branch of every wave-2 gate so a later
-        regression on the same branch starts fresh. Keys live under
-        the reserved ``_gate.`` prefix so the observable-cap eviction
-        never touches them.
+        A gate that passed or force-through settled with ``decision``
+        unchanged. A gate that rejected replays the exact rejection it
+        issued this turn, so a same-turn re-entry neither re-derives the
+        terminal kind nor bumps the reject counter again (issue #298).
+        Settlement is keyed by turn, so the next turn evaluates normally.
+        """
+        if self._settled_wave2_gates.get(gate) != turn_number:
+            return None
+        rejected = self._wave2_rejections.get(gate)
+        if rejected is not None and rejected[0] == turn_number:
+            return rejected[1]
+        return decision
+
+    def _clear_gate(
+        self, gate: str, case_state: ReasoningCaseState, turn_number: int,
+    ) -> None:
+        """Drop this gate's ``_gate.<name>.*`` observables (issue #248 L2)
+        and record that the gate settled this turn.
+
+        Called on the pass branch of every wave-2 gate and on a
+        force-through, so a later regression on the same branch starts
+        fresh. Keys live under the reserved ``_gate.`` prefix so the
+        observable-cap eviction never touches them. The settled record
+        lets the same-turn fanout re-entry skip a gate that already
+        decided (issues #298 / #299); it is keyed by turn, so the next
+        turn evaluates normally.
         """
         case_state.observables.pop(f"_gate.{gate}.reject_count", None)
         case_state.observables.pop(f"_gate.{gate}.directive", None)
+        self._wave2_rejections.pop(gate, None)
+        self._settled_wave2_gates[gate] = turn_number
 
     def _reject_or_force(
         self,
@@ -2537,6 +2584,10 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         (matches every hypothesis gate's mental model). Counter +
         directive live under ``_gate.<name>.*`` so agent scratchpad
         eviction never touches them (issue #248 L2).
+
+        An under-cap reject settles the gate for this turn and stores the
+        rejection it returns, so same-turn re-entry replays it (issue
+        #298). A force-through clears the gate via :meth:`_clear_gate`.
         """
         cap = int(getattr(self, "_unresolved_hyp_reject_cap", 3) or 3)
         counter_key = f"_gate.{gate}.reject_count"
@@ -2555,7 +2606,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                 **advisory_payload,
                 "forced_through_after_rejects": prior,
             }
-            self._clear_gate(gate, case_state)
+            self._clear_gate(gate, case_state, turn_number)
             return decision.model_copy(update={"payload": new_payload})
         _log.info(
             "%s submit REJECTED inv=%s branch=%s turn=%d rejects=%d/%d",
@@ -2575,7 +2626,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             f"[{log_label.upper()} GATE: submit rejected -- see "
             f"{directive_key}]\nOriginal submit attempt:\n{original_answer}"
         )
-        return decision.model_copy(update={
+        rejection = decision.model_copy(update={
             "action": "tool_run",
             "command": "",
             "answer": rejected_text,
@@ -2585,6 +2636,9 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                 f"_gate.{gate}.reject_count": new_count,
             },
         })
+        self._wave2_rejections[gate] = (turn_number, rejection)
+        self._settled_wave2_gates[gate] = turn_number
+        return rejection
 
     async def _evaluate_kill_criteria_this_turn(
         self,

@@ -1050,6 +1050,35 @@ caps: it indexes every tool reading and renders tool readings and agent
 scratchpad keys in full, with the context assembler sizing the live
 section against `platform.reasoning_context_budget_tokens`.
 
+### 8.bis.17 Wave-two submit gates run once per turn
+
+The async submit chain (`_maybe_reject_submit_when_draft_pending` ->
+`_apply_wave2_submit_gates`) and the platform fanout hook
+(`_maybe_reject_fanout_submit`) both evaluate the positive-submit and
+negative-submit gates on the same submit. `HonestVulnResearcher` keeps an
+in-memory record `_settled_wave2_gates` (gate name -> turn number). Every
+wave-2 gate settles for the turn it decides:
+
+- a pass or a force-through records its turn in `_clear_gate`;
+- an under-cap reject records its turn in `_reject_or_force` and stores the
+  rejection it returned in `_wave2_rejections` (gate name -> (turn, decision)).
+
+A later hook on the same turn returns early for a settled gate, through
+`_settled_gate_result`:
+
+- a pass or force-through returns the submit decision unchanged, so the
+  fanout re-entry does not re-arm a force-through (the counter stays cleared
+  and the submit is not converted back to `tool_run`);
+- a rejected gate replays its stored rejection unchanged, without re-running
+  `_terminal_outcome_kind` and without touching `_gate.<name>.reject_count`,
+  so one submit produces exactly one reject;
+- gates that have not settled on the turn still evaluate, so an independent
+  negative-submit contradiction is still caught after a forced positive;
+- the records are keyed by turn, so the next turn evaluates every gate
+  again and replaces the stale rejection.
+
+The records are not persisted and add no `_gate.` key or reserved prefix.
+
 ---
 
 ## 9. Open Questions
