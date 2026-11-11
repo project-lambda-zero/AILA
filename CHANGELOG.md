@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.15] - 2026-11-11 -- Malware targets use offset pagination
+
+### Fixed
+
+- The malware targets table now sends offset/limit requests and uses the backend's total metadata for page controls. Every target beyond the former 50-row cutoff is reachable without exceeding the backend page-size limit.
+
 ## [0.6.14] - 2026-11-11 -- Investigation confidence summaries accept exact and strong ranks
 
 ### Fixed
