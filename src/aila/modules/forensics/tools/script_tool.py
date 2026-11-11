@@ -7,6 +7,7 @@ import os
 import tempfile
 
 from aila.config import Settings
+from aila.modules.forensics.tools.script_guard import script_rejection
 from aila.platform.exceptions import AILAError
 from aila.platform.tools import Tool
 
@@ -74,6 +75,12 @@ class ScriptExecutorTool(Tool):
             an agent that reads only stdout / stderr.
 
         Raises:
+            ValueError: The script is empty, integration is missing, or
+                the script fails the AST policy in
+                :func:`aila.modules.forensics.tools.script_guard.script_rejection`.
+                The message starts with ``blocked:`` for policy rejections.
+                The rejection happens before any SSH, temp-file, upload,
+                or run call, so nothing reaches the analyzer.
             AILAError: Connection-level failures propagate --
                 :class:`aila.platform.exceptions.AuthenticationError` for
                 credential rejection, :class:`UpstreamError` for host-key
@@ -87,6 +94,10 @@ class ScriptExecutorTool(Tool):
             raise ValueError("script_content must be non-empty.")
         if not integration:
             raise ValueError("integration (SSH fields) is required.")
+        rejection = script_rejection(script_content)
+        if rejection is not None:
+            _log.warning("script_executor blocked script: %s", rejection)
+            raise ValueError(rejection)
 
         from aila.modules.forensics.tools._ssh_helper import get_ssh_service, python_cmd
 

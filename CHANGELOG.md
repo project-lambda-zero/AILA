@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.11] - 2026-11-11 -- Script policy applies before analyzer side effects
+
+### Fixed
+
+- Forensics script execution now uses one module-owned AST policy at both the investigator and public tool boundaries. Rejected scripts return a policy error before temporary-file creation, upload, SSH, or execution.
+
 ## [0.6.10] - 2026-11-11 -- Generic tool invocation awaits asynchronous results
 
 ### Fixed
