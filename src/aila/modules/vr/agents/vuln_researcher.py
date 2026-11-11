@@ -2030,11 +2030,12 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
     #
     # Each gate mirrors the reject-under-cap / force-through-over-cap
     # shape of the existing hypothesis gates (see
-    # ``_maybe_reject_submit_with_unresolved_hypotheses``). New
-    # counters and directives use the reserved ``_gate.`` observable
-    # prefix (issue #248 L2) so they never collide with the agent
-    # scratchpad namespace and are exempt from the observable-cap
-    # eviction the runner applies to plain agent keys.
+    # ``_maybe_reject_submit_with_unresolved_hypotheses``). Each gate's
+    # reject counter is the ordinary case-state observable
+    # ``_gate.<gate>.reject_count``; ``_gate.`` is not a reserved prefix.
+    # The mandatory directive lives under the reserved ``_directive.``
+    # prefix (``_directive.gate.<gate>.rejected``), so it renders through
+    # the active directives section and agent writes cannot overwrite it.
     #
     # Orchestration: they run as a single override of
     # ``_maybe_reject_fanout_submit`` (the last-in-chain gate the
@@ -2068,6 +2069,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             "_require_confirmed_evidence_on_positive_submit",
             False,
         ):
+            self._reset_gate("positive_submit_refs", case_state)
             return decision
         settled = self._settled_gate_result(
             "positive_submit_refs", decision, turn_number,
@@ -2151,6 +2153,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         F1 does not cover.
         """
         if not getattr(self, "_contradiction_gate_enabled", False):
+            self._reset_gate("contradiction_observable", case_state)
             return decision
         settled = self._settled_gate_result(
             "contradiction_observable", decision, turn_number,
@@ -2253,6 +2256,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         under cap when a cited pair is absent from the ran set.
         """
         if not getattr(self, "_tool_telemetry_crosscheck_enabled", False):
+            self._reset_gate("tool_telemetry", case_state)
             return decision
         settled = self._settled_gate_result("tool_telemetry", decision, turn_number)
         if settled is not None:
@@ -2334,6 +2338,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         """
         floor = int(getattr(self, "_tool_work_floor_probes", 0) or 0)
         if floor <= 0:
+            self._reset_gate("tool_work_floor", case_state)
             return decision
         settled = self._settled_gate_result("tool_work_floor", decision, turn_number)
         if settled is not None:
@@ -2547,23 +2552,35 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             return rejected[1]
         return decision
 
+    def _reset_gate(self, gate: str, case_state: ReasoningCaseState) -> None:
+        """Drop this gate's rejection state without settling the gate.
+
+        Removes the ``_gate.<gate>.reject_count`` counter, the mandatory
+        ``_directive.gate.<gate>.rejected`` directive, the rejection
+        stored for same-turn replay, and the gate's settled-turn entry.
+        A disabled gate calls this before returning (gate config reloads
+        every turn), so a rejection issued while the gate was enabled
+        stops rendering as a mandatory directive, and a re-enable on the
+        same turn or a later one evaluates normally.
+        """
+        case_state.observables.pop(f"_gate.{gate}.reject_count", None)
+        case_state.observables.pop(f"_directive.gate.{gate}.rejected", None)
+        self._wave2_rejections.pop(gate, None)
+        self._settled_wave2_gates.pop(gate, None)
+
     def _clear_gate(
         self, gate: str, case_state: ReasoningCaseState, turn_number: int,
     ) -> None:
-        """Drop this gate's ``_gate.<name>.*`` observables (issue #248 L2)
-        and record that the gate settled this turn.
+        """Reset this gate via :meth:`_reset_gate`, then record that it
+        settled this turn.
 
         Called on the pass branch of every wave-2 gate and on a
         force-through, so a later regression on the same branch starts
-        fresh. Keys live under the reserved ``_gate.`` prefix so the
-        observable-cap eviction never touches them. The settled record
-        lets the same-turn fanout re-entry skip a gate that already
-        decided (issues #298 / #299); it is keyed by turn, so the next
-        turn evaluates normally.
+        fresh. The settled record lets the same-turn fanout re-entry
+        skip a gate that already decided (issues #298 / #299); it is
+        keyed by turn, so the next turn evaluates normally.
         """
-        case_state.observables.pop(f"_gate.{gate}.reject_count", None)
-        case_state.observables.pop(f"_gate.{gate}.directive", None)
-        self._wave2_rejections.pop(gate, None)
+        self._reset_gate(gate, case_state)
         self._settled_wave2_gates[gate] = turn_number
 
     def _reject_or_force(
@@ -2581,9 +2598,17 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         """Shared reject-under-cap / force-through-over-cap machinery.
 
         Uses ``self._unresolved_hyp_reject_cap`` as the shared ceiling
-        (matches every hypothesis gate's mental model). Counter +
-        directive live under ``_gate.<name>.*`` so agent scratchpad
-        eviction never touches them (issue #248 L2).
+        (matches every hypothesis gate's mental model). The counter is
+        the ordinary case-state observable ``_gate.<name>.reject_count``.
+        The rejection directive lives under the reserved
+        ``_directive.gate.<name>.rejected`` key so
+        ``render_active_directives_section`` surfaces it as a mandatory
+        directive on the next turn.
+
+        The rejected submit is emitted as a ``reasoning`` decision whose
+        ``reasoning`` field carries the rejection text, so the agent reads
+        the rejection back as its own turn message rather than as a
+        synthesized empty ``tool_run``.
 
         An under-cap reject settles the gate for this turn and stores the
         rejection it returns, so same-turn re-entry replays it (issue
@@ -2591,7 +2616,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         """
         cap = int(getattr(self, "_unresolved_hyp_reject_cap", 3) or 3)
         counter_key = f"_gate.{gate}.reject_count"
-        directive_key = f"_gate.{gate}.directive"
+        directive_key = f"_directive.gate.{gate}.rejected"
         prior = int(case_state.observables.get(counter_key, 0) or 0)
         new_count = prior + 1
         if new_count > cap:
@@ -2627,9 +2652,8 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             f"{directive_key}]\nOriginal submit attempt:\n{original_answer}"
         )
         rejection = decision.model_copy(update={
-            "action": "tool_run",
-            "command": "",
-            "answer": rejected_text,
+            "action": "reasoning",
+            "reasoning": rejected_text,
             "payload": {
                 **payload,
                 f"_gate.{gate}.rejected": True,

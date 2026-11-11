@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.30] - 2026-11-12 -- VR gate rejections reach the mandatory directive section
+
+### Fixed
+
+- A rejected VR wave-two submit now comes back as a `reasoning` decision that carries the rejection text, instead of an empty `tool_run` that the turn runner coerced and annotated with a different directive.
+- The gate's corrective guidance is stored under `_directive.gate.<gate>.rejected`, so it renders in the next prompt's mandatory directive section. It is removed when the gate passes, forces through, or is disabled, so stale guidance stops rendering.
+
+### Removed
+
+- A test that only pinned the `_gate.` key naming convention.
+
 ## [0.6.29] - 2026-11-12 -- VR wave-two submit gates settle once per turn
 
 ### Fixed
