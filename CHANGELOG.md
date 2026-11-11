@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.23] - 2026-11-12 -- Config writes enforce declared bounds
+
+### Fixed
+
+- Config writes now enforce each field's declared constraints (minimum, maximum, and length bounds) in addition to its type. Out-of-range values such as a coverage floor of 5 are rejected with a 422 naming the field and the violated constraint, before any read-compare or write, so the stored value is unchanged. Error messages never echo the submitted value.
+
 ## [0.6.22] - 2026-11-12 -- Crypto scan guidance matches the live tool
 
 ### Fixed
