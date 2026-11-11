@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.20] - 2026-11-12 -- Forensics status badges render as elements
+
+### Fixed
+
+- Forensics key/value panels render React elements such as status badges directly instead of exposing element internals; plain objects keep their structured key/value rendering. The rendering fix was contributed in #343; this release adds regression coverage for the actual Overview status path, empty values, primitives, and mixed entries.
+
 ## [0.6.19] - 2026-11-12 -- Malware rails show created investigations
 
 ### Fixed
