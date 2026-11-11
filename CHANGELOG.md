@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.19] - 2026-11-12 -- Malware rails show created investigations
+
+### Fixed
+
+- Malware investigations with `created` status now appear as active work in the left rail. VR, vulnerability, and forensics `created` rows remain hidden unless pinned, and completed rows remain hidden unless pinned.
+
 ## [0.6.18] - 2026-11-11 -- Forensics rails show analyzing projects
 
 ### Fixed
