@@ -29,11 +29,12 @@ export default function Login() {
   const login = useAuth((s) => s.login);
   const busy = useAuth((s) => s.busy);
   const error = useAuth((s) => s.error);
-  const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("admin");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
+    if (!username.trim() || !password.trim()) return;
     void login(username, password);
   };
 
