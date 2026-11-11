@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.12] - 2026-11-11 -- Login requires explicit credentials
+
+### Fixed
+
+- The login form now starts with empty username and password fields. Empty or whitespace-only submissions are blocked before any authentication request, and frontend component tests cover the behavior.
+
 ## [0.6.11] - 2026-11-11 -- Script policy applies before analyzer side effects
 
 ### Fixed
