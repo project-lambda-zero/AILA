@@ -294,7 +294,7 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
             .select_from(VRInvestigationMessageRecord)
             .where(VRInvestigationMessageRecord.investigation_id == investigation_id)
         )).first()
-        message_count = int(msg_count_row[0]) if msg_count_row else 0
+        message_count = int(msg_count_row) if msg_count_row is not None else 0
 
         # Variant-hunt children spawned by this investigation, with
         # their findings + PoC drafts. When the user exports the
