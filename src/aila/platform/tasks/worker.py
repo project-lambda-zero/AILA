@@ -694,20 +694,18 @@ async def _on_startup(ctx: dict[str, Any]) -> None:
 
     import sys
 
-    if sys.platform != "win32":
-        return
+    if sys.platform == "win32":
+        from aila.storage import database as _db_module
 
-    from aila.storage import database as _db_module
-
-    engines = list(_db_module._ASYNC_ENGINES.values())
-    for eng in engines:
-        try:
-            await eng.dispose()
-        except Exception as exc:
-            # Connection may already be dead (ProactorEventLoop closed) -- ignore.
-            _log.debug("on_startup: stale engine dispose failed: %s", exc)
-    _db_module._ASYNC_ENGINES.clear()
-    _log.debug("ARQ on_startup: cleared %d stale async engine(s) (Windows loop migration)", len(engines))
+        engines = list(_db_module._ASYNC_ENGINES.values())
+        for eng in engines:
+            try:
+                await eng.dispose()
+            except Exception as exc:
+                # Connection may already be dead (ProactorEventLoop closed) -- ignore.
+                _log.debug("on_startup: stale engine dispose failed: %s", exc)
+        _db_module._ASYNC_ENGINES.clear()
+        _log.debug("ARQ on_startup: cleared %d stale async engine(s) (Windows loop migration)", len(engines))
 
     # Trigger every builtin module's create_module() so module-owned
     # periodic sweeps (vr.stage_tracker, vr.branch_reaper,

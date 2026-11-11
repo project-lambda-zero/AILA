@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.8] - 2026-11-11 -- Worker startup registers module sweeps on every platform
+
+### Fixed
+
+- Non-Windows workers now register built-in module periodic sweeps and run boot-time orphan recovery. Windows-only stale engine disposal remains scoped to Windows.
+
 ## [0.6.7] - 2026-11-11 -- VR PDF export handles scalar message counts
 
 ### Fixed

@@ -6,12 +6,124 @@ against real Memurai.
 """
 from __future__ import annotations
 
+import sys
 import uuid
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
 
+import aila.logging_config as logging_config
+import aila.platform.tasks.worker as worker_mod
+import aila.storage.database as db_module
+from aila.platform.tasks import sweeps
 from aila.platform.tasks.hooks import _on_job_end, _on_job_start
+
+
+def _patch_startup(
+    monkeypatch: pytest.MonkeyPatch, engines: dict[str, Any], order: list[str],
+) -> dict[str, Any]:
+    """Replace ``_on_startup`` collaborators with mocks that record call order."""
+
+    configure = MagicMock()
+    load = MagicMock(side_effect=lambda: order.append("load"))
+    sweep = AsyncMock(side_effect=lambda: order.append("sweep"))
+    monkeypatch.setattr(logging_config, "configure_logging", configure)
+    monkeypatch.setattr(worker_mod, "load_builtin_modules", load)
+    monkeypatch.setattr(worker_mod, "_sweep_orphan_running_tasks", sweep)
+    monkeypatch.setattr(db_module, "_ASYNC_ENGINES", engines)
+    return {"load": load, "sweep": sweep}
+
+
+def _fake_engine(order: list[str], name: str) -> MagicMock:
+    engine = MagicMock()
+    engine.dispose = AsyncMock(side_effect=lambda: order.append(f"dispose:{name}"))
+    return engine
+
+
+@pytest.mark.asyncio
+async def test_on_startup_non_windows_registers_modules_and_sweeps_without_dispose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    order: list[str] = []
+    engine = _fake_engine(order, "postgres")
+    engines = {"postgres": engine}
+    mocks = _patch_startup(monkeypatch, engines, order)
+
+    await worker_mod._on_startup({})
+
+    mocks["load"].assert_called_once_with()
+    mocks["sweep"].assert_awaited_once_with()
+    engine.dispose.assert_not_awaited()
+    assert engines == {"postgres": engine}
+    assert order == ["load", "sweep"]
+
+
+@pytest.mark.asyncio
+async def test_on_startup_non_windows_populates_real_module_sweep_registry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(logging_config, "configure_logging", MagicMock())
+    orphan_sweep = AsyncMock()
+    monkeypatch.setattr(worker_mod, "_sweep_orphan_running_tasks", orphan_sweep)
+    snapshot = dict(sweeps._PERIODIC_SWEEPS)
+    sweeps._PERIODIC_SWEEPS.clear()
+    try:
+        await worker_mod._on_startup({})
+        registered = sweeps.all_periodic_sweeps()
+        assert "vr.stall_recovery" in registered
+        assert "malware.stall_recovery" in registered
+        assert "forensics.stuck_healer" in registered
+        orphan_sweep.assert_awaited_once_with()
+    finally:
+        sweeps._PERIODIC_SWEEPS.clear()
+        sweeps._PERIODIC_SWEEPS.update(snapshot)
+
+
+@pytest.mark.asyncio
+async def test_on_startup_windows_disposes_engines_then_registers_and_sweeps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    order: list[str] = []
+    engine = _fake_engine(order, "postgres")
+    engines = {"postgres": engine}
+    mocks = _patch_startup(monkeypatch, engines, order)
+
+    await worker_mod._on_startup({})
+
+    engine.dispose.assert_awaited_once_with()
+    assert engines == {}
+    mocks["load"].assert_called_once_with()
+    mocks["sweep"].assert_awaited_once_with()
+    assert order == ["dispose:postgres", "load", "sweep"]
+
+
+@pytest.mark.asyncio
+async def test_on_startup_windows_dispose_failure_still_registers_and_sweeps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    order: list[str] = []
+    broken = _fake_engine(order, "broken")
+    broken.dispose = AsyncMock(side_effect=OSError("proactor loop closed"))
+    healthy = _fake_engine(order, "healthy")
+    engines = {"broken": broken, "healthy": healthy}
+    mocks = _patch_startup(monkeypatch, engines, order)
+
+    await worker_mod._on_startup({})
+
+    broken.dispose.assert_awaited_once_with()
+    healthy.dispose.assert_awaited_once_with()
+    assert engines == {}
+    mocks["load"].assert_called_once_with()
+    mocks["sweep"].assert_awaited_once_with()
 
 
 def test_worker_settings_shape() -> None:
