@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.9] - 2026-11-11 -- Fresh database bootstrap fits Alembic revision ids
+
+### Fixed
+
+- All migration revision ids now fit the 32-character Alembic version column, so canonical fresh database creation and stamping reaches head without truncation. Migration DDL and graph order are unchanged.
+
 ## [0.6.8] - 2026-11-11 -- Worker startup registers module sweeps on every platform
 
 ### Fixed
@@ -30,7 +36,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - The platform stall-recovery `single_submit_kinds` binding field and the `sweep_stalled_investigations` parameter of the same name. Module stall-recovery bindings no longer declare it.
 - `VRFinding.advisory_id` from the VR finding contract. The field was always `None`.
-- `obligations_json` from the project contract base, and the column itself from `vr_projects`, `malware_projects`, and `malware_findings` (migration `147_drop_project_obligations_json`).
+- `obligations_json` from the project contract base, and the column itself from `vr_projects`, `malware_projects`, and `malware_findings` (migration `147_drop_project_obligations`).
 - The unused obligation residue left by the removed n-day pipeline: the VR `obligation.changed` event type and the budget `auto_waive_recommended_at` setting with its `should_waive_recommended` property.
 
 ## [0.6.5] - 2026-11-03 -- n-day runs on the VR investigation hub; malware reports cite every verified claim
@@ -733,7 +739,7 @@ deployment that flips nothing is behavior-identical to 0.5.38.
 
 ### Migration
 
-- 127_managed_system_passphrase_secret: adds
+- 127_managed_system_passphrase: adds
   managedsystemrecord.private_key_passphrase_secret_id (nullable).
 
 ## [0.5.32] - 2026-08-15 -- Live backend-wired console
