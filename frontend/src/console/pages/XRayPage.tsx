@@ -74,7 +74,7 @@ export default function XRayPage(props: WindowChromeProps & SectionRouteProps & 
   const [detail, setDetail] = useState<DetailItem | null>(null);
 
   const invStatus = (inv.data?.status ?? "").toLowerCase();
-  const shell = useXRayShell({ view, panes: VR_LAYOUT_PANES, status: invStatus, control, onNavigate });
+  const shell = useXRayShell({ view, panes: VR_LAYOUT_PANES, status: invStatus, controllable: true, control, onNavigate });
 
   const branchList: Branch[] = branches.data ?? [];
   const branchMap = useMemo(() => {

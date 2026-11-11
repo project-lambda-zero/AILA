@@ -23,14 +23,18 @@ export function CtlButton({ label, onClick, enabled }: { label: string; onClick:
 
 // Window footer: run status, the five layout tabs and the focus / zoom / pin
 // readout; `children` render after the flexible spacer.
+// `inactive` marks a status that is not a live run (loading, error, unknown):
+// it renders muted instead of the active green badge.
 export function StatusStrip({
   status,
+  inactive = false,
   view,
   onNavigate,
   shell,
   children,
 }: {
   status: string | undefined;
+  inactive?: boolean;
   view: XRayView;
   onNavigate: (section: string) => void;
   shell: XRayShell;
@@ -39,7 +43,20 @@ export function StatusStrip({
   const { focus, zoom, pinned } = shell;
   return (
     <>
-      <span style={{ display: "flex", alignItems: "center", padding: "0 12px", background: "var(--status-ok)", color: "var(--text-on-accent)", fontWeight: 700, letterSpacing: "0.14em" }}>{status ?? "running"}</span>
+      <span
+        data-status-tone={inactive ? "inactive" : "active"}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          padding: "0 12px",
+          background: inactive ? "var(--surface-chrome)" : "var(--status-ok)",
+          color: inactive ? "var(--text-muted)" : "var(--text-on-accent)",
+          fontWeight: 700,
+          letterSpacing: "0.14em",
+        }}
+      >
+        {status ?? "running"}
+      </span>
       {VIEWS.map(([id, label], i) => {
         const on = id === view;
         return (
