@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.7] - 2026-11-11 -- VR PDF export handles scalar message counts
+
+### Fixed
+
+- VR PDF export reads SQLModel scalar message counts directly, so investigations with messages export instead of raising `TypeError`; zero counts remain zero.
+
 ## [0.6.6] - 2026-11-03 -- shared researcher prompt sections and submit gate
 
 ### Changed
