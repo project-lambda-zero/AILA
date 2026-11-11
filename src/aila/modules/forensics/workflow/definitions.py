@@ -23,6 +23,7 @@ import asyncio
 from typing import TYPE_CHECKING, Any, cast
 
 from aila.modules.forensics.config_schema import FORENSICS_DEFAULTS
+from aila.modules.forensics.contracts.status import InvestigationStatus, ProjectStatus
 from aila.modules.forensics.workflow.states.collection import state_collection
 from aila.modules.forensics.workflow.states.deep_analysis import state_deep_analysis
 from aila.modules.forensics.workflow.states.freeflow import state_freeflow
@@ -85,9 +86,10 @@ _SSH_TRANSIENT: tuple[type[BaseException], ...] = (
 async def _state_response_emit(
     input: dict[str, Any], _services: object,
 ) -> StateResult:
-    """Terminal state: marks project/investigation completed and assembles response."""
+    """Preserve terminal record status and assemble the response."""
     project_id = input.get("project_id", "")
     investigation_id = input.get("investigation_id")
+    resolved_status = input.get("status", ProjectStatus.COMPLETED.value)
 
     if project_id or investigation_id:
         from sqlmodel import select as _select
@@ -97,28 +99,39 @@ async def _state_response_emit(
 
         async with UnitOfWork() as uow:
             if project_id and not investigation_id:
-                # Full-analysis path -- mark the project completed.
+                # Full-analysis path -- complete only an active project.
                 proj = (await uow.session.exec(
                     _select(ForensicsProjectRecord).where(ForensicsProjectRecord.id == project_id)
                 )).first()
                 if proj is not None:
-                    proj.status = "completed"
+                    if proj.status in {
+                        ProjectStatus.CREATED.value,
+                        ProjectStatus.READY.value,
+                        ProjectStatus.ANALYZING.value,
+                    }:
+                        proj.status = ProjectStatus.COMPLETED.value
+                    resolved_status = proj.status
                     uow.session.add(proj)
 
             if investigation_id:
-                # Freeflow path -- mark the investigation completed.
+                # Freeflow path -- complete only a pending or running investigation.
                 inv = (await uow.session.exec(
                     _select(InvestigationRunRecord).where(InvestigationRunRecord.id == investigation_id)
                 )).first()
                 if inv is not None:
-                    inv.status = "completed"
+                    if inv.status in {
+                        InvestigationStatus.PENDING.value,
+                        InvestigationStatus.RUNNING.value,
+                    }:
+                        inv.status = InvestigationStatus.COMPLETED.value
+                    resolved_status = inv.status
                     uow.session.add(inv)
 
             await uow.commit()
 
     return StateResult(
         next_state=RESERVED_SUCCEEDED,
-        output={"status": "completed", **input},
+        output={**input, "status": resolved_status},
     )
 
 
