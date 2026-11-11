@@ -72,6 +72,19 @@ describe("selectRailRows: non-forensics controls", () => {
     },
   );
 
+  it("keeps an unpinned created malware investigation visible", () => {
+    const rows = selectRailRows([row("m1", "created")], [], "malware");
+    expect(ids(rows)).toEqual(["m1"]);
+  });
+
+  it.each(["forensics", "vr", "vulnerability"])(
+    "%s: created is not active and stays hidden",
+    (moduleId) => {
+      const rows = selectRailRows([row("x1", "created")], [], moduleId);
+      expect(rows).toEqual([]);
+    },
+  );
+
   it.each(["vr", "malware", "vulnerability"])(
     "%s: ready stays hidden unless pinned",
     (moduleId) => {

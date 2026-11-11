@@ -4,13 +4,15 @@ import type { RailRow } from "../api/forensicsRail";
 export const RAIL_ROW_LIMIT = 40;
 
 /** Whether a row's status counts as live work for the module's rail.
- * `analyzing` is a forensics project status (a pipeline is working on it);
- * no other module uses it, so it only counts as active for forensics.
- * `ready` is idle in every module and stays hidden unless pinned. */
+ * `analyzing` is a forensics project status (a pipeline is working on it),
+ * while `created` is the initial malware investigation state. Neither status
+ * is shared across modules. `ready` is idle in every module and stays hidden
+ * unless pinned. */
 function isActiveStatus(moduleId: string, status: string | undefined): boolean {
   const s = (status ?? "").toLowerCase();
   if (s === "running" || s === "active") return true;
-  return moduleId === "forensics" && s === "analyzing";
+  if (moduleId === "forensics" && s === "analyzing") return true;
+  return moduleId === "malware" && s === "created";
 }
 
 /** Select the rail's rows: live work plus pinned/favorited rows, pinned first,
