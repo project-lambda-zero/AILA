@@ -10,6 +10,7 @@ import type { LeftRailProps } from "./contract";
 import { css } from "./css";
 import { shortCaseId } from "./ids";
 import { ADMIN_CATS, GOD_TIER_ADMIN_ITEMS, MODULES } from "./nav";
+import { selectRailRows } from "./railRows";
 
 const GOD_TIER_ONLY: Record<string, true> = Object.fromEntries(GOD_TIER_ADMIN_ITEMS.map((label) => [label, true]));
 
@@ -74,31 +75,11 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
   const [adminCatOpen, setAdminCatOpen] = useState<Record<string, boolean>>({});
 
   const rows: RailRow[] = useMemo(() => {
-    const raw = source.data ?? [];
-    // The rail is a live worklist, not a full catalogue: show only what needs
-    // eyes on it -- currently-running investigations plus anything explicitly
-    // pinned/favorited. Completed/paused/failed rows are reachable from the
-    // investigations page, so they stay out of the rail. Pinned first, then by
-    // activity (branches weigh heavily, then messages) so the data-rich cases
-    // sit at the top. For forensics the hook synthesises branch/message counts
-    // from evidence + investigation + lead counts.
-    const score = (v: RailRow): number =>
-      (v.branch_count ?? 0) * 1000 + (v.message_count ?? 0);
-    const isPinned = (v: RailRow): boolean => pinned.includes(v.id) || Boolean(v.is_favorite);
-    const isRunning = (v: RailRow): boolean => {
-      const s = (v.status ?? "").toLowerCase();
-      return s === "running" || s === "active";
-    };
-    return raw
-      .filter((v) => isRunning(v) || isPinned(v))
-      .sort((a, b) => {
-        const ap = isPinned(a) ? 1 : 0;
-        const bp = isPinned(b) ? 1 : 0;
-        if (ap !== bp) return bp - ap;
-        return score(b) - score(a);
-      })
-      .slice(0, 40);
-  }, [source.data, pinned]);
+    // The rail is a live worklist, not a full catalogue: live work plus
+    // anything pinned/favorited (see selectRailRows). Forensics `analyzing`
+    // projects count as live; `ready` stays hidden unless pinned.
+    return selectRailRows(source.data ?? [], pinned, moduleId);
+  }, [source.data, pinned, moduleId]);
 
   // Per-module honest empty-state copy. Vulnerability has no case list; the
   // scan/findings/systems windows opened from the PAGES section above are the

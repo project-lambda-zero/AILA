@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.18] - 2026-11-11 -- Forensics rails show analyzing projects
+
+### Fixed
+
+- Forensics projects with `analyzing` status now remain visible as active work in the left rail. Unpinned `ready` projects stay table-only, pinned and favorited projects remain visible, and other module rail predicates are unchanged.
+
 ## [0.6.17] - 2026-11-11 -- Missing malware investigations render an inert error state
 
 ### Fixed
