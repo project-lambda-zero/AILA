@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.13] - 2026-11-11 -- Forensics prompt example passes its script policy
+
+### Fixed
+
+- The Linux forensics prompt now uses `type(fs).__name__` for filesystem introspection. The exact prompt example passes the shared AST policy, while direct dunder-class traversal remains blocked.
+
 ## [0.6.12] - 2026-11-11 -- Login requires explicit credentials
 
 ### Fixed
