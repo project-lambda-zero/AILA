@@ -431,6 +431,36 @@ async def test_tool_invoke_produces_audit(audit_client, operator_token, operator
     assert event["stage"] == "tool"
 
 
+@pytest.mark.asyncio
+async def test_tool_invoke_async_error_produces_audit(audit_client, operator_token, operator_key_record):
+    """POST /tools/{key} with an async forward() that raises returns the error field and audits it."""
+    registry = audit_client._transport.app.state.platform.runtime.tool_registry  # type: ignore[attr-defined]
+    failing_tool = MagicMock()
+    failing_tool.name = "async_failing_tool"
+    failing_tool.description = "An async tool that raises when awaited"
+    failing_tool.inputs = {}
+    failing_tool.output_type = "string"
+    failing_tool.forward = AsyncMock(side_effect=RuntimeError("async audit failure"))
+    registry.register("test.async_failing", failing_tool)
+
+    resp = await audit_client.post(
+        "/tools/test.async_failing",
+        json={"kwargs": {}},
+        headers=_auth_header(operator_token),
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["result"] is None
+    assert data["error"] == "async audit failure"
+
+    events = [e for e in _get_audit_events(AUDIT_ACTION_TOOL_INVOKE) if e["target"] == "test.async_failing"]
+    assert len(events) == 1
+    event = events[0]
+    assert event["user_id"] == operator_key_record.id
+    assert event["stage"] == "tool"
+    assert json.loads(event["details_json"]) == {"error": "async audit failure"}
+
+
 # ─── Config endpoint ────────────────────────────────────────────────────────
 
 
