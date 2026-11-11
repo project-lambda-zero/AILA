@@ -133,8 +133,10 @@ from .db_models import (
     VRInvestigationBranchRecord,
     VRInvestigationMessageRecord,
     VRInvestigationOutcomeRecord,
+    VRInvestigationOutcomeReviewRecord,
     VRInvestigationRecord,
 )
+from .services.outcome_review import compute_quorum
 from .workflow.task import (
     run_vr_claim_verifier,
     run_vr_investigate,
@@ -857,14 +859,70 @@ def _message_summary(
     )
 
 
-def _outcome_summary(record: Any) -> VROutcomeSummary:
+def _outcome_summary(
+    record: Any,
+    *,
+    approve_count: int,
+    reject_count: int,
+    request_edit_count: int,
+    abstain_count: int,
+    quorum_k: int,
+) -> VROutcomeSummary:
     """Project a VRInvestigationOutcomeRecord row to summary.
 
-    VR does not surface sibling-review vote counts (contract fields
-    default to 0), so no ``review_counts`` is passed. The platform
-    builder maps legacy NULL ``state`` to ``'dispatched'``.
+    Vote counts and ``quorum_k`` are supplied by the caller from the
+    grouped stored review rows (see ``_outcome_vote_counts``); an outcome
+    with no reviews passes zeros explicitly. The platform builder maps
+    legacy NULL ``state`` to ``'dispatched'``.
     """
-    return build_outcome_summary(record, summary_cls=VROutcomeSummary)
+    return build_outcome_summary(
+        record,
+        summary_cls=VROutcomeSummary,
+        review_counts={
+            "approve": approve_count,
+            "reject": reject_count,
+            "request_edit": request_edit_count,
+            "abstain": abstain_count,
+            "quorum_k": quorum_k,
+        },
+    )
+
+
+async def _outcome_vote_counts(
+    session: Any, *, investigation_id: str, outcome_ids: list[str],
+) -> tuple[dict[str, dict[str, int]], int]:
+    """Return ``({outcome_id: {vote: count}}, quorum_k)`` in two queries.
+
+    One GROUP BY over ``vr_outcome_reviews`` covers every outcome, so the
+    list endpoint never issues a per-outcome count. ``quorum_k`` is uniform
+    across an investigation's outcomes (it depends on the branch count, not
+    on any single outcome's votes) and is only computed when outcomes exist,
+    matching the malware rule: non-proposing siblings = non-abandoned
+    branches - 1.
+    """
+    vote_counts: dict[str, dict[str, int]] = {}
+    if not outcome_ids:
+        return vote_counts, 0
+    rev_rows = (await session.exec(
+        select(
+            VRInvestigationOutcomeReviewRecord.outcome_id,
+            VRInvestigationOutcomeReviewRecord.vote,
+            sa_func.count().label("n"),
+        )
+        .where(VRInvestigationOutcomeReviewRecord.outcome_id.in_(outcome_ids))
+        .group_by(
+            VRInvestigationOutcomeReviewRecord.outcome_id,
+            VRInvestigationOutcomeReviewRecord.vote,
+        ),
+    )).all()
+    for row in rev_rows:
+        vote_counts.setdefault(row[0], {})[row[1]] = int(row[2] or 0)
+    branch_count = int((await session.exec(
+        select(sa_func.count(VRInvestigationBranchRecord.id))
+        .where(VRInvestigationBranchRecord.investigation_id == investigation_id)
+        .where(VRInvestigationBranchRecord.status != "abandoned"),
+    )).one() or 0)
+    return vote_counts, compute_quorum(max(0, branch_count - 1))
 
 
 # Default strategy_family per InvestigationKind. Used both at create-time
@@ -6675,8 +6733,23 @@ def create_vr_router() -> APIRouter:
                 .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
                 .order_by(VRInvestigationOutcomeRecord.created_at.asc())
             )).all()
+            vote_counts, quorum_k = await _outcome_vote_counts(
+                uow.session,
+                investigation_id=investigation_id,
+                outcome_ids=[r.id for r in rows],
+            )
 
-        return DataEnvelope(data=[_outcome_summary(r) for r in rows])
+        return DataEnvelope(data=[
+            _outcome_summary(
+                r,
+                approve_count=vote_counts.get(r.id, {}).get("approve", 0),
+                reject_count=vote_counts.get(r.id, {}).get("reject", 0),
+                request_edit_count=vote_counts.get(r.id, {}).get("request_edit", 0),
+                abstain_count=vote_counts.get(r.id, {}).get("abstain", 0),
+                quorum_k=quorum_k,
+            )
+            for r in rows
+        ])
 
     @router.post(
         "/investigations/{investigation_id}/outcomes/{outcome_id}/reviews",
