@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.17] - 2026-11-11 -- Missing malware investigations render an inert error state
+
+### Fixed
+
+- A stale malware investigation link now stops detail retries, disables dependent queries, and renders an explicit not-found alert instead of a running cockpit. Loading and unknown statuses are distinct, and keyboard or palette mutations are unavailable until a controllable investigation loads.
+
 ## [0.6.16] - 2026-11-11 -- Malware X-Ray reads live cost keys
 
 ### Fixed

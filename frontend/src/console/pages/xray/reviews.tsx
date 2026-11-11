@@ -36,6 +36,7 @@ export function ReviewThread({
   branches,
   votes,
   pending,
+  disabled = false,
   onSubmit,
 }: {
   reviews: readonly OutcomeReview[];
@@ -43,6 +44,7 @@ export function ReviewThread({
   branches: readonly Branch[];
   votes: readonly ReviewVote[];
   pending: boolean;
+  disabled?: boolean;
   onSubmit: (req: ReviewSubmit, done: () => void) => void;
 }): JSX.Element {
   const [reviewer, setReviewer] = useState("");
@@ -91,9 +93,12 @@ export function ReviewThread({
           label="cast vote"
           pendingLabel="casting…"
           tone="accent"
-          disabled={!reviewer}
+          disabled={disabled || !reviewer}
           pending={pending}
-          onClick={() => onSubmit({ reviewer_branch_id: reviewer, vote, comment: comment.trim() }, () => setComment(""))}
+          onClick={() => {
+            if (disabled) return;
+            onSubmit({ reviewer_branch_id: reviewer, vote, comment: comment.trim() }, () => setComment(""));
+          }}
         />
       </div>
     </div>
