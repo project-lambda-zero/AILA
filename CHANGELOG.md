@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.14] - 2026-11-11 -- Investigation confidence summaries accept exact and strong ranks
+
+### Fixed
+
+- Forensics investigation-summary confidence filtering now recognizes the summary vocabulary `exact` and `strong` alongside `medium`. Collector and typed-investigation confidence behavior is unchanged.
+
 ## [0.6.13] - 2026-11-11 -- Forensics prompt example passes its script policy
 
 ### Fixed

@@ -469,6 +469,10 @@ _CONFIDENCE_RANK: dict[Any, int] = {
     "confirmed": 3, "high": 2, "medium": 1, "low": 0,
     "caveated": 0, "unknown": 0, "": 0, None: 0,
 }
+_INVESTIGATION_SUMMARY_CONFIDENCE_RANK: dict[Any, int] = {
+    "exact": 3, "confirmed": 3, "strong": 2, "high": 2, "medium": 1,
+    "low": 0, "caveated": 0, "unknown": 0, "": 0, None: 0,
+}
 _SEVERITY_RANK: dict[Any, int] = {
     "critical": 3, "high": 2, "medium": 1, "low": 0,
     "info": 0, "informational": 0, "": 0, None: 0,
@@ -635,7 +639,7 @@ def _passes_bar(row: Any, payload: dict[str, Any], bar: int) -> bool:
             return True
         if atype == "investigation_summary":
             conf = (payload.get("confidence") or "").lower()
-            return _CONFIDENCE_RANK.get(conf, 0) >= bar
+            return _INVESTIGATION_SUMMARY_CONFIDENCE_RANK.get(conf, 0) >= bar
         return False
 
     # --- collector rows ---------------------------------------------------
