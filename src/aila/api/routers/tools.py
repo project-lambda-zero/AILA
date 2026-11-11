@@ -6,6 +6,7 @@ POST /tools/{tool_key} requires operator+ role (D-20).
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -152,6 +153,12 @@ async def invoke_tool(
             detail=f"Tool '{tool_key}' not registered -- list available tools via GET /tools",
         )
     result, error = invoke_result
+    if inspect.isawaitable(result):
+        try:
+            result = await result
+        except Exception as exc:
+            _log.warning("Tool %s invocation failed: %s", tool_key, exc, exc_info=True)
+            result, error = None, str(exc)
 
     async def _audit_invoke() -> None:
         async with async_session_scope() as session:

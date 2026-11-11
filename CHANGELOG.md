@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.10] - 2026-11-11 -- Generic tool invocation awaits asynchronous results
+
+### Fixed
+
+- `POST /tools/{tool_key}` now awaits asynchronous tool results while keeping synchronous tools off the event loop. Sync and async exceptions retain the existing error and audit behavior.
+
 ## [0.6.9] - 2026-11-11 -- Fresh database bootstrap fits Alembic revision ids
 
 ### Fixed
