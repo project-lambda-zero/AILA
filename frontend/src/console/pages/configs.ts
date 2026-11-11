@@ -383,6 +383,8 @@ export const PAGE_CONFIGS = {
   "malware:targets": {
     title: "malware \u00b7 targets",
     endpoint: "/malware/targets",
+    pagination: true,
+    paginationParams: "offset",
     columns: [c("display_name", "name"), c("kind"), c("primary_language", "lang"), c("status"), c("analysis_state", "analysis"), c("uploaded_filename", "file"), c("created_at", "created")],
     filters: [{ name: "display_name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
