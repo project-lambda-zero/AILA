@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from aila.modules.forensics.agents.investigator import _script_rejection
+from aila.modules.forensics.tools.script_guard import script_rejection
 
 
 @pytest.mark.parametrize(
@@ -39,7 +39,7 @@ from aila.modules.forensics.agents.investigator import _script_rejection
     ],
 )
 def test_dangerous_scripts_rejected(script: str) -> None:
-    reason = _script_rejection(script)
+    reason = script_rejection(script)
     assert reason is not None, f"expected rejection, got None for: {script!r}"
     assert reason.startswith("blocked:"), reason
 
@@ -64,4 +64,4 @@ def test_dangerous_scripts_rejected(script: str) -> None:
     ],
 )
 def test_benign_scripts_accepted(script: str) -> None:
-    assert _script_rejection(script) is None
+    assert script_rejection(script) is None
