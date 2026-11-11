@@ -14,7 +14,7 @@ upgrade untouched. Table-existence is guarded via ``sa.inspect`` to
 mirror the pattern in 115 / 126 so a fresh test bootstrap without
 ``managedsystemrecord`` becomes a no-op instead of a crash.
 
-Revision ID: 127_managed_system_passphrase_secret
+Revision ID: 127_managed_system_passphrase
 Revises:     126_drop_result_path
 Create Date: 2026-08-16
 """
@@ -24,7 +24,7 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "127_managed_system_passphrase_secret"
+revision: str = "127_managed_system_passphrase"
 down_revision: str | None = "126_drop_result_path"
 branch_labels: tuple[str, ...] | None = None
 depends_on: tuple[str, ...] | None = None

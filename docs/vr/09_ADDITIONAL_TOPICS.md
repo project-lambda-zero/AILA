@@ -20,7 +20,7 @@ Topics not covered by the first eight documents. These are the operational, orga
 > | Outcome routing | `src/aila/modules/vr/agents/outcome_dispatcher.py` |
 > | DB schema (19 tables) | `src/aila/modules/vr/db_models/__init__.py` |
 > | Contract enums (TargetKind, InvestigationKind, InvestigationStatus, HypothesisState, OutcomeKind, PersonaVoice) | `src/aila/modules/vr/contracts/` |
-> | Alembic head | `src/aila/alembic/versions/067_workflow_state_cursor_archived_state.py` |
+> | Alembic head | `src/aila/alembic/versions/067_cursor_archived_state.py` |
 
 Cross-references:
 - `docs/vr/01_REASONING_LOOP.md` -- turn anatomy and the reasoning engine

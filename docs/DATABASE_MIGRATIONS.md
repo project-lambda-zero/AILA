@@ -37,10 +37,10 @@ src/aila/
       061_llm_idempotency_cache.py
       062_vr_outcome_review.py
       063_vr_auto_steering_dedup_key.py
-      064_vr_branch_persona_voice_not_null.py
-      065_task_records_input_hash_unique.py
+      064_vr_branch_persona_voice_nn.py
+      065_task_records_input_hash_uq.py
       066_task_records_status_check.py
-      067_workflow_state_cursor_archived_state.py
+      067_cursor_archived_state.py
       068_malware_module_tables.py
       069_malware_audit_fixes.py
       070_malware_project_slim_and_ack.py
@@ -178,10 +178,10 @@ Examples from the codebase:
 | `061_llm_idempotency_cache.py` | Platform subsystem |
 | `062_vr_outcome_review.py` | Module column + new table |
 | `063_vr_auto_steering_dedup_key.py` | Module column + partial UNIQUE |
-| `064_vr_branch_persona_voice_not_null.py` | Module backfill + NOT NULL |
-| `065_task_records_input_hash_unique.py` | Platform column + partial UNIQUE |
+| `064_vr_branch_persona_voice_nn.py` | Module backfill + NOT NULL |
+| `065_task_records_input_hash_uq.py` | Platform column + partial UNIQUE |
 | `066_task_records_status_check.py` | Platform CHECK constraint |
-| `067_workflow_state_cursor_archived_state.py` | Platform column addition |
+| `067_cursor_archived_state.py` | Platform column addition |
 | `068_malware_module_tables.py` | Malware module initial tables (17 tables) |
 | `069_malware_audit_fixes.py` | Module column additions + findings table rebuild |
 | `070_malware_project_slim_and_ack.py` | Module column drops + acked_at column |

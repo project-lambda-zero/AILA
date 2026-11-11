@@ -17,7 +17,7 @@ Backfill logic is inlined (not imported from app code) so the migration
 stays self-contained + frozen. Existing rows without a primary outcome
 stay NULL. Backfill is deterministic and idempotent per row.
 
-Revision ID: 135_vr_investigation_outcome_axes
+Revision ID: 135_vr_outcome_axes
 Revises:     134_fuzz_proposal_nullable_ctx
 Create Date: 2026-08-25
 """
@@ -29,7 +29,7 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "135_vr_investigation_outcome_axes"
+revision: str = "135_vr_outcome_axes"
 down_revision: str | None = "134_fuzz_proposal_nullable_ctx"
 branch_labels: tuple[str, ...] | None = None
 depends_on: tuple[str, ...] | None = None

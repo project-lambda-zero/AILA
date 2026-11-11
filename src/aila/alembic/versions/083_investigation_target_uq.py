@@ -10,7 +10,7 @@ converge on the same name.
 Guarded with ``IF EXISTS`` so a re-run, or a fresh database that already carries
 the derived name, is a no-op.
 
-Revision ID: 083_investigation_target_uq_rename
+Revision ID: 083_investigation_target_uq
 Revises:     082_observability_join_keys
 Create Date: 2026-07-21
 """
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "083_investigation_target_uq_rename"
+revision: str = "083_investigation_target_uq"
 down_revision: str | None = "082_observability_join_keys"
 branch_labels: tuple[str, ...] | None = None
 depends_on: tuple[str, ...] | None = None

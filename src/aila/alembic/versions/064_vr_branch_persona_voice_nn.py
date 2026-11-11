@@ -22,7 +22,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "064_vr_branch_persona_voice_not_null"
+revision = "064_vr_branch_persona_voice_nn"
 down_revision = "063_vr_auto_steering_dedup_key"
 branch_labels = None
 depends_on = None

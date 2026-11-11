@@ -26,8 +26,8 @@ from __future__ import annotations
 
 from alembic import op
 
-revision = "065_task_records_input_hash_unique"
-down_revision = "064_vr_branch_persona_voice_not_null"
+revision = "065_task_records_input_hash_uq"
+down_revision = "064_vr_branch_persona_voice_nn"
 branch_labels = None
 depends_on = None
 

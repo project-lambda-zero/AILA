@@ -18,7 +18,7 @@
 > | Outcome routing | `src/aila/modules/vr/agents/outcome_dispatcher.py` |
 > | DB schema (19 tables) | `src/aila/modules/vr/db_models/__init__.py` |
 > | Contract enums (TargetKind, InvestigationKind, InvestigationStatus, HypothesisState, OutcomeKind, PersonaVoice) | `src/aila/modules/vr/contracts/` |
-> | Alembic head | `src/aila/alembic/versions/067_workflow_state_cursor_archived_state.py` |
+> | Alembic head | `src/aila/alembic/versions/067_cursor_archived_state.py` |
 
 Reference on the turn-by-turn reasoning loop. This is the engine of the module: how the LLM thinks about finding bugs, what it sees each turn, what it produces, and how the platform keeps it honest. Brainstorm-grade exploration -- every gray area I can find, surfaced and named.
 

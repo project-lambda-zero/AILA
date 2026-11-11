@@ -12,7 +12,7 @@ The constraint name is module-prefixed per CLAUDE.md common mistake #21
 (constraint names are unique per schema, not per table).
 
 Revision ID: 105_automation_run_history
-Revises: 104_workflowrun_json_validity_check
+Revises: 104_workflowrun_json_validity
 Create Date: 2026-07-27
 """
 from __future__ import annotations
@@ -21,7 +21,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "105_automation_run_history"
-down_revision: str | None = "104_workflowrun_json_validity_check"
+down_revision: str | None = "104_workflowrun_json_validity"
 branch_labels: tuple[str, ...] | None = None
 depends_on: tuple[str, ...] | None = None
 

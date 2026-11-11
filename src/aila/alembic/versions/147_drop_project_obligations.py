@@ -5,7 +5,7 @@ tables (``vr_projects``, ``malware_projects``) and on ``malware_findings`` has n
 model, reader, or writer left in ``src/aila``. Table-existence guarded to match
 the codebase's migration style.
 
-Revision ID: 147_drop_project_obligations_json
+Revision ID: 147_drop_project_obligations
 Revises:     146_drop_vr_finding_nday_columns
 Create Date: 2026-11-04
 """
@@ -15,7 +15,7 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "147_drop_project_obligations_json"
+revision: str = "147_drop_project_obligations"
 down_revision: str | None = "146_drop_vr_finding_nday_columns"
 branch_labels: tuple[str, ...] | None = None
 depends_on: tuple[str, ...] | None = None

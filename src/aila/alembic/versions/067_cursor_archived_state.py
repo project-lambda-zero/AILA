@@ -29,7 +29,7 @@ security constraint). Backward compatible: existing cursors without
 ``archived_state`` resume from ``investigation_setup`` (or whatever the
 caller passes as fallback) as today.
 
-Revision ID: 067_workflow_state_cursor_archived_state
+Revision ID: 067_cursor_archived_state
 Revises: 066_task_records_status_check
 Create Date: 2026-06-11
 """
@@ -38,7 +38,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "067_workflow_state_cursor_archived_state"
+revision: str = "067_cursor_archived_state"
 down_revision: str | None = "066_task_records_status_check"
 branch_labels = None
 depends_on = None

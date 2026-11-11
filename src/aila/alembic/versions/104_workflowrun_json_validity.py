@@ -48,7 +48,7 @@ that motivated this note). This migration does not attempt to undo 069's drop
 policy so a future ``104+n`` migration touching a populated table has a
 copy-pasteable reference.
 
-Revision ID: 104_workflowrun_json_validity_check
+Revision ID: 104_workflowrun_json_validity
 Revises:     103_specialist_agent
 Create Date: 2026-07-27
 """
@@ -56,7 +56,7 @@ from __future__ import annotations
 
 from alembic import op
 
-revision: str = "104_workflowrun_json_validity_check"
+revision: str = "104_workflowrun_json_validity"
 down_revision: str | None = "103_specialist_agent"
 branch_labels: tuple[str, ...] | None = None
 depends_on: tuple[str, ...] | None = None

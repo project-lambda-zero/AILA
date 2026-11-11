@@ -1,6 +1,6 @@
 """Phase 143 findings enrichment -- add is_kev + current_workflow_state to LatestFindingRecord.
 
-Revision ID: 005_plan_143_findings_kev_workflow
+Revision ID: 005_plan_143_findings_kev_flow
 Revises: 004_plan_d_network_tables
 Create Date: 2026-04-10
 
@@ -18,7 +18,7 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "005_plan_143_findings_kev_workflow"
+revision: str = "005_plan_143_findings_kev_flow"
 down_revision: Union[str, None] = "004_plan_d_network_tables"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

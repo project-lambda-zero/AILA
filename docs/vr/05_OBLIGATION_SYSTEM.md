@@ -22,7 +22,7 @@ The frame: **the LLM is allowed to be confident only when the evidence graph con
 > | Outcome routing | `src/aila/modules/vr/agents/outcome_dispatcher.py` |
 > | DB schema (19 tables) | `src/aila/modules/vr/db_models/__init__.py` |
 > | Contract enums (TargetKind, InvestigationKind, InvestigationStatus, HypothesisState, OutcomeKind, PersonaVoice) | `src/aila/modules/vr/contracts/` |
-> | Alembic head | `src/aila/alembic/versions/067_workflow_state_cursor_archived_state.py` |
+> | Alembic head | `src/aila/alembic/versions/067_cursor_archived_state.py` |
 
 ## 0.1  What shipped instead
 

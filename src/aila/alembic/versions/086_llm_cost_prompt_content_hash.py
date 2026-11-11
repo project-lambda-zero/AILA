@@ -12,7 +12,7 @@ Guarded with IF NOT EXISTS so a re-run, or a fresh database that already
 carries the column, is a no-op.
 
 Revision ID: 086_llm_cost_prompt_content_hash
-Revises:     085_malware_mcp_call_log_join_keys
+Revises:     085_malware_mcp_log_join_keys
 Create Date: 2026-07-24
 """
 from __future__ import annotations
@@ -22,7 +22,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "086_llm_cost_prompt_content_hash"
-down_revision: str | None = "085_malware_mcp_call_log_join_keys"
+down_revision: str | None = "085_malware_mcp_log_join_keys"
 branch_labels: tuple[str, ...] | None = None
 depends_on: tuple[str, ...] | None = None
 
