@@ -23,6 +23,13 @@ class LLMError(Exception):
         self.retryable = retryable
 
 
+class LLMTruncationError(LLMError):
+    """Structured output was cut off at the model's output-token limit.
+
+    This is a retryable model-quality failure, not an infrastructure failure.
+    """
+
+
 class LLMDisabledError(LLMError):
     """Kill switch is active -- all LLM calls are disabled by operator.
 

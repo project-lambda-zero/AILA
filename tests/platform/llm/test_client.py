@@ -15,8 +15,9 @@ import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
-from openai import APIConnectionError, APITimeoutError
+from openai import APIConnectionError, APITimeoutError, InternalServerError
 from pydantic import BaseModel
 
 import aila.platform.llm.client as client_mod
@@ -645,6 +646,95 @@ class TestTruncation:
             response = await client.chat_json("scoring", [{"role": "user", "content": "test"}], schema)
 
         assert json.loads(response.content)["score"] == 8.5
+
+
+class TestTruncationHealthNeutrality:
+    """Truncated structured output is a model-quality failure (issue #305).
+
+    It stays a retryable LLMError for the caller, but must not mark the
+    endpoint unhealthy. Timeouts, connection failures and 5xx keep recording.
+    """
+
+    @pytest.mark.asyncio
+    async def test_truncation_does_not_record_infra_failure(
+        self, client: AilaLLMClient,
+    ) -> None:
+        truncated = '{"score": 8.5, "reason'
+        mock_completion = _make_completion(content=truncated, finish_reason="length")
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
+            mock_instance = AsyncMock()
+            mock_instance.chat.completions.create = AsyncMock(return_value=mock_completion)
+            mock_oai.return_value = mock_instance
+            with patch.object(client_mod, "_record_llm_error") as mock_record, patch(
+                "aila.platform.llm.client.asyncio.sleep", new_callable=AsyncMock,
+            ):
+                with pytest.raises(LLMError, match="truncated"):
+                    await client.chat_json(
+                        "scoring",
+                        [{"role": "user", "content": "test"}],
+                        ScoringOutput.model_json_schema(),
+                    )
+
+        mock_record.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_timeout_still_records_infra_failure(
+        self, client: AilaLLMClient,
+    ) -> None:
+        mock_completion = _make_completion(content="recovered")
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
+            mock_instance = AsyncMock()
+            mock_instance.chat.completions.create = AsyncMock(
+                side_effect=[APITimeoutError(request=MagicMock()), mock_completion],
+            )
+            mock_oai.return_value = mock_instance
+            with patch.object(client_mod, "_record_llm_error") as mock_record, patch(
+                "aila.platform.llm.client.asyncio.sleep", new_callable=AsyncMock,
+            ):
+                await client.chat("scoring", [{"role": "user", "content": "test"}])
+
+        assert [c.kwargs["kind"] for c in mock_record.call_args_list] == ["timeout"]
+
+    @pytest.mark.asyncio
+    async def test_connection_error_still_records_infra_failure(
+        self, client: AilaLLMClient,
+    ) -> None:
+        mock_completion = _make_completion(content="recovered")
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
+            mock_instance = AsyncMock()
+            mock_instance.chat.completions.create = AsyncMock(
+                side_effect=[APIConnectionError(request=MagicMock()), mock_completion],
+            )
+            mock_oai.return_value = mock_instance
+            with patch.object(client_mod, "_record_llm_error") as mock_record, patch(
+                "aila.platform.llm.client.asyncio.sleep", new_callable=AsyncMock,
+            ):
+                await client.chat("scoring", [{"role": "user", "content": "test"}])
+
+        assert [c.kwargs["kind"] for c in mock_record.call_args_list] == ["connect_refused"]
+
+    @pytest.mark.asyncio
+    async def test_server_error_still_records_infra_failure(
+        self, client: AilaLLMClient,
+    ) -> None:
+        mock_completion = _make_completion(content="recovered")
+        server_error = InternalServerError(
+            "upstream failure",
+            response=httpx.Response(500, request=httpx.Request("POST", "http://test")),
+            body=None,
+        )
+        with patch("aila.platform.llm.client.AsyncOpenAI") as mock_oai:
+            mock_instance = AsyncMock()
+            mock_instance.chat.completions.create = AsyncMock(
+                side_effect=[server_error, mock_completion],
+            )
+            mock_oai.return_value = mock_instance
+            with patch.object(client_mod, "_record_llm_error") as mock_record, patch(
+                "aila.platform.llm.client.asyncio.sleep", new_callable=AsyncMock,
+            ):
+                await client.chat("scoring", [{"role": "user", "content": "test"}])
+
+        assert [c.kwargs["kind"] for c in mock_record.call_args_list] == ["http_5xx"]
 
 
 # ---------------------------------------------------------------------------
