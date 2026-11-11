@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.16] - 2026-11-11 -- Malware X-Ray reads live cost keys
+
+### Fixed
+
+- The malware investigation cockpit now reads total, LLM-token, and MCP-call costs from the live `/cost` response keys. Investigation-summary fields remain the fallback, and fuzz infrastructure cost comes only from the summary.
+
 ## [0.6.15] - 2026-11-11 -- Malware targets use offset pagination
 
 ### Fixed

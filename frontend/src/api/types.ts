@@ -33,9 +33,9 @@ export interface Investigation {
   outcome_count?: number;
   strategy_family?: string | null;
   cost_budget_usd?: number;
-  cost_actual_usd?: number;
-  llm_tokens_cost_usd?: number;
-  mcp_calls_cost_usd?: number;
+  cost_actual_usd?: number | null;
+  llm_tokens_cost_usd?: number | null;
+  mcp_calls_cost_usd?: number | null;
   primary_outcome_kind?: string | null;
   primary_outcome_confidence?: string | null;
   primary_outcome_verdict_head?: string | null;
