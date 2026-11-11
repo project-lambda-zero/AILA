@@ -121,7 +121,7 @@ data = json.loads(response.content)  # Guaranteed valid against SeverityResult
 **Behavior details:**
 
 1. Generates JSON schema from `model_class.model_json_schema()`
-2. Injects `additionalProperties: false` and full `required` arrays for OpenAI strict mode
+2. Normalizes the schema for OpenAI strict mode: declared-property objects get `additionalProperties: false` and every declared property in `required`; free-form objects (no `properties`, not explicitly closed, e.g. `dict[str, Any]`) are left open with `additionalProperties: true`; explicitly closed objects stay closed. Strict providers may still reject open schemas and fall back to `json_object` mode (see `chat_json`)
 3. Sends via `chat_json()` with the generated schema
 4. Parses the response with `model_class.model_validate()`
 5. On parse failure: retries once with a correction prompt appended to messages
@@ -258,7 +258,7 @@ data = json.loads(response.content)
 **What happens internally:**
 
 1. `model_class.model_json_schema()` generates the JSON schema
-2. `additionalProperties: false` and full `required` lists are injected recursively (OpenAI strict mode requirement)
+2. Declared-property objects are closed recursively (`additionalProperties: false`, all declared properties in `required`). Free-form objects (`dict[str, Any]`: no `properties`, not explicitly closed) are preserved open with `additionalProperties: true`, since forcing an empty closed object would reject every key
 3. The schema is sent via `response_format` with `"strict": True`
 4. The response is parsed with `model_class.model_validate()`
 5. On parse failure, a correction prompt is appended and the call is retried once

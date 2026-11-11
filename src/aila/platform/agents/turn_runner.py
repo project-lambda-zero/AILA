@@ -669,6 +669,10 @@ class AgentTurnRunnerBase:
         for index, write in enumerate(writes):
             # An empty-payload ledger write carries no information and only creates a noise row, so it is dropped at the source.
             if not write.payload:
+                _log.warning(
+                    "ledger write dropped: empty payload inv=%s branch=%s turn=%d index=%d kind=%s",
+                    self.investigation_id, self.branch_id, turn_number, index, write.kind,
+                )
                 continue
             kind = write.kind
             if in_recon and kind == "note":
