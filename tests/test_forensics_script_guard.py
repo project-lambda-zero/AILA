@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from aila.modules.forensics.tools.script_guard import script_rejection
+from aila.platform.prompts.seeds import FORENSICS_OS_HINT_LINUX_TEXT
 
 
 @pytest.mark.parametrize(
@@ -65,3 +66,19 @@ def test_dangerous_scripts_rejected(script: str) -> None:
 )
 def test_benign_scripts_accepted(script: str) -> None:
     assert script_rejection(script) is None
+
+
+# Linux OS hint example, asserted present in the prompt so this regression
+# exercises the exact text the investigator sends to the model.
+_LINUX_HINT_TYPE_EXAMPLE = "print(t.os, list(type(fs).__name__ for fs in t.filesystems))"
+
+
+def test_linux_hint_example_uses_type_and_passes_guard() -> None:
+    assert _LINUX_HINT_TYPE_EXAMPLE in FORENSICS_OS_HINT_LINUX_TEXT
+    assert "fs.__class__" not in FORENSICS_OS_HINT_LINUX_TEXT
+    assert script_rejection(_LINUX_HINT_TYPE_EXAMPLE) is None
+
+
+def test_direct_dunder_class_traversal_still_rejected() -> None:
+    reason = script_rejection("print(list(fs.__class__.__name__ for fs in t.filesystems))")
+    assert reason == "blocked: banned attribute access: .__class__"
