@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.59] - 2026-11-12 -- Monaco loads only when a code surface opens
+
+### Fixed
+
+- The Monaco code editor, its stylesheet, and its workers now load only when a code-viewing surface opens, instead of at startup. The initial entry transfer drops from about 4.89 MB (1.23 MB gzip) to about 0.55 MB (0.15 MB gzip). The production build now fails if Monaco re-enters the entry document or its static imports.
+
 ## [0.6.58] - 2026-11-12 -- Confirm toolbar actions that restart or re-run analysis
 
 ### Fixed

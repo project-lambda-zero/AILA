@@ -43,27 +43,37 @@ const appVersion = readPackageVersion();
 const buildSha = readBuildSha();
 
 /**
- * Partition vendor code into deterministic chunks. Without this, Rollup
- * packs every eager import into a single oversized index chunk.
+ * Named vendor chunks. Monaco is reachable only through the lazy CodeBlock
+ * import, so its chunk, CSS, and workers never enter the entry document.
  *
- * Regex tolerates both POSIX `/` and Windows `\` separators because
- * Vite reports module ids with the host platform's path style.
+ * `includeDependenciesRecursively: false` on every group stops a group from
+ * claiming the imports of its members. Without it the Monaco group claimed
+ * React core through `@monaco-editor/react`, and every eager chunk then
+ * depended on the Monaco chunk.
+ *
+ * Regexes tolerate both POSIX `/` and Windows `\` separators because Vite
+ * reports module ids with the host platform's path style.
  */
-function manualChunks(id: string): string | undefined {
-  if (!id.includes("node_modules")) {
-    return undefined;
-  }
-  if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) {
-    return "vendor-react";
-  }
-  if (/[\\/]node_modules[\\/]@tanstack[\\/]/.test(id)) {
-    return "vendor-tanstack";
-  }
-  if (/[\\/]node_modules[\\/](monaco-editor|@monaco-editor)[\\/]/.test(id)) {
-    return "vendor-monaco";
-  }
-  return undefined;
-}
+const vendorChunkGroups = [
+  {
+    name: "vendor-react",
+    test: /[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/,
+    priority: 2,
+    includeDependenciesRecursively: false,
+  },
+  {
+    name: "vendor-tanstack",
+    test: /[\\/]node_modules[\\/]@tanstack[\\/]/,
+    priority: 1,
+    includeDependenciesRecursively: false,
+  },
+  {
+    name: "vendor-monaco",
+    test: /[\\/]node_modules[\\/](monaco-editor|@monaco-editor|state-local)[\\/]/,
+    priority: 0,
+    includeDependenciesRecursively: false,
+  },
+];
 
 export default defineConfig({
   plugins: [react()],
@@ -91,9 +101,11 @@ export default defineConfig({
     port: 4173,
   },
   build: {
-    rollupOptions: {
+    rolldownOptions: {
       output: {
-        manualChunks,
+        codeSplitting: {
+          groups: vendorChunkGroups,
+        },
       },
     },
   },
