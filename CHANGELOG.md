@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.46] - 2026-11-12 -- All-skipped playbook runs report skipped
+
+### Fixed
+
+- A malware playbook run in which every step was skipped now reports the aggregate status `skipped` instead of `ok`, in the run result, the execution outcome, and the task result, together with each step's skip reason. Such a run no longer advances the playbook's run count or last-run time. Runs that dispatch steps keep their `ok`, `partial`, or `failed` status.
+
 ## [0.6.45] - 2026-11-12 -- Forensics investigator stops on paused and terminal statuses
 
 ### Fixed
