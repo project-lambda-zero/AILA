@@ -481,21 +481,21 @@ Push table into registry in `register_tools()`:
 schema_registry.register(MyModRecord)
 ```
 
-**Migration file** (`src/aila/alembic/versions/027_mymod_tables.py`):
+**Migration file** (`src/aila/alembic/versions/NNN_mymod_tables.py`, where `NNN` is the next number after the head from `cd src/aila && alembic heads`):
 
 ```python
-"""027 -- mymod tables.
+"""NNN -- mymod tables.
 
-Revision ID: 027_mymod_tables
-Revises: 026_drop_legacy_task_columns
+Revision ID: NNN_mymod_tables
+Revises: <current head>
 Create Date: YYYY-MM-DD
 """
 from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "027_mymod_tables"
-down_revision: str | None = "026_drop_legacy_task_columns"  # set to actual latest
+revision: str = "NNN_mymod_tables"
+down_revision: str | None = "<current head>"  # the revision printed by `alembic heads`
 branch_labels = None
 depends_on = None
 

@@ -232,7 +232,7 @@ contention.
 ### First Start
 
 On first start:
-1. `make db-init` (or the container entrypoint when using `docker-compose.full.yml`) creates every SQLModel-registered table and stamps Alembic at the current head (`067_cursor_archived_state`).
+1. `make db-init` (or the container entrypoint when using `docker-compose.full.yml`) creates every SQLModel-registered table and stamps Alembic at the current head (check it with `cd src/aila && alembic heads`).
 2. If `AILA_ADMIN_PASSWORD` is set and no `UserRecord` row exists, the lifespan hook creates the `admin` user with that password (argon2id-hashed). When neither condition is met, startup raises `RuntimeError` to refuse an unprotected admin account.
 3. If `AILA_BOOTSTRAP_KEY` is set and no `ApiKeyRecord` row exists, an admin API key is created from the bootstrap value.
 4. The platform discovers and loads every installed module (`default`, `vr`, `vulnerability`, `forensics`, plus `hello_world` as the reference).
@@ -441,4 +441,4 @@ audit trail to reconstruct who triggered what across modules.
 
 ---
 
-*Last updated: 2026-06-21 (head: `067_cursor_archived_state`).*
+*Last updated: 2026-06-21. Check the current Alembic head with `cd src/aila && alembic heads`.*
