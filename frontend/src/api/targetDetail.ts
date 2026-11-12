@@ -26,6 +26,7 @@ export interface TargetDetail {
   analysis_stages: Record<string, StageInfo>;
   capability_profile: Record<string, unknown> | null;
   descriptor: Record<string, unknown> | null;
+  sha256: string | null;
   primary_language: string | null;
   secondary_languages: string[];
   uploaded_filename: string | null;
@@ -93,6 +94,7 @@ export function parseTargetDetail(o: Record<string, unknown>): TargetDetail {
     analysis_stages: parseStages(o.analysis_stages),
     capability_profile: asRecord(o.capability_profile),
     descriptor: asRecord(o.descriptor),
+    sha256: readStr(o, "sha256"),
     primary_language: readStr(o, "primary_language"),
     secondary_languages: readStrArray(o, "secondary_languages"),
     uploaded_filename: readStr(o, "uploaded_filename"),

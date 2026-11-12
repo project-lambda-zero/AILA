@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.50] - 2026-11-12 -- Target reads expose the uploaded sample digest
+
+### Fixed
+
+- Malware target list and detail reads now include the uploaded sample's SHA-256 as `sha256`, for binary and APK targets alike, and the target detail page shows it. APK overviews also carry the digest once decoding has run. Targets with no stored digest report null.
+
 ## [0.6.49] - 2026-11-12 -- APK overview reads the real ingestion handles
 
 ### Fixed
