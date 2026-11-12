@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.28] - 2026-11-12 -- VR outcome summaries report live review votes
+
+### Fixed
+
+- The VR investigation outcomes list now reports each outcome's stored approve, reject, request-edit, and abstain vote counts and the investigation's review quorum, instead of always reporting zero. Counts come from one grouped query for all outcomes. Quorum follows the malware rule: non-proposing siblings are the non-abandoned branches minus one.
+
 ## [0.6.27] - 2026-11-12 -- Truncated output no longer marks endpoints unhealthy
 
 ### Fixed
