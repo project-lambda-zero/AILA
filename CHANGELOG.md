@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.32] - 2026-11-12 -- VR gate reject counters are reserved observables
+
+### Fixed
+
+- `_gate.` is now a reserved observable prefix. A turn decision that writes a VR submit-gate reject counter is dropped, so a branch can no longer force an unsupported submit through by setting its own counter.
+- Submit-gate reject counters are no longer evicted by the agent-key cap or by the observable storage cap, so a flood of scratchpad keys or tool readings cannot reset a gate's rejection history.
+
 ## [0.6.31] - 2026-11-12 -- VR positive submits hydrate matching file citations into evidence refs
 
 ### Fixed

@@ -45,13 +45,14 @@ __all__ = [
 
 
 # Namespace prefixes the agent must not write to. Tool / directive /
-# recall keys carry external-source metadata (tool bodies, directive
-# lifts, engine-pinned recall list) that the agent must not overwrite,
-# rename, or shadow via self-set observables. ``_recall.pinned`` is
-# written exclusively by :meth:`absorb` when the agent emits
-# ``action="recall"``; blocking the ``_recall.`` prefix here also
-# exempts the pinned-key list from the agent-key eviction cap in the
-# same absorb() pass.
+# recall / gate keys carry external-source metadata (tool bodies,
+# directive lifts, engine-pinned recall list, submit-gate reject
+# counters) that the agent must not overwrite, rename, or shadow via
+# self-set observables. ``_recall.pinned`` is written exclusively by
+# :meth:`absorb` when the agent emits ``action="recall"``, and
+# ``_gate.<gate>.reject_count`` exclusively by the module's submit
+# gates; blocking a prefix here also exempts its keys from the
+# agent-key eviction cap in the same absorb() pass.
 _TOOL_PREFIXES: tuple[str, ...] = (
     "audit_mcp:", "audit_mcp.",
     "rea:", "rea.",
@@ -60,6 +61,7 @@ _TOOL_PREFIXES: tuple[str, ...] = (
     "_directive.",
     "_recall.",
     "_ledger.",
+    "_gate.",
 )
 
 # Fallback hard cap on agent-self-set observable keys across all turns
@@ -635,12 +637,10 @@ class CyberReasoningEngine:
                     observables[key] = _RECALL_MISSING_MARKER
         # Cap agent-self-set observables to keep case_state bounded:
         #   (1) max 10 NEW keys per turn (anti-spam)
-        #   (2) block writes to tool / directive / _recall namespaces
+        #   (2) block writes to every ``_TOOL_PREFIXES`` namespace
         #   (3) max _MAX_AGENT_KEYS_TOTAL agent-set keys across all
         #       turns -- LRU evict oldest by dict-insertion order;
-        #       tool / directive / _recall.pinned keys are NEVER
-        #       evicted (they're preserved by the partition in
-        #       render_case_model and live separately from the cap).
+        #       ``_TOOL_PREFIXES`` keys are NEVER evicted by this cap.
         accepted = 0
         for k, v in decision.observables.items():
             key = str(k).strip()

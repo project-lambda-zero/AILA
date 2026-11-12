@@ -1039,14 +1039,16 @@ Eliminates a class of "tool never matches anything" loops.
 
 ### 8.bis.16 absorb() caps on agent-set observables
 
-`absorb()` (`src/aila/platform/services/reasoning.py:455`) accepts at most
+`absorb()` (`src/aila/platform/services/reasoning.py:457`) accepts at most
 10 new agent-set observables per turn and evicts the oldest agent-set keys
-past `reasoning_max_agent_keys_total` (default 150, `reasoning.py:77`).
+past `reasoning_max_agent_keys_total` (default 150, `reasoning.py:79`).
 Keys with a `_TOOL_PREFIXES` prefix (`audit_mcp:`/`.`, `rea:`/`.`,
 `reverser_belt:`/`.`, `android_mcp:`/`.`, `_directive.`, `_recall.`,
-`_ledger.`; `reasoning.py:55-65`) cannot be written by the agent and are
-never evicted. `render_case_model` (`reasoning.py:716`) applies no display
-caps: it indexes every tool reading and renders tool readings and agent
+`_ledger.`, `_gate.`; `reasoning.py:56-65`) cannot be written by the agent
+and are never evicted by this cap. The tool executor's observable storage
+cap (`_merge_and_report_eviction`) also keeps `_gate.` keys.
+`render_case_model` (`reasoning.py:716`) applies no display caps: it
+indexes every tool reading and renders tool readings and agent
 scratchpad keys in full, with the context assembler sizing the live
 section against `platform.reasoning_context_budget_tokens`.
 
@@ -1114,8 +1116,10 @@ normalizes explicit citations the model already wrote:
 
 A rejected submit is emitted as a `reasoning` decision whose `reasoning`
 field carries the rejection text. The per-gate reject counter stays at
-`_gate.<gate>.reject_count`, an ordinary case-state observable (`_gate.`
-is not a reserved prefix). The directive text lives at the reserved
+`_gate.<gate>.reject_count`. `_gate.` is a reserved observable prefix:
+`absorb()` drops agent observable writes to it, and neither the agent-key
+cap nor the tool executor's observable storage cap evicts it, so a branch
+cannot forge or reset a gate's rejection history. The directive text lives at the reserved
 `_directive.gate.<gate>.rejected` key so `render_active_directives_section`
 surfaces it on the next turn. The counter and directive are removed when
 the gate passes or forces through, and when the gate is disabled.

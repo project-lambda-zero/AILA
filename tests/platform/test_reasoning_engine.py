@@ -657,6 +657,25 @@ def test_absorb_agent_key_cap_defaults_to_150() -> None:
     assert len(agent_keys) == 150
 
 
+def test_absorb_agent_key_cap_never_evicts_gate_counters() -> None:
+    """A submit-gate reject counter is the oldest key in a case state
+    flooded past the agent-key cap; the cap trims scratchpad keys and
+    leaves the counter intact, so the gate's rejection history survives."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    seed: dict[str, object] = {"_gate.some_gate.reject_count": 2}
+    seed.update({f"scratch_{i}": i for i in range(200)})
+    merged = engine.absorb(
+        ReasoningCaseState(observables=seed),
+        ReasoningTurnDecision(
+            reasoning="noop",
+            action="reasoning",
+            provenance=EvidenceProvenance(),
+        ),
+    )
+    assert merged.observables["_gate.some_gate.reject_count"] == 2
+    assert "scratch_0" not in merged.observables
+
+
 def test_absorb_agent_key_cap_resolves_from_platform_registry() -> None:
     """Wire a ConfigRegistry that returns 25 -> absorb enforces 25."""
     registry = _FakeConfigRegistry(

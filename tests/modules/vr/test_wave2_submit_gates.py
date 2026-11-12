@@ -3,7 +3,7 @@
 Pure-unit tests for the submit-time gates added to
 :mod:`aila.modules.vr.agents.vuln_researcher` and the deterministic
 distinctness score in :mod:`aila.modules.vr.services.distinctness`.
-No DB, no engine, no live LLM: the gates read a decision + case_state
+No DB, no live LLM: the gates read a decision + case_state
 in memory and either pass, swap the action to ``reasoning`` carrying the
 rejection text, or stamp the payload.
 """
@@ -32,6 +32,7 @@ from aila.platform.contracts.reasoning import (
     ReasoningCaseState,
     ReasoningTurnDecision,
 )
+from aila.platform.services.reasoning import CyberReasoningEngine
 
 
 # ---------------------------------------------------------------------------
@@ -579,6 +580,32 @@ def test_distinctness_stamp_skipped_on_negative_polarity() -> None:
 # ---------------------------------------------------------------------------
 # Gate counter and directive lifecycle.
 # ---------------------------------------------------------------------------
+
+
+def test_agent_observable_write_cannot_forge_gate_counter() -> None:
+    """A turn decision that sets the gate's reject counter past the cap is
+    absorbed without touching the counter, so the next unsupported positive
+    submit is rejected as a first rejection instead of forced through."""
+    key = "_gate.positive_submit_refs.reject_count"
+    engine = CyberReasoningEngine(None)  # type: ignore[arg-type]  # absorb does no LLM I/O
+    case = engine.absorb(
+        _empty_case(),
+        ReasoningTurnDecision(
+            action="reasoning",
+            reasoning="r",
+            provenance=EvidenceProvenance(),
+            observables={key: 99},
+        ),
+        turn_number=1,
+    )
+    assert key not in case.observables
+
+    out = _make_researcher()._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(payload={}), case_state=case, turn_number=2,
+    )
+
+    assert out.action == "reasoning"
+    assert case.observables[key] == 1
 
 
 def test_gate_pass_clears_counter_and_directive() -> None:
