@@ -15,12 +15,13 @@ import json
 import json as _json
 import logging
 from collections.abc import AsyncGenerator
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from sqlalchemy import Table
 from sqlalchemy import exists as sa_exists
 from sqlalchemy import func as sa_func
 from sqlalchemy import or_ as sa_or
@@ -35,6 +36,8 @@ from aila.modules.vr.services.outcome_polarity import derive_outcome_polarity
 from aila.platform.config_base import ModuleConfigReader, _shared_registry
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.auth import AuthContext, require_auth
+from aila.platform.llm.cost_record import LLMCostRecord
+from aila.platform.llm.idempotency_cache import purge_for_investigation
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.services.http import build_async_http_client
 from aila.platform.services.investigation_cost import (
@@ -5169,6 +5172,7 @@ def create_vr_router() -> APIRouter:
                     VRInvestigationBranchRecord.investigation_id == investigation_id,
                 ),
             )).all()
+            branch_ids = [branch.id for branch in branch_rows]
             for b in branch_rows:
                 if b.parent_branch_id is not None:
                     b.parent_branch_id = None
@@ -5214,8 +5218,32 @@ def create_vr_router() -> APIRouter:
                 },
             )
 
+            await purge_for_investigation(
+                uow.session,
+                investigation_id,
+                branch_ids=branch_ids,
+            )
+
+            # Cache entries are disposable; cost rows retain team totals after
+            # their investigation, branch, and run joins are detached.
+            cost_predicates = [
+                LLMCostRecord.investigation_id == investigation_id,
+                LLMCostRecord.run_id == investigation_id,
+            ]
+            if branch_ids:
+                cost_table = cast(Table, getattr(LLMCostRecord, "__table__"))
+                cost_predicates.append(cost_table.c.branch_id.in_(branch_ids))
+            cost_rows = (await uow.session.exec(
+                select(LLMCostRecord).where(sa_or(*cost_predicates)),
+            )).all()
+            for cost_row in cost_rows:
+                cost_row.investigation_id = None
+                cost_row.branch_id = None
+                cost_row.run_id = "_no_run"
+                uow.session.add(cost_row)
+
             await uow.session.delete(inv)
-            await uow.session.commit()
+            await uow.commit()
 
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
