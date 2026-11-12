@@ -460,15 +460,18 @@ investigations. These rules are the operational lessons:
 
 4. **Agent self-bloats observables.** They invent scratchpad keys
    like `sibling_renzo_h7`, `mandatory_next`, `critic_open_question`.
-   `absorb()` (`aila/platform/services/reasoning.py:455`) accepts at
+   `absorb()` (`aila/platform/services/reasoning.py:457`) accepts at
    most 10 new agent-set keys per turn and evicts the oldest agent-set
    keys past `reasoning_max_agent_keys_total` (default 150,
-   `reasoning.py:77`; config-resolved at `:661`). Keys with a
+   `reasoning.py:79`; config-resolved at `:661`). Keys with a
    `_TOOL_PREFIXES` prefix (`audit_mcp:`/`.`, `rea:`/`.`,
    `reverser_belt:`/`.`, `android_mcp:`/`.`, `_directive.`, `_recall.`,
-   `_ledger.`; `reasoning.py:55-65`) cannot be written by the agent and
-   are never evicted. `render_case_model` (`reasoning.py:716`) no longer
-   applies display caps: it indexes every tool reading, renders every
+   `_ledger.`, `_gate.`; `reasoning.py:56-65`) cannot be written by the
+   agent and are never evicted. `_gate.<gate>.reject_count` is a VR
+   submit-gate counter; the tool executor's storage cap
+   (`_merge_and_report_eviction`) also never evicts `_gate.` keys.
+   `render_case_model` (`reasoning.py:716`) no longer applies display
+   caps: it indexes every tool reading, renders every
    agent scratchpad key in full, and the context assembler sizes the
    live section against `platform.reasoning_context_budget_tokens`.
 

@@ -2031,9 +2031,10 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
     # Each gate mirrors the reject-under-cap / force-through-over-cap
     # shape of the existing hypothesis gates (see
     # ``_maybe_reject_submit_with_unresolved_hypotheses``). Each gate's
-    # reject counter is the ordinary case-state observable
-    # ``_gate.<gate>.reject_count``; ``_gate.`` is not a reserved prefix.
-    # The mandatory directive lives under the reserved ``_directive.``
+    # reject counter lives at ``_gate.<gate>.reject_count``. ``_gate.`` is
+    # a reserved observable prefix: agent observable writes to it are
+    # dropped, and neither the agent-key cap nor the observable storage
+    # cap evicts it. The mandatory directive lives under the reserved ``_directive.``
     # prefix (``_directive.gate.<gate>.rejected``), so it renders through
     # the active directives section and agent writes cannot overwrite it.
     #
@@ -2603,9 +2604,10 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         """Shared reject-under-cap / force-through-over-cap machinery.
 
         Uses ``self._unresolved_hyp_reject_cap`` as the shared ceiling
-        (matches every hypothesis gate's mental model). The counter is
-        the ordinary case-state observable ``_gate.<name>.reject_count``.
-        The rejection directive lives under the reserved
+        (matches every hypothesis gate's mental model). The counter lives
+        at the reserved ``_gate.<name>.reject_count`` key, which the agent
+        cannot write and no observable cap evicts. The rejection
+        directive lives under the reserved
         ``_directive.gate.<name>.rejected`` key so
         ``render_active_directives_section`` surfaces it as a mandatory
         directive on the next turn.

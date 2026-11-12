@@ -475,9 +475,10 @@ class ToolExecutorHelpersBase:
 
         Returns ``(new_case_state_json, evicted)`` where ``evicted`` maps
         each NON-reserved observable key the cap trim dropped to its value.
-        Reserved keys (``_directive.*``, ``_recall.*``, ``_ledger.*``) are
-        never evicted, so never appear in ``evicted``. The eviction policy
-        is identical to :meth:`_apply_observables_delta`; this method only
+        Reserved keys (``_directive.*``, ``_recall.*``, ``_ledger.*``,
+        ``_gate.*``) are never evicted, so never appear in ``evicted``.
+        The eviction policy is identical to
+        :meth:`_apply_observables_delta`; this method only
         additionally surfaces what fell out so a caller can persist it
         before it leaves the live case state. Pure helper -- does no I/O.
         """
@@ -498,7 +499,8 @@ class ToolExecutorHelpersBase:
         # (``_directive.*`` steering must survive; ``_recall.pinned`` is
         # the engine-written recall pin list and must not be evicted
         # out from under the render layer; ``_ledger.board`` is the shared
-        # ledger digest the render layer expects each turn), drop the
+        # ledger digest the render layer expects each turn; ``_gate.*``
+        # holds submit-gate reject counters that a trim would reset), drop the
         # OLDEST non-reserved keys by dict insertion order (Python 3.7+
         # guarantees insertion order in dicts). A non-positive cap
         # disables the trim entirely (operator opt-out for a debug run).
@@ -508,9 +510,7 @@ class ToolExecutorHelpersBase:
             # across turns.
             reserved_keys = {
                 k for k in observables
-                if str(k).startswith("_directive.")
-                or str(k).startswith("_recall.")
-                or str(k).startswith("_ledger.")
+                if str(k).startswith(("_directive.", "_recall.", "_ledger.", "_gate."))
             }
             non_reserved_keys = [
                 k for k in observables if k not in reserved_keys
