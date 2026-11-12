@@ -39,7 +39,17 @@ Bearer JWT token (reader+ role).
 
 | Param | Default | Description |
 |-------|---------|-------------|
-| `last_id` | `0` | Redis Stream ID to start from. `0` = replay all events. |
+| `last_id` | _(none)_ | Redis Stream ID to start from. `0` = replay all events. |
+
+### Resume Cursor (`last_id` vs `Last-Event-ID`)
+
+The starting cursor is resolved in this order:
+
+1. `last_id` query parameter, when present. Must be `0` or `<ms>-<seq>` (at most 64 characters); any other value returns `400`.
+2. `Last-Event-ID` request header, sent automatically by `EventSource` on reconnect. The stream resumes strictly after this id, so the event with that id is not replayed. A header that is not `0` or `<ms>-<seq>` is ignored and the stream starts from `0`.
+3. `0` (replay everything).
+
+An explicit `last_id=0` therefore replays all events even when a `Last-Event-ID` header is present. The same rules apply to the scan, task, and forensics investigation progress streams. The forensics readiness stream takes no cursor.
 
 ### Event Format
 
@@ -93,7 +103,7 @@ curl -N -H "Authorization: Bearer $TOKEN" \
 
 ### Late-Connect Replay
 
-If you connect after events have been emitted, all past events are replayed via Redis XRANGE before live streaming begins. This is the late-connect replay pattern (D-17/TASK-09). Pass `last_id=0` to get all events from the beginning.
+If you connect after events have been emitted, all past events are replayed via Redis XRANGE before live streaming begins. This is the late-connect replay pattern (D-17/TASK-09). With no `last_id` and no `Last-Event-ID` header, the stream replays from `0`. On reconnect, the `Last-Event-ID` header resumes after the last delivered event (see Resume Cursor).
 
 ### No-Redis Fallback
 
@@ -294,8 +304,9 @@ Fields:
 - [ ] Router exposes `GET /{resource}/{id}/events?last_id=0` returning `StreamingResponse`
 - [ ] Endpoint does ownership check before opening the stream
 - [ ] No-Redis guard: return single informational event and close
-- [ ] Catchup via `stream.catchup(task_id, last_id)` on connect (late-join support)
-- [ ] Live stream via `stream.stream_events(task_id, "$")` after catchup
+- [ ] Resolve the start cursor with `resolve_stream_cursor(last_id, request.headers.get("last-event-id"))` (`src/aila/api/sse_cursor.py`) and use it for both catchup and live streaming
+- [ ] Catchup via `stream.catchup(task_id, cursor)` on connect (late-join support)
+- [ ] Live stream via `stream.stream_events(task_id, cursor)` after catchup
 - [ ] On each `ping` event: check DB for terminal status, emit `event: done` and return if terminal
 - [ ] Terminal `event: done` emitted when resource reaches its terminal state
 - [ ] `Cache-Control: no-cache` + `X-Accel-Buffering: no` response headers

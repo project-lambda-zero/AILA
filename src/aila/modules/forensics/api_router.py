@@ -2464,20 +2464,30 @@ def create_forensics_router() -> APIRouter:
         request: Request,
         project_id: str,
         investigation_id: str,
-        last_id: str = Query(default="0"),
+        last_id: str | None = Query(
+            default=None,
+            description=(
+                "Redis Stream ID to resume after. Overrides the Last-Event-ID header when given; "
+                "omit both to replay all events ('0')."
+            ),
+        ),
         auth: AuthContext = Depends(require_auth),
     ) -> StreamingResponse:
         """Stream investigation agent progress via Server-Sent Events.
 
         Replays past events on connect, then streams live updates until
         the investigation reaches a terminal state (completed / failed).
+        The resume cursor is the ``last_id`` query argument when supplied,
+        else the ``Last-Event-ID`` header, else ``'0'``.
         """
+        from aila.api.sse_cursor import resolve_stream_cursor
         from aila.api.sse_gate import enforce_sse_cap
         from aila.modules.forensics.db_models import ForensicsProjectRecord, InvestigationRunRecord
 
         # #60 global SSE ceiling: refuse new streams when ACTIVE_SSE is
         # at or above the configured cap.
         enforce_sse_cap()
+        cursor = resolve_stream_cursor(last_id, request.headers.get("last-event-id"))
 
         async with UnitOfWork() as uow:
             project = (await uow.session.exec(
@@ -2531,10 +2541,10 @@ def create_forensics_router() -> APIRouter:
 
                 yield f"data: {json.dumps({'stage': 'stream', 'message': 'Connected', 'percent': 0})}\n\n"
 
-                resume_from = last_id
+                resume_from = cursor
                 latest_stage = "queued"
                 try:
-                    catchup_events = await stream.catchup(task_id, last_id)
+                    catchup_events = await stream.catchup(task_id, cursor)
                     for event_id, event in catchup_events:
                         yield f"id: {event_id}\ndata: {json.dumps(event)}\n\n"
                         resume_from = event_id
