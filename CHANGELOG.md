@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.31] - 2026-11-12 -- VR positive submits hydrate matching file citations into evidence refs
+
+### Fixed
+
+- A positive VR submit with empty `payload.evidence_refs` now has its explicit `path:line` and `path:start-end` citations from the answer, `source_ref`, and `sink_ref` attached as `source_citation` evidence refs when a tool observation on the same branch carries a matching coordinate header. Each hydrated ref names the matching observation, and the payload records a `positive_submit_evidence_hydration_advisory`.
+- Hydration is bounded to the first 4000 characters of each field and 16 citations. Basename-only citations never match by suffix, citations outside the observed line range never match, and observations that report no body are not match sources.
+- Hydration does not satisfy the live `confirmed_by` requirement, so a submit with no live confirmed hypothesis still rejects. Unmatched citations still reject, and non-empty `evidence_refs` are never rewritten.
+
 ## [0.6.30] - 2026-11-12 -- VR gate rejections reach the mandatory directive section
 
 ### Fixed

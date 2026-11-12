@@ -1079,6 +1079,39 @@ A later hook on the same turn returns early for a settled gate, through
 
 The records are not persisted and add no `_gate.` key or reserved prefix.
 
+#### Positive-submit evidence hydration (issue #303)
+
+Before the positive-submit gate rejects an empty `payload.evidence_refs`, it
+normalizes explicit citations the model already wrote:
+
+- Extraction reads at most the first 4000 characters each of `answer`,
+  `source_ref`, and `sink_ref` (the decision's `answer` when the payload has
+  none), recognizes `path:line` and `path:start-end`, dedupes in
+  first-occurrence order, and keeps at most 16 citations. Reversed ranges are
+  skipped.
+- Match sources are only this branch's observables under the tool prefixes
+  `audit_mcp.`/`audit_mcp:`, `rea.`/`rea:`, `reverser_belt.`/`reverser_belt:`,
+  and `android_mcp.`/`android_mcp:`, whose body begins with a coordinate
+  header `=== <path>:<start>-<end> ...`. Reserved `_directive.`/`_gate.`/
+  `_recall.`/`_ledger.` keys, scratchpad keys, other branches, and bodies
+  containing `!! NO BODY AVAILABLE !!` never match. `read_lines` output has
+  no coordinate header and is therefore not a match source.
+- A citation matches when its path equals the header path (after `\` to `/`
+  normalization), or, only when the citation carries directories, the header
+  path ends with `/<cited path>`. A basename-only citation never matches by
+  suffix. The cited line range must lie inside the header range.
+- Each match becomes `{"kind": "source_citation", "ref": "<path>:<line>
+  [<observation_id>]"}` in `payload.evidence_refs`, and the payload gains
+  `positive_submit_evidence_hydration_advisory = {"hydrated": [{"citation",
+  "observation_id"}], "message": ...}`. Non-empty `evidence_refs` are never
+  rewritten, and no advisory is added when nothing matches.
+- Hydration is a pre-step, not a pass. The live `confirmed_by` requirement is
+  unchanged, so hydrated refs without a live confirmed hypothesis still reject
+  with the mandatory directive. Unmatched citations still reject through the
+  existing reasoning and directive path.
+- This is normalization of model-provided explicit citations. It is not
+  ambiguity detection and not hidden routing.
+
 A rejected submit is emitted as a `reasoning` decision whose `reasoning`
 field carries the rejection text. The per-gate reject counter stays at
 `_gate.<gate>.reject_count`, an ordinary case-state observable (`_gate.`
