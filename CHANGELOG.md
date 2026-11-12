@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.55] - 2026-11-12 -- Progress streams resume from Last-Event-ID
+
+### Fixed
+
+- Scan, task, and forensics investigation progress streams now resume after the last delivered event when a client reconnects with a Last-Event-ID header, instead of replaying the whole stream. An explicit query cursor still takes precedence. A malformed query cursor is rejected with a 400 error, and a malformed header starts a fresh stream.
+
 ## [0.6.54] - 2026-11-12 -- Prompt-cache TTL reaches Claude-family requests
 
 ### Fixed

@@ -449,25 +449,36 @@ async def list_task_transitions(
 async def stream_task_events(
     task_id: str,
     request: Request,
-    last_id: str = Query(default="0", description="Redis Stream ID to start from (default '0' = all events)"),
+    last_id: str | None = Query(
+        default=None,
+        description=(
+            "Redis Stream ID to resume after. Overrides the Last-Event-ID header when given; "
+            "omit both to replay all events ('0')."
+        ),
+    ),
     auth: AuthContext = Depends(require_user_or_api_key),
 ) -> StreamingResponse:
     """Stream task progress events using Server-Sent Events.
 
     Verifies the caller has access to the task, then:
-    1. Replays all events from last_id via catchup() (late-connect replay)
+    1. Replays all events after the resume cursor via catchup() (late-connect replay)
     2. Streams new events via stream_events() (blocking generator, 30s ping keepalive)
+
+    The resume cursor is the ``last_id`` query argument when supplied, else the
+    ``Last-Event-ID`` header, else ``'0'`` (see ``resolve_stream_cursor``).
 
     If Redis is not configured, returns a single informational SSE message.
 
     Returns text/event-stream response for use with EventSource API.
     """
+    from aila.api.sse_cursor import resolve_stream_cursor
     from aila.api.sse_gate import enforce_sse_cap
 
     # #60 global SSE ceiling: refuse new streams when ACTIVE_SSE is at
     # or above the configured cap. Runs before the DB fetch so a runaway
     # reconnect burst does not pay any DB cost either.
     enforce_sse_cap()
+    cursor = resolve_stream_cursor(last_id, request.headers.get("last-event-id"))
 
     # Verify task exists and is accessible before opening the stream
     async def _fetch_task() -> TaskRecord | None:
@@ -520,9 +531,9 @@ async def stream_task_events(
             # Each progress frame carries its Redis stream id on an ``id:``
             # line so a reconnecting client resumes with ``last_id`` and the
             # live read starts after the newest replayed id (no duplicates).
-            resume_from = last_id
+            resume_from = cursor
             try:
-                catchup_events = await stream.catchup(task_id, last_id)
+                catchup_events = await stream.catchup(task_id, cursor)
                 for event_id, event in catchup_events:
                     yield f"id: {event_id}\ndata: {json.dumps(event)}\n\n"
                     resume_from = event_id

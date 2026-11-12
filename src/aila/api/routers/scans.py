@@ -314,7 +314,13 @@ async def cancel_scan(
 async def stream_scan_events(
     run_id: str,
     request: Request,
-    last_id: str = Query(default="0", description="Redis Stream ID to start from (default '0' = all events)"),
+    last_id: str | None = Query(
+        default=None,
+        description=(
+            "Redis Stream ID to resume after. Overrides the Last-Event-ID header when given; "
+            "omit both to replay all events ('0')."
+        ),
+    ),
     auth: AuthContext = Depends(require_user_or_api_key),
 ) -> StreamingResponse:
     """Stream scan progress events using Server-Sent Events (ASYNC-03/ASYNC-04).
@@ -322,15 +328,20 @@ async def stream_scan_events(
     Verifies caller access, replays past events via XRANGE catchup (TASK-09),
     then streams new events via blocking XREAD with 30s ping keepalive.
 
+    The resume cursor is the ``last_id`` query argument when supplied, else the
+    ``Last-Event-ID`` header, else ``'0'`` (see ``resolve_stream_cursor``).
+
     Each data line is JSON with keys: stage, message, percent, timestamp.
     Returns a single informational event if Redis is not configured.
     """
+    from aila.api.sse_cursor import resolve_stream_cursor
     from aila.api.sse_gate import enforce_sse_cap
 
     # #60 global SSE ceiling: refuse new streams when ACTIVE_SSE is at
     # or above the configured cap. Runs before the DB fetch so a runaway
     # reconnect burst does not pay any DB cost either.
     enforce_sse_cap()
+    cursor = resolve_stream_cursor(last_id, request.headers.get("last-event-id"))
 
     async def _fetch_scan() -> object:
         async with async_session_scope() as session:
@@ -384,10 +395,10 @@ async def stream_scan_events(
             # stream id; a reconnecting client passes the last one back as
             # ``last_id``. The live read resumes after the newest replayed id
             # so no event is sent twice.
-            resume_from = last_id
+            resume_from = cursor
             latest_stage = "submitted"
             try:
-                catchup_events = await stream.catchup(run_id, last_id)
+                catchup_events = await stream.catchup(run_id, cursor)
                 for event_id, event in catchup_events:
                     yield f"id: {event_id}\ndata: {json.dumps(event)}\n\n"
                     resume_from = event_id
