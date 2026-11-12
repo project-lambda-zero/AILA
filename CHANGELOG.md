@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.51] - 2026-11-12 -- VR investigation delete purges LLM cache and detaches cost rows
+
+### Fixed
+
+- Deleting a VR investigation now removes its LLM response cache entries for the investigation and all of its branches, and detaches its LLM cost records from the deleted investigation, branch, and run while keeping their amounts and team attribution. A failure in either step rolls back the whole delete.
+
 ## [0.6.50] - 2026-11-12 -- Target reads expose the uploaded sample digest
 
 ### Fixed
