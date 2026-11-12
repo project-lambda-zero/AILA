@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.27] - 2026-11-12 -- Truncated output no longer marks endpoints unhealthy
+
+### Fixed
+
+- Structured output truncated at the model's output-token limit no longer counts as an infrastructure failure against the LLM endpoint's health. The call is still retried. Timeouts, connection errors, and server errors still record endpoint failures.
+
 ## [0.6.26] - 2026-11-12 -- Strict schemas keep free-form objects open
 
 ### Fixed

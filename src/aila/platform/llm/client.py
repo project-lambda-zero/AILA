@@ -44,7 +44,7 @@ from ..observability import GEN_AI_OPERATION_CHAT, gen_ai_span
 from .cancellation import LLMCancelledError, is_run_cancelled
 from .config import LLMConfigProvider
 from .correlation import current_module_id, resolve_run_id
-from .errors import LLMError
+from .errors import LLMError, LLMTruncationError
 from .pipeline import PipelineRunner
 
 if TYPE_CHECKING:
@@ -1293,7 +1293,10 @@ class AilaLLMClient:
                 await asyncio.sleep(delay)
             except LLMError as exc:
                 if exc.retryable:
-                    _record_llm_error(routing.base_url, kind="unknown")
+                    # Truncated structured output is a model-quality failure,
+                    # not an infrastructure failure: the endpoint stays healthy.
+                    if not isinstance(exc, LLMTruncationError):
+                        _record_llm_error(routing.base_url, kind="unknown")
                     if self._commit_gate_blocks_retry(
                         call_state, exc, attempt, routing.model_id
                     ):
@@ -2038,7 +2041,7 @@ class AilaLLMClient:
         try:
             json.loads(content)
         except json.JSONDecodeError:
-            raise LLMError(
+            raise LLMTruncationError(
                 "LLM response was truncated (max_tokens hit) -- "
                 "incomplete JSON received. Increase max_tokens for this task_type.",
                 retryable=True,
