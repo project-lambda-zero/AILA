@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.45] - 2026-11-12 -- Forensics investigator stops on paused and terminal statuses
+
+### Fixed
+
+- The forensics investigator now stops before its next model call when the investigation becomes paused, completed, exhausted, or failed, not only when it is cancelled. Those stops return a non-cancelled stopped result and emit no cancellation event, and the freeflow state keeps the stored status instead of overwriting it or marking a zero-step failure. Cancellation and cost-ceiling exhaustion behave as before.
+
 ## [0.6.44] - 2026-11-12 -- Unpack detector runs after malware observations
 
 ### Fixed
