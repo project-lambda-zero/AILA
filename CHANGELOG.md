@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.35] - 2026-11-12 -- VR explorer skips submit-locked branches
+
+### Fixed
+
+- With the VR explorer enabled, a branch inside a submit-rejection streak (any positive unresolved-hypothesis, draft-pending, sibling-open, promote-confirmed, or wave-two gate reject counter) no longer runs the explorer, makes no explorer LLM call, and receives no new top lead. A stale `_directive.explorer_top_lead` is cleared, so the gate's mandatory directive is the only steering on those turns. Leads resume on the first turn after the counter clears.
+- The disabled-flag path and unlocked branches are unchanged.
+
 ## [0.6.34] - 2026-11-12 -- Unresolved-hypothesis gate honors answer folding
 
 ### Fixed
