@@ -550,7 +550,7 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
     "flex:0 0 auto;color:var(--accent);font-size:13px;font-weight:700;",
   );
   const inputStyle = css(
-    "flex:1;min-width:0;background:transparent;border:0;outline:none;color:var(--text-primary);font-family:var(--font-mono);font-size:13px;letter-spacing:0.01em;",
+    "flex:1;min-width:0;background:transparent;border:0;color:var(--text-primary);font-family:var(--font-mono);font-size:13px;letter-spacing:0.01em;",
   );
   const modeBtnStyle = css(
     `flex:0 0 auto;padding:0 10px;height:30px;font-family:var(--font-mono);font-size:11px;letter-spacing:0.1em;text-transform:uppercase;color:${adv ? T.acc : T.mut};background:transparent;border:1px solid ${adv ? `${H.acc}66` : "var(--border-soft)"};border-radius:2px;cursor:pointer;`,
@@ -678,6 +678,7 @@ export default function ChatConsole(props: ChatConsoleProps): JSX.Element {
             }
             onKeyDown={onKey}
             placeholder={placeholder}
+            className="shell-text-input"
             style={inputStyle}
           />
           <button type="button" onClick={onToggleMode} style={modeBtnStyle}>
