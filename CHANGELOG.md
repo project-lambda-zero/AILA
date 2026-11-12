@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.34] - 2026-11-12 -- Unresolved-hypothesis gate honors answer folding
+
+### Fixed
+
+- The VR and malware unresolved-hypothesis submit gate now counts a live hypothesis as resolved when its id is cited in the submit `answer` as an exact token, matching the folding option the directive and system prompts already advertise. Previously only ids in `rejected[]` cleared the gate, so a submit that followed the folding instruction was still rejected.
+- Matching is exact and case-sensitive: an id adjacent to a letter, digit, underscore, or hyphen does not count, so `h1` is not resolved by an answer that cites only `h10`, `h1_b`, or `h1-b`. Rejection, cap, and force-through behavior are unchanged, and the forensics gate is untouched.
+
 ## [0.6.33] - 2026-11-12 -- Rejected hypotheses can be revived once with confirmation evidence
 
 ### Fixed
