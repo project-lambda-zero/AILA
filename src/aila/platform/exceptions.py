@@ -16,6 +16,7 @@ __all__ = [
     "RouterError",
     "ModulePlatformNotReadyError",
     "ConfigValueMissingError",
+    "DuplicateResourceError",
     "WorkerUnreachableError",
 ]
 
@@ -167,6 +168,18 @@ class ConfigValueMissingError(AILAError):
     code: ClassVar[str] = "CONFIG_VALUE_MISSING"
     http_status: ClassVar[int] = 500
     user_message: ClassVar[str] = "Required platform configuration is missing."
+
+
+class DuplicateResourceError(AILAError):
+    """Raised when a write would duplicate a record guarded by a uniqueness rule.
+
+    Maps to HTTP 409. ``str(exc)`` is for server-side logs only; clients see
+    the static ``user_message`` so constraint names and SQL never leak.
+    """
+
+    code: ClassVar[str] = "DUPLICATE_RESOURCE"
+    http_status: ClassVar[int] = 409
+    user_message: ClassVar[str] = "A matching record already exists."
 
 
 class WorkerUnreachableError(AILAError):

@@ -69,6 +69,7 @@ server-side via `logger.exception(...)`.
 | `ROUTER_ERROR` | 500 | `RouterError` | Internal LLM/OmniRoute routing failure. |
 | `MODULE_PLATFORM_NOT_READY` | 503 | `ModulePlatformNotReadyError` | A module runtime is still initializing. |
 | `CONFIG_VALUE_MISSING` | 500 | `ConfigValueMissingError` | A required `ConfigRegistry` entry is absent. |
+| `DUPLICATE_RESOURCE` | 409 | `DuplicateResourceError` | A record that must be unique already exists (e.g. a second operator review from the same reviewer branch on one outcome). |
 | `WORKER_UNREACHABLE` | 503 | `WorkerUnreachableError` | The background task worker is unreachable. |
 | `VALIDATION_ERROR` | 422 | `RequestValidationError` | Request body or query/path params fail Pydantic validation. |
 | `INTERNAL_ERROR` | 500 | any otherwise-unhandled `Exception` | The generic last-resort handler. |
@@ -213,6 +214,13 @@ route's OpenAPI documentation for the exact shape it returns.
 
 - **When:** `DELETE /auth/keys/{id}` on an already-revoked key
 - **Response:** `{"detail": "Key already revoked"}`
+
+### Duplicate operator outcome review
+
+- **When:** `POST /malware/outcomes/{outcome_id}/reviews` with a `reviewer_branch_id` that already has a review on that outcome
+- **Response:** `{"code": "DUPLICATE_RESOURCE", "message": "A matching record already exists.", "hint": "...", "trace_id": "..."}`
+- **Effect:** No review row is written and the outcome's state and dispatch status are unchanged
+- **Fix:** Reuse the existing review, or submit from a different reviewer branch
 
 ### DAG cycle detected
 
