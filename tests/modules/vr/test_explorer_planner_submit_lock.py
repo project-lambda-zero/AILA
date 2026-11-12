@@ -57,6 +57,7 @@ def _patch(monkeypatch: pytest.MonkeyPatch, *, enabled: bool) -> list[tuple[str,
 async def _run(cs: ReasoningCaseState) -> str | None:
     return await ep.maybe_run_explorer_planner(
         investigation_id="inv-1", branch_id="branch-1", case_state=cs,
+        turn_number=1,
     )
 
 

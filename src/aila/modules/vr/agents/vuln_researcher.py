@@ -391,6 +391,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         inv: Any,
         target_snapshot: dict[str, Any] | None,
         case_state: Any,
+        turn_number: int,
     ) -> None:
         """RFC-12 Phase 1: re-retrieve prior knowledge on the branch's live focus.
 
@@ -419,6 +420,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             investigation_id=self.investigation_id,
             branch_id=self.branch_id,
             case_state=case_state,
+            turn_number=turn_number,
         )
 
         claims = [
