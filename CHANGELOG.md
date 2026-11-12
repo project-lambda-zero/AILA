@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.54] - 2026-11-12 -- Prompt-cache TTL reaches Claude-family requests
+
+### Fixed
+
+- The configured prompt-cache lifetime now reaches outgoing requests. Requests to Claude-family models carry a cache marker on the stable system prefix. A setting of zero uses the provider default lifetime, up to 300 seconds selects the five minute lifetime, and longer settings select the one hour lifetime. Requests to models that cache automatically are unchanged.
+
 ## [0.6.53] - 2026-11-12 -- Malware rail, observations, and transcripts load past fixed limits
 
 ### Fixed
