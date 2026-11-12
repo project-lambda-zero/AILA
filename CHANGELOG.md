@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.40] - 2026-11-12 -- Malware operator reviews evaluate quorum
+
+### Fixed
+
+- Malware operator outcome reviews now run the shared quorum evaluation after the review is recorded. Enough operator approvals approve the outcome and dispatch it once, enough rejects reject it, and below-threshold votes or abstentions leave it in draft. A later review of an already settled outcome causes no second transition or dispatch.
+
+### Changed
+
+- The malware approved-outcome dispatch and verdict experience write are module-level functions shared by the agent turn loop and the operator review route.
+
 ## [0.6.39] - 2026-11-12 -- Duplicate malware operator reviews return 409
 
 ### Fixed
