@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.21] - 2026-11-12 -- Forensics response emit preserves terminal statuses
+
+### Fixed
+
+- The forensics response-emit state no longer overwrites failed, cancelled, or exhausted investigations, or failed projects, as completed. Only active rows (created, ready, or analyzing projects; pending or running investigations) transition to completed, and the emitted status always matches the stored row. The fix was contributed in #341; this release trims incidental write-call assertions from its regression tests.
+
 ## [0.6.20] - 2026-11-12 -- Forensics status badges render as elements
 
 ### Fixed
