@@ -1018,9 +1018,12 @@ is no longer a hard stop.
 ### 8.bis.11 Hard submit-gate for unresolved hypotheses
 
 `_maybe_reject_submit_with_unresolved_hypotheses` runs before the
-variant-hunt gate on every submit. Computes
-`unresolved = live_ids - newly_rejected`; if non-empty, converts the
-submit into a non-terminal placeholder and injects
+variant-hunt gate on every submit. A live hypothesis is resolved when its
+id is in `decision.rejected[]` or cited in `decision.answer` as an exact
+token (not immediately preceded or followed by `[A-Za-z0-9_-]`, so `h1`
+does not resolve against `h10`, `h1_b`, `xh1`, or `h1-b`). Computes
+`unresolved = live_ids - newly_rejected - ids_cited_in_answer`; if
+non-empty, converts the submit into a non-terminal placeholder and injects
 `_directive.unresolved_hyp_submit_rejected` at PROMPT POSITION 2 of
 the next turn. After `VR_UNRESOLVED_HYP_REJECT_CAP` (default 3) the
 submit is forced through with

@@ -30,6 +30,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, ClassVar
@@ -77,6 +78,20 @@ _log = logging.getLogger(__name__)
 # window and matches the RFC-12 Phase 1 refresh-query ceiling VR
 # uses on the private retrieved path.
 _RFC24_QUERY_MAX_CHARS = 2000
+
+
+def _answer_cites_hypothesis(answer: Any, hyp_id: str) -> bool:
+    """True when ``hyp_id`` occurs in ``answer`` as an exact token.
+
+    Exact token: a case-sensitive occurrence of the id that is not
+    immediately preceded or followed by ``[A-Za-z0-9_-]``. ``h1`` is
+    cited by ``h1``, ``(h1)``, ``h1.`` or ``h1,`` but not by ``h10``,
+    ``h1_b``, ``xh1`` or ``h1-b``. A non-string answer cites nothing.
+    """
+    if not isinstance(answer, str) or not hyp_id:
+        return False
+    pattern = rf"(?<![A-Za-z0-9_-]){re.escape(hyp_id)}(?![A-Za-z0-9_-])"
+    return re.search(pattern, answer) is not None
 
 
 def _rfc24_query_from_case_state(case_state: Any) -> str:
@@ -802,9 +817,13 @@ class AgentTurnRunnerBase:
         """Intercept any terminal submit emitted while live hypotheses
         remain unresolved.
 
-        A hypothesis is resolved by this turn when it appears in
-        ``decision.rejected[]`` with the same id. Anything in
-        ``case_state.hypotheses`` whose id is not in that set is an
+        A hypothesis is resolved by this turn when either:
+          - it appears in ``decision.rejected[]`` with the same id, or
+          - its id is cited in ``decision.answer`` as an exact token
+            (see :func:`_answer_cites_hypothesis`), which is the
+            "fold the hypothesis into your answer" option the directive
+            offers.
+        Anything in ``case_state.hypotheses`` that is neither is an
         unresolved live hypothesis.
 
         Three-way outcome:
@@ -826,7 +845,12 @@ class AgentTurnRunnerBase:
 
         live_ids = [h.id for h in case_state.hypotheses if h.id]
         newly_rejected_ids = {r.id for r in decision.rejected if r.id}
-        unresolved = [hid for hid in live_ids if hid not in newly_rejected_ids]
+        unresolved = [
+            hid
+            for hid in live_ids
+            if hid not in newly_rejected_ids
+            and not _answer_cites_hypothesis(decision.answer, hid)
+        ]
 
         if not unresolved:
             # Passes the gate. Clear any prior rejection counter so a
@@ -1334,8 +1358,9 @@ class AgentTurnRunnerBase:
         # on the payload so the operator can audit and the agent
         # doesn't loop forever.
         # Pre-submit: every live hypothesis must be either explicitly
-        # rejected (in decision.rejected[]) or folded into the answer
-        # as supported evidence. Runs BEFORE the variant_hunt gate so
+        # rejected (in decision.rejected[]) or cited in the answer as an
+        # exact id token (folded in as supported evidence; see
+        # _answer_cites_hypothesis). Runs BEFORE the variant_hunt gate so
         # the agent fixes the hypothesis-resolution issue first; once
         # resolved cleanly, the variant_hunt gate (if applicable)
         # evaluates against the cleaned decision.
