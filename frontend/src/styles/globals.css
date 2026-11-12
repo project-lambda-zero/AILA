@@ -271,6 +271,12 @@ input, textarea, select, button { font-family: inherit; }
 .vuln-crumb:hover { color: var(--text-primary); background: color-mix(in srgb, var(--accent) 9%, transparent); }
 .vuln-crumb:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; color: var(--text-primary); }
 
+/* ---- Primary shell text inputs (chat composer, command palette) ----
+   Borderless inputs drop the browser's default ring; keyboard focus gets an
+   accent ring instead. Inline styles must not set outline, or this loses. */
+.shell-text-input:focus { outline: none; }
+.shell-text-input:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; }
 }

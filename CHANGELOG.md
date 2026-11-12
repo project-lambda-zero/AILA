@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.57] - 2026-11-12 -- Visible keyboard focus on the chat composer and command palette
+
+### Fixed
+
+- The chat composer and command palette search inputs now show a visible focus ring for keyboard users. Existing focus indicators on buttons and navigation are unchanged.
+
 ## [0.6.56] - 2026-11-12 -- VR streams emit stable ids and resume losslessly
 
 ### Fixed

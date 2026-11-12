@@ -128,7 +128,8 @@ export default function CommandPalette({ onNavigate }: { onNavigate: (moduleKey:
             }
           }}
           placeholder="jump to a page or action"
-          style={css("border:0;border-bottom:1px solid var(--border-soft);background:transparent;padding:10px 12px;font-family:var(--font-mono);font-size:12px;color:var(--text-primary);outline:none;")}
+          className="shell-text-input"
+          style={css("border:0;border-bottom:1px solid var(--border-soft);background:transparent;padding:10px 12px;font-family:var(--font-mono);font-size:12px;color:var(--text-primary);")}
         />
         <div style={css("max-height:320px;overflow:auto;display:flex;flex-direction:column;")}>
           {filtered.length === 0 ? (
