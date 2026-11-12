@@ -164,6 +164,159 @@ async def test_malware_promote_branch_cross_team_is_404_no_mutation(test_db) -> 
     assert row.promoted is False
 
 
+async def _seed_malware_lifecycle(
+    *statuses: str,
+) -> tuple[str, list[str]]:
+    """Seed one team-owned investigation with one branch per ``statuses``.
+
+    Returns (team_id, branch_ids) in the order given.
+    """
+    suffix = uuid4().hex[:8]
+    team = f"team-lc-{suffix}"
+    async with async_session_scope() as session:
+        ws = MalwareWorkspaceRecord(team_id=team, name="LC", slug=f"lc-{suffix}")
+        session.add(ws)
+        await session.flush()
+        target = MalwareTargetRecord(
+            team_id=team, workspace_id=ws.id, display_name="t", kind="elf_sample",
+        )
+        session.add(target)
+        await session.flush()
+        inv = MalwareInvestigationRecord(
+            team_id=team, target_id=target.id, title="inv-lc",
+            strategy_family="default",
+        )
+        session.add(inv)
+        await session.flush()
+        branches = [
+            MalwareInvestigationBranchRecord(
+                investigation_id=inv.id, status=status,
+            )
+            for status in statuses
+        ]
+        session.add_all(branches)
+        await session.commit()
+        return team, [b.id for b in branches]
+
+
+async def _branch_row(branch_id: str) -> MalwareInvestigationBranchRecord:
+    async with async_session_scope() as session:
+        row = await session.get(MalwareInvestigationBranchRecord, branch_id)
+    assert row is not None
+    return row
+
+
+async def test_malware_promote_abandoned_branch_is_409_unchanged(test_db) -> None:
+    team, (branch_id,) = await _seed_malware_lifecycle("abandoned")
+    before = await _branch_row(branch_id)
+    promote = _endpoint(
+        create_malware_router(), "/branches/{branch_id}/promote", "POST",
+    )
+    with pytest.raises(HTTPException) as exc:
+        await promote(request=_Req(), branch_id=branch_id, auth=_auth(team))
+    assert exc.value.status_code == 409
+    after = await _branch_row(branch_id)
+    assert (after.status, after.promoted, after.closed_reason, after.closed_at) == (
+        before.status, before.promoted, before.closed_reason, before.closed_at,
+    )
+    assert after.status == "abandoned"
+    assert after.promoted is False
+
+
+async def test_malware_abandon_promoted_branch_is_409_unchanged(test_db) -> None:
+    team, (branch_id,) = await _seed_malware_lifecycle("promoted")
+    async with async_session_scope() as session:
+        row = await session.get(MalwareInvestigationBranchRecord, branch_id)
+        row.promoted = True
+        session.add(row)
+        await session.commit()
+    before = await _branch_row(branch_id)
+    abandon = _endpoint(
+        create_malware_router(), "/branches/{branch_id}/abandon", "POST",
+    )
+    with pytest.raises(HTTPException) as exc:
+        await abandon(
+            request=_Req(), branch_id=branch_id, reason="nope", auth=_auth(team),
+        )
+    assert exc.value.status_code == 409
+    after = await _branch_row(branch_id)
+    assert after.status == "promoted"
+    assert after.promoted is True
+    assert (after.closed_reason, after.closed_at) == (
+        before.closed_reason, before.closed_at,
+    )
+
+
+async def test_malware_abandon_merged_branch_is_409_unchanged(test_db) -> None:
+    team, (branch_id,) = await _seed_malware_lifecycle("merged")
+    before = await _branch_row(branch_id)
+    abandon = _endpoint(
+        create_malware_router(), "/branches/{branch_id}/abandon", "POST",
+    )
+    with pytest.raises(HTTPException) as exc:
+        await abandon(
+            request=_Req(), branch_id=branch_id, reason="nope", auth=_auth(team),
+        )
+    assert exc.value.status_code == 409
+    after = await _branch_row(branch_id)
+    assert after.status == "merged"
+    assert (after.closed_reason, after.closed_at) == (
+        before.closed_reason, before.closed_at,
+    )
+
+
+async def test_malware_promote_demotes_active_and_paused_siblings(test_db) -> None:
+    team, (target_id, active_id, paused_id, done_id) = (
+        await _seed_malware_lifecycle("active", "active", "paused", "merged")
+    )
+    promote = _endpoint(
+        create_malware_router(), "/branches/{branch_id}/promote", "POST",
+    )
+    envelope = await promote(request=_Req(), branch_id=target_id, auth=_auth(team))
+    assert envelope.data.id == target_id
+    assert envelope.data.status == "promoted"
+    assert envelope.data.promoted is True
+
+    promoted = await _branch_row(target_id)
+    assert promoted.status == "promoted"
+    assert promoted.promoted is True
+    for sibling_id in (active_id, paused_id):
+        sibling = await _branch_row(sibling_id)
+        assert sibling.status == "abandoned"
+        assert sibling.promoted is False
+        assert sibling.closed_reason
+        assert sibling.closed_at is not None
+    # Already-terminal siblings are left alone.
+    assert (await _branch_row(done_id)).status == "merged"
+
+
+async def test_malware_abandon_active_branch_is_abandoned_with_reason(test_db) -> None:
+    team, (branch_id,) = await _seed_malware_lifecycle("active")
+    abandon = _endpoint(
+        create_malware_router(), "/branches/{branch_id}/abandon", "POST",
+    )
+    envelope = await abandon(
+        request=_Req(), branch_id=branch_id, reason="dead end", auth=_auth(team),
+    )
+    assert envelope.data.status == "abandoned"
+    row = await _branch_row(branch_id)
+    assert row.status == "abandoned"
+    assert row.promoted is False
+    assert row.closed_reason == "dead end"
+    assert row.closed_at is not None
+
+
+async def test_malware_abandon_default_reason_is_operator_abandoned(test_db) -> None:
+    team, (branch_id,) = await _seed_malware_lifecycle("paused")
+    abandon = _endpoint(
+        create_malware_router(), "/branches/{branch_id}/abandon", "POST",
+    )
+    await abandon(request=_Req(), branch_id=branch_id, reason="", auth=_auth(team))
+    row = await _branch_row(branch_id)
+    assert row.status == "abandoned"
+    assert row.closed_reason == "operator abandoned"
+
+
 async def test_malware_get_outcome_cross_team_is_404(test_db) -> None:
     team_a, _team_b, _tb_branch_id, tb_outcome_id = await _seed_malware()
     get_outcome = _endpoint(
