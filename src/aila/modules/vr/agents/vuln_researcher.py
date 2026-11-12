@@ -411,7 +411,9 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         method's behaviour is byte-identical to today. When the flag
         is ON, the helper injects a ``_directive.explorer_top_lead``
         observable that the prompt's active-directives section
-        surfaces on the next turn.
+        surfaces on the next turn, except on a submit-locked branch
+        (any submit-gate reject counter positive), where it makes no
+        explorer call and clears the stale lead.
         """
         await maybe_run_explorer_planner(
             investigation_id=self.investigation_id,

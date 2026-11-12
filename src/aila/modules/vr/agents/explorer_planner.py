@@ -45,6 +45,11 @@ Byte-identity contract: with the flag OFF (default),
 LLM construction, and any observable write. The VR loop is
 byte-identical to today; the entire wave-3 code path is dead code.
 
+Submit-lock skip: with the flag ON, a branch inside a submit-rejection
+streak (any submit-gate reject counter positive) gets no explorer call
+and no new lead; its stale ``_directive.explorer_top_lead`` is cleared
+so the gate's mandatory directive is the only steering it sees.
+
 Wave 3 is intentionally kept single-persona -- it reuses the existing
 researcher-agent context (case_state) and the existing lateral ledger
 channel. A full persona split (a distinct explorer LLM run against a
@@ -105,6 +110,24 @@ _PROMPT_LEDGER_BUDGET: int = 1600
 # right under operator steering -- the researcher's next turn sees
 # the lead as a labelled directive block.
 _TOP_LEAD_KEY: str = "_directive.explorer_top_lead"
+
+# Submit-rejection streak counters. Each submit gate increments its
+# counter on a rejection and pops it on pass and on force-through, so a
+# positive value means the branch is mid-streak: it is being told to
+# resolve something before it may submit, and a lateral lead would only
+# compete with that mandatory directive. ``_unresolved_hyp_...`` is the
+# shared gate in ``platform/agents/turn_runner.py``; the other three are
+# VR gates in ``vuln_researcher.py``. The wave-two gates write
+# ``_gate.<gate>.reject_count`` (see ``_GATE_COUNTER_PREFIX`` /
+# ``_GATE_COUNTER_SUFFIX``).
+_SUBMIT_REJECT_COUNTER_KEYS: tuple[str, ...] = (
+    "_unresolved_hyp_submit_rejected_count",
+    "_draft_pending_reject_count",
+    "_sibling_open_hyp_reject_count",
+    "_promote_confirmed_submit_rejected_count",
+)
+_GATE_COUNTER_PREFIX: str = "_gate."
+_GATE_COUNTER_SUFFIX: str = ".reject_count"
 
 
 # ─────────────────────────────────────────────────────────────────
@@ -572,6 +595,31 @@ def planner_pass(
 # ─────────────────────────────────────────────────────────────────
 
 
+def _is_positive_count(value: object) -> bool:
+    """True for a positive ``int`` reject counter."""
+    return isinstance(value, int) and value > 0
+
+
+def _branch_submit_locked(case_state: ReasoningCaseState) -> bool:
+    """True when the branch is inside a submit-rejection streak.
+
+    Owns the list of VR/platform submit-gate reject counters: the four
+    named keys in ``_SUBMIT_REJECT_COUNTER_KEYS`` plus every
+    ``_gate.<gate>.reject_count`` wave-two counter. Every gate pops its
+    counter on pass and on force-through, so a positive value always
+    means an active rejection streak.
+    """
+    observables = case_state.observables
+    if any(_is_positive_count(observables.get(k)) for k in _SUBMIT_REJECT_COUNTER_KEYS):
+        return True
+    return any(
+        _is_positive_count(value)
+        for key, value in observables.items()
+        if key.startswith(_GATE_COUNTER_PREFIX)
+        and key.endswith(_GATE_COUNTER_SUFFIX)
+    )
+
+
 async def maybe_run_explorer_planner(
     *,
     investigation_id: str,
@@ -589,11 +637,28 @@ async def maybe_run_explorer_planner(
     pass, and returns the rendered directive text (or ``None`` if the
     explorer surfaced no candidates).
 
+    Submit-lock skip: a branch inside a submit-rejection streak (see
+    :func:`_branch_submit_locked`) is told by a mandatory gate directive
+    what to resolve before submitting, so a lateral lead would only
+    compete with it and cost an explorer LLM call per retry. With the
+    flag ON and the branch locked, the explorer never runs, any stale
+    ``_directive.explorer_top_lead`` from an earlier turn is removed,
+    and the function returns ``None``. Leads resume on the first turn
+    after the gate counter clears.
+
     Best-effort: every failure branch logs at WARNING and returns
     ``None`` so the caller's turn loop never observes an exception
     raised from here.
     """
     if not await _explorer_enabled():
+        return None
+    if _branch_submit_locked(case_state):
+        case_state.observables.pop(_TOP_LEAD_KEY, None)
+        _log.debug(
+            "explorer_planner: skipped, branch is submit-locked "
+            "inv=%s branch=%s",
+            investigation_id, branch_id,
+        )
         return None
     try:
         directions = await explorer_pass(
