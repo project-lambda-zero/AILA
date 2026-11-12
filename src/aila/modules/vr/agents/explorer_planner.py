@@ -337,6 +337,7 @@ async def explorer_pass(
     investigation_id: str,
     branch_id: str,
     case_state: ReasoningCaseState,
+    turn_number: int,
 ) -> list[LateralDirection]:
     """Explorer: read the lateral ledger + (when configured) ask the
     cheap explorer LLM for one additional direction distinct from the
@@ -345,8 +346,10 @@ async def explorer_pass(
     Returns the ranked list of candidate directions -- pure explorer
     output; the planner turns it into a directive.
 
-    ``branch_id`` rides through to the LLM idempotency key so a
-    per-branch retry replays the cached proposal instead of re-paying.
+    ``branch_id`` and ``turn_number`` ride through to the LLM idempotency
+    key: a same-turn worker retry replays the cached proposal instead of
+    re-paying, while a later turn with an identical prompt makes a fresh
+    call rather than re-injecting the prior turn's lead.
     """
     ledger_entries = await _read_lateral_ledger(investigation_id)
     ranked = collect_ranked_directions(ledger_entries, case_state)
@@ -356,6 +359,7 @@ async def explorer_pass(
         branch_id=branch_id,
         case_state=case_state,
         ledger_candidates=ranked,
+        turn_number=turn_number,
     )
     if llm_direction is not None:
         # Boost the LLM proposal above every ledger candidate. Ledger
@@ -374,6 +378,7 @@ async def _llm_propose_direction(
     branch_id: str,
     case_state: ReasoningCaseState,
     ledger_candidates: list[LateralDirection],
+    turn_number: int,
 ) -> LateralDirection | None:
     """Cheap one-shot LLM call: given the branch's live hypotheses +
     the ledger's top candidates, propose ONE additional lateral
@@ -383,8 +388,10 @@ async def _llm_propose_direction(
     branch -- with no active hypothesis the "distinct from active"
     framing has no anchor and the ledger candidates already stand
     on their own. Routed through
-    :func:`~aila.platform.agents.idempotent_llm.idempotent_llm_call` so
-    a worker retry replays the cached proposal instead of re-paying.
+    :func:`~aila.platform.agents.idempotent_llm.idempotent_llm_call` keyed
+    on ``(investigation, branch, turn_number, prompt)`` so a same-turn
+    worker retry replays the cached proposal instead of re-paying, while
+    a later turn always makes a fresh call.
 
     Best-effort: any import / registry / LLM / parse failure logs at
     WARNING and returns ``None`` -- the planner then falls back to the
@@ -466,6 +473,7 @@ async def _llm_propose_direction(
             messages=[{"role": "user", "content": prompt}],
             investigation_id=investigation_id,
             branch_id=branch_id,
+            turn_number=turn_number,
         )
     except (
         OSError, RuntimeError, ValueError, TypeError, AttributeError,
@@ -625,6 +633,7 @@ async def maybe_run_explorer_planner(
     investigation_id: str,
     branch_id: str,
     case_state: ReasoningCaseState,
+    turn_number: int,
 ) -> str | None:
     """Top-level Wave-3 entry point called from the VR turn loop.
 
@@ -665,6 +674,7 @@ async def maybe_run_explorer_planner(
             investigation_id=investigation_id,
             branch_id=branch_id,
             case_state=case_state,
+            turn_number=turn_number,
         )
     except (
         OSError, RuntimeError, ValueError, TypeError, AttributeError,

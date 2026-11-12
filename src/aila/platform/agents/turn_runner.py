@@ -281,6 +281,7 @@ class AgentTurnRunnerBase:
         inv: Any,
         target_snapshot: dict[str, Any] | None,
         case_state: Any,
+        turn_number: int,
     ) -> None:
         """RFC-12 Phase 1: per-pivot refresh of the RETRIEVED prompt tier.
 
@@ -291,7 +292,7 @@ class AgentTurnRunnerBase:
         the prompt is built. Best-effort by contract: an override must swallow
         its own failures and never raise into the turn.
         """
-        del inv, target_snapshot, case_state
+        del inv, target_snapshot, case_state, turn_number
         return None
 
     async def _rfc24_populate_retrieved_tier(
@@ -1171,6 +1172,7 @@ class AgentTurnRunnerBase:
         # live pivot instead of the boot question. No-op by default.
         await self._refresh_retrieved_knowledge(
             inv=inv, target_snapshot=target_snapshot, case_state=case_state,
+            turn_number=turn_number,
         )
         # RFC-24 step 3+4: populate the assembler's RETRIEVED tier from
         # the per-investigation observation namespaces + shared

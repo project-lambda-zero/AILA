@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.36] - 2026-11-12 -- VR explorer LLM cache is keyed per turn
+
+### Fixed
+
+- The VR explorer's LLM proposal call now includes the turn number in its idempotency key. A same-turn worker retry still replays the cached proposal without a second model call, but a later turn with an identical prompt makes a fresh call instead of replaying the prior turn's lead as new work.
+
+### Changed
+
+- The agent knowledge-refresh hook (`_refresh_retrieved_knowledge`) takes the runner's `turn_number` keyword. The VR and malware overrides accept it, and VR threads it through the explorer planner.
+
 ## [0.6.35] - 2026-11-12 -- VR explorer skips submit-locked branches
 
 ### Fixed
