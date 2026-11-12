@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.53] - 2026-11-12 -- Malware rail, observations, and transcripts load past fixed limits
+
+### Fixed
+
+- The malware investigation rail, investigation observation history, and message transcripts now load beyond their former fixed limits of 100 investigations, 500 observations, and 1000 messages. Long transcripts now include the newest messages, and live polling appends new messages in order without duplicates.
+
 ## [0.6.52] - 2026-11-12 -- Malware list pages reach every row
 
 ### Fixed
