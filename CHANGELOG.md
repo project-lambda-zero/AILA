@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.38] - 2026-11-12 -- Deleting a malware finding removes its workflow records
+
+### Fixed
+
+- Deleting a malware finding now removes its malware finding-workflow records in the same transaction, so a deleted finding id no longer leaves mutable workflow history behind. A failure during the delete leaves both the finding and its workflow records in place, and workflow records of other findings or modules are untouched.
+
 ## [0.6.37] - 2026-11-12 -- Malware branch routes enforce branch lifecycle rules
 
 ### Fixed
