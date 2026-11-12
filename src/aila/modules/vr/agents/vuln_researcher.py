@@ -33,7 +33,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, NamedTuple
 
 from sqlmodel import select as _select
 
@@ -2063,6 +2063,9 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         Gate shape: reject under cap with a directive that names the
         missing side (refs / confirmation); force-through over cap
         stamps a ``positive_submit_evidence_advisory`` on the payload.
+        Empty ``evidence_refs`` first hydrate from explicit file:line
+        citations that match same-branch tool observations (issue #303);
+        hydration alone never satisfies the confirmed-hypothesis side.
         """
         if not getattr(
             self,
@@ -2081,12 +2084,12 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             self._clear_gate("positive_submit_refs", case_state, turn_number)
             return decision
         payload = decision.payload or {}
-        refs = payload.get("evidence_refs") or []
-        has_refs = isinstance(refs, list) and any(
-            (isinstance(r, str) and r.strip())
-            or (isinstance(r, dict) and r)
-            for r in refs
-        )
+        if not _has_checkable_refs(payload.get("evidence_refs")):
+            decision = _hydrate_positive_submit_evidence_refs(
+                decision=decision, case_state=case_state,
+            )
+            payload = decision.payload or {}
+        has_refs = _has_checkable_refs(payload.get("evidence_refs"))
         confirmed = self._confirmed_open_hypotheses(
             case_state=case_state, decision=decision,
         )
@@ -2113,7 +2116,9 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             "  (a) add each supporting source citation to "
             "``payload.evidence_refs`` (message id, outcome id, or "
             "source_citation ref). Do not restate reasoning; cite the "
-            "artifact.\n"
+            "artifact. Explicit file:line citations in answer/source_ref/"
+            "sink_ref that match a branch tool observation are attached "
+            "automatically; cite any others here.\n"
             "  (b) re-emit the hypothesis in ``decision.hypotheses[]`` "
             "with a non-empty ``confirmed_by`` string that names the "
             "concrete file:line, tool observation id, or probe id that "
@@ -2966,6 +2971,169 @@ _TOOL_CITE_RE = re.compile(
     r"[:.]([a-z_][a-z0-9_]*)\b",
     re.IGNORECASE,
 )
+
+# Issue #303: a positive submit whose ``payload.evidence_refs`` is empty
+# has its explicit ``path:line`` citations (answer, source_ref,
+# sink_ref) normalized into refs when a same-branch tool observation
+# carries a matching coordinate header. This is normalization of
+# model-provided citations only: it is not ambiguity detection, not
+# routing, and it never satisfies the live ``confirmed_by`` requirement.
+_HYDRATION_MAX_TEXT_CHARS = 4000
+_HYDRATION_MAX_CITATIONS = 16
+_HYDRATION_OBSERVABLE_PREFIXES: tuple[str, ...] = (
+    "audit_mcp.", "audit_mcp:",
+    "rea.", "rea:",
+    "reverser_belt.", "reverser_belt:",
+    "android_mcp.", "android_mcp:",
+)
+_HYDRATION_FILE_LINE_RE = re.compile(
+    r"(?<![\w./\\-])([\w.\-/\\]*\w\.\w+):([1-9]\d*)(?:-([1-9]\d*))?(?!\w)",
+)
+# Coordinate headers the tool adapters write at the top of an
+# observation body: ``=== <path>:<start>-<end> ...===``.
+_HYDRATION_COORD_HEADER_RE = re.compile(
+    r"^=== (?P<path>\S.*?):(?P<start>\d+)-(?P<end>\d+)(?=[ \]])",
+    re.MULTILINE,
+)
+_HYDRATION_NO_BODY_MARKER = "!! NO BODY AVAILABLE !!"
+
+
+class _FileLineCitation(NamedTuple):
+    text: str
+    path: str
+    start: int
+    end: int
+
+
+class _BranchCoordinate(NamedTuple):
+    observation_id: str
+    path: str
+    start: int
+    end: int
+
+
+def _has_checkable_refs(refs: Any) -> bool:
+    return isinstance(refs, list) and any(
+        (isinstance(r, str) and r.strip()) or (isinstance(r, dict) and r)
+        for r in refs
+    )
+
+
+def _extract_file_line_citations(texts: list[str]) -> list[_FileLineCitation]:
+    """Explicit ``path:line`` / ``path:start-end`` citations in first-
+    occurrence order, deduped by normalized text, capped at
+    ``_HYDRATION_MAX_CITATIONS``. Each text is read only up to
+    ``_HYDRATION_MAX_TEXT_CHARS``. Reversed ranges are skipped."""
+    seen: set[str] = set()
+    found: list[_FileLineCitation] = []
+    for text in texts:
+        for match in _HYDRATION_FILE_LINE_RE.finditer(
+            text[:_HYDRATION_MAX_TEXT_CHARS],
+        ):
+            path = match.group(1)
+            start = int(match.group(2))
+            end = int(match.group(3)) if match.group(3) else start
+            if end < start:
+                continue
+            label = f"{path}:{start}" if end == start else f"{path}:{start}-{end}"
+            if label in seen:
+                continue
+            seen.add(label)
+            found.append(_FileLineCitation(label, path, start, end))
+            if len(found) >= _HYDRATION_MAX_CITATIONS:
+                return found
+    return found
+
+
+def _branch_tool_coordinates(
+    case_state: ReasoningCaseState,
+) -> list[_BranchCoordinate]:
+    """Coordinate headers carried by this branch's tool observations.
+
+    Only keys under a recognized tool-server prefix count. Reserved
+    ``_directive.`` / ``_gate.`` / ``_recall.`` / ``_ledger.`` keys and
+    agent scratchpad keys are never match sources. Observations whose
+    body reports ``NO BODY AVAILABLE`` are excluded: their header names
+    a coordinate the tool did not return.
+    """
+    coords: list[_BranchCoordinate] = []
+    for key, value in case_state.observables.items():
+        if not key.startswith(_HYDRATION_OBSERVABLE_PREFIXES):
+            continue
+        if not isinstance(value, str) or _HYDRATION_NO_BODY_MARKER in value:
+            continue
+        for header in _HYDRATION_COORD_HEADER_RE.finditer(value):
+            coords.append(_BranchCoordinate(
+                observation_id=key,
+                path=header.group("path").replace("\\", "/"),
+                start=int(header.group("start")),
+                end=int(header.group("end")),
+            ))
+    return coords
+
+
+def _coordinate_covers(citation: _FileLineCitation, coord: _BranchCoordinate) -> bool:
+    """Exact path (or a whole trailing path when the citation carries
+    directories) AND the cited line range inside the header range."""
+    cited = citation.path.replace("\\", "/")
+    path_ok = coord.path == cited or (
+        "/" in cited and coord.path.endswith("/" + cited)
+    )
+    return path_ok and coord.start <= citation.start and citation.end <= coord.end
+
+
+def _hydrate_positive_submit_evidence_refs(
+    *,
+    decision: ReasoningTurnDecision,
+    case_state: ReasoningCaseState,
+) -> ReasoningTurnDecision:
+    """Issue #303: attach matching explicit citations as evidence refs.
+
+    Each citation that matches a same-branch observation becomes
+    ``{"kind": "source_citation", "ref": "<path>:<line> [<observation_id>]"}``
+    and is recorded under ``positive_submit_evidence_hydration_advisory``.
+    With no match the decision is returned unchanged.
+    """
+    payload = decision.payload or {}
+    texts = [
+        value for value in (
+            payload.get("answer") or decision.answer or "",
+            payload.get("source_ref") or "",
+            payload.get("sink_ref") or "",
+        )
+        if isinstance(value, str)
+    ]
+    coords = _branch_tool_coordinates(case_state)
+    hydrated_refs: list[dict[str, str]] = []
+    hydrated: list[dict[str, str]] = []
+    for citation in _extract_file_line_citations(texts):
+        coord = next(
+            (c for c in coords if _coordinate_covers(citation, c)), None,
+        )
+        if coord is None:
+            continue
+        hydrated_refs.append({
+            "kind": "source_citation",
+            "ref": f"{citation.text} [{coord.observation_id}]",
+        })
+        hydrated.append({
+            "citation": citation.text,
+            "observation_id": coord.observation_id,
+        })
+    if not hydrated_refs:
+        return decision
+    new_payload = dict(payload)
+    new_payload["evidence_refs"] = hydrated_refs
+    new_payload["positive_submit_evidence_hydration_advisory"] = {
+        "hydrated": hydrated,
+        "message": (
+            f"Hydrated {len(hydrated)} explicit file:line citation(s) from "
+            "answer/source_ref/sink_ref into payload.evidence_refs; each "
+            "matches a same-branch tool observation's coordinate header. "
+            "Hydration does not satisfy the live `confirmed_by` requirement."
+        ),
+    }
+    return decision.model_copy(update={"payload": new_payload})
 
 
 def _render_target_snapshot_section(snapshot: dict[str, Any]) -> str:

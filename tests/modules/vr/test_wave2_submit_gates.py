@@ -14,6 +14,8 @@ from typing import Any
 import pytest
 
 from aila.modules.vr.agents.vuln_researcher import (
+    _HYDRATION_MAX_CITATIONS,
+    _HYDRATION_MAX_TEXT_CHARS,
     HonestVulnResearcher,
     _extract_cited_tool_pairs,
 )
@@ -218,6 +220,212 @@ def test_positive_submit_passes_when_refs_and_confirmation_present() -> None:
     )
     assert out.action == "submit"
     assert "_gate.positive_submit_refs.reject_count" not in case.observables
+
+
+def test_positive_submit_hydrates_matching_answer_citation() -> None:
+    r = _make_researcher()
+    case = _empty_case()
+    case.hypotheses = [
+        Hypothesis(id="h1", claim="stack overflow", confirmed_by="src/x.c:12"),
+    ]
+    observation_id = "audit_mcp.read_function.src_x_c"
+    case.observables[observation_id] = (
+        "=== src/x.c:12-12 [decode_frame] ===\nmemcpy(dst, src, len);"
+    )
+    decision = _make_submit(answer="Unbounded copy at src/x.c:12", payload={})
+
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=1,
+    )
+
+    assert out.action == "submit"
+    assert out.payload["evidence_refs"] == [
+        {
+            "kind": "source_citation",
+            "ref": f"src/x.c:12 [{observation_id}]",
+        },
+    ]
+    advisory = out.payload["positive_submit_evidence_hydration_advisory"]
+    assert advisory["hydrated"] == [
+        {"citation": "src/x.c:12", "observation_id": observation_id},
+    ]
+
+
+def _hydration_case(
+    observation_key: str, body: str, *, confirmed: bool = True,
+) -> ReasoningCaseState:
+    case = _empty_case()
+    if confirmed:
+        case.hypotheses = [
+            Hypothesis(id="h1", claim="stack overflow", confirmed_by="src/x.c:12"),
+        ]
+    case.observables[observation_key] = body
+    return case
+
+
+def test_positive_submit_rejects_fabricated_citation_without_match() -> None:
+    r = _make_researcher()
+    case = _hydration_case(
+        "audit_mcp.read_function.src_x_c",
+        "=== src/x.c:12-12 [decode_frame] ===\nmemcpy(dst, src, len);",
+    )
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(answer="Copy at src/x.c:99", payload={}),
+        case_state=case, turn_number=1,
+    )
+    assert out.action == "reasoning"
+    assert "evidence_refs" not in out.payload
+    assert "positive_submit_evidence_hydration_advisory" not in out.payload
+
+
+def test_positive_submit_rejects_same_path_citation_outside_header_range() -> None:
+    r = _make_researcher()
+    for answer in ("Copy at src/x.c:21", "Copy at src/x.c:20-21"):
+        case = _hydration_case(
+            "audit_mcp.read_function.src_x_c",
+            "=== src/x.c:10-20 [decode_frame] ===\nmemcpy(dst, src, len);",
+        )
+        out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+            decision=_make_submit(answer=answer, payload={}),
+            case_state=case, turn_number=1,
+        )
+        assert out.action == "reasoning", answer
+        assert "evidence_refs" not in out.payload, answer
+
+
+def test_non_tool_observable_with_coordinate_header_is_not_a_match_source() -> None:
+    r = _make_researcher()
+    body = "=== src/x.c:12-12 [decode_frame] ===\nmemcpy(dst, src, len);"
+    for key in ("_directive.gate.note", "_recall.src_x_c", "scratch.src_x_c"):
+        case = _hydration_case(key, body)
+        out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+            decision=_make_submit(answer="Copy at src/x.c:12", payload={}),
+            case_state=case, turn_number=1,
+        )
+        assert out.action == "reasoning", key
+        assert "evidence_refs" not in out.payload, key
+
+
+def test_no_body_observation_does_not_hydrate() -> None:
+    r = _make_researcher()
+    case = _hydration_case(
+        "audit_mcp.read_function.src_x_c",
+        "=== src/x.c:12-12 [decode_frame] ===\n"
+        "!! NO BODY AVAILABLE !! not found\n",
+    )
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(answer="Copy at src/x.c:12", payload={}),
+        case_state=case, turn_number=1,
+    )
+    assert out.action == "reasoning"
+    assert "evidence_refs" not in out.payload
+
+
+def test_hydration_collects_answer_source_and_sink_citations_in_order() -> None:
+    r = _make_researcher()
+    case = _hydration_case(
+        "audit_mcp.read_function.x", "=== src/x.c:10-20 [a] ===\nbody",
+    )
+    case.observables["rea.asm.y"] = "=== src/y.c:3-9 [b] ===\nbody"
+    decision = _make_submit(
+        answer="src/x.c:12 then src/x.c:12 again",
+        payload={"source_ref": "src/x.c:12", "sink_ref": "src/y.c:3-4"},
+    )
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=1,
+    )
+    assert out.action == "submit"
+    assert out.payload["evidence_refs"] == [
+        {"kind": "source_citation", "ref": "src/x.c:12 [audit_mcp.read_function.x]"},
+        {"kind": "source_citation", "ref": "src/y.c:3-4 [rea.asm.y]"},
+    ]
+    assert out.payload["positive_submit_evidence_hydration_advisory"]["hydrated"] == [
+        {"citation": "src/x.c:12", "observation_id": "audit_mcp.read_function.x"},
+        {"citation": "src/y.c:3-4", "observation_id": "rea.asm.y"},
+    ]
+
+
+def test_hydration_caps_citation_count_and_text_length() -> None:
+    r = _make_researcher()
+    case = _hydration_case(
+        "audit_mcp.search_functions.all",
+        "\n".join(f"=== f{i}.c:1-1 [fn] ===\nbody" for i in range(20)),
+    )
+    answer = " ".join(f"f{i}.c:1" for i in range(20))
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(answer=answer, payload={}),
+        case_state=case, turn_number=1,
+    )
+    assert out.action == "submit"
+    assert len(out.payload["evidence_refs"]) == _HYDRATION_MAX_CITATIONS
+    assert out.payload["evidence_refs"][0]["ref"] == (
+        "f0.c:1 [audit_mcp.search_functions.all]"
+    )
+
+    late = _hydration_case(
+        "audit_mcp.read_function.late", "=== src/late.c:5-5 [f] ===\nbody",
+    )
+    beyond_cap = "x" * _HYDRATION_MAX_TEXT_CHARS + " src/late.c:5"
+    out = _make_researcher()._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(answer=beyond_cap, payload={}),
+        case_state=late, turn_number=1,
+    )
+    assert out.action == "reasoning"
+    assert "evidence_refs" not in out.payload
+
+
+def test_existing_valid_refs_are_not_rewritten_by_hydration() -> None:
+    r = _make_researcher()
+    case = _hydration_case(
+        "audit_mcp.read_function.src_x_c",
+        "=== src/x.c:12-12 [decode_frame] ===\nbody",
+    )
+    refs = [{"kind": "source_citation", "ref": "msg-7"}]
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(answer="Copy at src/x.c:12", payload={"evidence_refs": refs}),
+        case_state=case, turn_number=1,
+    )
+    assert out.action == "submit"
+    assert out.payload["evidence_refs"] == refs
+    assert "positive_submit_evidence_hydration_advisory" not in out.payload
+
+
+def test_hydrated_refs_alone_do_not_pass_without_live_confirmed_hypothesis() -> None:
+    r = _make_researcher()
+    case = _hydration_case(
+        "audit_mcp.read_function.src_x_c",
+        "=== src/x.c:12-12 [decode_frame] ===\nbody",
+        confirmed=False,
+    )
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(answer="Copy at src/x.c:12", payload={}),
+        case_state=case, turn_number=1,
+    )
+    assert out.action == "reasoning"
+    body = case.observables["_directive.gate.positive_submit_refs.rejected"]
+    assert "`confirmed_by`" in body
+    assert "payload.evidence_refs is empty" not in body
+    assert out.payload["positive_submit_evidence_hydration_advisory"]["hydrated"] == [
+        {"citation": "src/x.c:12", "observation_id": "audit_mcp.read_function.src_x_c"},
+    ]
+
+
+def test_hydrated_rejection_replays_same_turn() -> None:
+    r = _make_researcher()
+    case = _hydration_case(
+        "audit_mcp.read_function.src_x_c",
+        "=== src/x.c:12-12 [decode_frame] ===\nbody",
+        confirmed=False,
+    )
+    decision = _make_submit(answer="Copy at src/x.c:12", payload={})
+    first = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=1,
+    )
+    second = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=1,
+    )
+    assert second is first
+    assert case.observables["_gate.positive_submit_refs.reject_count"] == 1
 
 
 def test_positive_submit_forces_through_over_cap() -> None:
