@@ -140,6 +140,7 @@ from .db_models import (
     VRInvestigationRecord,
 )
 from .services.outcome_review import compute_quorum
+from .sse_cursor import format_event_id, resolve_stream_cursor
 from .workflow.task import (
     run_vr_claim_verifier,
     run_vr_investigate,
@@ -1343,9 +1344,6 @@ def create_vr_router() -> APIRouter:
         # #60 global SSE ceiling: refuse new streams when ACTIVE_SSE is
         # at or above the configured cap.
         enforce_sse_cap()
-        del request
-        from datetime import datetime as _dt
-
         from .db_models import (
             VRFuzzCampaignRecord,
             VRFuzzCrashRecord,
@@ -1371,16 +1369,7 @@ def create_vr_router() -> APIRouter:
                     detail=f"VR project {project_id!r} not found.",
                 )
 
-        if since_iso:
-            try:
-                cursor = _dt.fromisoformat(since_iso.replace("Z", "+00:00"))
-            except ValueError:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Invalid since_iso: {since_iso!r}",
-                ) from None
-        else:
-            cursor = utc_now()
+        cursor = resolve_stream_cursor(since_iso, request.headers.get("last-event-id"))
 
         async def _generator() -> AsyncGenerator[str, None]:
             import json as _json
@@ -1430,9 +1419,15 @@ def create_vr_router() -> APIRouter:
                             select(VRInvestigationMessageRecord)
                             .where(
                                 VRInvestigationMessageRecord.investigation_id.in_(inv_ids),
-                                VRInvestigationMessageRecord.created_at > local_cursor,
+                                local_cursor.sql_after(
+                                    VRInvestigationMessageRecord.created_at,
+                                    VRInvestigationMessageRecord.id,
+                                ),
                             )
-                            .order_by(VRInvestigationMessageRecord.created_at.asc())
+                            .order_by(
+                                VRInvestigationMessageRecord.created_at.asc(),
+                                VRInvestigationMessageRecord.id.collate("C").asc(),
+                            )
                             .limit(_SSE_BATCH_LIMIT)
                         )).all()
                         if inv_ids else []
@@ -1442,9 +1437,15 @@ def create_vr_router() -> APIRouter:
                             select(VRInvestigationBranchRecord)
                             .where(
                                 VRInvestigationBranchRecord.investigation_id.in_(inv_ids),
-                                VRInvestigationBranchRecord.updated_at > local_cursor,
+                                local_cursor.sql_after(
+                                    VRInvestigationBranchRecord.updated_at,
+                                    VRInvestigationBranchRecord.id,
+                                ),
                             )
-                            .order_by(VRInvestigationBranchRecord.updated_at.asc())
+                            .order_by(
+                                VRInvestigationBranchRecord.updated_at.asc(),
+                                VRInvestigationBranchRecord.id.collate("C").asc(),
+                            )
                             .limit(_SSE_BATCH_LIMIT)
                         )).all()
                         if inv_ids else []
@@ -1454,9 +1455,15 @@ def create_vr_router() -> APIRouter:
                             select(VRInvestigationOutcomeRecord)
                             .where(
                                 VRInvestigationOutcomeRecord.investigation_id.in_(inv_ids),
-                                VRInvestigationOutcomeRecord.created_at > local_cursor,
+                                local_cursor.sql_after(
+                                    VRInvestigationOutcomeRecord.created_at,
+                                    VRInvestigationOutcomeRecord.id,
+                                ),
                             )
-                            .order_by(VRInvestigationOutcomeRecord.created_at.asc())
+                            .order_by(
+                                VRInvestigationOutcomeRecord.created_at.asc(),
+                                VRInvestigationOutcomeRecord.id.collate("C").asc(),
+                            )
                             .limit(_SSE_BATCH_LIMIT)
                         )).all()
                         if inv_ids else []
@@ -1466,20 +1473,27 @@ def create_vr_router() -> APIRouter:
                             select(VRFuzzCrashRecord)
                             .where(
                                 VRFuzzCrashRecord.campaign_id.in_(camp_ids),
-                                VRFuzzCrashRecord.discovered_at > local_cursor,
+                                local_cursor.sql_after(
+                                    VRFuzzCrashRecord.discovered_at,
+                                    VRFuzzCrashRecord.id,
+                                ),
                             )
-                            .order_by(VRFuzzCrashRecord.discovered_at.asc())
+                            .order_by(
+                                VRFuzzCrashRecord.discovered_at.asc(),
+                                VRFuzzCrashRecord.id.collate("C").asc(),
+                            )
                             .limit(_SSE_BATCH_LIMIT)
                         )).all()
                         if camp_ids else []
                     )
 
                 # Emit each in chronological order across all sources.
-                events: list[tuple[Any, str, dict[str, Any]]] = []
+                events: list[tuple[Any, str, str, dict[str, Any]]] = []
                 for m in new_messages:
                     is_op = m.sender_kind == SenderKind.OPERATOR.value
                     events.append((
                         m.created_at,
+                        m.id,
                         (
                             VREventType.OPERATOR_STEERING.value
                             if is_op else VREventType.MESSAGE_CREATED.value
@@ -1493,6 +1507,7 @@ def create_vr_router() -> APIRouter:
                 for b in new_branches:
                     events.append((
                         b.updated_at,
+                        b.id,
                         VREventType.HYPOTHESIS_STATE_CHANGED.value,
                         {
                             "investigation_id": b.investigation_id,
@@ -1503,6 +1518,7 @@ def create_vr_router() -> APIRouter:
                 for o in new_outcomes:
                     events.append((
                         o.created_at,
+                        o.id,
                         VREventType.OUTCOME_CREATED.value,
                         {
                             "investigation_id": o.investigation_id,
@@ -1516,6 +1532,7 @@ def create_vr_router() -> APIRouter:
                 for c in new_crashes:
                     events.append((
                         c.discovered_at,
+                        c.id,
                         VREventType.CAMPAIGN_CRASH_FOUND.value,
                         {
                             "payload": {
@@ -1527,12 +1544,26 @@ def create_vr_router() -> APIRouter:
                             },
                         },
                     ))
-                events.sort(key=lambda e: e[0] or utc_now())
-                advanced = local_cursor
-                for ts_, type_, body in events:
+                # A source that filled its batch can hold rows after its last
+                # one. Emit only through the earliest such last row so the
+                # shared cursor never passes rows a later poll still owes.
+                full_tails: list[tuple[Any, str]] = []
+                if len(new_messages) >= _SSE_BATCH_LIMIT:
+                    full_tails.append((new_messages[-1].created_at, new_messages[-1].id))
+                if len(new_branches) >= _SSE_BATCH_LIMIT:
+                    full_tails.append((new_branches[-1].updated_at, new_branches[-1].id))
+                if len(new_outcomes) >= _SSE_BATCH_LIMIT:
+                    full_tails.append((new_outcomes[-1].created_at, new_outcomes[-1].id))
+                if len(new_crashes) >= _SSE_BATCH_LIMIT:
+                    full_tails.append((new_crashes[-1].discovered_at, new_crashes[-1].id))
+                if full_tails:
+                    bound = min(full_tails)
+                    events = [e for e in events if (e[0], e[1]) <= bound]
+                events.sort(key=lambda e: (e[0], e[1]))
+                for ts_, row_id, type_, body in events:
                     envelope = VREventEnvelope(
                         type=VREventType(type_),
-                        ts=ts_.isoformat() if ts_ else utc_now().isoformat(),
+                        ts=ts_.isoformat(),
                         project_id=project_id,
                         investigation_id=body.get("investigation_id"),
                         branch_id=body.get("branch_id"),
@@ -1540,12 +1571,11 @@ def create_vr_router() -> APIRouter:
                         payload=body.get("payload", {}),
                     )
                     yield (
+                        f"id: {format_event_id(ts_, row_id)}\n"
                         f"event: {type_}\n"
                         f"data: {_json.dumps(envelope.model_dump(mode='json'))}\n\n"
                     )
-                    if ts_ and ts_ > advanced:
-                        advanced = ts_
-                local_cursor = advanced
+                    local_cursor = local_cursor.advanced_to(ts_, row_id)
 
                 now = utc_now()
                 if (now - last_heartbeat).total_seconds() >= _SSE_HEARTBEAT_S:
@@ -6166,9 +6196,6 @@ def create_vr_router() -> APIRouter:
         # #60 global SSE ceiling: refuse new streams when ACTIVE_SSE is
         # at or above the configured cap.
         enforce_sse_cap()
-        del request
-        from datetime import datetime as _dt
-
         from .db_models import VRInvestigationMessageRecord, VRInvestigationRecord
 
         async with UnitOfWork() as uow:
@@ -6186,16 +6213,7 @@ def create_vr_router() -> APIRouter:
                     detail=f"Investigation {investigation_id} not found.",
                 )
 
-        if since_iso:
-            try:
-                cursor = _dt.fromisoformat(since_iso.replace("Z", "+00:00"))
-            except ValueError:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Invalid since_iso: {since_iso!r}",
-                ) from None
-        else:
-            cursor = utc_now()
+        cursor = resolve_stream_cursor(since_iso, request.headers.get("last-event-id"))
 
         async def _generator() -> AsyncGenerator[str, None]:
             import json as _json
@@ -6220,14 +6238,18 @@ def create_vr_router() -> APIRouter:
                 async with UnitOfWork() as poll_uow:
                     stmt = select(VRInvestigationMessageRecord).where(
                         VRInvestigationMessageRecord.investigation_id == investigation_id,
-                        VRInvestigationMessageRecord.created_at > local_cursor,
+                        local_cursor.sql_after(
+                            VRInvestigationMessageRecord.created_at,
+                            VRInvestigationMessageRecord.id,
+                        ),
                     )
                     if branch_id:
                         stmt = stmt.where(
                             VRInvestigationMessageRecord.branch_id == branch_id,
                         )
                     stmt = stmt.order_by(
-                        VRInvestigationMessageRecord.created_at.asc()
+                        VRInvestigationMessageRecord.created_at.asc(),
+                        VRInvestigationMessageRecord.id.collate("C").asc(),
                     ).limit(_SSE_BATCH_LIMIT)
                     rows = (await poll_uow.session.exec(stmt)).all()
 
@@ -6293,6 +6315,7 @@ def create_vr_router() -> APIRouter:
                             payload=summary.model_dump(mode="json"),
                         )
                         event_data = (
+                            f"id: {format_event_id(row.created_at, row.id)}\n"
                             f"event: {event_type.value}\n"
                             f"data: {_json.dumps(envelope.model_dump(mode='json'))}\n\n"
                         )
@@ -6307,8 +6330,7 @@ def create_vr_router() -> APIRouter:
                     # Advance the cursor past this row whether or not it
                     # serialized, so a bad row is skipped for good instead of
                     # re-crashing / re-logging on every poll.
-                    if row.created_at and row.created_at > local_cursor:
-                        local_cursor = row.created_at
+                    local_cursor = local_cursor.advanced_to(row.created_at, row.id)
 
                 now = utc_now()
                 if (now - last_heartbeat).total_seconds() >= _SSE_HEARTBEAT_S:

@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.56] - 2026-11-12 -- VR streams emit stable ids and resume losslessly
+
+### Fixed
+
+- The VR project event stream and the investigation message stream now emit stable event ids and resume a reconnecting client after the last delivered event, including events that share its timestamp. An explicit since_iso cursor still takes precedence, and a fresh connection starts at the current time as before.
+- The VR project event stream no longer skips events from one source when another source has newer events during a busy poll.
+
 ## [0.6.55] - 2026-11-12 -- Progress streams resume from Last-Event-ID
 
 ### Fixed

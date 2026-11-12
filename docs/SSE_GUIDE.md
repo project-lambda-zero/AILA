@@ -279,9 +279,17 @@ GET /vr/investigations/{investigation_id}/messages/stream?since_iso=<ISO-8601>&b
 
 Live tail of new `VRInvestigationMessageRecord` rows for one investigation, wrapped in the same envelope. `branch_id` is optional and filters by branch.
 
-### `since_iso` cursor
+### Event ids and resume cursor
 
-`since_iso` is the resume cursor. Clients pass the timestamp of the last envelope they received; the server returns every envelope strictly newer than that. On first connect, pass `since_iso` set to one second before the current time (or omit to receive only new envelopes). The frontend persists the last-seen cursor so a reconnect resumes from there.
+Every row-backed frame carries an SSE `id:` line of the form `<ISO-8601 UTC timestamp>|<row id>`, for example `id: 2026-05-14T12:34:56.789000+00:00|5f0c...`. The id is the row's position in stream order `(timestamp, row id)`. Row ids compare as raw strings (code-point order, matching `COLLATE "C"` in SQL), so rows that share a timestamp stream in a deterministic order.
+
+The starting cursor is resolved in this order:
+
+1. `since_iso` query parameter, when present. It keeps its original meaning: envelopes with a timestamp strictly newer than it. A value that is not ISO-8601 returns `422`.
+2. `Last-Event-ID` request header, sent automatically by `EventSource` on reconnect. The stream resumes strictly after the `(timestamp, row id)` it names. A row sharing that timestamp with a later row id is delivered; the represented row is not replayed. A header that is malformed, naive (no UTC offset), empty in either part, or longer than 128 characters is ignored and the stream starts fresh.
+3. A fresh connection: only envelopes created after the connection opens are delivered.
+
+An explicit `since_iso` therefore overrides a `Last-Event-ID` header. Clients that only use native `EventSource` reconnects need no `since_iso`; the frontend's persisted timestamp cursor is still accepted for clients that cannot use `Last-Event-ID`.
 
 ### `VREventEnvelope`
 
@@ -391,7 +399,7 @@ Most SSE progress is backed by Redis Streams, not pub/sub.
 
 ### Polling-backed VR streams
 
-The per-project and per-investigation VR streams (`/vr/projects/{project_id}/events`, `/vr/investigations/{investigation_id}/messages/stream`) do NOT use Redis Streams. They poll Postgres at ~1 s intervals over typed envelope rows and use a `since_iso` timestamp cursor instead of a Redis `last_id`. The Redis-backed `task:{task_id}:progress` stream still carries the VR worker's coarse task progress; the typed envelope stream is a separate surface.
+The per-project and per-investigation VR streams (`/vr/projects/{project_id}/events`, `/vr/investigations/{investigation_id}/messages/stream`) do NOT use Redis Streams. They poll Postgres at ~1 s intervals over typed envelope rows. Their resume cursor is the `(timestamp, row id)` pair carried in each frame's `id:` line (see section 5), with `since_iso` as the explicit timestamp override, instead of a Redis `last_id`. The Redis-backed `task:{task_id}:progress` stream still carries the VR worker's coarse task progress; the typed envelope stream is a separate surface.
 
 ### Tuning
 
