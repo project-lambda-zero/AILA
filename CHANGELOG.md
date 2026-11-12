@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.44] - 2026-11-12 -- Unpack detector runs after malware observations
+
+### Fixed
+
+- The malware unpack detector now runs after each tool dispatch and after playbook runs attributed to an investigation. When a target has both a positive packer-detected and a positive unpack-result observation, exactly one unpacked child target is created through the canonical outcome dispatcher and the parent investigation pauses for its analysis. Repeated checks and re-dispatch do not create another child, and detection never executes sample content.
+- Playbook runs attributed to an investigation now record their execution outcome under the investigation's active branch instead of failing on an empty branch id. A run whose investigation has no active branch is refused before any step runs.
+
 ## [0.6.43] - 2026-11-12 -- Malware role notes reach the reasoning prompt
 
 ### Fixed

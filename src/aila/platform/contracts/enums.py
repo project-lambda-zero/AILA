@@ -160,6 +160,7 @@ class InvestigationPauseReason(StrEnum):
     COST_BUDGET = "cost_budget"
     AWAITING_CAMPAIGN = "awaiting_campaign"
     AWAITING_MCP = "awaiting_mcp"
+    AWAITING_UNPACK_TARGET_ANALYSIS = "awaiting_unpack_target_analysis"
 
 
 class OutcomeConfidence(StrEnum):
