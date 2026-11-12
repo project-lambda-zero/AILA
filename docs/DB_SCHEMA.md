@@ -16,7 +16,7 @@ Two creation paths coexist:
 - Platform + module tables that predate the Alembic baseline
   (`001_baseline_stamp`) are created on first boot by `make db-init`, which runs
   `SQLModel.metadata.create_all()` then stamps `alembic_version` at the current
-  head (`126_drop_result_path`).
+  head (check it with `cd src/aila && alembic heads`).
 - Every schema change since then ships as an Alembic revision under
   `src/aila/alembic/versions/`. See [`DATABASE_MIGRATIONS.md`](DATABASE_MIGRATIONS.md).
 
@@ -2056,4 +2056,4 @@ and crashes on conflict; `merge()` does INSERT-or-UPDATE keyed on the PK.
 
 ---
 
-*Generated from live SQLModel metadata (119 tables). Alembic head `126_drop_result_path`. Regenerate with `.run/schema_dump.py` + `.run/gen_schema_md.py` after model changes.*
+*Generated from live SQLModel metadata (119 tables). Check the Alembic head with `cd src/aila && alembic heads`. Regenerate with `.run/schema_dump.py` + `.run/gen_schema_md.py` after model changes.*

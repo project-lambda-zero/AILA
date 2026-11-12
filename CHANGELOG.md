@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.60] - 2026-11-12 -- Docs point to alembic heads instead of a pinned revision
+
+### Fixed
+
+- Deployment, migration, schema, and VR reference documents no longer name a stale Alembic revision as the current head. They direct readers to `alembic heads`, and migration templates use placeholder revision numbers.
+
 ## [0.6.59] - 2026-11-12 -- Monaco loads only when a code surface opens
 
 ### Fixed

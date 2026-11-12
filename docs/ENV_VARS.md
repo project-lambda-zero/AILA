@@ -355,4 +355,4 @@ Before deploying to production, verify these are set:
 ---
 
 *Generated from source: `src/aila/config.py`, `src/aila/platform/config.py`, `src/aila/platform/llm/`, `src/aila/api/app.py`, `.env.example`, `start.sh`.*
-*Last updated: 2026-06-21 (head: `067_cursor_archived_state`).*
+*Last updated: 2026-06-21. Check the current Alembic head with `cd src/aila && alembic heads`.*

@@ -54,7 +54,8 @@ src/aila/
       078_notification_created_index.py
       079_refresh_token_client_meta.py
       080_platform_schema_reconcile.py
-      081_vr_schema_reconcile.py                     # current head
+      081_vr_schema_reconcile.py
+      ...
 ```
 
 `alembic.ini` and the `alembic/` directory live under `src/aila/`, not at the repo root. All Alembic commands must run from `src/aila/`:
@@ -99,8 +100,8 @@ Create a new file in `src/aila/alembic/versions/`:
 Where `{NNN}` is the next sequential number (zero-padded to 3 digits). Check the latest file:
 
 ```bash
-ls src/aila/alembic/versions/*.py | tail -1
-# 081_vr_schema_reconcile.py -> next is 082
+cd src/aila && alembic heads
+# prints the current head revision; the next file number is that number plus one
 ```
 
 ### Step 3: Write the migration
@@ -108,12 +109,12 @@ ls src/aila/alembic/versions/*.py | tail -1
 Use this template:
 
 ```python
-"""082 -- add priority column to task records.
+"""NNN -- add priority column to task records.
 
 Adds a nullable priority field so operators can influence queue ordering.
 
-Revision ID: 082_taskrecord_priority
-Revises: 081_vr_schema_reconcile
+Revision ID: NNN_taskrecord_priority
+Revises: <current head>
 Create Date: 2026-07-22
 """
 from __future__ import annotations
@@ -121,8 +122,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "082_taskrecord_priority"
-down_revision = "081_vr_schema_reconcile"
+revision = "NNN_taskrecord_priority"  # replace NNN with the next number
+down_revision = "<current head>"  # the revision printed by `alembic heads`
 branch_labels = None
 depends_on = None
 
