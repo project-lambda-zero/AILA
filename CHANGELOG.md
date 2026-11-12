@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.39] - 2026-11-12 -- Duplicate malware operator reviews return 409
+
+### Fixed
+
+- A second operator review of a malware outcome from the same reviewer branch now returns 409 with error code `DUPLICATE_RESOURCE`, writes no row, and leaves review counts and quorum unchanged. It previously returned 500. Other database errors on the route keep their existing handling.
+
+### Added
+
+- `DuplicateResourceError` in the platform error taxonomy (code `DUPLICATE_RESOURCE`, HTTP 409) and a storage helper that recognizes a uniqueness violation of a named constraint, so routes can map one specific constraint to a conflict without exposing constraint names.
+
 ## [0.6.38] - 2026-11-12 -- Deleting a malware finding removes its workflow records
 
 ### Fixed

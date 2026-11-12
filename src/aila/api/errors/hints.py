@@ -26,6 +26,10 @@ ERROR_HINTS: dict[str, str] = {
     "CONFIG_VALUE_MISSING": (
         "Set this config value under Admin -> Platform Config before retrying."
     ),
+    "DUPLICATE_RESOURCE": (
+        "This record already exists. Update or reuse the existing record "
+        "instead of creating another."
+    ),
     "WORKER_UNREACHABLE": (
         "The background worker is not reachable. Check the Workers panel under "
         "Admin -> System Health."
