@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.49] - 2026-11-12 -- APK overview reads the real ingestion handles
+
+### Fixed
+
+- The malware APK target overview now shows the decoded directory, manifest, decompiled directory, JADX root and class count, code index, and a bounded static-summary reference produced by APK ingestion. It previously showed none of them because it read handle names the pipeline does not write. The full static-summary artifact is never embedded in target reads.
+
 ## [0.6.48] - 2026-11-12 -- Intake shows why a target failed
 
 ### Fixed
