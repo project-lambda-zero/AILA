@@ -5,6 +5,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.22] - 2026-11-12 -- Crypto scan guidance matches the live tool
+
+### Fixed
+
+- Malware and VR system prompts no longer reference a nonexistent crypto constant tool; `reverser_belt.detect_crypto_primitives` is the single crypto scan. The rename was contributed in #342.
+- Crypto scan guidance now matches the tool's output: hits are leads that report `type`, an optional `algorithm`, and `confidence`; only some hits carry an address; and the scan never names a family-specific variant or confirms a key on its own. Key candidates are confirmed by reading their bytes.
+- Deployments whose prompt version store already has a production alias keep serving the previous prompt until the new file version is promoted.
+
+### Removed
+
+- The prompt source-text test added with the rename.
+
 ## [0.6.21] - 2026-11-12 -- Forensics response emit preserves terminal statuses
 
 ### Fixed
