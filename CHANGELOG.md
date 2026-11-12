@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.47] - 2026-11-12 -- Outcome views show the generated narrative
+
+### Fixed
+
+- Malware X-Ray outcome views now show the generated investigation narrative body in the primary finding and selected outcome panes. It takes precedence over other outcome prose, and a missing or malformed narrative falls back to the previous text. Exports are unchanged.
+
 ## [0.6.46] - 2026-11-12 -- All-skipped playbook runs report skipped
 
 ### Fixed
