@@ -148,6 +148,14 @@ export function TargetSteps(props: TargetStepsProps): JSX.Element {
                       {t.workspace_name ?? t.workspace_id ?? ""}
                       {t.analysis_state ? ` \u00b7 ${t.analysis_state}` : ""}
                     </span>
+                    {t.analysis_state?.toLowerCase() === "failed" && t.analysis_state_message?.trim() ? (
+                      <span
+                        data-testid="intake-target-failure-reason"
+                        style={css("font-size:11px;line-height:1.4;color:var(--status-err,#d64545);white-space:pre-wrap;word-break:break-word;max-height:66px;overflow:auto;")}
+                      >
+                        {t.analysis_state_message}
+                      </span>
+                    ) : null}
                   </span>
                   <span style={css("font-size:11px;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-faint);")}>{t.kind}</span>
                 </button>
