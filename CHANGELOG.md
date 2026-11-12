@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.48] - 2026-11-12 -- Intake shows why a target failed
+
+### Fixed
+
+- The intake target picker now shows a failed target's analysis failure message under its state, so the reason is visible without leaving intake. Rows that are not failed, or that have no message, are unchanged.
+
 ## [0.6.47] - 2026-11-12 -- Outcome views show the generated narrative
 
 ### Fixed
