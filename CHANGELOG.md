@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.41] - 2026-11-12 -- Malware rejects unsupported script actions
+
+### Fixed
+
+- A malware agent decision with the `script_execute` action is now rejected explicitly. The turn records an `unsupported_action` error that keeps the submitted script body, invokes no executor, stays nonterminal, and the agent receives a corrective directive listing the valid malware actions. Malware prompt guidance no longer advertises `script_execute`. Modules that implement script execution are unchanged.
+
 ## [0.6.40] - 2026-11-12 -- Malware operator reviews evaluate quorum
 
 ### Fixed

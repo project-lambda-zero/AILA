@@ -764,6 +764,21 @@ class AgentTurnRunnerBase:
                 # request id does not exist; skip without failing the turn.
                 continue
 
+    def _maybe_reject_unsupported_action(
+        self, *, decision: Any, case_state: Any, turn_number: int,
+    ) -> Any:
+        """Reject a schema-valid action this module has no handler for.
+
+        Runs first after the decision is validated, before any gate. A
+        module that does not implement an action in the shared
+        ``ReasoningAction`` set overrides this to write a corrective
+        ``_directive.*`` observable into ``case_state`` and return the
+        decision (its payload mapper then records the explicit error).
+        Default: every action is supported.
+        """
+        del case_state, turn_number
+        return decision
+
     def _maybe_reject_fanout_submit(
         self, *, decision: Any, inv: Any, case_state: Any, turn_number: int,
     ) -> Any:
@@ -1325,6 +1340,12 @@ class AgentTurnRunnerBase:
                 f"(inv={self.investigation_id} branch={self.branch_id} "
                 f"turn={turn_number}) -- logic bug",
             )
+
+        decision = self._maybe_reject_unsupported_action(
+            decision=decision,
+            case_state=case_state,
+            turn_number=turn_number,
+        )
 
         # ── variant_hunt submit gate ────────────────────────────────────
         # When the agent terminal-submits on a kind=variant_hunt
