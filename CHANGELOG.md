@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.52] - 2026-11-12 -- Malware list pages reach every row
+
+### Fixed
+
+- The malware investigations, findings, and observations pages now page through every row using the backend total. They previously stopped at the first 50 investigations or findings and the first 200 observations.
+
 ## [0.6.51] - 2026-11-12 -- VR investigation delete purges LLM cache and detaches cost rows
 
 ### Fixed

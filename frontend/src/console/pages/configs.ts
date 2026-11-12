@@ -401,12 +401,16 @@ export const PAGE_CONFIGS = {
   "malware:investigations": {
     title: "malware \u00b7 investigations",
     endpoint: "/malware/investigations",
+    pagination: true,
+    paginationParams: "offset",
     columns: [c("title"), c("kind"), c("status"), c("strategy_family", "strategy"), c("branch_count", "branches"), c("message_count", "turns"), c("outcome_count", "outcomes"), c("cost_actual_usd", "cost $")],
     filters: [{ name: "title", label: "title", type: "text" }, { name: "status", label: "status", type: "select" }],
   },
   "malware:observations": {
     title: "malware \u00b7 observations",
     endpoint: "/malware/observations",
+    pagination: true,
+    paginationParams: "offset",
     scopeFrom: { endpoint: "/malware/targets", param: "target_id" },
     columns: [c("kind"), c("polarity"), c("source"), c("target_id", "target"), c("investigation_id", "investigation"), c("created_at", "created")],
     filters: [{ name: "kind", label: "kind", type: "text" }, { name: "polarity", label: "polarity", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
@@ -420,6 +424,8 @@ export const PAGE_CONFIGS = {
   "malware:findings": {
     title: "malware \u00b7 findings",
     endpoint: "/malware/findings",
+    pagination: true,
+    paginationParams: "offset",
     columns: [
       c("kind"),
       c("confidence"),
