@@ -89,7 +89,7 @@ class VRInvestigationCreate(BaseModel):
         description=(
             "When True, engine self-drives through ambiguous decisions. When False, "
             "an unknown-confidence decision pauses the investigation (low_confidence) "
-            "for operator input (D-43 GA-21, #349)."
+            "for operator input (D-43 GA-21)."
         ),
     )
     cost_budget_usd: float = Field(

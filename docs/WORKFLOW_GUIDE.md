@@ -646,6 +646,12 @@ Three gates from commit `2328b4e` plus the idempotent draft-review request from 
 
 `POST /malware/outcomes/{outcome_id}/reviews` records the operator vote, commits it, then runs the shared `evaluate_quorum` kernel on the outcome (`create_outcome_review` in `src/aila/modules/malware/api_router.py`), the same kernel the agent turn loop uses after `submit_outcome_review`. A transition writes experience via `record_experience_on_verdict`, and an approving transition dispatches the outcome via `dispatch_approved_outcome`; both are gated on `transition_occurred`, so a repeated evaluation of a settled outcome has no side effects. Reviewer uniqueness is enforced by `uq_malware_outcome_reviews_outcome_reviewer` (409 on duplicate). Votes below threshold, abstentions, and rejects below the veto threshold leave the outcome in draft.
 
+### Malware Unpack Target Detection
+
+`UnpackDetectorService.check` (`src/aila/modules/malware/agents/unpack_detector.py`) reads the target's `PACKER_DETECTED` and `UNPACK_RESULT` observations. It is positive only when both exist. `maybe_spawn_unpack_target` (`src/aila/modules/malware/agents/unpack_spawn.py`) runs it at two points: `ToolExecutor._post_dispatch` after each tool dispatch's observations persist, and `PlaybookRunnerService.run` after a playbook run attributed to an investigation. Both run only after the observations they read have been written.
+
+A positive result writes one `UNPACK_TARGET_SPAWNED` outcome in state `approved` and hands it to `OutcomeDispatcher.dispatch`, which creates the child target with `parent_target_id` set and pauses the parent (`awaiting_unpack_target_analysis`). The outcome id is a uuid5 of the target and the `UNPACK_RESULT` observation, and the insert is `on_conflict_do_nothing`, so repeated checks create no second outcome and no second child. A missing signal produces no outcome. Detection never executes unpacked content; it reads observation rows only.
+
 ### Do / Do Not
 
 **Do:**
