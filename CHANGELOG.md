@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.58] - 2026-11-12 -- Confirm toolbar actions that restart or re-run analysis
+
+### Fixed
+
+- Malware and VR target detail toolbars now ask for confirmation before restarting, resetting, or re-running analysis, so a misclick no longer resets a pipeline or starts a new analysis, ranking, source refresh, or APK audit. Delete confirmation is unchanged.
+
 ## [0.6.57] - 2026-11-12 -- Visible keyboard focus on the chat composer and command palette
 
 ### Fixed
