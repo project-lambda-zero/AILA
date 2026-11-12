@@ -907,7 +907,17 @@ def _merge_case_states(
         resolved=merge_resolved(a.resolved, b.resolved),
         observables={**a.observables, **b.observables},
         current_turn=max(a.current_turn, b.current_turn),
+        # #301 -- revival history must survive merge, or a merged branch
+        # could revive an id a second time.
+        revived_hypothesis_ids=_union_ids(
+            a.revived_hypothesis_ids, b.revived_hypothesis_ids,
+        ),
     )
+
+
+def _union_ids(a: list[str], b: list[str]) -> list[str]:
+    """Order-preserving dedupe union of two id lists."""
+    return list(dict.fromkeys([*a, *b]))
 
 
 def _has_contract(c: ReasoningContract) -> bool:

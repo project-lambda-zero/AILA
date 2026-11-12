@@ -9,6 +9,7 @@ rejection text, or stamp the payload.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -31,9 +32,9 @@ from aila.platform.contracts.reasoning import (
     Hypothesis,
     ReasoningCaseState,
     ReasoningTurnDecision,
+    RejectedHypothesis,
 )
 from aila.platform.services.reasoning import CyberReasoningEngine
-
 
 # ---------------------------------------------------------------------------
 # Helpers.
@@ -456,6 +457,171 @@ def test_positive_gate_off_when_toggle_disabled() -> None:
         decision=decision, case_state=_empty_case(), turn_number=1,
     )
     assert out is decision
+
+
+# ---------------------------------------------------------------------------
+# #301: a submit gate sees the same revival view absorb will admit.
+# ---------------------------------------------------------------------------
+
+
+def _revival_case(*, revived: list[str]) -> ReasoningCaseState:
+    return ReasoningCaseState(
+        rejected=[RejectedHypothesis(id="H1", claim="c", reason="disproved")],
+        revived_hypothesis_ids=revived,
+    )
+
+
+def _revival_submit(*, confirmed_by: str, rejected: list[str] | None = None) -> ReasoningTurnDecision:
+    decision = _make_submit(payload={"evidence_refs": ["audit_mcp:read_function#1"]})
+    decision.hypotheses = [
+        Hypothesis(id="H1", claim="c", confirmed_by=confirmed_by),
+    ]
+    decision.rejected = [
+        RejectedHypothesis(id=rid, claim="c", reason="same-decision") for rid in (rejected or [])
+    ]
+    return decision
+
+
+def test_positive_submit_refuses_second_revival_of_terminal_id() -> None:
+    """A refused second revival must not satisfy the confirmed-citation gate.
+
+    H1 was already revived once (``revived_hypothesis_ids``); absorb will
+    refuse this re-emit, so the submit gate must not count it either.
+    """
+    r = _make_researcher()
+    case = _revival_case(revived=["H1"])
+    decision = _revival_submit(confirmed_by="src/x.py:1")
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=3,
+    )
+    assert out.action == "reasoning"
+    assert out.payload["_gate.positive_submit_refs.rejected"] is True
+    assert "no live hypothesis carries a `confirmed_by` citation" in (
+        case.observables["_directive.gate.positive_submit_refs.rejected"]
+    )
+
+
+def test_positive_submit_accepts_first_revival_of_terminal_id() -> None:
+    r = _make_researcher()
+    case = _revival_case(revived=[])
+    decision = _revival_submit(confirmed_by="src/x.py:1")
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=2,
+    )
+    assert out.action == "submit"
+
+
+def test_positive_submit_ignores_confirmation_rejected_same_decision() -> None:
+    r = _make_researcher()
+    case = _revival_case(revived=[])
+    decision = _revival_submit(confirmed_by="src/x.py:1", rejected=["H1"])
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=2,
+    )
+    assert out.action == "reasoning"
+
+
+def test_positive_submit_ignores_unsupported_revival_reemit() -> None:
+    r = _make_researcher()
+    case = _revival_case(revived=[])
+    decision = _revival_submit(confirmed_by="")
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=2,
+    )
+    assert out.action == "reasoning"
+
+
+def test_async_submit_chain_does_not_submit_refused_second_revival() -> None:
+    """The async dispatcher must not terminal-submit a refused revival.
+
+    The positive-submit gate runs first and short-circuits, so no
+    DB-reading gate is reached.
+    """
+    r = _make_researcher()
+    case = _revival_case(revived=["H1"])
+    decision = _revival_submit(confirmed_by="src/x.py:1")
+    out = asyncio.run(
+        r._apply_wave2_submit_gates(
+            decision=decision,
+            case_state=case,
+            turn_number=3,
+            prior_outcomes=None,
+        ),
+    )
+    assert out.action == "reasoning"
+
+
+def test_sync_submit_chain_does_not_submit_refused_second_revival() -> None:
+    """The fanout hook runs the same gate; a refused revival must not pass."""
+    r = _make_researcher()
+    case = _revival_case(revived=["H1"])
+    decision = _revival_submit(confirmed_by="src/x.py:1")
+    out = r._wave2_submit_gates_sync(
+        decision=decision, case_state=case, turn_number=3,
+    )
+    assert out.action == "reasoning"
+
+
+def _merged_overlap_case() -> ReasoningCaseState:
+    """Merged branch state: H1 live and terminal, already revived once."""
+    return ReasoningCaseState(
+        hypotheses=[Hypothesis(id="H1", claim="c", confirmed_by="src/x.py:1")],
+        rejected=[RejectedHypothesis(id="H1", claim="c", reason="closed")],
+        revived_hypothesis_ids=["H1"],
+    )
+
+
+def test_confirmed_open_excludes_merged_live_terminal_overlap_without_decision() -> None:
+    r = _make_researcher()
+    confirmed = r._confirmed_open_hypotheses(
+        case_state=_merged_overlap_case(), decision=None,
+    )
+    assert confirmed == []
+
+
+def test_positive_submit_refs_cannot_pass_merged_live_terminal_overlap() -> None:
+    """Refs alone must not pass: absorb drops the live H1 and refuses the revival."""
+    r = _make_researcher()
+    refs = {"evidence_refs": ["audit_mcp:read_function#1"]}
+
+    bare = _make_submit(payload=dict(refs))
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=bare, case_state=_merged_overlap_case(), turn_number=3,
+    )
+    assert out.action == "reasoning"
+
+    reemit = _revival_submit(confirmed_by="src/x.py:2")
+    reemit.payload = dict(refs)
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=reemit, case_state=_merged_overlap_case(), turn_number=3,
+    )
+    assert out.action == "reasoning"
+
+
+def test_positive_submit_accepts_live_revival_after_absorb() -> None:
+    """Preservation: a first revival that absorb admits passes the gate."""
+    engine = CyberReasoningEngine(None)  # type: ignore[arg-type]
+    initial = ReasoningCaseState(
+        rejected=[RejectedHypothesis(id="H1", claim="c", reason="old")],
+    )
+    after = engine.absorb(
+        initial,
+        ReasoningTurnDecision(
+            reasoning="revive",
+            action="reasoning",
+            hypotheses=[Hypothesis(id="H1", claim="c", confirmed_by="src/x.py:1")],
+        ),
+        turn_number=2,
+    )
+    assert after.rejected == []
+    assert after.revived_hypothesis_ids == ["H1"]
+
+    r = _make_researcher()
+    decision = _make_submit(payload={"evidence_refs": ["audit_mcp:read_function#1"]})
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=after, turn_number=3,
+    )
+    assert out.action == "submit"
 
 
 # ---------------------------------------------------------------------------

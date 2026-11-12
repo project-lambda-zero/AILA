@@ -501,9 +501,41 @@ class CyberReasoningEngine:
         # observed live on investigation <inv-uuid>: r1, r_gc_layout,
         # r_obj_moved_missing_from_source all appeared twice in
         # maddie's rejected list with slightly different wording.
+        newly_rejected_ids = {item.id for item in decision.rejected if item.id}
+        # Bounded revival (#301): a previously rejected or resolved id
+        # re-emitted under decision.hypotheses with a non-blank
+        # confirmed_by is admitted live exactly once per branch. The
+        # re-emit must not be rejected in this same decision, and an id
+        # already revived once is never revivable again (it falls
+        # through to the refusal path below). Revival history is kept in
+        # ``revived_hypothesis_ids`` so the once-only rule survives turns.
+        prior_terminal_ids = (
+            {item.id for item in case_state.rejected if item.id}
+            | {item.id for item in case_state.resolved if item.id}
+        )
+        revived_done = set(case_state.revived_hypothesis_ids)
+        revivable_ids: set[str] = set()
+        revived_now: list[str] = []
+        for new_h in decision.hypotheses or []:
+            if (
+                not new_h.id
+                or new_h.id in revivable_ids
+                or not new_h.confirmed_by.strip()
+                or new_h.id not in prior_terminal_ids
+                or new_h.id in newly_rejected_ids
+                or new_h.id in revived_done
+            ):
+                continue
+            revivable_ids.add(new_h.id)
+            revived_now.append(new_h.id)
+            _log.warning(
+                "absorb: revived previously terminal hypothesis id=%r via "
+                "confirmed_by=%r (claim=%r); one revival per id",
+                new_h.id, new_h.confirmed_by[:200], (new_h.claim or "")[:200],
+            )
         rejected_by_id: dict[str, Any] = {}
         for item in case_state.rejected:
-            if item.id:
+            if item.id and item.id not in revivable_ids:
                 rejected_by_id[item.id] = item
         for item in decision.rejected:
             if item.id:
@@ -512,17 +544,20 @@ class CyberReasoningEngine:
         rejected = [item for item in case_state.rejected if not item.id]
         rejected.extend(item for item in decision.rejected if not item.id)
         rejected.extend(rejected_by_id.values())
-        newly_rejected_ids = {item.id for item in decision.rejected if item.id}
 
-        # #165: rejection is permanent. Any id present in the rejected
-        # set (either from a prior turn or this turn's decision) or in
-        # the resolved set is refused resurrection when the agent
-        # re-proposes it under decision.hypotheses. Without this guard
-        # the same id could sit in both ``rejected`` and ``hypotheses``
-        # simultaneously, silently undoing an earlier close-out and
-        # letting stale-hypothesis / sibling-consensus directives
-        # re-fire on a branch the model already resolved.
-        resolved_ids = {item.id for item in case_state.resolved if item.id}
+        # #165: rejection is permanent except for one evidence-backed
+        # revival (#301). Any id present in the rejected set (either from
+        # a prior turn or this turn's decision) or in the resolved set is
+        # refused resurrection when the agent re-proposes it under
+        # decision.hypotheses, unless it is in ``revivable_ids`` above.
+        # Without this guard the same id could sit in both ``rejected``
+        # and ``hypotheses`` simultaneously, silently undoing an earlier
+        # close-out and letting stale-hypothesis / sibling-consensus
+        # directives re-fire on a branch the model already resolved.
+        resolved_ids = {
+            item.id for item in case_state.resolved
+            if item.id and item.id not in revivable_ids
+        }
         # rejected_by_id already fully accounts for prior + new rejections.
         forbidden_ids = set(rejected_by_id.keys()) | resolved_ids
 
@@ -544,7 +579,8 @@ class CyberReasoningEngine:
                 continue
             if new_h.id in forbidden_ids:
                 # Resurrection attempt: the agent is re-emitting an id
-                # that was already rejected or resolved. Drop it and
+                # that was already rejected or resolved and is not
+                # admissible for its one confirmed revival. Drop it and
                 # log at WARNING so the operator sees the attempt.
                 # Keeping ``rejected`` as the sticky source of truth
                 # matches the "Rejected (do not re-propose)" render
@@ -552,8 +588,19 @@ class CyberReasoningEngine:
                 verdict = "rejected" if new_h.id in rejected_by_id else "resolved"
                 _log.warning(
                     "absorb: refusing to resurrect %s hypothesis id=%r "
-                    "(claim=%r); rejection is permanent",
+                    "(claim=%r); a terminal id revives only once, with "
+                    "confirmed_by, and not in the decision that rejects it",
                     verdict, new_h.id, (new_h.claim or "")[:200],
+                )
+                continue
+            if new_h.id in revivable_ids and not new_h.confirmed_by.strip():
+                # Revival authorization is per entry (#301): a duplicate
+                # re-emit of a revived id without evidence cannot replace
+                # the supported entry that authorized the revival.
+                _log.warning(
+                    "absorb: dropping unsupported duplicate of revived "
+                    "hypothesis id=%r (claim=%r); confirmed_by is required",
+                    new_h.id, (new_h.claim or "")[:200],
                 )
                 continue
             for i, existing in enumerate(merged_live):
@@ -708,9 +755,10 @@ class CyberReasoningEngine:
             contract=contract,
             hypotheses=merged_live,
             rejected=rejected,
-            resolved=case_state.resolved,
+            resolved=[item for item in case_state.resolved if item.id not in revivable_ids],
             observables=observables,
             current_turn=turn_number or case_state.current_turn,
+            revived_hypothesis_ids=list(case_state.revived_hypothesis_ids) + revived_now,
         )
 
     def render_case_model(self, case_state: ReasoningCaseState) -> str:

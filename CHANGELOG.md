@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.33] - 2026-11-12 -- Rejected hypotheses can be revived once with confirmation evidence
+
+### Fixed
+
+- A rejected or resolved hypothesis that a later decision re-emits under the same id with a non-empty `confirmed_by` citation is admitted live again, once per id per branch, and keeps its evidence. Each revival is logged at WARNING and recorded in `revived_hypothesis_ids` on the persisted case state, so the once-only rule holds across turns, branch merges, and the forensics investigator.
+- Re-emits without `confirmed_by`, a second revival of the same id, and a confirmed re-emit of an id rejected in the same decision are still refused and logged.
+- The VR positive-submit gate applies the same admissibility rule before `absorb()` runs, so a refused revival, or a merged state that holds an id both live and terminal, never counts as a confirmed citation.
+
 ## [0.6.32] - 2026-11-12 -- VR gate reject counters are reserved observables
 
 ### Fixed

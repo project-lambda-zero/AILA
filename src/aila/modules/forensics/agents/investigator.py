@@ -374,6 +374,9 @@ class HonestInvestigator:
         # this list with a neutral badge so operators know to consult
         # the canonical outcome for the true classification.
         self.resolved: list[dict[str, Any]] = []
+        # Ids that already used their one evidence-backed revival (#301).
+        # Carried through every absorb so a terminal id cannot revive again.
+        self.revived_hypothesis_ids: list[str] = []
         self.observables: dict[str, Any] = {}
         # Consecutive rejections by the unresolved-hypothesis submit
         # gate on THIS investigation (issue #175). Counted per run,
@@ -1125,6 +1128,7 @@ class HonestInvestigator:
             rejected=rejected,
             resolved=resolved,
             observables=dict(self.observables),
+            revived_hypothesis_ids=list(self.revived_hypothesis_ids),
         )
 
     def _apply_case_state(self, case_state: ReasoningCaseState) -> None:
@@ -1138,6 +1142,7 @@ class HonestInvestigator:
         self.hypotheses = [item.model_dump(mode="json") for item in case_state.hypotheses]
         self.rejected = [item.model_dump(mode="json") for item in case_state.rejected]
         self.resolved = [item.model_dump(mode="json") for item in case_state.resolved]
+        self.revived_hypothesis_ids = list(case_state.revived_hypothesis_ids)
         self.observables = dict(case_state.observables)
 
     async def _maybe_reject_submit_with_unresolved_hypotheses(

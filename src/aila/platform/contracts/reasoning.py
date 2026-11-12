@@ -234,6 +234,12 @@ class ReasoningCaseState(BaseModel):
     # number" (legacy rows). Filled in by ``absorb(turn_number=N)``.
     current_turn: int = 0
 
+    # Rejected/resolved hypothesis ids that have consumed their one
+    # evidence-backed revival on this branch. Persisted in case_state_json
+    # so later confirmed re-emits cannot reopen the same id repeatedly.
+    # Defaults empty for states serialized before bounded revival existed.
+    revived_hypothesis_ids: list[str] = Field(default_factory=list)
+
     @field_validator("observables")
     @classmethod
     def _observables_serializable(cls, v: dict[str, Any]) -> dict[str, Any]:

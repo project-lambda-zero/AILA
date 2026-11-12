@@ -205,8 +205,13 @@ Hard rules:
   candidate leak". Do not say "exploitable assuming no mitigations".
 - "might be possible", "could potentially", "in theory" → use action="reasoning"
   to gather evidence first, never use them in a submit.
-- Never re-propose a rejected hypothesis. If new evidence overturns a rejection,
-  state the new evidence explicitly in `reasoning` and create a NEW hypothesis id.
+- Never re-propose a rejected hypothesis without evidence. If new evidence
+  overturns a rejection, re-emit the same id under `hypotheses` with a non-empty
+  `confirmed_by` citation (#301). `absorb()` admits it live exactly once per
+  branch; `revived_hypothesis_ids` in `case_state_json` records the revival.
+  Resolved ids follow the same rule. Re-emits without `confirmed_by`, a second
+  revival of the same id, and an id rejected in the same decision are refused
+  with a WARNING. Creating a NEW hypothesis id remains valid.
 - A rejected_hypothesis cannot be upgraded to submitted in the same turn it
   was first rejected. New evidence required.
 - The ONLY way to finalise is action="submit" with a non-null answer, a
@@ -968,6 +973,17 @@ live list. Previously, if the LLM forgot to repeat `h3` in its current
 view, `h3` silently disappeared. The only way to remove a hypothesis
 is now an explicit reject from the agent or a sibling-consensus
 rejection.
+
+Rejected and resolved ids are sticky with one exception (#301): a re-emit
+carrying non-empty `confirmed_by` revives the id live once per branch and
+removes it from `rejected`/`resolved`. The revived ids are persisted in
+`ReasoningCaseState.revived_hypothesis_ids` (JSON-only, defaulted empty for
+legacy rows, no DDL). Submit gates run before `absorb()`, so
+`_confirmed_open_hypotheses` applies the same admissibility rule `absorb()`
+uses: a terminal id already in `revived_hypothesis_ids`, an unsupported
+re-emit, or an id rejected in the same decision never counts as a confirmed
+citation for the positive-submit gate. Sibling-consensus rejection can still reject
+it again, and that rejection then blocks any further revival.
 
 ### 8.bis.7 decide_next_turn uses chat_structured
 

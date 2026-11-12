@@ -1231,16 +1231,42 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         the decision rejects this turn. ``decision`` is None on the
         proactive-injection path (no decision yet), where only the
         accumulated state is scanned.
+
+        Submit gates run before ``absorb`` (turn_runner), so this view
+        must refuse exactly what absorb refuses (#301): a previously
+        rejected or resolved id re-enters only through its single
+        evidence-backed revival. An id already revived once, or re-emitted
+        without ``confirmed_by``, never counts as confirmed here. Live seeds
+        whose id also sits in ``rejected``/``resolved`` are dropped too:
+        absorb gives terminal membership precedence over stale merged rows,
+        so only an admissible current-decision first revival may re-add them.
         """
+        terminal_ids = (
+            {r.id for r in case_state.rejected if r.id}
+            | {r.id for r in case_state.resolved if r.id}
+        )
+        revived_done = set(case_state.revived_hypothesis_ids)
         confirmed: dict[str, Hypothesis] = {}
         for h in case_state.hypotheses:
-            if h.id and getattr(h, "confirmed_by", ""):
+            if not h.id or h.id in terminal_ids:
+                # A merged case_state can carry the same id live and
+                # terminal; absorb drops the live entry, so it cannot
+                # seed a confirmation here either (#301).
+                continue
+            if getattr(h, "confirmed_by", ""):
                 confirmed[h.id] = h
         if decision is not None:
             for h in decision.hypotheses:
                 if not h.id:
                     continue
-                if getattr(h, "confirmed_by", ""):
+                supported = bool(h.confirmed_by.strip())
+                if h.id in terminal_ids:
+                    # Revival candidate: absorb admits only the first
+                    # supported re-emit of a terminal id, and only once.
+                    if h.id in revived_done or not supported:
+                        continue
+                    confirmed[h.id] = h
+                elif supported:
                     confirmed[h.id] = h
                 else:
                     # Current view no longer confirms this id -- retract.
