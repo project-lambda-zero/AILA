@@ -38,6 +38,7 @@ from typing import Any
 
 from aila.config import Settings
 from aila.modules.forensics.config_schema import FORENSICS_HARD_TURN_CAP, ForensicsConfigSchema
+from aila.modules.forensics.contracts.status import InvestigationStatus
 from aila.modules.forensics.tools.script_guard import script_rejection
 from aila.platform.agents.turn_helpers import auto_resolve_live_on_terminal
 from aila.platform.config_base import ModuleConfigReader
@@ -74,6 +75,17 @@ __all__ = ["HonestInvestigator"]
 
 _log = logging.getLogger(__name__)
 _cfg = ModuleConfigReader("forensics")
+
+# Persisted statuses at which the investigate loop stops before the next
+# provider call. ``running`` and ``pending`` are deliberately absent: the
+# loop only runs while the row is in one of those.
+_INVESTIGATOR_STOP_STATUSES = frozenset({
+    InvestigationStatus.PAUSED.value,
+    InvestigationStatus.CANCELLED.value,
+    InvestigationStatus.COMPLETED.value,
+    InvestigationStatus.EXHAUSTED.value,
+    InvestigationStatus.FAILED.value,
+})
 
 
 async def _read_float_config(key: str) -> float:
@@ -469,11 +481,13 @@ class HonestInvestigator:
         confidence = "caveated"
 
         for turn in range(1, max_turns + 1):
-            # Analyst-initiated stop: cheap indexed PK lookup at the top
-            # of each iteration. We don't poll inside _run_turn -- that
-            # would race with ssh commands already in flight. Between
-            # turns is the safe boundary.
-            if await self._is_cancelled():
+            # Stop check: cheap indexed PK lookup at the top of each
+            # iteration. We don't poll inside _run_turn -- that would race
+            # with ssh commands already in flight. Between turns is the
+            # safe boundary: no provider or tool call starts once the row
+            # has left running.
+            stop_status = await self._stop_status()
+            if stop_status == InvestigationStatus.CANCELLED.value:
                 _log.info(
                     "HonestInvestigator inv_id=%s cancelled by analyst at turn %d",
                     self.investigation_id, turn,
@@ -490,6 +504,21 @@ class HonestInvestigator:
                     "attempts_used": turn - 1,
                     "steps": steps,
                     "cancelled": True,
+                }
+            if stop_status is not None:
+                # Paused or terminal: the workflow owns the persisted
+                # status, so the investigator only reports the stop.
+                _log.info(
+                    "HonestInvestigator inv_id=%s stopped at turn %d: status=%s",
+                    self.investigation_id, turn, stop_status,
+                )
+                return {
+                    "answer": None,
+                    "confidence": "unknown",
+                    "attempts_used": turn - 1,
+                    "steps": steps,
+                    "cancelled": False,
+                    "stopped_status": stop_status,
                 }
 
             if emitter:
@@ -752,13 +781,16 @@ class HonestInvestigator:
         except (OSError, RuntimeError, AILAError):
             _log.exception("Failed to set investigation status=%s", status_value)
 
-    async def _is_cancelled(self) -> bool:
-        """One indexed PK lookup against the investigation row.
+    async def _stop_status(self) -> str | None:
+        """One indexed PK lookup returning the status that stops the loop.
 
-        Returns True when the analyst has hit the Stop button on the UI
-        (``POST .../cancel`` flipped ``status`` to ``cancelled``). The
+        Returns the persisted status when it is one the investigator must
+        not run past: ``paused`` (lifecycle pause), ``cancelled`` (analyst
+        Stop button or cost-ceiling flip), or any terminal status
+        (``completed`` / ``exhausted`` / ``failed``). Returns ``None`` for
+        ``pending`` / ``running`` or when the row cannot be read. The
         investigate loop calls this at the top of each iteration so it
-        can exit cleanly between turns instead of mid-shell-command.
+        exits between turns instead of mid-shell-command.
         """
         from sqlmodel import select as _select
 
@@ -772,10 +804,12 @@ class HonestInvestigator:
                         InvestigationRunRecord.id == self.investigation_id
                     )
                 )).first()
-            return bool(row is not None and row.status == "cancelled")
         except (OSError, RuntimeError, AILAError):
-            _log.exception("Failed to poll investigation cancel flag")
-            return False
+            _log.exception("Failed to poll investigation status for stop check")
+            return None
+        if row is None or row.status not in _INVESTIGATOR_STOP_STATUSES:
+            return None
+        return row.status
 
     # ---------------------------------------------------------------- turn
 

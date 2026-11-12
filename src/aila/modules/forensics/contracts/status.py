@@ -30,6 +30,9 @@ class InvestigationStatus(StrEnum):
 
     PENDING = "pending"
     RUNNING = "running"
+    # Written by the platform investigation lifecycle (pause_investigation);
+    # the investigator stops at the next turn boundary and leaves it intact.
+    PAUSED = "paused"
     COMPLETED = "completed"
     EXHAUSTED = "exhausted"
     FAILED = "failed"

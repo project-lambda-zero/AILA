@@ -413,6 +413,19 @@ The freeflow investigator is strategy-neutral by design. Replaces the prior stra
 - The agent picks its own tool: shell command, Python script (uploaded via `ScriptTool`), or a structured Dissect / Volatility / tshark / Zeek action.
 - Output is graded twice per investigation: (a) answer correctness; (b) whether a DFIR / CTF-grade report can be produced from the captured trajectory alone, without re-running the case.
 
+### Stop semantics
+
+The investigate loop reads the investigation row's status at the top of every turn, before any provider or tool call. The persisted status decides what happens next:
+
+| Persisted status | Loop behavior | Final status written by freeflow |
+| --- | --- | --- |
+| `pending`, `running` | Runs the turn | Set by the answer / failure path |
+| `paused` (lifecycle pause) | Stops at the turn boundary | `paused` is left intact |
+| `cancelled` (analyst Stop, or cost-ceiling monitor) | Stops at the turn boundary | `cancelled`, or `exhausted` when the cost ceiling was crossed |
+| `completed`, `exhausted`, `failed` | Stops at the turn boundary | The stopped status is left intact |
+
+A stop observed before turn 1 makes no provider or tool call and does not mark the investigation `failed`. A paused or terminal stop never overwrites the status that is already persisted.
+
 ---
 
 ## Frontend -- Console Pages

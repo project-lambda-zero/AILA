@@ -360,7 +360,7 @@ async def test_freeflow_cost_ceiling_triggers_investigation_cancel(test_db) -> N
     assert float(outcome["actual_usd"]) == pytest.approx(2.0)
 
     # The investigation row is flipped to CANCELLED so the investigator
-    # loop halts at its next _is_cancelled check.
+    # loop halts at its next _stop_status check.
     async with async_session_scope() as session:
         row = (await session.exec(
             select(InvestigationRunRecord).where(InvestigationRunRecord.id == inv_id)
