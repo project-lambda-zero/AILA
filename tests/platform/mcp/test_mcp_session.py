@@ -440,3 +440,73 @@ class TestStdioChildExit:
             assert session._proc.pid != first_pid
         finally:
             await session.aclose()
+
+
+class _FakeChildStdin:
+    def __init__(self, on_close: Any) -> None:
+        self._on_close = on_close
+
+    def close(self) -> None:
+        self._on_close()
+
+
+class _FakeChild:
+    """Process stand-in: ``wait`` returns only once the child has exited.
+
+    ``exit_on_eof`` decides whether closing stdin lets the child exit
+    gracefully; otherwise only ``kill()`` ends it.
+    """
+
+    def __init__(self, *, exit_on_eof: bool) -> None:
+        self.pid = 4242
+        self.returncode: int | None = None
+        self.killed = False
+        self.reaped = 0
+        self._exited = asyncio.Event()
+        self._exit_on_eof = exit_on_eof
+        self.stdin = _FakeChildStdin(self._on_stdin_close)
+
+    def _on_stdin_close(self) -> None:
+        if self._exit_on_eof:
+            self._exit(0)
+
+    def _exit(self, code: int) -> None:
+        self.returncode = code
+        self._exited.set()
+
+    async def wait(self) -> int | None:
+        await self._exited.wait()
+        self.reaped += 1
+        return self.returncode
+
+    def kill(self) -> None:
+        self.killed = True
+        self._exit(-9)
+
+
+class TestStdioCloseProcessLifecycle:
+    async def test_cancelled_graceful_close_kills_and_reaps_child(self) -> None:
+        """A stalled stdin-EOF wait cancelled by a caller bound kills and reaps the child."""
+        session = McpStdioSession(("fake-child",))
+        child = _FakeChild(exit_on_eof=False)
+        session._proc = child  # type: ignore[assignment]
+
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(session.aclose(), timeout=0.05)
+
+        assert child.killed is True
+        assert child.reaped == 1  # wait completed after the kill, so the child is reaped
+        assert session._proc is None
+        assert session._ready is False
+
+    async def test_graceful_close_does_not_kill_child_that_exits_on_eof(self) -> None:
+        """The normal path closes stdin and waits; a child that exits is never killed."""
+        session = McpStdioSession(("fake-child",))
+        child = _FakeChild(exit_on_eof=True)
+        session._proc = child  # type: ignore[assignment]
+
+        await session.aclose()
+
+        assert child.killed is False
+        assert child.reaped == 1
+        assert session._proc is None

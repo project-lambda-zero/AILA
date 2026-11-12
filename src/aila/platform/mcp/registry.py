@@ -6,7 +6,8 @@ to an MCP server running on a workstation. This service surfaces:
 * which MCP servers the module knows about (audit-mcp, android-mcp, ...)
 * the URL each one currently resolves to (env -> ConfigRegistry -> catalog
   -> default)
-* a live HTTP health probe (reachable / unreachable + latency)
+* a live health probe (reachable / unreachable + latency): HTTP servers
+  via ``/openapi.json``, stdio servers via a native MCP ``tools/list``
 * the tool count and tool names each server advertises
 * a write path so the operator can retarget a server at a different
   workstation without touching env vars
@@ -48,10 +49,16 @@ from aila.platform.mcp.client import (
     ResolvedInstance,
     resolve_instance,
 )
+from aila.platform.mcp.factory import stdio_command
 from aila.platform.mcp.instance_catalog import (
     McpInstanceCatalog,
     decode_capability_tags,
 )
+from aila.platform.mcp.mcp_session import (
+    McpStdioError,
+    McpStdioSession,
+)
+from aila.platform.mcp.server_specs import SERVER_SPECS
 from aila.storage.registry import ConfigRegistry
 
 __all__ = ["McpRegistryServiceBase"]
@@ -59,6 +66,22 @@ __all__ = ["McpRegistryServiceBase"]
 _log = logging.getLogger(__name__)
 
 _PROBE_TIMEOUT_SECONDS = 3.0
+_STDIO_CLOSE_TIMEOUT_SECONDS = 5.0
+_STDIO_URL_PREFIX = "stdio://"
+
+
+async def _close_probe_session(session: McpStdioSession | None) -> None:
+    """Close a probe-owned stdio session so its child is reaped.
+
+    A stalled ``aclose()`` is cancelled by the outer timeout; its
+    ``CancelledError`` branch kills and reaps the child.
+    """
+    if session is None:
+        return
+    try:
+        await asyncio.wait_for(session.aclose(), timeout=_STDIO_CLOSE_TIMEOUT_SECONDS)
+    except (TimeoutError, OSError) as exc:
+        _log.warning("mcp stdio probe: session close failed: %s", exc)
 
 
 class McpRegistryServiceBase:
@@ -266,15 +289,57 @@ class McpRegistryServiceBase:
             return None
         return endpoint
 
+    async def _probe_stdio(
+        self, result: dict[str, Any], server_id: str,
+    ) -> dict[str, Any]:
+        """Health-check a stdio MCP server with a native ``tools/list``.
+
+        The probe spawns its own session and never touches the shared bridge
+        session, so a probe cannot cancel another caller's pending request.
+        The session is closed on every exit path -- success, failure, the probe
+        timeout, or caller cancellation -- so no child outlives its probe.
+        Every failure (a malformed ``<ID>_MCP_COMMAND`` override, a spawn,
+        handshake, or answer failure, or the probe timeout) marks the row
+        unreachable.
+        """
+        server = SERVER_SPECS.get(server_id)
+        start = asyncio.get_running_loop().time()
+        session: McpStdioSession | None = None
+        try:
+            command = stdio_command(server) if server is not None else ()
+            if not command:
+                result["error"] = "McpStdioError: stdio transport has no command"
+                return result
+            session = McpStdioSession(command)
+            tools_raw = await asyncio.wait_for(
+                session.list_tools(timeout=_PROBE_TIMEOUT_SECONDS),
+                timeout=_PROBE_TIMEOUT_SECONDS,
+            )
+            latency_ms = int((asyncio.get_running_loop().time() - start) * 1000)
+        except (McpStdioError, TimeoutError, OSError, ValueError) as exc:
+            result["error"] = f"{type(exc).__name__}: {exc}"
+            return result
+        finally:
+            await _close_probe_session(session)
+        tools = sorted(
+            t["name"] for t in tools_raw if isinstance(t.get("name"), str)
+        )
+        result["status"] = "reachable"
+        result["latency_ms"] = latency_ms
+        result["tool_count"] = len(tools)
+        result["tools"] = tools
+        return result
+
     async def _probe(self, spec: dict[str, str]) -> dict[str, Any]:
-        url, url_source = await self._resolved_url(spec)
+        resolved = await self._resolve_instance(spec)
+        url = resolved.url
         probed_at = utc_now()
         result: dict[str, Any] = {
             "id": spec["id"],
             "name": spec["name"],
             "description": spec["description"],
             "base_url": url,
-            "base_url_source": url_source,
+            "base_url_source": resolved.source,
             "default_url": spec["default_url"],
             "env_var": spec["env_var"],
             "config_key": spec["config_key"],
@@ -285,6 +350,12 @@ class McpRegistryServiceBase:
             "last_probed_at": probed_at.isoformat(),
             "error": None,
         }
+
+        # The resolved URL decides the protocol: a stdio:// endpoint is a child
+        # process; anything else (including an operator override of a stdio
+        # default to http(s)) is probed over HTTP and never spawns a child.
+        if url.startswith(_STDIO_URL_PREFIX):
+            return await self._probe_stdio(result, spec["id"])
 
         start = asyncio.get_event_loop().time()
         try:

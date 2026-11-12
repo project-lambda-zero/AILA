@@ -529,12 +529,21 @@ class McpStdioSession(McpSession):
         try:
             await asyncio.wait_for(proc.wait(), timeout=10.0)
         except TimeoutError:
-            try:
-                proc.kill()
-            except ProcessLookupError:
-                _log.debug("mcp_stdio %s: child already exited before kill", self._command[0])
-            else:
-                await proc.wait()
+            await self._kill_child(proc)
+        except asyncio.CancelledError:
+            # A caller's bound (e.g. the probe reset) cancelled the graceful
+            # wait. Kill and reap before propagating so the child cannot
+            # outlive the cancelled close.
+            await self._kill_child(proc)
+            raise
+
+    async def _kill_child(self, proc: asyncio.subprocess.Process) -> None:
+        try:
+            proc.kill()
+        except ProcessLookupError:
+            _log.debug("mcp_stdio %s: child already exited before kill", self._command[0])
+        else:
+            await proc.wait()
 
 
 # Process-wide session registry, partitioned per event loop: asyncio

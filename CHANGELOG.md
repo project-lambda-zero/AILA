@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.24] - 2026-11-12 -- Health checks probe stdio MCP servers natively
+
+### Fixed
+
+- MCP health checks probe stdio servers (such as `rea` and `reverser_belt`) with a native MCP `tools/list` over a short-lived probe session instead of an HTTP request to a `stdio://` address. Healthy stdio servers now report reachable with their tool count and latency. The probe never touches the shared bridge session and always closes and reaps its child, including on timeout or cancellation. An operator override to an http(s) URL is still probed over HTTP.
+
 ## [0.6.23] - 2026-11-12 -- Config writes enforce declared bounds
 
 ### Fixed
