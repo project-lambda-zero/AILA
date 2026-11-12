@@ -483,3 +483,234 @@ async def test_kill_criterion_writes_discovery_when_not_refuted(
     _, payload = next((k, v) for k, v in calls if k == "discovery")
     assert payload["hypothesis_id"] == "h2"
     assert payload["matched_observable"] == "audit_mcp:read_function#7"
+
+
+# ---------------------------------------------------------------------------
+# #298 / #299 settled wave-2 gates: a same-turn force-through must not be
+# re-armed by the fanout hook, and each gate evaluates once per turn.
+# ---------------------------------------------------------------------------
+
+
+async def _passthrough_draft_pending(
+    *, decision: ReasoningTurnDecision, case_state: ReasoningCaseState, turn_number: int,
+) -> ReasoningTurnDecision:
+    return decision
+
+
+async def _no_prior_outcomes() -> list[dict[str, Any]]:
+    return []
+
+
+def _stub_async_hooks(monkeypatch: pytest.MonkeyPatch, r: HonestVulnResearcher) -> None:
+    monkeypatch.setattr(r, "_draft_pending_check", _passthrough_draft_pending)
+    monkeypatch.setattr(r, "_load_prior_outcomes", _no_prior_outcomes)
+
+
+def _isolate_positive_gate(r: HonestVulnResearcher) -> None:
+    """Disable the DB-reading, telemetry, and distinctness-stamp paths so only
+    the in-memory positive/negative gates are exercised (no UnitOfWork, no engine)."""
+    r._tool_telemetry_crosscheck_enabled = False
+    r._tool_work_floor_probes = 0
+    r._distinctness_score_enabled = False
+
+
+@pytest.mark.asyncio
+async def test_forced_positive_gate_settles_through_async_and_fanout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    r = _make_researcher()
+    _isolate_positive_gate(r)
+    _stub_async_hooks(monkeypatch, r)
+    r._unresolved_hyp_reject_cap = 1
+    case = _empty_case()
+    case.observables["_gate.positive_submit_refs.reject_count"] = 1
+
+    decision = await r._maybe_reject_submit_when_draft_pending(
+        decision=_make_submit(payload={}), case_state=case, turn_number=1,
+    )
+    assert decision.action == "submit"
+    assert "positive_submit_evidence_advisory" in decision.payload
+    assert "_gate.positive_submit_refs.reject_count" not in case.observables
+
+    out = r._maybe_reject_fanout_submit(
+        decision=decision, inv=None, case_state=case, turn_number=1,
+    )
+    assert out.action == "submit"
+    assert "positive_submit_evidence_advisory" in out.payload
+    assert "_gate.positive_submit_refs.reject_count" not in case.observables
+
+
+def test_forced_positive_gate_does_not_skip_independent_negative_gate() -> None:
+    r = _make_researcher()
+    _isolate_positive_gate(r)
+    r._unresolved_hyp_reject_cap = 1
+    case = _empty_case()
+    case.observables["_gate.positive_submit_refs.reject_count"] = 1
+    case.observables["audit_mcp:read_function#42"] = (
+        "trace shows ASan: heap-buffer-overflow at decode_frame+0x14"
+    )
+
+    forced = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(payload={}), case_state=case, turn_number=1,
+    )
+    assert forced.action == "submit"
+
+    negative = ReasoningTurnDecision(
+        action="submit",
+        answer="no vulnerability found",
+        reasoning="test",
+        confidence="strong",
+        provenance=EvidenceProvenance(),
+        payload={"evidence_refs": ["audit_mcp:read_function#42"]},
+    )
+    out = r._maybe_reject_fanout_submit(
+        decision=negative, inv=None, case_state=case, turn_number=1,
+    )
+    assert out.action == "tool_run"
+    assert out.payload["_gate.contradiction_observable.rejected"] is True
+    assert case.observables["_gate.contradiction_observable.reject_count"] == 1
+
+
+def test_forced_positive_gate_reevaluates_next_turn() -> None:
+    r = _make_researcher()
+    _isolate_positive_gate(r)
+    r._unresolved_hyp_reject_cap = 1
+    case = _empty_case()
+    case.observables["_gate.positive_submit_refs.reject_count"] = 1
+
+    forced = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(payload={}), case_state=case, turn_number=1,
+    )
+    assert forced.action == "submit"
+
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(payload={}), case_state=case, turn_number=2,
+    )
+    assert out.action == "tool_run"
+    assert case.observables["_gate.positive_submit_refs.reject_count"] == 1
+
+
+def test_fanout_fallback_evaluates_unsettled_positive_gate() -> None:
+    r = _make_researcher()
+    _isolate_positive_gate(r)
+    case = _empty_case()
+
+    out = r._maybe_reject_fanout_submit(
+        decision=_make_submit(payload={}), inv=None, case_state=case, turn_number=1,
+    )
+    assert out.action == "tool_run"
+    assert case.observables["_gate.positive_submit_refs.reject_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_forced_positive_chain_and_fanout_evaluate_kind_once_per_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    r = _make_researcher()
+    _isolate_positive_gate(r)
+    _stub_async_hooks(monkeypatch, r)
+    r._unresolved_hyp_reject_cap = 1
+    case = _empty_case()
+    case.observables["_gate.positive_submit_refs.reject_count"] = 1
+
+    kind_calls: list[str] = []
+    original_kind = r._terminal_outcome_kind
+
+    def _counting_kind(decision: ReasoningTurnDecision) -> Any:
+        kind_calls.append(decision.action)
+        return original_kind(decision)
+
+    r._terminal_outcome_kind = _counting_kind  # type: ignore[method-assign]
+
+    decision = await r._maybe_reject_submit_when_draft_pending(
+        decision=_make_submit(payload={}), case_state=case, turn_number=1,
+    )
+    r._maybe_reject_fanout_submit(
+        decision=decision, inv=None, case_state=case, turn_number=1,
+    )
+    # Async chain: positive gate (forced, settled) + negative gate (positive
+    # polarity, settled). Fanout: both gates already settled this turn, so
+    # neither re-derives the terminal kind.
+    assert len(kind_calls) == 2
+
+
+def test_rejected_positive_submit_replays_same_turn_decision() -> None:
+    r = _make_researcher()
+    _isolate_positive_gate(r)
+    r._unresolved_hyp_reject_cap = 1
+    case = _empty_case()
+    original_submit = _make_submit(payload={})
+
+    kind_calls: list[str] = []
+    original_kind = r._terminal_outcome_kind
+
+    def _counting_kind(decision: ReasoningTurnDecision) -> Any:
+        kind_calls.append(decision.action)
+        return original_kind(decision)
+
+    r._terminal_outcome_kind = _counting_kind  # type: ignore[method-assign]
+
+    first = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=original_submit, case_state=case, turn_number=1,
+    )
+    second = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=original_submit, case_state=case, turn_number=1,
+    )
+
+    assert first.action == "tool_run"
+    assert second == first
+    assert kind_calls == ["submit"]
+    assert case.observables["_gate.positive_submit_refs.reject_count"] == 1
+
+    later = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=original_submit, case_state=case, turn_number=2,
+    )
+    assert later.action == "submit"
+    assert "positive_submit_evidence_advisory" in later.payload
+    assert kind_calls == ["submit", "submit"]
+
+
+def test_rejected_contradiction_gate_replays_same_turn_decision() -> None:
+    r = _make_researcher()
+    _isolate_positive_gate(r)
+    r._unresolved_hyp_reject_cap = 1
+    case = _empty_case()
+    case.observables["audit_mcp:read_function#42"] = (
+        "trace shows ASan: heap-buffer-overflow at decode_frame+0x14"
+    )
+    original_submit = ReasoningTurnDecision(
+        action="submit",
+        answer="no vulnerability found",
+        reasoning="test",
+        confidence="strong",
+        provenance=EvidenceProvenance(),
+        payload={"evidence_refs": ["audit_mcp:read_function#42"]},
+    )
+
+    kind_calls: list[str] = []
+    original_kind = r._terminal_outcome_kind
+
+    def _counting_kind(decision: ReasoningTurnDecision) -> Any:
+        kind_calls.append(decision.action)
+        return original_kind(decision)
+
+    r._terminal_outcome_kind = _counting_kind  # type: ignore[method-assign]
+
+    first = r._maybe_reject_negative_submit_contradicting_observable(
+        decision=original_submit, case_state=case, turn_number=1,
+    )
+    second = r._maybe_reject_negative_submit_contradicting_observable(
+        decision=original_submit, case_state=case, turn_number=1,
+    )
+
+    assert first.action == "tool_run"
+    assert second == first
+    assert kind_calls == ["submit"]
+    assert case.observables["_gate.contradiction_observable.reject_count"] == 1
+
+    later = r._maybe_reject_negative_submit_contradicting_observable(
+        decision=original_submit, case_state=case, turn_number=2,
+    )
+    assert later.action == "submit"
+    assert "contradiction_observable_advisory" in later.payload
+    assert kind_calls == ["submit", "submit"]
