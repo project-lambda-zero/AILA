@@ -634,6 +634,10 @@ Three gates from commit `2328b4e` plus the idempotent draft-review request from 
 
 **Idempotent draft-review request (commit `8f2d1f5`).** `post_draft_review_request` (`src/aila/modules/vr/services/outcome_review.py:365-459`) builds `auto_steering_key = f"draft_review_request:{outcome_id}"`. Before inserting a new operator-kind message it runs a substring `.contains(auto_steering_key)` lookup against `VRInvestigationMessageRecord.payload_json` (lines 432-434); if a match exists no new row is written and the existing message id is returned.
 
+### Malware Operator Review Quorum
+
+`POST /malware/outcomes/{outcome_id}/reviews` records the operator vote, commits it, then runs the shared `evaluate_quorum` kernel on the outcome (`create_outcome_review` in `src/aila/modules/malware/api_router.py`), the same kernel the agent turn loop uses after `submit_outcome_review`. A transition writes experience via `record_experience_on_verdict`, and an approving transition dispatches the outcome via `dispatch_approved_outcome`; both are gated on `transition_occurred`, so a repeated evaluation of a settled outcome has no side effects. Reviewer uniqueness is enforced by `uq_malware_outcome_reviews_outcome_reviewer` (409 on duplicate). Votes below threshold, abstentions, and rejects below the veto threshold leave the outcome in draft.
+
 ### Do / Do Not
 
 **Do:**
