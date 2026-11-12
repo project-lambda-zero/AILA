@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.37] - 2026-11-12 -- Malware branch routes enforce branch lifecycle rules
+
+### Fixed
+
+- Malware branch promote and abandon requests now go through the shared branch pool lifecycle rules. Promoting an abandoned branch, or abandoning a promoted or merged branch, returns 409 and leaves the row unchanged, instead of returning 200 and writing an inconsistent state.
+- Promoting a malware branch now demotes its active and paused siblings with a closed reason, matching VR.
+
 ## [0.6.36] - 2026-11-12 -- VR explorer LLM cache is keyed per turn
 
 ### Fixed
