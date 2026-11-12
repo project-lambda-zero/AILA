@@ -927,8 +927,7 @@ microcode / typed AST reasoning the servers do not have.
 | `reverser_belt.capa_scan` | CAPA capabilities | High-level capability + ATT&CK tagging. | -- |
 | `reverser_belt.classify_behavior` | Behavior class | Classify observed behaviors from static features. | -- |
 | `reverser_belt.verify_capabilities` | Capability verification | Cross-check declared/expected capabilities against actual API use. | -- |
-| `reverser_belt.detect_crypto_primitives` | Crypto primitive ID | Identify crypto routines by constants and structure. | -- |
-| `reverser_belt.find_crypto_constants` | Crypto constant scan | Locate known crypto constants (S-boxes, primes, K constants). | -- |
+| `reverser_belt.detect_crypto_primitives` | Crypto constants/patterns scan | Scan the binary for known crypto constants and structural patterns that identify crypto routines. | -- |
 | `rea.inspect_byte_entropy` | Entropy scan | Locate packed/encrypted regions. | -- |
 | `rea.procedure_assembly` | Instruction disassembly | Only when you specifically need register/branch detail pseudocode cannot show. Prefer `rea.procedure_pseudo_code`. | `procedure` |
 | `rea.xrefs` | Cross-references | Raw xref listing for a symbol or address when the specialized callers/callees tools do not fit. | `address`, `direction` |
