@@ -6,6 +6,8 @@ render section in ``render_case_model`` (no DB).
 """
 from __future__ import annotations
 
+import json
+import logging
 from types import SimpleNamespace
 
 from aila.platform.agents.turn_runner import (
@@ -204,6 +206,84 @@ async def test_agent_self_approval_skipped(test_db) -> None:
     assert await Oracle().is_ratified(inv, request) is False  # distinct-approver rule
 
 
+class _FakeLLMResponse:
+    def __init__(self, content: str) -> None:
+        self.content = content
+        self.disabled = False
+
+
+class _FakeStructuredLLM:
+    def __init__(self, content: str) -> None:
+        self._response = _FakeLLMResponse(content)
+
+    async def chat_structured(self, **_kwargs: object) -> _FakeLLMResponse:
+        return self._response
+
+
+class _RecordingLedger:
+    """In-memory stand-in for ``LedgerService.append_general``.
+
+    Stores each payload as JSON text (the shape of ``payload_json``) so the
+    read-back below exercises a real encode/decode round trip, not the
+    original Python object.
+    """
+
+    def __init__(self) -> None:
+        self.rows: list[dict[str, object]] = []
+
+    async def append_general(
+        self,
+        investigation_id: str,
+        author_branch_id: str,
+        kind: str,
+        payload: dict[str, object],
+        *,
+        idempotency_key: str | None = None,
+        session: object = None,
+        **_kwargs: object,
+    ) -> int:
+        del session
+        self.rows.append({
+            "investigation_id": investigation_id,
+            "author_branch_id": author_branch_id,
+            "kind": kind,
+            "payload_json": json.dumps(payload),
+            "idempotency_key": idempotency_key,
+        })
+        return len(self.rows)
+
+
+async def test_engine_ledger_payload_survives_to_persisted_row(monkeypatch) -> None:
+    payload = {
+        "sample": {"sections": [{"name": ".text", "entropy": 7.2}], "packed": True},
+        "imports": {"kernel32.dll": ["VirtualAlloc", "WriteProcessMemory"]},
+        "trail": [None, {"depth": {"a": {"b": ["c", 1, False]}}}],
+    }
+    llm_content = json.dumps({
+        "reasoning": "packed sample",
+        "action": "reasoning",
+        "ledger_writes": [{"kind": "discovery", "payload": payload}],
+    })
+    engine = CyberReasoningEngine(_FakeStructuredLLM(llm_content))  # type: ignore[arg-type]
+    decision = await engine.decide_next_turn(
+        task_type="malware_analysis",
+        system_prompt="system",
+        user_prompt="user",
+        run_id="inv-e2e",
+    )
+    ledger = _RecordingLedger()
+    monkeypatch.setattr("aila.platform.agents.turn_runner.LedgerService", lambda: ledger)
+    me = SimpleNamespace(investigation_id="inv-e2e", branch_id="branch-e2e")
+    await AgentTurnRunnerBase._post_ledger_writes(
+        me, decision, 2, object(), ReasoningCaseState(),  # type: ignore[arg-type]
+    )
+    assert len(ledger.rows) == 1
+    row = ledger.rows[0]
+    assert row["kind"] == "discovery"
+    assert row["author_branch_id"] == "branch-e2e"
+    assert json.loads(str(row["payload_json"])) == payload
+
+
 def _specialist_request(capability: str, reason: str) -> ReasoningTurnDecision:
     return ReasoningTurnDecision(
         reasoning="need a specialist",
@@ -286,3 +366,30 @@ async def test_non_specialist_request_keeps_per_turn_key(test_db) -> None:
             await uow.session.commit()
     reqs = [r for r in await LedgerService().read_general(inv) if r["kind"] == "request"]
     assert len(reqs) == 2
+
+
+async def test_ledger_write_empty_payload_dropped_with_one_warning(test_db, caplog) -> None:
+    del test_db
+    inv, branch = "inv-lw-dropwarn", "branch-lw-dropwarn"
+    me = SimpleNamespace(investigation_id=inv, branch_id=branch)
+    decision = ReasoningTurnDecision(
+        reasoning="x",
+        ledger_writes=[
+            LedgerWrite(kind="discovery", payload={}),
+            LedgerWrite(kind="note", payload={"nested": {"a": [1, 2]}}),
+        ],
+    )
+    caplog.set_level(logging.WARNING, logger="aila.platform.agents.turn_runner")
+    async with UnitOfWork() as uow:
+        await AgentTurnRunnerBase._post_ledger_writes(me, decision, 3, uow.session, ReasoningCaseState())
+        await uow.session.commit()
+    rows = await LedgerService().read_general(inv)
+    assert len(rows) == 1
+    assert rows[0]["payload"] == {"nested": {"a": [1, 2]}}
+    dropped = [r for r in caplog.records if "empty payload" in r.getMessage()]
+    assert len(dropped) == 1
+    message = dropped[0].getMessage()
+    assert "kind=discovery" in message
+    assert "turn=3" in message
+    assert "index=0" in message
+    assert "nested" not in message

@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.26] - 2026-11-12 -- Strict schemas keep free-form objects open
+
+### Fixed
+
+- Structured-output schemas keep free-form dictionary fields (reasoning observables, ledger-write payloads, edit patches, probe arguments) open instead of collapsing them to an object that only accepts `{}`. Declared models stay strict, and an explicitly closed property-less model stays closed. Strict providers that reject open objects keep using the existing JSON-object fallback.
+- Dropping an empty ledger-write payload now logs a warning with the investigation, branch, turn, index, and kind, without payload content.
+
+### Removed
+
+- An unused duplicate strict-schema helper in the LLM client.
+
 ## [0.6.25] - 2026-11-12 -- Forensics declares its panel turn cap
 
 ### Fixed
