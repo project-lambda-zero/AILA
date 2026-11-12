@@ -116,12 +116,13 @@ async def test_search_envelope_shape(async_client, admin_token, seeded_system):
 async def test_search_finds_findings(test_db, admin_token, seeded_findings):
     """GET /search?q=CVE-2023 returns matching findings.
 
-    Production goes through the vulnerability module
-    (src/aila/api/routers/search.py:113 -> module.search_entities). The
-    shared async_client fixture pins app.state.platform=None so the
+    Findings resolve through every module that exposes ``latest_findings``
+    (src/aila/api/routers/search.py), on the caller's team-scoped session.
+    The shared async_client fixture pins app.state.platform=None so the
     finding branch is skipped; this test builds its own client with a
-    stub platform whose module_registry.require("vulnerability")
-    returns the real VulnerabilityModule so the DB-backed search runs.
+    stub platform whose module_registry.all_with returns the real
+    VulnerabilityModule for the capabilities it implements, so the
+    DB-backed search runs.
     """
     import time  # noqa: PLC0415
     from unittest.mock import MagicMock  # noqa: PLC0415
@@ -133,10 +134,8 @@ async def test_search_finds_findings(test_db, admin_token, seeded_findings):
 
     vuln_module = create_vuln_module()
     stub_registry = MagicMock()
-    stub_registry.require.return_value = vuln_module
-    stub_registry.modules = [vuln_module]
-    stub_registry.first_with.side_effect = (
-        lambda cap: vuln_module if callable(getattr(vuln_module, cap, None)) else None
+    stub_registry.all_with.side_effect = lambda cap: (
+        [vuln_module] if callable(getattr(vuln_module, cap, None)) else []
     )
     stub_runtime = MagicMock()
     stub_runtime.module_registry = stub_registry

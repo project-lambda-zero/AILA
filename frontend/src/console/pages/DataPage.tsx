@@ -7,11 +7,12 @@
 import { useEffect, useState } from "react";
 import type { ChangeEvent, JSX, ReactNode } from "react";
 
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { useAuth } from "../../api/auth";
 import { apiFetch, API_BASE } from "../../api/client";
-import type { WindowChromeProps, PageOpenerProps } from "../contract";
+import { asRecord } from "../../api/parse";
+import type { EntityBindingProps, WindowChromeProps, PageOpenerProps } from "../contract";
 import { css } from "../css";
 import { ConsoleWindow } from "../window";
 import { ActionModals } from "./data/ActionModals";
@@ -31,7 +32,7 @@ import { CREATE_FORMS, EDIT_FORMS } from "./formSpecs";
 
 export type { ActionField, PageAction, PageColumn, PageConfig, PageFilter } from "./data/types";
 
-export interface DataPageProps extends WindowChromeProps, PageOpenerProps {
+export interface DataPageProps extends WindowChromeProps, PageOpenerProps, EntityBindingProps {
   config: PageConfig;
   /** Registry key (`${moduleId}:${pageId}`) used to look up the matching
    * typed create/edit form. Every registry entry passes this explicitly;
@@ -84,6 +85,24 @@ export default function DataPage(props: DataPageProps): JSX.Element {
     setPendingSelectFirst(false);
     setSel(data.allRows[0]);
   }, [pendingSelectFirst, data.allRows]);
+
+  // Deep link: a window opened with an entity id selects that row. The row is
+  // fetched by id (config.rowEndpoint) because it may sit outside the loaded
+  // list page. The query never refetches, so the operator's later row choice
+  // is not overridden.
+  const { rowEndpoint } = config;
+  const deepLinkId = props.investigationId ?? "";
+  const deepLinkQ = useQuery({
+    queryKey: ["datapage-row", rowEndpoint ?? "", deepLinkId],
+    queryFn: () => apiFetch<unknown>(fillTemplate(rowEndpoint ?? "", "", deepLinkId)),
+    enabled: Boolean(rowEndpoint) && deepLinkId !== "",
+    staleTime: Infinity,
+    retry: false,
+  });
+  useEffect(() => {
+    const row = asRecord(deepLinkQ.data);
+    if (row) setSel(row);
+  }, [deepLinkQ.data]);
 
   // Optional page-local floater viewer (config.rowViewer). Holds the row
   // whose content is being shown; the window state lives in RowViewerWindow.

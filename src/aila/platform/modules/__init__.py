@@ -12,6 +12,7 @@ from .protocol import (
     ModuleRequest,
     ModuleRouteSpec,
     ModuleRuntime,
+    SearchEntity,
     action_id_for,
 )
 from .registry import ModuleRegistry
@@ -28,6 +29,7 @@ __all__ = [
     "ModuleRouteSpec",
     "ModuleRuntime",
     "PlatformModule",
+    "SearchEntity",
     "UNROUTABLE_ACTION_ID",
     "action_id_for",
     "build_module_factory",
