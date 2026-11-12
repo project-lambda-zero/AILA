@@ -24,12 +24,14 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections.abc import Sequence
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import DateTime, Index
+from sqlalchemy import DateTime, Index, Table, or_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import DBAPIError, SQLAlchemyError
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import Field, SQLModel, delete, select
 
 from aila.platform.contracts import utc_now
@@ -243,31 +245,26 @@ async def purge_expired(session: Any) -> int:
 
 
 async def purge_for_investigation(
-    session: Any, investigation_id: str,
+    session: AsyncSession,
+    investigation_id: str,
+    branch_ids: Sequence[str] = (),
 ) -> int:
-    """Delete every cache row tied to ``investigation_id``.
+    """Stage removal of cache rows tied to an investigation or its branches.
 
-    Used by ``/reset`` endpoints / explicit cascade deletes (§121). Returns
-    the count deleted, or 0 on transport error (best-effort -- the data is
-    cache state, not source of truth).
+    The caller owns the transaction and must commit or roll it back. Database
+    failures propagate so a hard delete cannot commit without its cache purge.
     """
     if not investigation_id:
         return 0
-    try:
-        result = await session.execute(
-            delete(LLMIdempotencyCache).where(
-                LLMIdempotencyCache.investigation_id == investigation_id,
-            )
-        )
-        await session.commit()
-        rc = int(getattr(result, "rowcount", 0) or 0)
-        return rc if rc >= 0 else 0
-    except (SQLAlchemyError, DBAPIError) as exc:
-        _log.warning(
-            "idempotency cache purge_for_investigation(%s) failed: %s",
-            investigation_id, exc,
-        )
-        return 0
+    cache_table = cast(Table, getattr(LLMIdempotencyCache, "__table__"))
+    predicates = [cache_table.c.investigation_id == investigation_id]
+    if branch_ids:
+        predicates.append(cache_table.c.branch_id.in_(branch_ids))
+    result = await session.execute(
+        delete(LLMIdempotencyCache).where(or_(*predicates)),
+    )
+    rc = int(getattr(result, "rowcount", 0) or 0)
+    return rc if rc >= 0 else 0
 
 
 async def run_purge_expired_cron() -> int:
