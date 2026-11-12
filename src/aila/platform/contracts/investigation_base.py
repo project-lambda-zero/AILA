@@ -79,7 +79,13 @@ class InvestigationRecordBase(TableDerivedConstraintsMixin, TeamScopedMixin, SQL
     initial_question: str = Field(default="", sa_type=Text, sa_column_kwargs={"nullable": True})
     status: str = Field(default="created", index=True, max_length=32)
     pause_reason: str | None = Field(default=None, max_length=32)
-    auto_pilot: bool = Field(default=True)
+    auto_pilot: bool = Field(
+        default=True,
+        description=(
+            "When False, an unknown-confidence decision pauses the investigation "
+            "(low_confidence) for operator input instead of continuing."
+        ),
+    )
     # Index shape differs per module (vr = partial index, malware = full
     # column). The subclass carries the module-specific Index in its own
     # __table_args__; the base column stays plain.
