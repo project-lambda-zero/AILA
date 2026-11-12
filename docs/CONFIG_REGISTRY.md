@@ -356,6 +356,7 @@ read through ConfigRegistry.
 | `collection_timeout_seconds` | float | Timeout for the full artifact collection pipeline |
 | `freeflow_max_attempts` | int | Max script-execution attempts per free-flow investigation |
 | `freeflow_max_cost_usd` | float | Hard per-investigation LLM spend ceiling in USD; `0.0` disables the ceiling |
+| `max_turns_per_task` | int | Per-task turn cap for the forensics panel loop (default 3, range 1-50) |
 
 ---
 

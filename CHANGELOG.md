@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.25] - 2026-11-12 -- Forensics declares its panel turn cap
+
+### Fixed
+
+- The forensics panel turn cap `max_turns_per_task` is now a declared, bounded config key (1 to the forensics hard turn cap, default 3), so operators can set it through the config API and out-of-range writes are rejected. The panel loop clamps any persisted value into range and falls back to the schema default on registry read failures.
+- Forensics OS hints no longer instruct the agent to pass capa rules and signature paths from undeclared config keys or environment variables; capa runs through the `strings_runner` tool.
+
+### Removed
+
+- The undeclared capa rules and signature environment variables from `.env.example` and the configuration docs.
+
 ## [0.6.24] - 2026-11-12 -- Health checks probe stdio MCP servers natively
 
 ### Fixed

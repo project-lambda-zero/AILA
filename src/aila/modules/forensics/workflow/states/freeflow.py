@@ -14,7 +14,7 @@ when the cap is crossed, flips the investigation row's status to
 top of each turn, terminating the loop by the same code path as the
 operator-initiated Stop button. On return the handler overrides the
 final status to ``exhausted`` so the UI can distinguish budget cap from
-manual cancel. The turn cap (``_HARD_TURN_CAP=50`` in investigator.py) and
+manual cancel. The turn cap (``FORENSICS_HARD_TURN_CAP`` in config_schema.py) and
 this cost cap are ANDed: whichever fires first halts the run.
 """
 from __future__ import annotations

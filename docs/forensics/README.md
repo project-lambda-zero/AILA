@@ -365,14 +365,7 @@ Both Linux (`apt`, `pip3`) and Windows (`winget`, `pip`) install paths are defin
 
 ### CAPA integration
 
-The `strings` runner exposes a `capa` action for MITRE ATT&CK capability mapping on PE binaries. The runner needs both the rules and signatures pointed at the analyzer's filesystem:
-
-| Variable | Resolves via | Purpose |
-|---|---|---|
-| `AILA_FORENSICS_CAPA_RULES` (env) or `capa_rules` (ConfigRegistry) | env → DB → schema default | Path to the capa rules directory on the analyzer |
-| `AILA_FORENSICS_CAPA_SIGS` (env) or `capa_sigs` (ConfigRegistry) | env → DB → schema default | Path to the capa signatures directory on the analyzer |
-
-The investigator invokes capa with both paths supplied explicitly: `capa -q -j -r <rules> -s <sigs> <input_file>` (`-j` for JSON; the agent walks `rules.*` to extract matches). When the values are unset, the strings runner skips capa and reports it in the artifact log.
+The `strings_runner` tool exposes a `capa` action (`src/aila/modules/forensics/tools/strings_runner.py`) for capability detection on binaries. It runs `capa <file>` on the analyzer (`capa.exe "<file>"` on Windows analyzers) using the rule and signature set bundled with the capa install. The module has no configuration keys for capa; the rules and signatures are not passed as arguments.
 
 ---
 

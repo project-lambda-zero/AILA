@@ -31,6 +31,10 @@ from typing import Any
 
 from sqlmodel import select as _select
 
+from aila.modules.forensics.config_schema import (
+    FORENSICS_DEFAULTS,
+    FORENSICS_HARD_TURN_CAP,
+)
 from aila.modules.forensics.db_models import (
     ForensicsInvestigationBranchRecord,
     ForensicsInvestigationMessageRecord,
@@ -48,6 +52,7 @@ from aila.platform.contracts.enums import (
     SenderKind,
 )
 from aila.platform.contracts.mcp_payload import PayloadKind
+from aila.platform.exceptions import AILAError
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import StateResult
 
@@ -55,12 +60,6 @@ __all__ = ["state_forensics_panel_loop"]
 
 _log = logging.getLogger(__name__)
 _cfg = ModuleConfigReader("forensics")
-
-# Fallback per-task turn cap when the ``forensics/max_turns_per_task``
-# config key is unset. The panel roles converge in a small number of
-# turns -- unlike VR / malware, forensics has no deep multi-turn tool
-# chase yet.
-_DEFAULT_MAX_TURNS = 3
 
 # Outcome kind emitted by a panel role's terminal turn. Single kind for
 # the initial panel wiring; a follow-up broadens this to distinguish
@@ -101,11 +100,21 @@ def _render_applicable_patterns_block(
 
 
 async def _read_max_turns() -> int:
-    """Resolve the panel per-task turn cap from the forensics namespace."""
+    """Resolve the panel per-task turn cap from the forensics namespace.
+
+    The configured value is clamped to ``[1, FORENSICS_HARD_TURN_CAP]`` so
+    a persisted out-of-range value cannot produce a zero-turn or unbounded
+    panel. On a registry read failure the schema-declared default is used.
+    """
     try:
-        return int(await _cfg.get_int("max_turns_per_task"))
-    except (KeyError, ValueError, TypeError):
-        return _DEFAULT_MAX_TURNS
+        configured = await _cfg.get_int("max_turns_per_task")
+    except (KeyError, ValueError, TypeError, OSError, RuntimeError, AILAError) as exc:
+        _log.warning(
+            "forensics.max_turns_per_task registry read failed (%s); using schema default",
+            exc,
+        )
+        configured = FORENSICS_DEFAULTS.max_turns_per_task
+    return min(max(configured, 1), FORENSICS_HARD_TURN_CAP)
 
 
 async def _record_turn_message(

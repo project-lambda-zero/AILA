@@ -37,7 +37,7 @@ import time
 from typing import Any
 
 from aila.config import Settings
-from aila.modules.forensics.config_schema import ForensicsConfigSchema
+from aila.modules.forensics.config_schema import FORENSICS_HARD_TURN_CAP, ForensicsConfigSchema
 from aila.modules.forensics.tools.script_guard import script_rejection
 from aila.platform.agents.turn_helpers import auto_resolve_live_on_terminal
 from aila.platform.config_base import ModuleConfigReader
@@ -287,9 +287,6 @@ def _command_rejection(command: str) -> str | None:
             )
     return None
 
-# Per-investigation turn cap (hard limit on top of config-supplied max_attempts).
-_HARD_TURN_CAP = 50
-
 # Max bytes of stdout to keep per turn in the persisted record. Sized
 # to fit complete forensic windows (multi-entry security logs, full
 # commits.diff blobs, Action-log zip listings) without truncation.
@@ -424,7 +421,7 @@ class HonestInvestigator:
         )
         from aila.platform.uow import UnitOfWork
 
-        max_turns = min(max(max_attempts, 1), _HARD_TURN_CAP)
+        max_turns = min(max(max_attempts, 1), FORENSICS_HARD_TURN_CAP)
         _log.info(
             "HonestInvestigator.investigate START inv_id=%s project_id=%s os=%s max_turns=%d q=%r",
             self.investigation_id, self.project_id, self.analyzer_os,

@@ -37,7 +37,7 @@ have. Required keys block boot when missing.
 | `AILA_{NAMESPACE}_{KEY}` | *(per schema)* | varies | `storage/registry.py` |
 
 **Optional / commented in `.env.example`:**
-- Forensics per-pipeline overrides: `AILA_PLATFORM_LLM_MODEL_FORENSICS_{FREEFLOW,RESOLVER,WRITEUP}`, `AILA_PLATFORM_LLM_MAX_TOKENS_FORENSICS_{FREEFLOW,RESOLVER,WRITEUP}`, `AILA_FORENSICS_CAPA_RULES`, `AILA_FORENSICS_CAPA_SIGS`.
+- Forensics per-pipeline overrides: `AILA_PLATFORM_LLM_MODEL_FORENSICS_{FREEFLOW,RESOLVER,WRITEUP}`, `AILA_PLATFORM_LLM_MAX_TOKENS_FORENSICS_{FREEFLOW,RESOLVER,WRITEUP}`.
 - `AILA_LLM_MODELS_REJECTING_TEMPERATURE`.
 
 **Dev-stack knobs read by `start.sh` (not Python config):**
@@ -287,6 +287,13 @@ All fields from `PlatformConfigSchema` (registered under namespace `platform`):
 - **Type:** Integer (bytes)
 - **Used in:** `src/aila/modules/forensics/services/file_retriever.py:52`
 - **Production guidance:** Maximum file size for forensics evidence file retrieval. Raise when investigating large disk images or memory dumps; lower in shared-tenant deployments to bound per-call memory.
+
+### `AILA_FORENSICS_MAX_TURNS_PER_TASK`
+
+- **Default:** `3`
+- **Type:** Integer (1-50)
+- **Used in:** `src/aila/modules/forensics/workflow/panel/loop.py` (`_read_max_turns`), resolved through `ConfigRegistry` (`src/aila/storage/registry.py`)
+- **Production guidance:** Per-task turn cap for the forensics panel loop. Values outside 1-50 are rejected on write.
 
 ### `PLATFORM_WORKER_HEARTBEAT_GRACE_S`
 
