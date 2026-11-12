@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.42] - 2026-11-12 -- auto_pilot off pauses on unknown-confidence decisions
+
+### Fixed
+
+- With `auto_pilot` off, an investigation now pauses with reason `low_confidence` when a nonterminal agent decision reports structured confidence `unknown`, and waits for operator resume instead of continuing automatically. Investigations with `auto_pilot` on, terminal submits, and decisions with any other confidence are unchanged. A tool run in the same turn still executes before the pause.
+
 ## [0.6.41] - 2026-11-12 -- Malware rejects unsupported script actions
 
 ### Fixed

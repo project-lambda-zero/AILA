@@ -86,7 +86,11 @@ class VRInvestigationCreate(BaseModel):
     )
     auto_pilot: bool = Field(
         default=True,
-        description="When True, engine self-drives without operator pauses for ambiguity (D-43 GA-21).",
+        description=(
+            "When True, engine self-drives through ambiguous decisions. When False, "
+            "an unknown-confidence decision pauses the investigation (low_confidence) "
+            "for operator input (D-43 GA-21, #349)."
+        ),
     )
     cost_budget_usd: float = Field(
         default=50.0, ge=0.0,

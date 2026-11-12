@@ -35,6 +35,14 @@ the prior `current_state` is preserved in the cursor's `archived_state` column
 `__paused__` is not a member of `RESERVED_TERMINAL_STATES`; the main engine
 loop skips it. Source: `src/aila/platform/workflows/types.py:36-42`.
 
+Investigation-level pauses are triggered by the investigation loop, not the
+engine. With `auto_pilot=False`, a researcher decision whose confidence is
+`unknown` pauses the investigation (`pause_reason = low_confidence`) instead of
+continuing; the investigation resumes only through the operator resume path.
+The flag is read at each decision, so toggling `auto_pilot` mid-run takes effect
+on the next ambiguous decision. Source:
+`src/aila/platform/workflows/investigation_loop_base.py` (the Issue #349 gate).
+
 The engine loop:
 1. Load or create cursor row for `run_id`
 2. Call `services_factory(run_id)` to build a fresh services bundle

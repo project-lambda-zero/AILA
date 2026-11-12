@@ -96,6 +96,10 @@ _LOOP_BINDINGS = InvestigationStateBindings(
     max_turns_reader=lambda: _cfg.get_int("max_turns_per_task"),
     researcher_error=VulnResearcherError,
     specialist_spawn_fn=_spawn_ratified_specialists,
+    # The unknown-confidence pause gate calls the platform lifecycle
+    # service, which needs the queue track and the branch table name.
+    track="vr",
+    branch_table="vr_investigation_branches",
     # Operator-requested index-readiness gate: the loop fires ZERO turns
     # and defers (re-enqueue) until the bound audit-mcp index has BOTH the
     # graph (trailmark) and semantic (semble) indexes ready. Gated by
