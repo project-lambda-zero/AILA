@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.43] - 2026-11-12 -- Malware role notes reach the reasoning prompt
+
+### Fixed
+
+- Malware persona and investigation-kind role notes are now part of the reasoning system prompt. The matching note is appended exactly once to the pinned or file-backed base prompt before it is hashed. Unmatched combinations keep the base prompt unchanged.
+
 ## [0.6.42] - 2026-11-12 -- auto_pilot off pauses on unknown-confidence decisions
 
 ### Fixed
