@@ -21,6 +21,7 @@ have. Required keys block boot when missing.
 | `AILA_PLATFORM_LLM_DEFAULT_MODEL` | `openai/gpt-4o-mini` (fallback) | string | ConfigRegistry override (`platform.llm_default_model`) |
 | `AILA_PLATFORM_LLM_BASE_URL` | `https://openrouter.ai/api/v1` (fallback) | URL | ConfigRegistry override (`platform.llm_base_url`) |
 | `AILA_PLATFORM_LLM_DEFAULT_MAX_TOKENS` | `4096` (fallback) | int | ConfigRegistry override (`platform.llm_default_max_tokens`) |
+| `AILA_PLATFORM_PROMPT_CACHE_TTL_SECONDS` | `0` | int | ConfigRegistry override (`platform.prompt_cache_ttl_seconds`) |
 | `AILA_LLM_TIMEOUT_SECONDS` | `180` | float | `platform/llm/client.py` |
 | `AILA_LLM_MODELS_REJECTING_TEMPERATURE` | *(unset)* | csv substrings | `platform/llm/client.py` |
 | `AILA_PLATFORM_LLM_PIPELINE_CLASSIFY_RESTRICTED_BEHAVIOR_SCORING` | *(unset)* | string mode | ConfigRegistry override |

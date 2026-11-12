@@ -850,13 +850,12 @@ class PlatformConfigSchema(BaseModel):
         ),
     )
 
-    # ENHANCEMENT #155 -- investigation-scoped prompt-cache TTL in
-    # seconds. Forwarded to the provider as a cache-control lifetime
-    # hint where the provider supports it (Anthropic honours the ttl
-    # field on ``cache_control``; OpenAI ignores it and keeps its own
-    # 24 h default, which is safe). ``0`` = provider default (Anthropic
-    # ~5 min ephemeral cache). Set to 3600 or 86400 for longer-lived
-    # investigations. Read via
+    # ENHANCEMENT #155 -- prompt-cache TTL in seconds. Applied as
+    # ``cache_control`` on the stable system prefix of Claude-family
+    # requests; automatic-cache models (OpenAI, Google) receive no marker.
+    # 1..300 selects the 5-minute lifetime, 301 and above the 1-hour
+    # lifetime; 0 sends the bare marker so the provider default (5 minutes)
+    # applies. Read via
     # :func:`aila.platform.llm.prompt_layout.resolve_cache_ttl_seconds`.
     prompt_cache_ttl_seconds: int = 0
 

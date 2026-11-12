@@ -46,6 +46,7 @@ from .config import LLMConfigProvider
 from .correlation import current_module_id, resolve_run_id
 from .errors import LLMError, LLMTruncationError
 from .pipeline import PipelineRunner
+from .prompt_layout import annotate_stable_prefix, resolve_cache_ttl_seconds
 
 if TYPE_CHECKING:
     from ...storage.registry import ConfigRegistry
@@ -1748,7 +1749,11 @@ class AilaLLMClient:
         """
         kwargs: dict[str, Any] = {
             "model": routing.model_id,
-            "messages": messages,
+            "messages": annotate_stable_prefix(
+                messages,
+                model_id=routing.model_id,
+                ttl_seconds=resolve_cache_ttl_seconds(self._config.registry),
+            ),
             "max_tokens": routing.max_tokens,
         }
         if _model_supports_temperature(routing.model_id):
@@ -1972,7 +1977,11 @@ class AilaLLMClient:
             # Call the model again
             kwargs: dict[str, Any] = {
                 "model": routing.model_id,
-                "messages": messages,
+                "messages": annotate_stable_prefix(
+                    messages,
+                    model_id=routing.model_id,
+                    ttl_seconds=resolve_cache_ttl_seconds(self._config.registry),
+                ),
                 "max_tokens": routing.max_tokens,
                 "tools": tools,
             }

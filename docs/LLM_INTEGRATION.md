@@ -724,6 +724,18 @@ All LLM configuration lives in the `platform` namespace of ConfigRegistry. Chang
 | `llm_tool_timeout_s` | `300.0` | Default wall-clock ceiling (seconds) for a single tool-calling step. |
 | `llm_tool_timeout_s_{task_type}` | *(unset)* | Per-task-type per-tool timeout override (seconds). |
 
+### Prompt caching
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `prompt_cache_ttl_seconds` (env: `AILA_PLATFORM_PROMPT_CACHE_TTL_SECONDS`) | `0` | Prompt-cache lifetime for the stable system prefix of Claude-family requests. `0` sends a bare `cache_control` marker, which takes the provider default lifetime of 5 minutes. `1`-`300` sends a `5m` lifetime. `301` and above send `1h`, the longest lifetime the provider offers. |
+
+- Only model ids whose final path segment contains `claude` (case-insensitive) receive the marker. Other model families are sent unchanged.
+- The marker is attached to the last text block of the leading `system` messages on every outgoing request, including each step of a tool loop. Caller-owned message lists are not modified.
+- Every value above `300` is sent as `1h`. Values from `301` to `3599` therefore cache for longer than configured, and values above `3600` are capped at one hour.
+- The marker reaches Anthropic only if the configured `llm_base_url` forwards `cache_control` unchanged. OpenRouter documents that pass-through for Claude models. Anthropic's OpenAI-compatibility endpoint documents that prompt caching is not supported. This repository does not verify how that endpoint treats the field.
+- Cache writes cost more than uncached input and cache reads cost less. The default (`0`) therefore annotates every Claude-family request. No cache-read savings are measured in this repository.
+
 ### Pipeline Step Toggling
 
 | Key | Default | Description |

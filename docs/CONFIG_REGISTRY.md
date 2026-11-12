@@ -229,6 +229,7 @@ The `platform` namespace is registered with `PlatformConfigSchema`. All fields:
 | `llm_base_url` | str | `https://openrouter.ai/api/v1` | LLM provider API base URL |
 | `llm_default_max_tokens` | int | `4096` | Default max completion tokens |
 | `llm_default_temperature` | float | `0.0` | Default sampling temperature (deterministic) |
+| `prompt_cache_ttl_seconds` | int | `0` | Prompt-cache lifetime in seconds for the stable system prefix of Claude-family requests. `0` sends a bare marker (provider default, 5 minutes); `1`-`300` sends `5m`; `301` and above send `1h`. Other model families are not annotated. See LLM_INTEGRATION.md, "Prompt caching". |
 | `llm_tool_timeout_s` | float | `300.0` | Wall-clock ceiling for a single tool-calling step |
 | `llm_kill_switch` | bool | `False` | Operator circuit breaker; short-circuits every LLM call when true |
 | `llm_pipeline_classify_default` | bool | `True` | LLM pipeline classify stage default-on |
