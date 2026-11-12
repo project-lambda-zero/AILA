@@ -95,6 +95,53 @@ describe("selectRailRows: non-forensics controls", () => {
   );
 });
 
+describe("selectRailRows: created status", () => {
+  it("keeps an unpinned created malware investigation visible", () => {
+    const rows = selectRailRows([row("m1", "created")], [], "malware");
+    expect(ids(rows)).toEqual(["m1"]);
+  });
+
+  it("keeps a pinned created malware investigation visible", () => {
+    const rows = selectRailRows([row("m1", "created")], ["m1"], "malware");
+    expect(ids(rows)).toEqual(["m1"]);
+  });
+
+  it("keeps malware ready investigations hidden alongside created ones", () => {
+    const rows = selectRailRows(
+      [row("m1", "ready"), row("m2", "created")],
+      [],
+      "malware",
+    );
+    expect(ids(rows)).toEqual(["m2"]);
+  });
+
+  it("keeps created and running malware rows while hiding completed", () => {
+    const rows = selectRailRows(
+      [row("m1", "created"), row("m2", "running"), row("m3", "completed")],
+      [],
+      "malware",
+    );
+    expect(ids(rows).sort()).toEqual(["m1", "m2"]);
+  });
+
+  it("keeps completed malware rows hidden unless pinned", () => {
+    const hidden = selectRailRows([row("m1", "completed")], [], "malware");
+    const pinned = selectRailRows([row("m1", "completed")], ["m1"], "malware");
+    expect(hidden).toEqual([]);
+    expect(ids(pinned)).toEqual(["m1"]);
+  });
+
+  it.each(["vr", "vulnerability", "forensics"])(
+    "%s: created stays hidden unless pinned",
+    (moduleId) => {
+      const hidden = selectRailRows([row("x1", "created")], [], moduleId);
+      const pinned = selectRailRows([row("x1", "created")], ["x1"], moduleId);
+      expect(hidden).toEqual([]);
+      expect(ids(pinned)).toEqual(["x1"]);
+    },
+  );
+});
+
 describe("selectRailRows: ordering and bounds", () => {
   it("places pinned rows first, then orders by activity weight", () => {
     const rows = selectRailRows(
