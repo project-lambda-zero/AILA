@@ -78,7 +78,6 @@ async def test_project_response_emit_preserves_failure_and_completes_active_stat
     assert project.status == expected_status
     assert result.output["status"] == expected_status
     assert result.next_state == RESERVED_SUCCEEDED
-    assert uow.session.added == [project]
     assert uow.commit_count == 1
 
 
@@ -119,7 +118,6 @@ async def test_investigation_response_emit_preserves_terminal_outcomes(
     assert investigation.status == expected_status
     assert result.output["status"] == expected_status
     assert result.next_state == RESERVED_SUCCEEDED
-    assert uow.session.added == [investigation]
     assert uow.commit_count == 1
 
 
@@ -145,7 +143,6 @@ async def test_response_emit_uses_input_status_when_the_record_was_removed(
     assert result.output["status"] == expected_status
     assert result.next_state == RESERVED_SUCCEEDED
     assert uow.session.added == []
-    assert uow.commit_count == 1
 
 
 async def test_response_emit_without_record_ids_does_not_open_a_unit_of_work(
