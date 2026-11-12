@@ -1068,16 +1068,24 @@ A later hook on the same turn returns early for a settled gate, through
 
 - a pass or force-through returns the submit decision unchanged, so the
   fanout re-entry does not re-arm a force-through (the counter stays cleared
-  and the submit is not converted back to `tool_run`);
+  and the submit is not converted back to `reasoning`);
 - a rejected gate replays its stored rejection unchanged, without re-running
   `_terminal_outcome_kind` and without touching `_gate.<name>.reject_count`,
   so one submit produces exactly one reject;
-- gates that have not settled on the turn still evaluate, so an independent
+- gates that have not settled on the turn still run, so an independent
   negative-submit contradiction is still caught after a forced positive;
 - the records are keyed by turn, so the next turn evaluates every gate
   again and replaces the stale rejection.
 
 The records are not persisted and add no `_gate.` key or reserved prefix.
+
+A rejected submit is emitted as a `reasoning` decision whose `reasoning`
+field carries the rejection text. The per-gate reject counter stays at
+`_gate.<gate>.reject_count`, an ordinary case-state observable (`_gate.`
+is not a reserved prefix). The directive text lives at the reserved
+`_directive.gate.<gate>.rejected` key so `render_active_directives_section`
+surfaces it on the next turn. The counter and directive are removed when
+the gate passes or forces through, and when the gate is disabled.
 
 ---
 

@@ -4,8 +4,8 @@ Pure-unit tests for the submit-time gates added to
 :mod:`aila.modules.vr.agents.vuln_researcher` and the deterministic
 distinctness score in :mod:`aila.modules.vr.services.distinctness`.
 No DB, no engine, no live LLM: the gates read a decision + case_state
-in memory and either pass, swap the action to ``tool_run``, or stamp
-the payload.
+in memory and either pass, swap the action to ``reasoning`` carrying the
+rejection text, or stamp the payload.
 """
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ from aila.modules.vr.services.distinctness import (
     extract_corpus_texts,
     tokenize,
 )
+from aila.platform.agents.prompt_sections import render_active_directives_section
 from aila.platform.contracts.reasoning import (
     EvidenceProvenance,
     Hypothesis,
@@ -80,6 +81,18 @@ def _make_submit(
 
 def _empty_case() -> ReasoningCaseState:
     return ReasoningCaseState()
+
+
+def _assert_gate_reset(
+    r: HonestVulnResearcher,
+    case: ReasoningCaseState,
+    gate: str,
+) -> None:
+    assert f"_gate.{gate}.reject_count" not in case.observables
+    assert f"_directive.gate.{gate}.rejected" not in case.observables
+    assert f"gate.{gate}.rejected" not in render_active_directives_section(case)
+    assert gate not in r._wave2_rejections
+    assert gate not in r._settled_wave2_gates
 
 
 # ---------------------------------------------------------------------------
@@ -151,10 +164,44 @@ def test_positive_submit_rejected_when_refs_and_confirmation_missing() -> None:
     out = r._maybe_reject_positive_submit_without_confirmed_evidence(
         decision=decision, case_state=case, turn_number=1,
     )
-    assert out.action == "tool_run"
+    assert out.action == "reasoning"
     assert out.payload["_gate.positive_submit_refs.rejected"] is True
     assert case.observables["_gate.positive_submit_refs.reject_count"] == 1
-    assert "_gate.positive_submit_refs.directive" in case.observables
+    assert isinstance(
+        case.observables["_directive.gate.positive_submit_refs.rejected"], str,
+    )
+
+
+def test_rejected_positive_submit_surfaces_directive_in_active_directives_section() -> None:
+    r = _make_researcher()
+    case = _empty_case()
+    decision = _make_submit(answer="heap overflow in decode_frame", payload={})
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=1,
+    )
+    assert out.action == "reasoning"
+    assert "Original submit attempt:\nheap overflow in decode_frame" in out.reasoning
+    body = case.observables["_directive.gate.positive_submit_refs.rejected"]
+    assert "Rejection 1/3 on this branch" in body
+    section = render_active_directives_section(case)
+    assert "## directive: gate.positive_submit_refs.rejected" in section
+    assert body in section
+
+
+def test_rejected_positive_submit_directive_tracks_latest_rejection() -> None:
+    r = _make_researcher()
+    case = _empty_case()
+    r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(payload={}), case_state=case, turn_number=1,
+    )
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(payload={}), case_state=case, turn_number=2,
+    )
+    assert out.action == "reasoning"
+    body = case.observables["_directive.gate.positive_submit_refs.rejected"]
+    assert "Rejection 2/3 on this branch" in body
+    assert case.observables["_gate.positive_submit_refs.reject_count"] == 2
+    assert body in render_active_directives_section(case)
 
 
 def test_positive_submit_passes_when_refs_and_confirmation_present() -> None:
@@ -178,6 +225,7 @@ def test_positive_submit_forces_through_over_cap() -> None:
     r._unresolved_hyp_reject_cap = 1
     case = _empty_case()
     case.observables["_gate.positive_submit_refs.reject_count"] = 1
+    case.observables["_directive.gate.positive_submit_refs.rejected"] = "stale"
     decision = _make_submit(payload={})
     out = r._maybe_reject_positive_submit_without_confirmed_evidence(
         decision=decision, case_state=case, turn_number=2,
@@ -187,6 +235,8 @@ def test_positive_submit_forces_through_over_cap() -> None:
     assert out.payload["positive_submit_evidence_advisory"][
         "forced_through_after_rejects"
     ] == 1
+    assert "_directive.gate.positive_submit_refs.rejected" not in case.observables
+    assert "_gate.positive_submit_refs.reject_count" not in case.observables
 
 
 def test_positive_gate_off_when_toggle_disabled() -> None:
@@ -221,8 +271,11 @@ def test_negative_submit_rejected_when_cited_observable_has_positive_marker() ->
     out = r._maybe_reject_negative_submit_contradicting_observable(
         decision=decision, case_state=case, turn_number=1,
     )
-    assert out.action == "tool_run"
+    assert out.action == "reasoning"
     assert out.payload["_gate.contradiction_observable.rejected"] is True
+    assert isinstance(
+        case.observables["_directive.gate.contradiction_observable.rejected"], str,
+    )
 
 
 def test_negative_submit_passes_when_no_positive_marker_in_cited_observable() -> None:
@@ -316,31 +369,15 @@ def test_distinctness_stamp_skipped_on_negative_polarity() -> None:
 
 
 # ---------------------------------------------------------------------------
-# F6 gate-namespace hygiene.
+# Gate counter and directive lifecycle.
 # ---------------------------------------------------------------------------
-
-
-def test_gate_counters_use_reserved_gate_prefix() -> None:
-    r = _make_researcher()
-    case = _empty_case()
-    decision = _make_submit(payload={})
-    r._maybe_reject_positive_submit_without_confirmed_evidence(
-        decision=decision, case_state=case, turn_number=1,
-    )
-    reserved_keys = [k for k in case.observables if k.startswith("_gate.")]
-    plain_keys = [
-        k for k in case.observables
-        if not k.startswith("_") and not k.startswith("_gate.")
-    ]
-    assert reserved_keys, "gate must write under _gate.*"
-    assert not plain_keys, "gate must NOT pollute agent scratchpad namespace"
 
 
 def test_gate_pass_clears_counter_and_directive() -> None:
     r = _make_researcher()
     case = _empty_case()
     case.observables["_gate.positive_submit_refs.reject_count"] = 2
-    case.observables["_gate.positive_submit_refs.directive"] = "stale"
+    case.observables["_directive.gate.positive_submit_refs.rejected"] = "stale"
     case.hypotheses = [
         Hypothesis(id="h1", claim="x", confirmed_by="foo:1"),
     ]
@@ -351,7 +388,8 @@ def test_gate_pass_clears_counter_and_directive() -> None:
         decision=decision, case_state=case, turn_number=3,
     )
     assert "_gate.positive_submit_refs.reject_count" not in case.observables
-    assert "_gate.positive_submit_refs.directive" not in case.observables
+    assert "_directive.gate.positive_submit_refs.rejected" not in case.observables
+    assert "gate.positive_submit_refs.rejected" not in render_active_directives_section(case)
 
 
 # ---------------------------------------------------------------------------
@@ -515,6 +553,145 @@ def _isolate_positive_gate(r: HonestVulnResearcher) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("gate", "method_name", "toggle", "disabled_value", "is_async"),
+    [
+        (
+            "positive_submit_refs",
+            "_maybe_reject_positive_submit_without_confirmed_evidence",
+            "_require_confirmed_evidence_on_positive_submit",
+            False,
+            False,
+        ),
+        (
+            "contradiction_observable",
+            "_maybe_reject_negative_submit_contradicting_observable",
+            "_contradiction_gate_enabled",
+            False,
+            False,
+        ),
+        (
+            "tool_telemetry",
+            "_maybe_reject_submit_with_uncalled_tool_cite",
+            "_tool_telemetry_crosscheck_enabled",
+            False,
+            True,
+        ),
+        (
+            "tool_work_floor",
+            "_maybe_reject_positive_submit_below_tool_work_floor",
+            "_tool_work_floor_probes",
+            0,
+            True,
+        ),
+    ],
+)
+async def test_disabled_wave2_gate_resets_rejection_without_settling(
+    gate: str,
+    method_name: str,
+    toggle: str,
+    disabled_value: bool | int,
+    is_async: bool,
+) -> None:
+    r = _make_researcher()
+    case = _empty_case()
+    decision = _make_submit(payload={})
+    rejected = r._reject_or_force(
+        gate=gate,
+        decision=decision,
+        case_state=case,
+        turn_number=4,
+        directive="mandatory rejection",
+        payload_advisory_key=f"{gate}_advisory",
+        advisory_payload={},
+        log_label=gate,
+    )
+    assert rejected.action == "reasoning"
+    assert r._settled_wave2_gates[gate] == 4
+
+    setattr(r, toggle, disabled_value)
+    method = getattr(r, method_name)
+    out = method(decision=decision, case_state=case, turn_number=4)
+    if is_async:
+        out = await out
+
+    assert out is decision
+    _assert_gate_reset(r, case, gate)
+
+
+def test_disabled_positive_gate_reevaluates_when_reenabled() -> None:
+    r = _make_researcher()
+    case = _empty_case()
+    decision = _make_submit(payload={})
+    first = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=1,
+    )
+    assert first.action == "reasoning"
+
+    r._require_confirmed_evidence_on_positive_submit = False
+    disabled = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=1,
+    )
+    assert disabled is decision
+    _assert_gate_reset(r, case, "positive_submit_refs")
+
+    r._require_confirmed_evidence_on_positive_submit = True
+    same_turn = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=1,
+    )
+    assert same_turn.action == "reasoning"
+    assert same_turn is not first
+    assert case.observables["_gate.positive_submit_refs.reject_count"] == 1
+
+    r._require_confirmed_evidence_on_positive_submit = False
+    r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=1,
+    )
+    _assert_gate_reset(r, case, "positive_submit_refs")
+    r._require_confirmed_evidence_on_positive_submit = True
+    later_turn = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=2,
+    )
+    assert later_turn.action == "reasoning"
+    assert case.observables["_gate.positive_submit_refs.reject_count"] == 1
+
+
+def test_disabled_contradiction_gate_reevaluates_same_turn_when_reenabled() -> None:
+    r = _make_researcher()
+    case = _empty_case()
+    case.observables["audit_mcp:read_function#42"] = (
+        "trace shows ASan: heap-buffer-overflow at decode_frame+0x14"
+    )
+    decision = ReasoningTurnDecision(
+        action="submit",
+        answer="no vulnerability found",
+        reasoning="test",
+        confidence="strong",
+        provenance=EvidenceProvenance(),
+        payload={"evidence_refs": ["audit_mcp:read_function#42"]},
+    )
+    first = r._maybe_reject_negative_submit_contradicting_observable(
+        decision=decision, case_state=case, turn_number=1,
+    )
+    assert first.action == "reasoning"
+
+    r._contradiction_gate_enabled = False
+    disabled = r._maybe_reject_negative_submit_contradicting_observable(
+        decision=decision, case_state=case, turn_number=1,
+    )
+    assert disabled is decision
+    _assert_gate_reset(r, case, "contradiction_observable")
+
+    r._contradiction_gate_enabled = True
+    reenabled = r._maybe_reject_negative_submit_contradicting_observable(
+        decision=decision, case_state=case, turn_number=1,
+    )
+    assert reenabled.action == "reasoning"
+    assert reenabled is not first
+    assert case.observables["_gate.contradiction_observable.reject_count"] == 1
+
+
+@pytest.mark.asyncio
 async def test_forced_positive_gate_settles_through_async_and_fanout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -566,7 +743,7 @@ def test_forced_positive_gate_does_not_skip_independent_negative_gate() -> None:
     out = r._maybe_reject_fanout_submit(
         decision=negative, inv=None, case_state=case, turn_number=1,
     )
-    assert out.action == "tool_run"
+    assert out.action == "reasoning"
     assert out.payload["_gate.contradiction_observable.rejected"] is True
     assert case.observables["_gate.contradiction_observable.reject_count"] == 1
 
@@ -586,7 +763,7 @@ def test_forced_positive_gate_reevaluates_next_turn() -> None:
     out = r._maybe_reject_positive_submit_without_confirmed_evidence(
         decision=_make_submit(payload={}), case_state=case, turn_number=2,
     )
-    assert out.action == "tool_run"
+    assert out.action == "reasoning"
     assert case.observables["_gate.positive_submit_refs.reject_count"] == 1
 
 
@@ -598,7 +775,7 @@ def test_fanout_fallback_evaluates_unsettled_positive_gate() -> None:
     out = r._maybe_reject_fanout_submit(
         decision=_make_submit(payload={}), inv=None, case_state=case, turn_number=1,
     )
-    assert out.action == "tool_run"
+    assert out.action == "reasoning"
     assert case.observables["_gate.positive_submit_refs.reject_count"] == 1
 
 
@@ -657,10 +834,14 @@ def test_rejected_positive_submit_replays_same_turn_decision() -> None:
         decision=original_submit, case_state=case, turn_number=1,
     )
 
-    assert first.action == "tool_run"
+    assert first.action == "reasoning"
+    assert "Original submit attempt:\nfound a heap overflow in decode_frame" in first.reasoning
     assert second == first
     assert kind_calls == ["submit"]
     assert case.observables["_gate.positive_submit_refs.reject_count"] == 1
+    assert case.observables["_directive.gate.positive_submit_refs.rejected"] in (
+        render_active_directives_section(case)
+    )
 
     later = r._maybe_reject_positive_submit_without_confirmed_evidence(
         decision=original_submit, case_state=case, turn_number=2,
@@ -703,10 +884,13 @@ def test_rejected_contradiction_gate_replays_same_turn_decision() -> None:
         decision=original_submit, case_state=case, turn_number=1,
     )
 
-    assert first.action == "tool_run"
+    assert first.action == "reasoning"
     assert second == first
     assert kind_calls == ["submit"]
     assert case.observables["_gate.contradiction_observable.reject_count"] == 1
+    assert case.observables["_directive.gate.contradiction_observable.rejected"] in (
+        render_active_directives_section(case)
+    )
 
     later = r._maybe_reject_negative_submit_contradicting_observable(
         decision=original_submit, case_state=case, turn_number=2,
