@@ -31,6 +31,7 @@ from aila.platform.modules import (
     ModuleProtocol,
     ModuleRouteSpec,
     ModuleRuntime,
+    SearchEntity,
     action_id_for,
 )
 from aila.platform.runtime import ToolRegistry
@@ -444,6 +445,41 @@ class VRModule(ModuleProtocol):
         except (OSError, RuntimeError, ValueError):
             _log.debug("vr.report_count failed", exc_info=True)
             return {}
+
+    async def search_entities(
+        self,
+        session: Any,
+        query: str,
+        *,
+        team_id: str | None,
+        limit: int,
+    ) -> list[SearchEntity]:
+        """Match VR investigations by title for global search.
+
+        Runs on the router's team-scoped ``session``. Mirrors the investigations
+        list: no status filter, newest first. ``team_id=None`` (god-tier) applies
+        no team filter.
+        """
+        from sqlmodel import select
+
+        from aila.modules.vr.db_models import VRInvestigationRecord
+
+        stmt = select(VRInvestigationRecord).where(
+            VRInvestigationRecord.title.icontains(query, autoescape=True),
+        )
+        if team_id is not None:
+            stmt = stmt.where(VRInvestigationRecord.team_id == team_id)
+        stmt = stmt.order_by(VRInvestigationRecord.created_at.desc()).limit(limit)
+        rows = (await session.exec(stmt)).all()
+        return [
+            SearchEntity(
+                entity_type="investigation",
+                entity_id=row.id,
+                title=row.title,
+                snippet=f"{row.kind} -- {row.status}",
+            )
+            for row in rows
+        ]
 
     def health_checks(self) -> dict[str, object]:
         """Probe every MCP server the VR runtime depends on.

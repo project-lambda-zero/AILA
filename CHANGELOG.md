@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.61] - 2026-11-12 -- Global search finds malware targets and VR investigations
+
+### Fixed
+
+- Global search now finds malware targets by display name and VR investigations by title, limited to the caller's team, and opens each result in its existing detail window. Existing system, session, and vulnerability finding results are unchanged, and each finding appears once.
+
 ## [0.6.60] - 2026-11-12 -- Docs point to alembic heads instead of a pinned revision
 
 ### Fixed
