@@ -8,6 +8,7 @@ from sqlalchemy import Column, DateTime, Text
 from sqlmodel import Field, SQLModel
 
 from aila.platform.contracts import utc_now
+from aila.platform.events.entity_status import track_status_changes
 
 __all__ = ["AgentStepRecord", "InvestigationRunRecord", "WriteUpRecord"]
 
@@ -68,6 +69,12 @@ class InvestigationRunRecord(SQLModel, table=True):
     updated_at: datetime | None = Field(
         default_factory=utc_now, sa_type=DateTime(timezone=True),
     )
+
+
+# Every committed status transition is announced as an
+# ``entity.status_changed`` domain event (worker writes reach the API
+# process via the Redis bridge) and pushed to the team's SSE streams.
+track_status_changes(InvestigationRunRecord, module_id="forensics", entity_kind="investigation")
 
 
 class AgentStepRecord(SQLModel, table=True):

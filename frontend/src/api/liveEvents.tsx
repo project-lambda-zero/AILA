@@ -10,6 +10,11 @@
  * list caches and the affected detail query. After a reconnect every
  * investigation cache is invalidated, because events emitted while the stream
  * was down are not replayed.
+ *
+ * Forensics keys carry the project id (`["forensics", projectId, ...]`) and the
+ * investigation event does not, so forensics invalidation matches on key
+ * shape instead of a fixed prefix. `project.status_changed` events refresh the
+ * project detail and the rail list.
  */
 
 import { createContext, useContext, useRef, useState, type JSX, type ReactNode } from "react";
@@ -24,13 +29,27 @@ export const INVESTIGATION_STATUS_CHANGED = "investigation.status_changed";
 /** Ring buffer capacity for the live feed. */
 const LIVE_EVENT_CAPACITY = 200;
 
+/** Modules whose investigations use the `[module, "investigations"]` key layout. */
+const GENERIC_INVESTIGATION_MODULES = ["vr", "malware"] as const;
+type GenericInvestigationModule = (typeof GENERIC_INVESTIGATION_MODULES)[number];
+
 /** Modules whose investigations push status changes over the stream. */
-const LIVE_INVESTIGATION_MODULES = ["vr", "malware"] as const;
+const LIVE_INVESTIGATION_MODULES = [...GENERIC_INVESTIGATION_MODULES, "forensics"] as const;
 type LiveInvestigationModule = (typeof LIVE_INVESTIGATION_MODULES)[number];
+
+export const PROJECT_STATUS_CHANGED = "project.status_changed";
 
 export interface InvestigationStatusChange {
   module: LiveInvestigationModule;
   investigationId: string;
+  status: string;
+  previousStatus: string | null;
+}
+
+/** A forensics project status change (the only module that pushes them). */
+export interface ProjectStatusChange {
+  module: "forensics";
+  projectId: string;
   status: string;
   previousStatus: string | null;
 }
@@ -44,6 +63,8 @@ export interface LiveEvent {
   timestamp: string;
   /** Set for investigation.status_changed frames. */
   investigation: InvestigationStatusChange | null;
+  /** Set for project.status_changed frames. */
+  project: ProjectStatusChange | null;
   /** One-line rendering of the payload for the feed. */
   summary: string;
 }
@@ -82,20 +103,53 @@ function parseLiveEvent(msg: SseMessage, seq: number): LiveEvent {
       investigation = { module, investigationId, status, previousStatus: readStr(data, "previous_status") };
     }
   }
+  let project: ProjectStatusChange | null = null;
+  if (msg.event === PROJECT_STATUS_CHANGED && data) {
+    const module = readStr(data, "module");
+    const projectId = readStr(data, "project_id");
+    const status = readStr(data, "status");
+    if (module === "forensics" && projectId !== null && status !== null) {
+      project = { module, projectId, status, previousStatus: readStr(data, "previous_status") };
+    }
+  }
   const summary = investigation
     ? `${investigation.module} ${investigation.investigationId.slice(0, 8)}: ${investigation.previousStatus ?? "new"} \u2192 ${investigation.status}`
-    : data
-      ? JSON.stringify(data)
-      : msg.data;
-  return { seq, type: msg.event, timestamp, investigation, summary };
+    : project
+      ? `${project.module} ${project.projectId.slice(0, 8)}: ${project.previousStatus ?? "new"} \u2192 ${project.status}`
+      : data
+        ? JSON.stringify(data)
+        : msg.data;
+  return { seq, type: msg.event, timestamp, investigation, project, summary };
 }
 
-function invalidateInvestigationLists(qc: QueryClient, module: LiveInvestigationModule): void {
+function invalidateInvestigationLists(qc: QueryClient, module: GenericInvestigationModule): void {
   const endpoint = `/${module}/investigations`;
   void qc.invalidateQueries({ queryKey: [module, "investigations"] });
   void qc.invalidateQueries({ queryKey: ["datapage", endpoint] });
   void qc.invalidateQueries({ queryKey: ["target-investigations", endpoint] });
 }
+
+/**
+ * Forensics keys are `["forensics", projectId, ...]`. An investigation event
+ * carries no project id, so it matches every project's investigation keys.
+ */
+function invalidateForensicsInvestigation(qc: QueryClient, investigationId: string): void {
+  void qc.invalidateQueries({
+    predicate: (q) =>
+      q.queryKey[0] === "forensics" &&
+      (q.queryKey[2] === "investigations" ||
+        (q.queryKey[2] === "investigation" && q.queryKey[3] === investigationId)),
+  });
+}
+
+/** Project keys for one project plus the project list and rail. */
+function invalidateForensicsProject(qc: QueryClient, projectId: string): void {
+  void qc.invalidateQueries({
+    predicate: (q) =>
+      q.queryKey[0] === "forensics" && (q.queryKey[1] === projectId || q.queryKey[1] === "projects"),
+  });
+}
+
 
 export function LiveEventsProvider({ children }: { children: ReactNode }): JSX.Element {
   const qc = useQueryClient();
@@ -108,10 +162,11 @@ export function LiveEventsProvider({ children }: { children: ReactNode }): JSX.E
     onOpen: ({ reconnected }) => {
       if (!reconnected) return;
       setReconnects((n) => n + 1);
-      for (const module of LIVE_INVESTIGATION_MODULES) {
+      for (const module of GENERIC_INVESTIGATION_MODULES) {
         invalidateInvestigationLists(qc, module);
         void qc.invalidateQueries({ queryKey: [module, "investigation"] });
       }
+      void qc.invalidateQueries({ predicate: (q) => q.queryKey[0] === "forensics" });
     },
     onMessage: (msg) => {
       seq.current += 1;
@@ -121,11 +176,17 @@ export function LiveEventsProvider({ children }: { children: ReactNode }): JSX.E
         next.push(evt);
         return next;
       });
-      if (evt.investigation) {
-        invalidateInvestigationLists(qc, evt.investigation.module);
-        void qc.invalidateQueries({
-          queryKey: [evt.investigation.module, "investigation", evt.investigation.investigationId],
-        });
+      const change = evt.investigation;
+      if (change) {
+        if (change.module === "forensics") {
+          invalidateForensicsInvestigation(qc, change.investigationId);
+        } else {
+          invalidateInvestigationLists(qc, change.module);
+          void qc.invalidateQueries({ queryKey: [change.module, "investigation", change.investigationId] });
+        }
+      }
+      if (evt.project) {
+        invalidateForensicsProject(qc, evt.project.projectId);
       }
     },
   });

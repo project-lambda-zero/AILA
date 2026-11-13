@@ -6,7 +6,7 @@ How to consume Server-Sent Events from AILA's SSE endpoints.
 
 ## Overview
 
-AILA exposes nine SSE surfaces across the platform and the production modules:
+AILA exposes six SSE surfaces across the platform and the production modules:
 
 | Endpoint | Method | Owner | Notes |
 |----------|--------|-------|-------|
@@ -14,8 +14,6 @@ AILA exposes nine SSE surfaces across the platform and the production modules:
 | `/scans/{run_id}/events` | GET | platform | Scan progress (Redis Streams, `last_id` cursor) |
 | `/tasks/{task_id}/events` | GET | platform | Task progress (Redis Streams, `last_id` cursor) |
 | `/sessions/{session_id}/messages` | POST | platform | Chat token stream (requires `Accept: text/event-stream`) |
-| `/forensics/projects/{project_id}/investigations/{investigation_id}/events` | GET | forensics | Forensic investigation progress |
-| `/forensics/projects/{project_id}/readiness-check/stream` | GET | forensics | Tool readiness probe stream |
 | `/vr/projects/{project_id}/events?since_iso=...` | GET | vr | Typed VR envelopes multiplexed across the project |
 | `/vr/investigations/{investigation_id}/messages/stream?since_iso=...&branch_id=...` | GET | vr | Per-investigation message tail |
 
@@ -49,7 +47,7 @@ The starting cursor is resolved in this order:
 2. `Last-Event-ID` request header, sent automatically by `EventSource` on reconnect. The stream resumes strictly after this id, so the event with that id is not replayed. A header that is not `0` or `<ms>-<seq>` is ignored and the stream starts from `0`.
 3. `0` (replay everything).
 
-An explicit `last_id=0` therefore replays all events even when a `Last-Event-ID` header is present. The same rules apply to the scan, task, and forensics investigation progress streams. The forensics readiness stream takes no cursor.
+An explicit `last_id=0` therefore replays all events even when a `Last-Event-ID` header is present. The same rules apply to the scan and task progress streams.
 
 ### Event Format
 
@@ -68,7 +66,7 @@ Fields:
 Keepalive cadence depends on the transport backing the endpoint. Redis-backed
 SSE (scan progress, task progress, chat tokens) uses an `XREAD` block of 30 s
 (`src/aila/platform/tasks/constants.py:68`). Worker-stream-backed SSE
-(e.g. forensics readiness, in-process progress) uses a 5 s heartbeat
+(e.g. in-process progress) uses a 5 s heartbeat
 (`src/aila/platform/sse/worker_stream.py:27`, `heartbeat_interval: float = 5.0`).
 
 Keepalive payload:
@@ -208,58 +206,7 @@ If the client disconnects mid-stream, `asyncio.CancelledError` is caught, the ba
 
 ---
 
-## 4. Forensics Investigation SSE
-
-### Endpoint
-
-```
-GET /forensics/projects/{project_id}/investigations/{investigation_id}/events?last_id=0
-```
-
-### Authentication
-
-Bearer JWT token (reader+ role). Team-scoped -- you must own the project.
-
-### Event Format
-
-Identical to scan/task progress:
-
-```json
-{"stage": "reasoning", "message": "Checking prefetch artifacts for lateral movement", "percent": null}
-{"stage": "script_exec", "message": "Running vol3 -f memory.dmp windows.pslist", "percent": null}
-{"stage": "completed", "message": "Investigation complete", "percent": 100}
-```
-
-Terminal `event: done` is emitted when investigation status reaches `completed` or `failed`:
-
-```
-event: done
-data: {"status": "completed"}
-```
-
-### No-stream Fallback
-
-If Redis is unavailable or the investigation has no `task_id` yet (race between submit and SSE open):
-
-```
-data: {"message": "No progress stream available -- Redis not configured or task not yet queued"}
-```
-
-### Frontend Hook
-
-```typescript
-import { useInvestigationEventFeed } from "@forensics/queries";
-
-const { events, feedStatus } = useInvestigationEventFeed(projectId, investigationId);
-// feedStatus: "idle" | "connecting" | "live" | "unavailable" | "closed" | "error"
-// events: InvestigationEvent[]  -- {stage, message, percent, timestamp}
-```
-
-Only open the feed when the investigation status is running (`queued | running | analyzing`). Pass empty strings to disable.
-
----
-
-## 5. VR Investigation Streams
+## 4. VR Investigation Streams
 
 Two VR endpoints, both backed by DB polling (~1 s interval) over typed envelope rows rather than Redis Streams.
 
@@ -399,7 +346,7 @@ Most SSE progress is backed by Redis Streams, not pub/sub.
 
 ### Polling-backed VR streams
 
-The per-project and per-investigation VR streams (`/vr/projects/{project_id}/events`, `/vr/investigations/{investigation_id}/messages/stream`) do NOT use Redis Streams. They poll Postgres at ~1 s intervals over typed envelope rows. Their resume cursor is the `(timestamp, row id)` pair carried in each frame's `id:` line (see section 5), with `since_iso` as the explicit timestamp override, instead of a Redis `last_id`. The Redis-backed `task:{task_id}:progress` stream still carries the VR worker's coarse task progress; the typed envelope stream is a separate surface.
+The per-project and per-investigation VR streams (`/vr/projects/{project_id}/events`, `/vr/investigations/{investigation_id}/messages/stream`) do NOT use Redis Streams. They poll Postgres at ~1 s intervals over typed envelope rows. Their resume cursor is the `(timestamp, row id)` pair carried in each frame's `id:` line (see section 4), with `since_iso` as the explicit timestamp override, instead of a Redis `last_id`. The Redis-backed `task:{task_id}:progress` stream still carries the VR worker's coarse task progress; the typed envelope stream is a separate surface.
 
 ### Tuning
 
