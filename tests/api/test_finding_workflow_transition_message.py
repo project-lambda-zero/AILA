@@ -14,13 +14,14 @@ while a target known to no module keeps the unknown-state message with
 the valid list.
 
 Direct handler invocation (the ``test_p0_team_scoping_findings_specialists``
-pattern) with a stub request whose platform carries fake production
-modules declaring the same prefixed states the real modules declare in
-``module.py::workflow_definitions()``.
+pattern) with a stub request whose platform carries the real VR module
+(the finding's owner) beside a malware double declaring the same prefixed
+states the real malware module declares in ``module.py::workflow_definitions()``.
 """
 from __future__ import annotations
 
 import types
+import uuid
 
 import pytest
 from fastapi import HTTPException
@@ -28,23 +29,15 @@ from fastapi import HTTPException
 from aila.api.auth import AuthContext
 from aila.api.routers.findings_workflow import router as fw_router
 from aila.api.schemas.endpoints import FindingTransitionRequest
+from aila.modules.vr.db_models.finding import VRFindingRecord
+from aila.modules.vr.module import VRModule
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import FindingWorkflowRecord
 
 _TRANSITION = "/findings/{finding_id}/transition"
 
-# Module extensions mirror the production contracts in
-# src/aila/modules/{vr,malware}/module.py::workflow_definitions().
-_VR_DEF = {
-    "finding": {
-        "states": ["vr.false_positive", "vr.accepted_risk"],
-        "transitions": {
-            "investigating": ["vr.false_positive", "vr.accepted_risk"],
-            "vr.false_positive": ["investigating"],
-            "vr.accepted_risk": ["investigating"],
-        },
-    }
-}
+# Mirrors the production contract in
+# src/aila/modules/malware/module.py::workflow_definitions().
 _MALWARE_DEF = {
     "finding": {
         "states": ["malware.benign_confirmed", "malware.quarantined"],
@@ -58,7 +51,7 @@ _MALWARE_DEF = {
 
 
 class _FakeModule:
-    """Minimal module double: only what the resolver reads."""
+    """Minimal sibling-module double: only what the resolver reads."""
 
     def __init__(self, module_id: str, definitions: dict) -> None:
         self.module_id = module_id
@@ -69,9 +62,9 @@ class _FakeModule:
 
 
 def _req() -> object:
-    """Request stub whose platform registers fake production modules."""
+    """Request stub whose platform registers the VR owner and a malware sibling."""
     modules = [
-        _FakeModule("vr", _VR_DEF),
+        VRModule(),
         _FakeModule("malware", _MALWARE_DEF),
     ]
     return types.SimpleNamespace(
@@ -105,9 +98,11 @@ def _transition_endpoint():
     raise AssertionError(f"route POST {_TRANSITION} not registered")
 
 
-async def _seed_investigating(finding_id: str) -> None:
-    """Insert one FindingWorkflowRecord so the finding reads as 'investigating'."""
+async def _seed_investigating() -> str:
+    """Insert a VR finding whose workflow reads as 'investigating'; return its id."""
+    finding_id = f"F-{uuid.uuid4().hex}"
     async with async_session_scope() as session:
+        session.add(VRFindingRecord(id=finding_id, team_id=None))
         record = FindingWorkflowRecord(
             finding_id=finding_id,
             module_id="vr",
@@ -119,17 +114,18 @@ async def _seed_investigating(finding_id: str) -> None:
         )
         session.add(record)
         await session.commit()
+    return finding_id
 
 
 @pytest.mark.usefixtures("test_db")
 async def test_cross_module_target_reports_transition_phrasing() -> None:
     """AC3: malware.quarantined against a vr finding 422s with the transition message."""
-    await _seed_investigating("F-AC3")
+    finding_id = await _seed_investigating()
     endpoint = _transition_endpoint()
     with pytest.raises(HTTPException) as exc:
         await endpoint(
             request=_req(),
-            finding_id="F-AC3",
+            finding_id=finding_id,
             body=FindingTransitionRequest(
                 target_state="malware.quarantined", module_id="vr"
             ),
@@ -145,12 +141,12 @@ async def test_cross_module_target_reports_transition_phrasing() -> None:
 @pytest.mark.usefixtures("test_db")
 async def test_genuinely_unknown_target_keeps_unknown_state_message() -> None:
     """A target known to no module keeps the vocabulary-error message + valid list."""
-    await _seed_investigating("F-UNKNOWN")
+    finding_id = await _seed_investigating()
     endpoint = _transition_endpoint()
     with pytest.raises(HTTPException) as exc:
         await endpoint(
             request=_req(),
-            finding_id="F-UNKNOWN",
+            finding_id=finding_id,
             body=FindingTransitionRequest(
                 target_state="malware.quarantind", module_id="vr"
             ),

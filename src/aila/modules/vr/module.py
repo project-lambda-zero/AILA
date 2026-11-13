@@ -206,6 +206,17 @@ class VRModule(ModuleProtocol):
             },
         }
 
+    async def finding_exists(self, finding_id: str, session: Any) -> bool:
+        """A VR finding is a ``vr_findings`` row; the session's team scope hides other teams' rows."""
+        from sqlmodel import select
+
+        from aila.modules.vr.db_models.finding import VRFindingRecord
+
+        row = (await session.exec(
+            select(VRFindingRecord.id).where(VRFindingRecord.id == finding_id).limit(1),
+        )).first()
+        return row is not None
+
     async def register_tools(
         self,
         tool_registry: ToolRegistry,

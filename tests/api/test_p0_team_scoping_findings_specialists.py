@@ -19,16 +19,23 @@ namespace. The autouse ``_disable_slowapi_limiter`` fixture (see
 from __future__ import annotations
 
 import types
+import uuid
 
 import pytest
 from fastapi import HTTPException
 from sqlmodel import select
 
-from aila.api.auth import AuthContext
+from aila.api.auth import AuthContext, TeamContext
 from aila.api.routers.findings_workflow import router as fw_router
 from aila.api.routers.specialist_agents import router as sp_router
 from aila.api.schemas.endpoints import FindingTransitionRequest
+from aila.modules.forensics.module import ForensicsModule
+from aila.modules.malware.db_models.finding import MalwareFindingRecord
+from aila.modules.malware.module import MalwareModule
+from aila.modules.vr.db_models.finding import VRFindingRecord
+from aila.modules.vr.module import VRModule
 from aila.platform.contracts.finding_states import FINDING_STATE_TRANSITIONS
+from aila.platform.services.team_scope import team_context_scope
 from aila.platform.services.specialist_registry import (
     SpecialistAgentCreate,
     SpecialistAgentRecord,
@@ -43,16 +50,27 @@ from aila.storage.db_models import FindingWorkflowRecord
 
 
 def _req() -> object:
-    """Minimal Request stub good enough for the handlers used here.
-
-    The workflow router reads ``request.app.state.platform`` when
-    resolving the finding state machine; a ``None`` platform falls
-    through to the ``FINDING_STATE_TRANSITIONS`` base map, which
-    already accepts ``new -> investigating``, the transition every
-    test in this file uses.
-    """
+    """Minimal Request stub for handlers that never read the platform."""
     return types.SimpleNamespace(
         app=types.SimpleNamespace(state=types.SimpleNamespace(platform=None))
+    )
+
+
+def _owners_req() -> object:
+    """Request stub whose platform registers the real finding-owning modules.
+
+    The transition route asks the module named in the body whether the
+    finding exists, so these tests need the modules that own findings.
+    """
+    platform = types.SimpleNamespace(
+        runtime=types.SimpleNamespace(
+            module_registry=types.SimpleNamespace(
+                modules=[VRModule(), MalwareModule(), ForensicsModule()],
+            ),
+        ),
+    )
+    return types.SimpleNamespace(
+        app=types.SimpleNamespace(state=types.SimpleNamespace(platform=platform))
     )
 
 
@@ -154,52 +172,118 @@ async def test_fw_admin_sees_all_teams() -> None:
     assert len(env.data.history) == 1
 
 
-@pytest.mark.usefixtures("test_db")
-async def test_fw_transition_stamps_team_id() -> None:
-    """A team-scoped transition stamps ``team_id`` on the new row."""
-    trans_ep = _endpoint(fw_router, _FW_TRANSITION, "POST")
-    env = await trans_ep(
-        request=_req(),
-        finding_id="F-STAMP",
-        body=FindingTransitionRequest(target_state="investigating"),
-        auth=_auth("team-a"),
-    )
-    assert env.data.current_state == "investigating"
-    async with async_session_scope() as session:
-        rows = (await session.exec(
-            select(FindingWorkflowRecord)
-            .where(FindingWorkflowRecord.finding_id == "F-STAMP")
-        )).all()
-    assert len(rows) == 1
-    assert rows[0].team_id == "team-a"
+_OWNERS = ["vr", "malware", "forensics"]
 
 
-@pytest.mark.usefixtures("test_db")
-async def test_fw_transition_cross_team_is_404() -> None:
-    """team-a cannot append onto team-b's existing history.
+async def _seed_finding(module_id: str, team_id: str | None) -> str:
+    """Persist one finding owned by ``module_id`` and ``team_id``; return its id.
 
-    Seeding a team-b row for ``F-CROSS`` and then trying to transition
-    as team-a must 404 instead of silently forking a new chain.
+    vr and malware findings are table rows. A forensics finding is derived
+    from artifacts; the findings list persists its initial ``new`` workflow
+    row, which is the only stored record of it.
     """
-    await _seed_transition("F-CROSS", "team-b")
-    trans_ep = _endpoint(fw_router, _FW_TRANSITION, "POST")
-    with pytest.raises(HTTPException) as exc:
-        await trans_ep(
-            request=_req(),
-            finding_id="F-CROSS",
-            body=FindingTransitionRequest(target_state="investigating"),
-            auth=_auth("team-a"),
-        )
-    assert exc.value.status_code == 404
-    # And the underlying row is untouched: still exactly one row, owned
-    # by team-b.
+    finding_id = f"F-{uuid.uuid4().hex}"
     async with async_session_scope() as session:
-        rows = (await session.exec(
+        if module_id == "vr":
+            session.add(VRFindingRecord(id=finding_id, team_id=team_id))
+        elif module_id == "malware":
+            session.add(MalwareFindingRecord(id=finding_id, team_id=team_id, kind="capability"))
+        else:
+            session.add(FindingWorkflowRecord(
+                finding_id=finding_id,
+                module_id="forensics",
+                current_state="new",
+                previous_state=None,
+                transitioned_by="seed",
+                notes="",
+                team_id=team_id,
+            ))
+        await session.commit()
+    return finding_id
+
+
+async def _workflow_rows(finding_id: str) -> list[FindingWorkflowRecord]:
+    async with async_session_scope() as session:
+        return list((await session.exec(
             select(FindingWorkflowRecord)
-            .where(FindingWorkflowRecord.finding_id == "F-CROSS")
-        )).all()
-    assert len(rows) == 1
-    assert rows[0].team_id == "team-b"
+            .where(FindingWorkflowRecord.finding_id == finding_id)
+        )).all())
+
+
+async def _transition(finding_id: str, auth: AuthContext, *, module_id: str = "vr"):
+    """Invoke the transition handler with the caller's TeamContext bound.
+
+    Binds the ambient scope the request middleware binds in production,
+    so every session the handler opens is team-filtered exactly as it
+    would be over HTTP.
+    """
+    trans_ep = _endpoint(fw_router, _FW_TRANSITION, "POST")
+    with team_context_scope(TeamContext.from_auth(auth)):
+        return await trans_ep(
+            request=_owners_req(),
+            finding_id=finding_id,
+            body=FindingTransitionRequest(target_state="investigating", module_id=module_id),
+            auth=auth,
+        )
+
+
+@pytest.mark.parametrize("module_id", _OWNERS)
+@pytest.mark.usefixtures("test_db")
+async def test_fw_transition_stamps_team_id(module_id: str) -> None:
+    """The owning team transitions its own finding; the new row carries its team."""
+    finding_id = await _seed_finding(module_id, "team-a")
+    before = len(await _workflow_rows(finding_id))
+    env = await _transition(finding_id, _auth("team-a"), module_id=module_id)
+    assert env.data.current_state == "investigating"
+    assert env.data.previous_state == "new"
+    rows = await _workflow_rows(finding_id)
+    assert len(rows) == before + 1
+    latest = next(r for r in rows if r.current_state == "investigating")
+    assert latest.team_id == "team-a"
+    assert latest.module_id == module_id
+
+
+@pytest.mark.parametrize("module_id", _OWNERS)
+@pytest.mark.usefixtures("test_db")
+async def test_fw_transition_cross_team_is_404(module_id: str) -> None:
+    """team-a cannot transition team-b's finding, whether or not it has history yet."""
+    finding_id = await _seed_finding(module_id, "team-b")
+    before = len(await _workflow_rows(finding_id))
+    with pytest.raises(HTTPException) as exc:
+        await _transition(finding_id, _auth("team-a"), module_id=module_id)
+    assert exc.value.status_code == 404
+    assert exc.value.detail == f"Finding '{finding_id}' not found"
+    assert len(await _workflow_rows(finding_id)) == before
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_fw_transition_unknown_finding_is_404() -> None:
+    """An id no module owns gets the same 404 as another team's finding, and no row."""
+    finding_id = f"F-{uuid.uuid4().hex}"
+    with pytest.raises(HTTPException) as exc:
+        await _transition(finding_id, _auth("team-a"))
+    assert exc.value.status_code == 404
+    assert exc.value.detail == f"Finding '{finding_id}' not found"
+    assert await _workflow_rows(finding_id) == []
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_fw_transition_names_owning_module() -> None:
+    """A real finding transitioned under a module that does not own it is 404."""
+    finding_id = await _seed_finding("vr", "team-a")
+    with pytest.raises(HTTPException) as exc:
+        await _transition(finding_id, _auth("team-a"), module_id="platform")
+    assert exc.value.status_code == 404
+    assert await _workflow_rows(finding_id) == []
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_fw_transition_admin_reaches_any_team() -> None:
+    """A god-tier admin (team_id=None) transitions another team's finding."""
+    finding_id = await _seed_finding("vr", "team-b")
+    env = await _transition(finding_id, _auth(None, role="admin"))
+    assert env.data.current_state == "investigating"
+    assert len(await _workflow_rows(finding_id)) == 1
 
 
 # ---------------------------------------------------------------------------

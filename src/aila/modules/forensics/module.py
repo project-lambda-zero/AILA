@@ -225,6 +225,27 @@ class ForensicsModule(ModuleProtocol):
             },
         }
 
+    async def finding_exists(self, finding_id: str, session: Any) -> bool:
+        """Return True when the project findings list has recorded ``finding_id``.
+
+        Forensics findings are derived from artifacts at read time and have
+        no table of their own. The findings list persists the initial
+        workflow row for each finding's fingerprint, stamped with the
+        project's team, so that row is the finding's persisted identity; the
+        session's team scope hides other teams' rows.
+        """
+        from sqlmodel import select
+
+        from aila.storage.db_models import FindingWorkflowRecord
+
+        row = (await session.exec(
+            select(FindingWorkflowRecord.id)
+            .where(FindingWorkflowRecord.module_id == self.module_id)
+            .where(FindingWorkflowRecord.finding_id == finding_id)
+            .limit(1),
+        )).first()
+        return row is not None
+
     async def register_tools(
         self,
         tool_registry: ToolRegistry,
