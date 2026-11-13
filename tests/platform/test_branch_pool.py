@@ -22,6 +22,7 @@ from aila.modules.vr.db_models import (
 )
 from aila.platform.agents.branch_pool import BranchPool
 from aila.platform.contracts.enums import BranchOperation, BranchStatus
+from aila.platform.services.audit import AuditActor
 from aila.platform.uow import UnitOfWork
 
 
@@ -158,7 +159,8 @@ async def test_pause_then_resume_round_trip() -> None:
     inv_id, primary = await _seed()
     mgr = BranchManager(inv_id)
 
-    pause_res = await mgr.pause(primary, reason="operator")
+    actor = AuditActor(stage="vr", user_id="op", team_id="admin")
+    pause_res = await mgr.pause(primary, actor=actor, reason="operator")
     assert pause_res.op == BranchOperation.PAUSE
     async with UnitOfWork() as uow:
         b = (await uow.session.exec(
@@ -168,6 +170,6 @@ async def test_pause_then_resume_round_trip() -> None:
         )).first()
     assert b.status == BranchStatus.PAUSED.value
 
-    resume_res = await mgr.resume(primary, reason="operator")
+    resume_res = await mgr.resume(primary, actor=actor, reason="operator")
     assert resume_res.op == BranchOperation.RESUME
     assert await _active_count(inv_id) == 1

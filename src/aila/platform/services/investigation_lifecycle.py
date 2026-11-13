@@ -46,6 +46,7 @@ from aila.platform.llm.cancellation import (
     cancel_for_investigation,
     clear_for_investigation,
 )
+from aila.platform.services.audit import AuditActor, record_audit_event
 from aila.platform.tasks.arq_purge import purge_arq_jobs_for_investigation
 from aila.platform.tasks.models import TaskStatus
 from aila.platform.tasks.queue import qualified_task_name
@@ -239,6 +240,7 @@ async def pause_investigation(
     branch_table: str,
     track: str,
     pause_reason: str,
+    actor: AuditActor | None = None,
     user_id: str | None = None,
 ) -> dict[str, Any]:
     """Atomically pause every active task for ``investigation_id``.
@@ -253,6 +255,11 @@ async def pause_investigation(
     flagged by ``noop=True`` in the returned summary. ``pause_reason``
     is the already-coerced enum value; the module wrapper owns the
     coercion so the reason vocabulary stays module-side.
+
+    ``actor`` is passed only by operator-initiated pauses. When given,
+    the ``investigation_paused`` audit row is written in the same
+    transaction as the status flip. System flows (worker auto-pause)
+    pass ``None`` and write no audit row.
     """
     summary: dict[str, Any] = {
         "paused_cursors": 0,
@@ -391,10 +398,31 @@ async def pause_investigation(
             summary["paused_branches"] = 0
 
         # 4. Flip the investigation status derived projection.
+        prior_status = inv.status
         inv.status = InvestigationStatus.PAUSED.value
         inv.pause_reason = pause_reason
         inv.updated_at = now
         uow.session.add(inv)
+
+        if actor is not None:
+            record_audit_event(
+                uow.session,
+                run_id=investigation_id,
+                stage=actor.stage,
+                action="investigation_paused",
+                target=f"investigation:{investigation_id}",
+                user_id=actor.user_id,
+                team_id=actor.team_id,
+                details={
+                    "investigation_id": investigation_id,
+                    "prior_status": prior_status,
+                    "new_status": InvestigationStatus.PAUSED.value,
+                    "pause_reason": pause_reason,
+                    "paused_cursors": summary["paused_cursors"],
+                    "cancelled_tasks": summary["cancelled_tasks"],
+                    "paused_branches": summary["paused_branches"],
+                },
+            )
 
         await uow.session.commit()
         await uow.session.refresh(inv)
@@ -437,6 +465,7 @@ async def resume_investigation(
     branch_model: type[Any],
     branch_table: str,
     track: str,
+    actor: AuditActor,
     task_fn: Callable[..., Awaitable[Any]],
     task_queue: Any = None,
     user_id: str | None = None,
@@ -464,6 +493,12 @@ async def resume_investigation(
     Raises :class:`ResumeInvestigationError` if the investigation is not
     PAUSED. The fan-out submits one ``task_fn`` task per resumed cursor
     so every branch (not just the primary) ticks again.
+
+    ``actor`` identifies the operator. The ``investigation_resumed`` audit
+    row is added to the transaction that commits the status change: the
+    RUNNING flip (``action="resumed"``) or the fallback reset to CREATED
+    (``action="reenqueued"``). A ``noop_failed`` result writes no row
+    because the investigation status stays PAUSED.
     """
     if task_queue is None:
         raise ResumeInvestigationError(
@@ -743,10 +778,30 @@ async def resume_investigation(
                 .with_for_update()
             )).first()
             if inv_row is not None:
+                prior_status = inv_row.status
                 inv_row.status = InvestigationStatus.RUNNING.value
                 inv_row.pause_reason = None
                 inv_row.updated_at = utc_now()
                 uow.session.add(inv_row)
+                record_audit_event(
+                    uow.session,
+                    run_id=investigation_id,
+                    stage=actor.stage,
+                    action="investigation_resumed",
+                    target=f"investigation:{investigation_id}",
+                    user_id=actor.user_id,
+                    team_id=actor.team_id,
+                    details={
+                        "investigation_id": investigation_id,
+                        "action": "resumed",
+                        "prior_status": prior_status,
+                        "new_status": InvestigationStatus.RUNNING.value,
+                        "resumed_cursors": summary["resumed_cursors"],
+                        "resumed_branches": summary["resumed_branches"],
+                        "precancelled_tasks": summary["precancelled_tasks"],
+                        "submitted_tasks": summary["submitted_tasks"],
+                    },
+                )
                 await uow.session.commit()
                 await uow.session.refresh(inv_row)
                 summary["inv_status"] = inv_row.status
@@ -787,6 +842,28 @@ async def resume_investigation(
 
         return _send
 
+    def _record_fallback_audit(
+        session: Any, prior_status: str, reset: dict[str, Any],
+    ) -> None:
+        record_audit_event(
+            session,
+            run_id=investigation_id,
+            stage=actor.stage,
+            action="investigation_resumed",
+            target=f"investigation:{investigation_id}",
+            user_id=actor.user_id,
+            team_id=actor.team_id,
+            details={
+                "investigation_id": investigation_id,
+                "action": "reenqueued",
+                "prior_status": prior_status,
+                "new_status": InvestigationStatus.CREATED.value,
+                "cancelled_stale_tasks": reset["cancelled_stale_tasks"],
+                "wiped_crashed_cursors": reset["wiped_crashed_cursors"],
+                "superseded_replans": reset["superseded_replans"],
+            },
+        )
+
     try:
         reenqueued = await reenqueue_investigation(
             investigation_id,
@@ -795,6 +872,7 @@ async def resume_investigation(
             prepare_submit=_prepare_submit,
             branch_model=branch_model,
             branch_status_active="active",
+            before_commit=_record_fallback_audit,
         )
     except (ReenqueueInvestigationError, SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
         # The dispatch could not be built or the reset itself failed (row vanished, transport error) -- the
@@ -863,6 +941,7 @@ async def reenqueue_investigation(
     branch_status_active: str | None = None,
     new_kind: str | None = None,
     new_strategy: str | None = None,
+    before_commit: Callable[[Any, str, dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Reset an investigation to CREATED and submit fresh worker tasks.
 
@@ -894,6 +973,11 @@ async def reenqueue_investigation(
     dispatch builder and the branch-query parameters as data. Every builder
     runs before the reset, so a builder that raises leaves the row
     unchanged; the sends run after the commit.
+
+    ``before_commit`` (optional) runs inside the reset transaction right
+    before its commit, as ``before_commit(session, prior_status, summary)``
+    where ``prior_status`` is the status the row held before the reset. A
+    caller uses it to add a row that commits atomically with the reset.
     """
     summary: dict[str, Any] = {
         "submitted": 0,
@@ -931,6 +1015,7 @@ async def reenqueue_investigation(
             inv.kind = new_kind
             if new_strategy is not None:
                 inv.strategy_family = new_strategy
+        prior_status = inv.status
         inv.status = InvestigationStatus.CREATED.value
         inv.pause_reason = None
         # Null the wall-clock origin: a re-enqueued investigation had a
@@ -984,6 +1069,8 @@ async def reenqueue_investigation(
             uow.session, investigation_id,
         )
 
+        if before_commit is not None:
+            before_commit(uow.session, prior_status, summary)
         await uow.session.commit()
 
     # Commit precedes the sends: the same UoW would race with the dedup
