@@ -2,7 +2,10 @@
 
 AutomationRunner.tick() is the main entry point: it fetches all enabled
 AutomationScheduleRecords, checks each against its cron expression using
-croniter, and submits due jobs through the platform TaskQueue.
+croniter, and submits each due schedule through the platform TaskQueue as
+:func:`~aila.platform.automation.dispatch.run_automation_action` on the
+queue the default worker consumes. The worker resolves the action id and
+runs its handler.
 
 Called by: CLI command or periodic trigger (e.g., ARQ cron job).
 Depends on: AutomationRegistry (action resolution), TaskQueue (job submission).
@@ -33,6 +36,7 @@ from croniter import CroniterError, croniter
 from sqlmodel import select
 from sqlmodel.sql.expression import SelectOfScalar
 
+from aila.platform.automation.dispatch import AUTOMATION_TRACK, run_automation_action
 from aila.platform.automation.lock import (
     AutomationOccurrenceLock,
     LockBackendUnavailableError,
@@ -188,8 +192,7 @@ class AutomationRunner:
             if not self._is_due(schedule, now):
                 continue
 
-            action = self._registry.get_action(schedule.action_id)
-            if action is None:
+            if self._registry.get_action(schedule.action_id) is None:
                 _log.warning(
                     "Schedule %s references unknown action %r -- skipping",
                     schedule.id, schedule.action_id,
@@ -281,9 +284,9 @@ class AutomationRunner:
                 )
 
                 handle = await self._queue.submit(
-                    track=action.module_id,
-                    fn=action.handler_fn,
-                    kwargs=kwargs,
+                    track=AUTOMATION_TRACK,
+                    fn=run_automation_action,
+                    kwargs={"action_id": schedule.action_id, "action_kwargs": kwargs},
                     user_id=schedule.created_by,
                     team_id=schedule.team_id,
                 )

@@ -1,10 +1,9 @@
 """Coverage tests for tasks.py router uncovered paths.
 
-Targets lines 241, 249-253, 269-307, 347-358 in src/aila/api/routers/tasks.py.
+Targets lines 241, 249-253, 269-307 in src/aila/api/routers/tasks.py.
 
 - SSE endpoint 404 path (line 241)
 - SSE endpoint with platform present but Redis config exception (lines 249-253)
-- submit_task with mock platform that has task_queue.submit (lines 347-358)
 - cancel/resume additional paths not yet covered by existing tests
 
 Uses async_client and async_client_with_registries fixtures from conftest.
@@ -125,59 +124,6 @@ async def test_sse_events_redis_config_error(
     assert "text/event-stream" in content_type
     # Falls back to the no-redis informational message
     assert "Redis not configured" in resp.text or "no progress stream" in resp.text
-
-
-# ---------------------------------------------------------------------------
-# POST /task with mocked platform.task_queue.submit (lines 347-358)
-# ---------------------------------------------------------------------------
-
-
-@pytest_asyncio.fixture(scope="function")
-async def async_client_with_task_queue(test_db):
-    """Client where platform.task_queue.submit() returns a TaskHandle.
-
-    This exercises the submit_task success path (lines 347-358).
-    """
-    from aila.api.app import create_app
-    from aila.platform.tasks.models import TaskHandle
-
-    mock_handle = TaskHandle(task_id="submitted-task-001")
-    stub_task_queue = MagicMock()
-    stub_task_queue.submit.return_value = mock_handle
-
-    stub_platform = MagicMock()
-    stub_platform.task_queue = stub_task_queue
-
-    test_app = create_app()
-    test_app.state.platform = stub_platform
-    test_app.state.start_time = time.monotonic()
-
-    async with AsyncClient(
-        transport=ASGITransport(app=test_app),
-        base_url="http://testserver",
-    ) as client:
-        yield client
-
-
-@pytest.mark.asyncio
-async def test_submit_task_success(
-    async_client_with_task_queue: AsyncClient,
-    admin_token: str,
-    test_db,
-) -> None:
-    """POST /task with platform and task_queue returns 202 with run_id.
-
-    Covers lines 347-358 (submit_task success path).
-    """
-    resp = await async_client_with_task_queue.post(
-        "/task",
-        json={"query_text": "scan all systems"},
-        headers={"Authorization": f"Bearer {admin_token}"},
-    )
-    assert resp.status_code == 202
-    data = resp.json()
-    assert data["run_id"] == "submitted-task-001"
-    assert data["status"] == "submitted"
 
 
 # ---------------------------------------------------------------------------

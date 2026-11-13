@@ -37,12 +37,14 @@ export function useXRayShell({
   view,
   panes: layoutPanes,
   status,
+  controllable,
   control,
   onNavigate,
 }: {
   view: XRayView;
   panes: LayoutPanes;
   status: string; // lower-cased investigation status
+  controllable: boolean; // false while the investigation is not loaded: `p` must not mutate
   control: PauseControl;
   onNavigate: (section: string) => void;
 }): XRayShell {
@@ -59,6 +61,7 @@ export function useXRayShell({
   const navRef = useRef(onNavigate);
   const controlRef = useRef(control);
   const statusRef = useRef("");
+  const controllableRef = useRef(controllable);
   const zoomRef = useRef(zoom);
   const helpRef = useRef(help);
   const panesRef = useRef(layoutPanes);
@@ -67,6 +70,7 @@ export function useXRayShell({
   navRef.current = onNavigate;
   controlRef.current = control;
   statusRef.current = status;
+  controllableRef.current = controllable;
   zoomRef.current = zoom;
   helpRef.current = help;
   panesRef.current = layoutPanes;
@@ -156,6 +160,7 @@ export function useXRayShell({
       }
       if (e.key === "p") {
         e.preventDefault();
+        if (!controllableRef.current) return;
         const st = statusRef.current;
         if (st === "paused") controlRef.current.mutate("resume");
         else if (!["completed", "failed", "cancelled"].includes(st)) controlRef.current.mutate("pause");

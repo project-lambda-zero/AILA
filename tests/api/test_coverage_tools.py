@@ -8,7 +8,8 @@ the _module_id_from_key helper.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
@@ -39,6 +40,37 @@ class _FailingTool:
 
     def forward(self, **kwargs: Any) -> Any:
         raise RuntimeError("tool invocation error")
+
+
+@dataclass
+class _AsyncMockTool:
+    name: str = "async_mock_tool"
+    description: str = "An async mock tool for testing"
+    inputs: dict[str, object] | None = None
+    output_type: str = "dict"
+
+    async def forward(self, **kwargs: Any) -> Any:
+        return {"echo": kwargs}
+
+
+@dataclass
+class _AsyncFailingTool:
+    name: str = "async_failing_tool"
+    description: str = "An async tool that raises when awaited"
+
+    async def forward(self, **kwargs: Any) -> Any:
+        raise RuntimeError("async tool invocation error")
+
+
+@dataclass
+class _ThreadRecordingTool:
+    name: str = "thread_recording_tool"
+    description: str = "Records the thread that forward() runs on"
+    seen_threads: list[int] = field(default_factory=list)
+
+    def forward(self, **kwargs: Any) -> Any:
+        self.seen_threads.append(threading.get_ident())
+        return {"echo": kwargs}
 
 
 # ---------------------------------------------------------------------------
@@ -268,6 +300,76 @@ async def test_invoke_tool_error(
     data = resp.json()
     assert data["result"] is None
     assert "tool invocation error" in data["error"]
+
+
+@pytest.mark.asyncio
+async def test_invoke_tool_awaits_async_forward(
+    async_client_with_registries: AsyncClient,
+    admin_token: str,
+) -> None:
+    """POST /tools/{key} awaits an async forward() and returns its resolved dict, not a coroutine."""
+    client = async_client_with_registries
+    app = client._transport.app  # type: ignore[attr-defined]
+    registry = app.state.platform.runtime.tool_registry
+    registry.register("vuln.async_invoke", _AsyncMockTool())
+
+    resp = await client.post(
+        "/tools/vuln.async_invoke",
+        json={"kwargs": {"x": 1}},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["tool_key"] == "vuln.async_invoke"
+    assert data["result"] == {"echo": {"x": 1}}
+    assert data["error"] is None
+
+
+@pytest.mark.asyncio
+async def test_invoke_tool_async_error_returns_error_field(
+    async_client_with_registries: AsyncClient,
+    admin_token: str,
+) -> None:
+    """POST /tools/{key} when an async forward() raises when awaited returns 200 with the error field."""
+    client = async_client_with_registries
+    app = client._transport.app  # type: ignore[attr-defined]
+    registry = app.state.platform.runtime.tool_registry
+    registry.register("vuln.async_failing", _AsyncFailingTool())
+
+    resp = await client.post(
+        "/tools/vuln.async_failing",
+        json={"kwargs": {}},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["result"] is None
+    assert data["error"] == "async tool invocation error"
+
+
+@pytest.mark.asyncio
+async def test_invoke_tool_sync_forward_runs_off_event_loop(
+    async_client_with_registries: AsyncClient,
+    admin_token: str,
+) -> None:
+    """POST /tools/{key} keeps a blocking synchronous forward() on a worker thread and returns its value."""
+    client = async_client_with_registries
+    app = client._transport.app  # type: ignore[attr-defined]
+    registry = app.state.platform.runtime.tool_registry
+    tool = _ThreadRecordingTool()
+    registry.register("vuln.thread_probe", tool)
+
+    resp = await client.post(
+        "/tools/vuln.thread_probe",
+        json={"kwargs": {}},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["result"] == {"echo": {}}
+    assert data["error"] is None
+    assert len(tool.seen_threads) == 1
+    assert tool.seen_threads[0] != threading.get_ident()
 
 
 @pytest.mark.asyncio

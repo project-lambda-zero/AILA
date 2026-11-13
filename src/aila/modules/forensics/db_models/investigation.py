@@ -8,6 +8,7 @@ from sqlalchemy import Column, DateTime, Text
 from sqlmodel import Field, SQLModel
 
 from aila.platform.contracts import utc_now
+from aila.platform.events.entity_status import track_status_changes
 
 __all__ = ["AgentStepRecord", "InvestigationRunRecord", "WriteUpRecord"]
 
@@ -68,6 +69,19 @@ class InvestigationRunRecord(SQLModel, table=True):
     updated_at: datetime | None = Field(
         default_factory=utc_now, sa_type=DateTime(timezone=True),
     )
+    # Written by the platform investigation lifecycle: re-enqueueing a stuck
+    # run clears ``pause_reason`` and nulls ``started_at`` while resetting the
+    # row to ``created``. SQLModel rejects assignment to an undeclared field,
+    # so both columns must exist for that reset to commit. Nullable so
+    # existing rows need no backfill; migration 149 adds the columns.
+    pause_reason: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    started_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
+
+
+# Every committed status transition is announced as an
+# ``entity.status_changed`` domain event (worker writes reach the API
+# process via the Redis bridge) and pushed to the team's SSE streams.
+track_status_changes(InvestigationRunRecord, module_id="forensics", entity_kind="investigation")
 
 
 class AgentStepRecord(SQLModel, table=True):

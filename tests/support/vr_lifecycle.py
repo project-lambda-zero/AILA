@@ -18,8 +18,10 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
 )
 from aila.modules.vr.workflow.task import run_vr_investigate
+from aila.platform.services.audit import AuditActor
 from aila.platform.services.investigation_lifecycle import (
     PauseInvestigationError,
+    PreparedSubmit,
     ReenqueueInvestigationError,
     ResumeInvestigationError,
 )
@@ -83,12 +85,14 @@ async def resume_investigation_atomic(
     auth_team_id: str | None = None,
 ) -> dict[str, Any]:
     """Resume every paused cursor for ``investigation_id`` (VR binding)."""
+    actor_user = auth_user_id or user_id or "system"
     return await _platform_resume(
         investigation_id,
         inv_model=VRInvestigationRecord,
         branch_model=VRInvestigationBranchRecord,
         branch_table=_VR_BRANCH_TABLE,
         track="vr",
+        actor=AuditActor(stage="vr", user_id=actor_user, team_id=auth_team_id),
         task_fn=run_vr_investigate,
         task_queue=task_queue,
         user_id=user_id,
@@ -114,22 +118,28 @@ async def reenqueue_investigation_atomic(
             "task_queue argument required (auth-bound for safety)",
         )
 
-    async def _submit_one(inv_id: str, branch_id: str | None) -> None:
+    async def _prepare_submit(
+        inv_id: str, branch_id: str | None,
+    ) -> PreparedSubmit:
         del branch_id  # VR submits once; setup owns branch spawn
-        await task_queue.submit(
-            track="vr",
-            fn=run_vr_investigate,
-            kwargs={"investigation_id": inv_id},
-            user_id=user_id,
-            group_id=group_id,
-            team_id=team_id,
-        )
+
+        async def _send() -> None:
+            await task_queue.submit(
+                track="vr",
+                fn=run_vr_investigate,
+                kwargs={"investigation_id": inv_id},
+                user_id=user_id,
+                group_id=group_id,
+                team_id=team_id,
+            )
+
+        return _send
 
     return await _platform_reenqueue(
         investigation_id,
         inv_model=VRInvestigationRecord,
         fn_path_pattern="%run_vr_investigate%",
-        submit_one=_submit_one,
+        prepare_submit=_prepare_submit,
         new_kind=new_kind,
         new_strategy=new_strategy,
     )

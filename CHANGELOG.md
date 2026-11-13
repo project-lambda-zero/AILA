@@ -5,6 +5,777 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.111] - 2026-11-13 -- Pause reason contract test and outcome review query count test
+
+### Fixed
+
+- The pause reason contract test lists every declared `InvestigationPauseReason` value, including `awaiting_unpack_target_analysis` (#513).
+- The outcome review query count test captures statements on any engine instance, so it no longer fails when another test file runs earlier in the same process (#513).
+
+## [0.6.110] - 2026-11-12 -- Investigation control actions write audit events in every investigation module
+
+### Added
+
+- Pausing, resuming, or cancelling an investigation, pausing or resuming a branch, resuming a target analysis, and deleting or archiving an investigation, project, or workspace in the vr, malware, and forensics modules now each write one audit event. The event uses the module id as its stage, names the operator and team, and targets `<kind>:<id>`. It commits in the same transaction as the state change. A refused request or a no-op (for example pausing an already paused investigation) writes none.
+- The audit trail section of the security model lists the new control actions.
+
+### Changed
+
+- The platform investigation lifecycle and branch pool take the operator as an `AuditActor` and record the action inside their own transaction. Resume and branch pause or resume require it; pause accepts none for automated pauses, which write no operator audit event.
+
+## [0.6.109] - 2026-11-12 -- Finding transitions require a finding the caller's team can see
+
+### Fixed
+
+- Transitioning a finding now returns 404 unless the module named in the request owns a finding with that id that the caller's team can see. Previously an unknown id, or another team's finding with no workflow history yet, was accepted and started a new workflow chain under the caller's team; the cross-team history check also missed rows because the request's team scope hid them. Unknown ids and other teams' findings return the same 404, and no workflow row is written.
+
+### Changed
+
+- Modules answer finding existence through a new `finding_exists` capability on the module protocol (default False). VR and malware check their findings tables; forensics checks the workflow row its findings list records for each derived finding.
+- The transition request now requires `module_id`. The former default named no module that owns findings.
+- The transition route returns 503 when the platform is not initialized, since no module can confirm the finding.
+
+## [0.6.108] - 2026-11-12 -- Scheduled platform automation runs on the default worker; the broken freeform task route is removed
+
+### Fixed
+
+- Scheduled platform automation actions (health check, tool storage prune, calibration sweeps, memory consolidation sweeps, retrieval eval, shadow report, routing retune) now run. A due schedule is submitted as one registered worker task on the default queue, which the default worker set consumes; the worker resolves the action id and runs its handler. Previously they were queued on a platform queue no worker consumed, as functions the worker did not register.
+
+### Removed
+
+- The freeform task submit route at /task. It failed on every call before anything was queued; scan submission at /analyze covers the same query path through a registered worker task.
+
+## [0.6.107] - 2026-11-12 -- Module config namespaces no longer offer an LLM model key that nothing read
+
+### Removed
+
+- The module scoped llm_model config key is gone from every module namespace (vr, malware, forensics, vulnerability, and the module template). Setting it never changed which model an agent used; model selection is the platform per task type keys (llm_model_<task_type>, falling back to llm_default_model). Writes to the module key are now rejected as an unknown key.
+- Migration `150_drop_module_llm_model_config` deletes the llm_model rows that module registration had stored, so the config list no longer shows them.
+
+## [0.6.106] - 2026-11-12 -- Calibration sweep reports failed table reads instead of an idle install
+
+### Fixed
+
+- The calibration proposer sweep now lists every outcome and review table pair whose read failed in its report errors, with the failure class, instead of reporting zero samples and no errors as if the install were idle. Override pairs that name an unsafe table or are malformed are also listed. A readable pair with no reviews in the window still reports zero samples and no error.
+
+## [0.6.105] - 2026-11-12 -- A task queue drain now stops submissions from every caller in the deployment
+
+### Fixed
+
+- Draining the task queue now rejects new submissions from every caller, including module routes, workers, and other API processes. The drain flag was held on the single queue object that served the admin request, so submissions through any other queue object were still accepted.
+
+### Added
+
+- An admin undrain route and a "resume submissions" action on the admin task queue page lift a drain. The drain state is kept in Redis and therefore survives API restarts, so it is lifted explicitly instead of by restarting.
+
+### Changed
+
+- The drain confirmation on the admin task queue page now states that new submissions are rejected until resumed and that queued tasks still run.
+
+## [0.6.104] - 2026-11-12 -- Team-scoped admins can no longer change deployment config or operate the shared task queue
+
+### Fixed
+
+- Config value writes now require a god-tier admin (admin role with no team scope). Config entries carry no team, so a write changes behavior for every team; a team-scoped admin now receives 403 instead of writing platform or module settings.
+- Task queue depth, drain, and requeue of failed tasks now require a god-tier admin. These act on the queue every team shares, so a team-scoped admin now receives 403.
+
+## [0.6.103] - 2026-11-12 -- The console renews an expired access token instead of signing the user out
+
+### Fixed
+
+- When the access token expires, the console renews it through the refresh cookie and retries the failed request once, so users are no longer returned to the sign in screen every hour while their refresh session is valid. Concurrent requests that hit an expired token share a single renewal. The user is signed out only when the renewal itself fails.
+- Report and evidence downloads, the vulnerability report explanation, and live event streams use the same renewal path instead of signing the user out on the first 401.
+
+### Changed
+
+- The console keeps the access token in memory only and no longer writes it to browser storage. Login, refresh, and logout requests send the session cookies and the CSRF header, and a page reload restores the session through the refresh cookie.
+
+## [0.6.102] - 2026-11-12 -- An empty forensics findings tab no longer reads as a clean result before analysis
+
+### Fixed
+
+- The forensics findings tab shows "no suspicious findings." only after analysis produced artifacts. With no artifacts it says the project is not analyzed yet, that analysis is still running, that analysis failed, or that analysis produced no artifacts, so an unanalyzed project is no longer reported as clean.
+
+## [0.6.101] - 2026-11-12 -- Retrying a failed forensics readiness check no longer creates another project
+
+### Fixed
+
+- In the forensics intake wizard, Retry after a failed readiness check (and Next with unchanged inputs) re-runs the readiness check on the project the wizard already created instead of creating a new project each time. Changing the project inputs and checking again creates exactly one new project.
+
+## [0.6.100] - 2026-11-12 -- The forensics evidence tab pages through every evidence file and shows the total
+
+### Changed
+
+- The forensics evidence list route now returns a page object (`items`, `total`, `page`, `page_size`, `pages`) instead of a bare list, matching the artifacts route. The console evidence tab is its only caller and was migrated in the same change.
+
+### Fixed
+
+- The forensics evidence tab no longer silently stops at the first 100 evidence files. It shows the project's evidence total and has previous and next page controls, so every evidence file is reachable.
+
+## [0.6.99] - 2026-11-12 -- Forensics intake config declares only the fields its wizard uses
+
+### Removed
+
+- The forensics intake config no longer carries step labels, a header, a tagline, a demo analyzer list, a readiness checklist, a new-case label, or a launch label. The forensics wizard renders its own steps and labels, lists analyzers from the systems registry, and shows the backend's readiness results, so none of these values was ever displayed.
+- The unused `ModuleCfg` union, its `flow` discriminant, and the uncalled `getCfg` helper are removed; the intake overlay picks its wizard by module id.
+
+## [0.6.98] - 2026-11-12 -- Failed and cancelled workflow runs no longer mark their task done
+
+### Fixed
+
+- A workflow-engine task whose run ends in `__failed__` or `__crashed__` (for example a state handler that raises) is now recorded `failed` with an error starting `code=WORKFLOW_FAILED` and naming the failed state and error class, instead of `done`. Its waiting dependents are no longer released.
+- A workflow-engine task whose run ends in `__cancelled__` is now recorded `cancelled` instead of `done`. A `__succeeded__` run still records `done`, and run-record finalization is unchanged.
+
+## [0.6.97] - 2026-11-12 -- Long-running workflow states keep a fresh task heartbeat
+
+### Fixed
+
+- A workflow task whose state handler runs longer than `platform.reaper_zombie_heartbeat_min` (for example a forensics freeflow investigation or a long LLM turn) is no longer cancelled as a zombie while it is still running. The engine now refreshes `taskrecord.heartbeat_at` every `platform.heartbeat_interval_s` while a handler runs and stops the refresher when the handler returns, raises, or times out, so a task whose worker died is still reaped within the configured threshold.
+
+## [0.6.96] - 2026-11-12 -- Stuck forensics investigations are re-enqueued
+
+### Added
+
+- Migration `149_forensics_inv_lifecycle_cols` adds nullable `pause_reason` and `started_at` columns to `forensics_investigations`, so the platform investigation reset applies to forensics rows.
+
+### Changed
+
+- Investigation re-enqueue now takes a dispatch builder (`prepare_submit`) instead of a one-shot submitter. Every module builds its worker dispatch before the reset transaction and sends it after the commit; the operator re-enqueue routes, stuck healers, and investigation reconcilers of vr, malware, forensics, and the module template use it.
+
+### Fixed
+
+- Re-enqueueing a stuck forensics investigation no longer fails with a missing-field error, so the forensics stuck healer and reconciler stop retrying the same row on every tick.
+- A stuck forensics freeflow investigation is re-driven by submitting exactly one freeflow task rebuilt from its project and analyzer rows, and the investigation row points at the new task. A branched investigation with no active panel branch is refused instead of being re-driven as freeflow.
+- A re-enqueue whose dispatch cannot be built (missing investigation, project, or analyzer system) now refuses before any reset write, leaving the row, its cursors, and its tasks unchanged.
+
+## [0.6.95] - 2026-11-12 -- Forensics projects end failed, with a reason, when analysis fails after intake
+
+### Fixed
+
+- A forensics full-analysis run that fails after intake (a stage raising after its retries, timing out, or failing output validation) now sets the project to failed with a failure reason naming the stage and error class. Previously the project stayed in analyzing. Successful runs still end completed, and an intake failure keeps the reason intake recorded.
+
+### Changed
+
+- Every forensics full-analysis and raw-directory state routes failures to a new `analysis_failed` state that ends the run at `__failed__` instead of `__crashed__`.
+
+## [0.6.94] - 2026-11-12 -- Forensics registry analysis buckets are filled from the artifact types the disk collector emits
+
+### Fixed
+
+- The forensics registry analysis view now fills its buckets from the artifact types the disk collector actually writes. User accounts (written under the `user` family) and Windows startup entries (`startupinfo`) were never shown, and macOS launch agents, launch daemons, login items, recent documents, and interface addresses were dropped.
+
+### Changed
+
+- Registry analysis rows are selected by dissect artifact type instead of by artifact family. Types without a bucket (shell and command history, recycle bin, spotlight) are not listed in this view.
+
+### Removed
+
+- The `amcache`, `bam`, and `security_packages` registry analysis buckets and their tab sections. No collector produced rows for them, so they were always empty.
+
+## [0.6.93] - 2026-11-12 -- Forensics project creation goes through the readiness wizard; intake failures keep their reason
+
+### Fixed
+
+- The forensics projects page "+ new" button now opens the forensics intake wizard, which checks analyzer readiness before analysis starts, instead of a generic create form that skipped the readiness check.
+- A failed forensics intake now stores a bounded failure reason (exception class and message) on the project. The reason is returned with project summaries and shown on the project overview while the project is failed. A later non-failed status write clears it.
+
+### Added
+
+- Migration `148_project_failure_reason` adds a nullable `failure_reason` column to `forensics_projects`.
+
+### Removed
+
+- The generic `forensics:projects` create form spec.
+
+## [0.6.92] - 2026-11-12 -- readiness requires a readable evidence directory
+
+### Fixed
+
+- The forensics readiness check now verifies that the project's evidence directory exists and is readable on the analyzer, for disk-evidence and raw-directory projects on POSIX and Windows analyzers. When it is missing or unreadable the check reports not ready with the reason in its message, the project stays `created`, and no analysis task is enqueued. Previously such a project reached `ready` and failed later during intake (#447).
+
+## [0.6.91] - 2026-11-12 -- one binary-analysis artifact per sample
+
+### Fixed
+
+- Forensics collection persists every successful binary-analysis result for an evidence file as its own artifact. Previously all results of one evidence file shared a single duplicate-detection key, so only the first result was stored (#459).
+- A binary-analysis sample that cannot be read or staged is reported as a `binary_analysis_sample_failed` collection event instead of being stored as an artifact, and a failure row stored by an earlier run no longer blocks a later successful result for that sample (#459).
+
+## [0.6.90] - 2026-11-12 -- forensics evidence paths are quoted for the analyzer shell
+
+### Fixed
+
+- Forensics deep analysis (strings, FLOSS, capa, Ghidra function listing) quotes evidence paths for the analyzer shell. On POSIX analyzers, paths containing double quotes, dollar signs, or backticks now reach the tool as one literal argument instead of breaking the command or being expanded by the shell (#445).
+- Intake directory listing quotes the evidence directory: POSIX `find` and its `ls -lR` fallback receive it as one argument, and the Windows listing uses a PowerShell literal path with embedded single quotes escaped. The Windows evidence reachability probe uses the same literal quoting (#445).
+- The generated binary analysis script encodes the image path as a Python string literal, so paths containing quotes, newlines, or a trailing backslash no longer make the script unparseable (#445).
+
+## [0.6.89] - 2026-11-12 -- binary analysis runs on POSIX analyzers
+
+### Fixed
+
+- The forensics binary-analysis collector now issues every remote step in the form of the project's analyzer OS. POSIX analyzers get `python3`, a `/tmp` script path, and `rm -f` cleanup instead of Windows commands that never ran there; Windows analyzers keep `python`, `%TEMP%`, and `del /f /q` (#440).
+- The image OS sniff passes the image path as a quoted argument instead of embedding it in Python source, so paths containing quotes, spaces, or shell metacharacters reach the analyzer intact (#440).
+- The Ghidra stage of binary analysis reports `ghidra_stage_skipped` with reason `analyzer_os_unsupported` on non-Windows analyzers instead of probing Windows scratch paths (#440).
+
+## [0.6.88] - 2026-11-12 -- one active forensics full-analysis task per project
+
+### Fixed
+
+- `POST /forensics/projects/{project_id}/full-analysis` no longer enqueues a second analysis pipeline when one is already active for the project (for example one auto-enqueued by a readiness check). It returns the active task id with status `already_queued`, matching the readiness check behavior (#432).
+- The full-analysis trigger submits the same task arguments as the readiness auto-enqueue, so concurrent submits for one project share a queue dedupe key (#432).
+
+## [0.6.87] - 2026-11-12 -- redispatched stopped forensics investigations stay stopped
+
+### Fixed
+
+- A forensics investigation that is redispatched (task retry or stuck-run healer) while its row is already cancelled, paused, or terminal now keeps that status and starts no turn. Previously the run overwrote the row with `running` and spent one more turn before noticing the stop (#460).
+- No forensics investigator status write can move a row out of `cancelled` (#460).
+
+## [0.6.86] - 2026-11-12 -- forensics status changes reach the live event stream
+
+### Fixed
+
+- Forensics project and investigation status changes now publish `project.status_changed` and `investigation.status_changed` events on `/events/stream`, delivered to the owning team like the VR and malware investigation events (#420).
+- The console refreshes forensics project and investigation views when one of these events arrives, and refreshes every forensics view after a stream reconnect, so status changes appear without a manual reload (#420).
+
+### Removed
+
+- The forensics SSE routes `GET /forensics/projects/{project_id}/readiness-check/stream` and `GET /forensics/projects/{project_id}/investigations/{investigation_id}/events`, which had no console consumer. Readiness checks use the synchronous `POST .../readiness-check`; forensics task progress remains available on `GET /tasks/{task_id}/events` (#420).
+
+## [0.6.85] - 2026-11-12 -- Dumped memory regions stored as metadata under a byte cap
+
+### Fixed
+
+- Memory collection no longer stores each dumped malfind region's bytes as base64 text inside its artifact. Nothing read that copy, and one run could add hundreds of megabytes to the artifact table. Region artifacts keep the size, SHA-256, MZ header flag, and PID and VAD coordinates. Region pulls now also stop once 64 MiB has been pulled in a run (in addition to the 40 region limit), and the completion event reports how many regions were skipped.
+
+## [0.6.84] - 2026-11-12 -- Long investigator steps keep their structured fields
+
+### Fixed
+
+- A forensics investigator step whose case model is large now keeps its contract, hypotheses, rejected list, observables, provenance, and submitted flag in the step view. The stored blob was cut at 6000 characters after serialization, which left invalid JSON, so long steps showed only the raw truncated text. Free text is now bounded per field before serialization (the reasoning at 6000 characters, every other string at 2000, each with a truncation marker), so the stored blob is always valid JSON.
+
+## [0.6.83] - 2026-11-12 -- Full analysis opens evidence lanes from intake
+
+### Fixed
+
+- Full analysis now runs the collector lanes that match the classified evidence. Intake classifications were never posted to the evidence board the dispatch hub reads, and the hub's lane conditions looked the board up by an investigation id that full-analysis runs do not carry, so every lane was skipped and the run went straight to the post-collection stages. Intake now posts one discovery per classified file under the project, the lane conditions read the same project board, and re-running intake does not duplicate entries.
+
+## [0.6.82] - 2026-11-12 -- Lead reasons no longer cite the question as evidence
+
+### Fixed
+
+- A lead's reason and evidence list no longer report a keyword that appears only in the investigation's question or requested answer format; those fields restate what was asked, not what was found. Keywords in the answer and other evidence fields are still reported, and the keyword score boost follows the same rule.
+
+## [0.6.81] - 2026-11-12 -- Intake records evidence SHA-256 under a size cap
+
+### Added
+
+- Forensics config key `intake_hash_max_bytes` (env `AILA_FORENSICS_INTAKE_HASH_MAX_BYTES`, default 2 GiB): the largest evidence file intake hashes on the analyzer. `0` defers hashing for every file.
+
+### Fixed
+
+- Evidence intake now stores a SHA-256 digest for every evidence file at or below the intake hash cap; the evidence list previously returned a null hash for every item. Files above the cap and files whose hash command fails keep a null digest, and the row's metadata records `hash_status` (`computed`, `deferred_over_cap`, or `failed`), so an unhashed file is distinguishable from a missing value. Re-running intake does not re-hash a file whose size is unchanged and that already has a digest.
+- Deep analysis hashes files through the same helper as intake instead of its own copy.
+
+## [0.6.80] - 2026-11-12 -- Forensics project updated_at advances on status changes
+
+### Fixed
+
+- A forensics project's `updated_at` now advances on every update, including each status change written by the workflow. It previously stayed equal to `created_at` for the life of the project.
+
+## [0.6.79] - 2026-11-12 -- Readiness probes honor the tool's exit status
+
+### Fixed
+
+- Forensics analyzer readiness no longer reports a missing tool as installed. Tool check commands no longer pipe through `head` or `grep`, whose exit status hid the tool's own failure, and a probe now counts as a pass only when it exits 0 and prints no shell not-found message. Online and offline install verification use the same rule.
+- On Windows analyzers, foremost (which has no Windows port) is reported as skipped instead of installed.
+
+## [0.6.78] - 2026-11-12 -- Failed MCP catalog fetches are retried instead of cached
+
+### Fixed
+
+- A failed MCP tool catalog fetch (connection error, timeout, non-JSON body, or a payload without a tool list) no longer caches an empty catalog for the life of the process. The call still returns an empty catalog, and the next call fetches again, so tool schemas appear once the server recovers without a worker restart. A server that answers with an empty tool list is still cached. This applies to the shared MCP client and to the Android middleware's class-level catalog.
+
+## [0.6.77] - 2026-11-12 -- Reconciler closes run records with the cursors it terminalizes
+
+### Fixed
+
+- When the state reconciler drives the stranded workflow cursors of a completed, failed, or abandoned investigation to a terminal state, it now also closes each matching workflow run record with the mapped status and a completion time in the same transaction. Those runs previously stayed listed as running with no completion time. A repeated reconcile pass leaves them unchanged.
+
+## [0.6.76] - 2026-11-12 -- artifact_query is a valid agent action; every forensics tool has a key
+
+### Fixed
+
+- The forensics agent can now use the `artifact_query` action its prompt tells it to use for reading deep analysis and Ghidra artifacts. The shared reasoning action vocabulary did not include it, so such a decision failed validation and the investigator's query branch was unreachable. VR, malware, and the module template reject `artifact_query` explicitly with an unsupported action message instead of treating it as a plain turn.
+- Forensics tool keys now cover every tool in the forensics catalog (zeek, yara, registry viewer, carving, dd), so those tools appear in the module's required tools and capability profiles.
+
+## [0.6.75] - 2026-11-12 -- Seal content retention can be enabled through config
+
+### Fixed
+
+- The per task type `llm_seal_store_content_<task_type>` setting, which the LLM log names as the switch for full prompt and response retention, can now be set through the validated config path. The key family was undeclared, so setting it was rejected as unknown. It accepts boolean values and rejects anything else.
+
+## [0.6.74] - 2026-11-12 -- Dashboard warns when a module is excluded from finding totals
+
+### Fixed
+
+- When a module fails to report its finding counts, the dashboard now logs the exclusion at WARNING with the traceback instead of DEBUG, so totals that are lower than the true count no longer go unnoticed under default logging.
+
+## [0.6.73] - 2026-11-12 -- Writeup records the artifacts its steps and answers cite
+
+### Fixed
+
+- A forensics writeup now stores the artifacts cited by the investigation: each step's provenance artifact and the primary artifact of every answer the investigation produced, deduplicated in first-seen order. The list was read from a step key investigator steps never carry, so it was always empty.
+- When the project's artifact inventory cannot be read, the writeup methodology now states that the evidence sections were built without it, instead of the failure appearing only in the worker log.
+
+## [0.6.72] - 2026-11-12 -- Agent prompt shows the knowledge retrieve arguments
+
+### Fixed
+
+- The agent prompt now lists the knowledge retrieve signature with its `query` (required), `limit`, and `route` arguments. The knowledge bridge published its argument list under a key the prompt renderer does not read, so the tool appeared with no arguments under a header telling the agent to use the exact parameter names shown.
+
+## [0.6.71] - 2026-11-12 -- Writeup fails with a typed reason when the LLM is disabled
+
+### Fixed
+
+- When the LLM kill switch is active, the forensics writeup step now emits a `writeup_llm_disabled` event with the reason and fails with the typed LLM disabled error, instead of crashing with a generic runtime error.
+- Step log fields in the writeup bundle that are capped (command, reasoning, stdout, stderr) now end with a visible truncation marker, matching the per-section cap.
+
+### Removed
+
+- The unused template writeup builder in the forensics writeup module. Writeup generation has no template fallback; its docstring now says so.
+
+## [0.6.70] - 2026-11-12 -- Freeflow investigations promote their artifacts to leads
+
+### Fixed
+
+- A forensics freeflow investigation now promotes the artifacts it wrote to leads before its writeup, so the leads tab and lead consumers show its conclusions without waiting for a later full analysis run. Collector artifacts still never become leads.
+- Lead promotion skips artifacts that already have a lead, so a retried promotion state or a full analysis run after a freeflow investigation does not create duplicate leads.
+
+## [0.6.69] - 2026-11-12 -- Freeflow marks the investigation failed on LLM errors
+
+### Fixed
+
+- A forensics freeflow investigation whose LLM call fails with an LLM subsystem error (for example a budget stop or a disabled provider) is now marked failed and emits an agent failure event. The error escaped the freeflow failure handler, so the workflow crashed while the investigation stayed running in the UI.
+
+## [0.6.68] - 2026-11-12 -- Leads tab requests stay within the route limit
+
+### Fixed
+
+- The forensics leads tab loads leads again. It defaulted to a limit of 200 and offered 500 and 1000, while the leads route accepts at most 100, so the default load failed validation and the tab showed a load error. The tab now defaults to 100 and offers 25, 50, and 100.
+
+## [0.6.67] - 2026-11-12 -- apiFetch resolves 204 and empty responses
+
+### Fixed
+
+- Deleting a forensics directive or finding suppression no longer shows a failure toast after the row was deleted. The console API client now resolves a 204 response, or any successful response with an empty body, without trying to parse JSON; the backend labels these empty responses as JSON.
+
+## [0.6.66] - 2026-11-12 -- Directory retrievals report the archive digest
+
+### Fixed
+
+- Retrieving a directory from a forensics project (disk image or raw directory) no longer fails with a hash mismatch and quarantines the archive. The extraction scripts now report the SHA-256 of the finished zip archive, which is the file the API host pulls and re-hashes, instead of a digest over the member contents.
+
+## [0.6.65] - 2026-11-12 -- Evidence classifier routes .img, syslog, and memory.raw to their lanes
+
+### Fixed
+
+- Forensics intake now classifies `.img` files as disk images and the extensionless `syslog` file (and numbered rotations such as `syslog.1`) as log files, so they activate the disk and log analysis lanes instead of being stored as unknown.
+- Raw files whose name starts with `memory` (for example `memory.raw`) now classify as memory dumps. The pattern required a literal backslash before the extension, so these files fell through to the generic raw disk rule and ran the disk and binary analysis lanes instead of the memory lane.
+
+## [0.6.64] - 2026-11-12 -- Readiness enqueue guard tests exercise the real stored task path
+
+### Fixed
+
+- The forensics readiness enqueue guard tests now seed task rows with the task path exactly as the queue stores it. The previous constant double-qualified the path, so the positive cases failed and the negative cases passed without exercising the guard. Each negative case now also asserts that a matching live task is detected on the same query.
+
+## [0.6.63] - 2026-11-12 -- Forensics script lint no longer rejects benign scripts
+
+### Fixed
+
+- The forensics investigator's pre-flight dissect API lint now rejects a script only when the script contains a known API mistake. A precedence error made every entry after the first fire unconditionally, so every script without `Target(` (including a plain assignment or a `t.fs.walk()` loop) was rejected with the `.rglob(` message and never reached the analyzer. `Target(` keeps its `Target.open(` exception.
+
+## [0.6.62] - 2026-11-12 -- Workflow run records close at the terminal state
+
+### Fixed
+
+- Workflow runs driven by the durable state machine now record their outcome on the run record. A succeeded terminal records `completed`, a failed or crashed terminal records `failed`, a cancelled terminal records `cancelled`, and `completed_at` is set in the same transaction as the terminal cursor transition. Previously these runs stayed `running` with no completion time.
+- Two phase dispatch keeps the run open across the dispatcher handoff and closes it at the inner definition's terminal state. A dispatcher that selects no definition, or one outside its dispatch map, now closes the run as `failed`.
+- A new attempt that starts a fresh cursor on a closed run (for example after the reaper cleared a terminal cursor) reopens the run record so the new attempt's outcome is recorded. Retrying a run whose cursor is already terminal still returns the stored output without rerunning handlers or changing `completed_at`.
+
+## [0.6.61] - 2026-11-12 -- Global search finds malware targets and VR investigations
+
+### Fixed
+
+- Global search now finds malware targets by display name and VR investigations by title, limited to the caller's team, and opens each result in its existing detail window. Existing system, session, and vulnerability finding results are unchanged, and each finding appears once.
+
+## [0.6.60] - 2026-11-12 -- Docs point to alembic heads instead of a pinned revision
+
+### Fixed
+
+- Deployment, migration, schema, and VR reference documents no longer name a stale Alembic revision as the current head. They direct readers to `alembic heads`, and migration templates use placeholder revision numbers.
+
+## [0.6.59] - 2026-11-12 -- Monaco loads only when a code surface opens
+
+### Fixed
+
+- The Monaco code editor, its stylesheet, and its workers now load only when a code-viewing surface opens, instead of at startup. The initial entry transfer drops from about 4.89 MB (1.23 MB gzip) to about 0.55 MB (0.15 MB gzip). The production build now fails if Monaco re-enters the entry document or its static imports.
+
+## [0.6.58] - 2026-11-12 -- Confirm toolbar actions that restart or re-run analysis
+
+### Fixed
+
+- Malware and VR target detail toolbars now ask for confirmation before restarting, resetting, or re-running analysis, so a misclick no longer resets a pipeline or starts a new analysis, ranking, source refresh, or APK audit. Delete confirmation is unchanged.
+
+## [0.6.57] - 2026-11-12 -- Visible keyboard focus on the chat composer and command palette
+
+### Fixed
+
+- The chat composer and command palette search inputs now show a visible focus ring for keyboard users. Existing focus indicators on buttons and navigation are unchanged.
+
+## [0.6.56] - 2026-11-12 -- VR streams emit stable ids and resume losslessly
+
+### Fixed
+
+- The VR project event stream and the investigation message stream now emit stable event ids and resume a reconnecting client after the last delivered event, including events that share its timestamp. An explicit since_iso cursor still takes precedence, and a fresh connection starts at the current time as before.
+- The VR project event stream no longer skips events from one source when another source has newer events during a busy poll.
+
+## [0.6.55] - 2026-11-12 -- Progress streams resume from Last-Event-ID
+
+### Fixed
+
+- Scan, task, and forensics investigation progress streams now resume after the last delivered event when a client reconnects with a Last-Event-ID header, instead of replaying the whole stream. An explicit query cursor still takes precedence. A malformed query cursor is rejected with a 400 error, and a malformed header starts a fresh stream.
+
+## [0.6.54] - 2026-11-12 -- Prompt-cache TTL reaches Claude-family requests
+
+### Fixed
+
+- The configured prompt-cache lifetime now reaches outgoing requests. Requests to Claude-family models carry a cache marker on the stable system prefix. A setting of zero uses the provider default lifetime, up to 300 seconds selects the five minute lifetime, and longer settings select the one hour lifetime. Requests to models that cache automatically are unchanged.
+
+## [0.6.53] - 2026-11-12 -- Malware rail, observations, and transcripts load past fixed limits
+
+### Fixed
+
+- The malware investigation rail, investigation observation history, and message transcripts now load beyond their former fixed limits of 100 investigations, 500 observations, and 1000 messages. Long transcripts now include the newest messages, and live polling appends new messages in order without duplicates.
+
+## [0.6.52] - 2026-11-12 -- Malware list pages reach every row
+
+### Fixed
+
+- The malware investigations, findings, and observations pages now page through every row using the backend total. They previously stopped at the first 50 investigations or findings and the first 200 observations.
+
+## [0.6.51] - 2026-11-12 -- VR investigation delete purges LLM cache and detaches cost rows
+
+### Fixed
+
+- Deleting a VR investigation now removes its LLM response cache entries for the investigation and all of its branches, and detaches its LLM cost records from the deleted investigation, branch, and run while keeping their amounts and team attribution. A failure in either step rolls back the whole delete.
+
+## [0.6.50] - 2026-11-12 -- Target reads expose the uploaded sample digest
+
+### Fixed
+
+- Malware target list and detail reads now include the uploaded sample's SHA-256 as `sha256`, for binary and APK targets alike, and the target detail page shows it. APK overviews also carry the digest once decoding has run. Targets with no stored digest report null.
+
+## [0.6.49] - 2026-11-12 -- APK overview reads the real ingestion handles
+
+### Fixed
+
+- The malware APK target overview now shows the decoded directory, manifest, decompiled directory, JADX root and class count, code index, and a bounded static-summary reference produced by APK ingestion. It previously showed none of them because it read handle names the pipeline does not write. The full static-summary artifact is never embedded in target reads.
+
+## [0.6.48] - 2026-11-12 -- Intake shows why a target failed
+
+### Fixed
+
+- The intake target picker now shows a failed target's analysis failure message under its state, so the reason is visible without leaving intake. Rows that are not failed, or that have no message, are unchanged.
+
+## [0.6.47] - 2026-11-12 -- Outcome views show the generated narrative
+
+### Fixed
+
+- Malware X-Ray outcome views now show the generated investigation narrative body in the primary finding and selected outcome panes. It takes precedence over other outcome prose, and a missing or malformed narrative falls back to the previous text. Exports are unchanged.
+
+## [0.6.46] - 2026-11-12 -- All-skipped playbook runs report skipped
+
+### Fixed
+
+- A malware playbook run in which every step was skipped now reports the aggregate status `skipped` instead of `ok`, in the run result, the execution outcome, and the task result, together with each step's skip reason. Such a run no longer advances the playbook's run count or last-run time. Runs that dispatch steps keep their `ok`, `partial`, or `failed` status.
+
+## [0.6.45] - 2026-11-12 -- Forensics investigator stops on paused and terminal statuses
+
+### Fixed
+
+- The forensics investigator now stops before its next model call when the investigation becomes paused, completed, exhausted, or failed, not only when it is cancelled. Those stops return a non-cancelled stopped result and emit no cancellation event, and the freeflow state keeps the stored status instead of overwriting it or marking a zero-step failure. Cancellation and cost-ceiling exhaustion behave as before.
+
+## [0.6.44] - 2026-11-12 -- Unpack detector runs after malware observations
+
+### Fixed
+
+- The malware unpack detector now runs after each tool dispatch and after playbook runs attributed to an investigation. When a target has both a positive packer-detected and a positive unpack-result observation, exactly one unpacked child target is created through the canonical outcome dispatcher and the parent investigation pauses for its analysis. Repeated checks and re-dispatch do not create another child, and detection never executes sample content.
+- Playbook runs attributed to an investigation now record their execution outcome under the investigation's active branch instead of failing on an empty branch id. A run whose investigation has no active branch is refused before any step runs.
+
+## [0.6.43] - 2026-11-12 -- Malware role notes reach the reasoning prompt
+
+### Fixed
+
+- Malware persona and investigation-kind role notes are now part of the reasoning system prompt. The matching note is appended exactly once to the pinned or file-backed base prompt before it is hashed. Unmatched combinations keep the base prompt unchanged.
+
+## [0.6.42] - 2026-11-12 -- auto_pilot off pauses on unknown-confidence decisions
+
+### Fixed
+
+- With `auto_pilot` off, an investigation now pauses with reason `low_confidence` when a nonterminal agent decision reports structured confidence `unknown`, and waits for operator resume instead of continuing automatically. Investigations with `auto_pilot` on, terminal submits, and decisions with any other confidence are unchanged. A tool run in the same turn still executes before the pause.
+
+## [0.6.41] - 2026-11-12 -- Malware rejects unsupported script actions
+
+### Fixed
+
+- A malware agent decision with the `script_execute` action is now rejected explicitly. The turn records an `unsupported_action` error that keeps the submitted script body, invokes no executor, stays nonterminal, and the agent receives a corrective directive listing the valid malware actions. Malware prompt guidance no longer advertises `script_execute`. Modules that implement script execution are unchanged.
+
+## [0.6.40] - 2026-11-12 -- Malware operator reviews evaluate quorum
+
+### Fixed
+
+- Malware operator outcome reviews now run the shared quorum evaluation after the review is recorded. Enough operator approvals approve the outcome and dispatch it once, enough rejects reject it, and below-threshold votes or abstentions leave it in draft. A later review of an already settled outcome causes no second transition or dispatch.
+
+### Changed
+
+- The malware approved-outcome dispatch and verdict experience write are module-level functions shared by the agent turn loop and the operator review route.
+
+## [0.6.39] - 2026-11-12 -- Duplicate malware operator reviews return 409
+
+### Fixed
+
+- A second operator review of a malware outcome from the same reviewer branch now returns 409 with error code `DUPLICATE_RESOURCE`, writes no row, and leaves review counts and quorum unchanged. It previously returned 500. Other database errors on the route keep their existing handling.
+
+### Added
+
+- `DuplicateResourceError` in the platform error taxonomy (code `DUPLICATE_RESOURCE`, HTTP 409) and a storage helper that recognizes a uniqueness violation of a named constraint, so routes can map one specific constraint to a conflict without exposing constraint names.
+
+## [0.6.38] - 2026-11-12 -- Deleting a malware finding removes its workflow records
+
+### Fixed
+
+- Deleting a malware finding now removes its malware finding-workflow records in the same transaction, so a deleted finding id no longer leaves mutable workflow history behind. A failure during the delete leaves both the finding and its workflow records in place, and workflow records of other findings or modules are untouched.
+
+## [0.6.37] - 2026-11-12 -- Malware branch routes enforce branch lifecycle rules
+
+### Fixed
+
+- Malware branch promote and abandon requests now go through the shared branch pool lifecycle rules. Promoting an abandoned branch, or abandoning a promoted or merged branch, returns 409 and leaves the row unchanged, instead of returning 200 and writing an inconsistent state.
+- Promoting a malware branch now demotes its active and paused siblings with a closed reason, matching VR.
+
+## [0.6.36] - 2026-11-12 -- VR explorer LLM cache is keyed per turn
+
+### Fixed
+
+- The VR explorer's LLM proposal call now includes the turn number in its idempotency key. A same-turn worker retry still replays the cached proposal without a second model call, but a later turn with an identical prompt makes a fresh call instead of replaying the prior turn's lead as new work.
+
+### Changed
+
+- The agent knowledge-refresh hook (`_refresh_retrieved_knowledge`) takes the runner's `turn_number` keyword. The VR and malware overrides accept it, and VR threads it through the explorer planner.
+
+## [0.6.35] - 2026-11-12 -- VR explorer skips submit-locked branches
+
+### Fixed
+
+- With the VR explorer enabled, a branch inside a submit-rejection streak (any positive unresolved-hypothesis, draft-pending, sibling-open, promote-confirmed, or wave-two gate reject counter) no longer runs the explorer, makes no explorer LLM call, and receives no new top lead. A stale `_directive.explorer_top_lead` is cleared, so the gate's mandatory directive is the only steering on those turns. Leads resume on the first turn after the counter clears.
+- The disabled-flag path and unlocked branches are unchanged.
+
+## [0.6.34] - 2026-11-12 -- Unresolved-hypothesis gate honors answer folding
+
+### Fixed
+
+- The VR and malware unresolved-hypothesis submit gate now counts a live hypothesis as resolved when its id is cited in the submit `answer` as an exact token, matching the folding option the directive and system prompts already advertise. Previously only ids in `rejected[]` cleared the gate, so a submit that followed the folding instruction was still rejected.
+- Matching is exact and case-sensitive: an id adjacent to a letter, digit, underscore, or hyphen does not count, so `h1` is not resolved by an answer that cites only `h10`, `h1_b`, or `h1-b`. Rejection, cap, and force-through behavior are unchanged, and the forensics gate is untouched.
+
+## [0.6.33] - 2026-11-12 -- Rejected hypotheses can be revived once with confirmation evidence
+
+### Fixed
+
+- A rejected or resolved hypothesis that a later decision re-emits under the same id with a non-empty `confirmed_by` citation is admitted live again, once per id per branch, and keeps its evidence. Each revival is logged at WARNING and recorded in `revived_hypothesis_ids` on the persisted case state, so the once-only rule holds across turns, branch merges, and the forensics investigator.
+- Re-emits without `confirmed_by`, a second revival of the same id, and a confirmed re-emit of an id rejected in the same decision are still refused and logged.
+- The VR positive-submit gate applies the same admissibility rule before `absorb()` runs, so a refused revival, or a merged state that holds an id both live and terminal, never counts as a confirmed citation.
+
+## [0.6.32] - 2026-11-12 -- VR gate reject counters are reserved observables
+
+### Fixed
+
+- `_gate.` is now a reserved observable prefix. A turn decision that writes a VR submit-gate reject counter is dropped, so a branch can no longer force an unsupported submit through by setting its own counter.
+- Submit-gate reject counters are no longer evicted by the agent-key cap or by the observable storage cap, so a flood of scratchpad keys or tool readings cannot reset a gate's rejection history.
+
+## [0.6.31] - 2026-11-12 -- VR positive submits hydrate matching file citations into evidence refs
+
+### Fixed
+
+- A positive VR submit with empty `payload.evidence_refs` now has its explicit `path:line` and `path:start-end` citations from the answer, `source_ref`, and `sink_ref` attached as `source_citation` evidence refs when a tool observation on the same branch carries a matching coordinate header. Each hydrated ref names the matching observation, and the payload records a `positive_submit_evidence_hydration_advisory`.
+- Hydration is bounded to the first 4000 characters of each field and 16 citations. Basename-only citations never match by suffix, citations outside the observed line range never match, and observations that report no body are not match sources.
+- Hydration does not satisfy the live `confirmed_by` requirement, so a submit with no live confirmed hypothesis still rejects. Unmatched citations still reject, and non-empty `evidence_refs` are never rewritten.
+
+## [0.6.30] - 2026-11-12 -- VR gate rejections reach the mandatory directive section
+
+### Fixed
+
+- A rejected VR wave-two submit now comes back as a `reasoning` decision that carries the rejection text, instead of an empty `tool_run` that the turn runner coerced and annotated with a different directive.
+- The gate's corrective guidance is stored under `_directive.gate.<gate>.rejected`, so it renders in the next prompt's mandatory directive section. It is removed when the gate passes, forces through, or is disabled, so stale guidance stops rendering.
+
+### Removed
+
+- A test that only pinned the `_gate.` key naming convention.
+
+## [0.6.29] - 2026-11-12 -- VR wave-two submit gates settle once per turn
+
+### Fixed
+
+- A VR positive submit that a wave-two gate forces through after its reject cap is no longer reversed by the fanout hook re-evaluating the same gate on the same turn.
+- Wave-two submit gates decide once per turn: a same-turn re-entry replays the original pass or rejection instead of re-running the gate and bumping its reject counter twice. Gates that have not decided on that turn still evaluate, and every gate evaluates again on the next turn.
+
+## [0.6.28] - 2026-11-12 -- VR outcome summaries report live review votes
+
+### Fixed
+
+- The VR investigation outcomes list now reports each outcome's stored approve, reject, request-edit, and abstain vote counts and the investigation's review quorum, instead of always reporting zero. Counts come from one grouped query for all outcomes. Quorum follows the malware rule: non-proposing siblings are the non-abandoned branches minus one.
+
+## [0.6.27] - 2026-11-12 -- Truncated output no longer marks endpoints unhealthy
+
+### Fixed
+
+- Structured output truncated at the model's output-token limit no longer counts as an infrastructure failure against the LLM endpoint's health. The call is still retried. Timeouts, connection errors, and server errors still record endpoint failures.
+
+## [0.6.26] - 2026-11-12 -- Strict schemas keep free-form objects open
+
+### Fixed
+
+- Structured-output schemas keep free-form dictionary fields (reasoning observables, ledger-write payloads, edit patches, probe arguments) open instead of collapsing them to an object that only accepts `{}`. Declared models stay strict, and an explicitly closed property-less model stays closed. Strict providers that reject open objects keep using the existing JSON-object fallback.
+- Dropping an empty ledger-write payload now logs a warning with the investigation, branch, turn, index, and kind, without payload content.
+
+### Removed
+
+- An unused duplicate strict-schema helper in the LLM client.
+
+## [0.6.25] - 2026-11-12 -- Forensics declares its panel turn cap
+
+### Fixed
+
+- The forensics panel turn cap `max_turns_per_task` is now a declared, bounded config key (1 to the forensics hard turn cap, default 3), so operators can set it through the config API and out-of-range writes are rejected. The panel loop clamps any persisted value into range and falls back to the schema default on registry read failures.
+- Forensics OS hints no longer instruct the agent to pass capa rules and signature paths from undeclared config keys or environment variables; capa runs through the `strings_runner` tool.
+
+### Removed
+
+- The undeclared capa rules and signature environment variables from `.env.example` and the configuration docs.
+
+## [0.6.24] - 2026-11-12 -- Health checks probe stdio MCP servers natively
+
+### Fixed
+
+- MCP health checks probe stdio servers (such as `rea` and `reverser_belt`) with a native MCP `tools/list` over a short-lived probe session instead of an HTTP request to a `stdio://` address. Healthy stdio servers now report reachable with their tool count and latency. The probe never touches the shared bridge session and always closes and reaps its child, including on timeout or cancellation. An operator override to an http(s) URL is still probed over HTTP.
+
+## [0.6.23] - 2026-11-12 -- Config writes enforce declared bounds
+
+### Fixed
+
+- Config writes now enforce each field's declared constraints (minimum, maximum, and length bounds) in addition to its type. Out-of-range values such as a coverage floor of 5 are rejected with a 422 naming the field and the violated constraint, before any read-compare or write, so the stored value is unchanged. Error messages never echo the submitted value.
+
+## [0.6.22] - 2026-11-12 -- Crypto scan guidance matches the live tool
+
+### Fixed
+
+- Malware and VR system prompts no longer reference a nonexistent crypto constant tool; `reverser_belt.detect_crypto_primitives` is the single crypto scan. The rename was contributed in #342.
+- Crypto scan guidance now matches the tool's output: hits are leads that report `type`, an optional `algorithm`, and `confidence`; only some hits carry an address; and the scan never names a family-specific variant or confirms a key on its own. Key candidates are confirmed by reading their bytes.
+- Deployments whose prompt version store already has a production alias keep serving the previous prompt until the new file version is promoted.
+
+### Removed
+
+- The prompt source-text test added with the rename.
+
+## [0.6.21] - 2026-11-12 -- Forensics response emit preserves terminal statuses
+
+### Fixed
+
+- The forensics response-emit state no longer overwrites failed, cancelled, or exhausted investigations, or failed projects, as completed. Only active rows (created, ready, or analyzing projects; pending or running investigations) transition to completed, and the emitted status always matches the stored row. The fix was contributed in #341; this release trims incidental write-call assertions from its regression tests.
+
+## [0.6.20] - 2026-11-12 -- Forensics status badges render as elements
+
+### Fixed
+
+- Forensics key/value panels render React elements such as status badges directly instead of exposing element internals; plain objects keep their structured key/value rendering. The rendering fix was contributed in #343; this release adds regression coverage for the actual Overview status path, empty values, primitives, and mixed entries.
+
+## [0.6.19] - 2026-11-12 -- Malware rails show created investigations
+
+### Fixed
+
+- Malware investigations with `created` status now appear as active work in the left rail. VR, vulnerability, and forensics `created` rows remain hidden unless pinned, and completed rows remain hidden unless pinned.
+
+## [0.6.18] - 2026-11-11 -- Forensics rails show analyzing projects
+
+### Fixed
+
+- Forensics projects with `analyzing` status now remain visible as active work in the left rail. Unpinned `ready` projects stay table-only, pinned and favorited projects remain visible, and other module rail predicates are unchanged.
+
+## [0.6.17] - 2026-11-11 -- Missing malware investigations render an inert error state
+
+### Fixed
+
+- A stale malware investigation link now stops detail retries, disables dependent queries, and renders an explicit not-found alert instead of a running cockpit. Loading and unknown statuses are distinct, and keyboard or palette mutations are unavailable until a controllable investigation loads.
+
+## [0.6.16] - 2026-11-11 -- Malware X-Ray reads live cost keys
+
+### Fixed
+
+- The malware investigation cockpit now reads total, LLM-token, and MCP-call costs from the live `/cost` response keys. Investigation-summary fields remain the fallback, and fuzz infrastructure cost comes only from the summary.
+
+## [0.6.15] - 2026-11-11 -- Malware targets use offset pagination
+
+### Fixed
+
+- The malware targets table now sends offset/limit requests and uses the backend's total metadata for page controls. Every target beyond the former 50-row cutoff is reachable without exceeding the backend page-size limit.
+
+## [0.6.14] - 2026-11-11 -- Investigation confidence summaries accept exact and strong ranks
+
+### Fixed
+
+- Forensics investigation-summary confidence filtering now recognizes the summary vocabulary `exact` and `strong` alongside `medium`. Collector and typed-investigation confidence behavior is unchanged.
+
+## [0.6.13] - 2026-11-11 -- Forensics prompt example passes its script policy
+
+### Fixed
+
+- The Linux forensics prompt now uses `type(fs).__name__` for filesystem introspection. The exact prompt example passes the shared AST policy, while direct dunder-class traversal remains blocked.
+
+## [0.6.12] - 2026-11-11 -- Login requires explicit credentials
+
+### Fixed
+
+- The login form now starts with empty username and password fields. Empty or whitespace-only submissions are blocked before any authentication request, and frontend component tests cover the behavior.
+
+## [0.6.11] - 2026-11-11 -- Script policy applies before analyzer side effects
+
+### Fixed
+
+- Forensics script execution now uses one module-owned AST policy at both the investigator and public tool boundaries. Rejected scripts return a policy error before temporary-file creation, upload, SSH, or execution.
+
+## [0.6.10] - 2026-11-11 -- Generic tool invocation awaits asynchronous results
+
+### Fixed
+
+- `POST /tools/{tool_key}` now awaits asynchronous tool results while keeping synchronous tools off the event loop. Sync and async exceptions retain the existing error and audit behavior.
+
+## [0.6.9] - 2026-11-11 -- Fresh database bootstrap fits Alembic revision ids
+
+### Fixed
+
+- All migration revision ids now fit the 32-character Alembic version column, so canonical fresh database creation and stamping reaches head without truncation. Migration DDL and graph order are unchanged.
+
+## [0.6.8] - 2026-11-11 -- Worker startup registers module sweeps on every platform
+
+### Fixed
+
+- Non-Windows workers now register built-in module periodic sweeps and run boot-time orphan recovery. Windows-only stale engine disposal remains scoped to Windows.
+
+## [0.6.7] - 2026-11-11 -- VR PDF export handles scalar message counts
+
+### Fixed
+
+- VR PDF export reads SQLModel scalar message counts directly, so investigations with messages export instead of raising `TypeError`; zero counts remain zero.
+
 ## [0.6.6] - 2026-11-03 -- shared researcher prompt sections and submit gate
 
 ### Changed
@@ -18,7 +789,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - The platform stall-recovery `single_submit_kinds` binding field and the `sweep_stalled_investigations` parameter of the same name. Module stall-recovery bindings no longer declare it.
 - `VRFinding.advisory_id` from the VR finding contract. The field was always `None`.
-- `obligations_json` from the project contract base, and the column itself from `vr_projects`, `malware_projects`, and `malware_findings` (migration `147_drop_project_obligations_json`).
+- `obligations_json` from the project contract base, and the column itself from `vr_projects`, `malware_projects`, and `malware_findings` (migration `147_drop_project_obligations`).
 - The unused obligation residue left by the removed n-day pipeline: the VR `obligation.changed` event type and the budget `auto_waive_recommended_at` setting with its `should_waive_recommended` property.
 
 ## [0.6.5] - 2026-11-03 -- n-day runs on the VR investigation hub; malware reports cite every verified claim
@@ -721,7 +1492,7 @@ deployment that flips nothing is behavior-identical to 0.5.38.
 
 ### Migration
 
-- 127_managed_system_passphrase_secret: adds
+- 127_managed_system_passphrase: adds
   managedsystemrecord.private_key_passphrase_secret_id (nullable).
 
 ## [0.5.32] - 2026-08-15 -- Live backend-wired console

@@ -50,6 +50,7 @@ export interface TargetRow {
   workspace_name?: string | null;
   status?: string;
   analysis_state?: string;
+  analysis_state_message?: string | null;
   created_at?: string | null;
 }
 

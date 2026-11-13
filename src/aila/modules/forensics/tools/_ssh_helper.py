@@ -12,9 +12,36 @@ from aila.platform.exceptions import AILAError
 from aila.platform.services.ssh import SSHService
 
 __all__ = [
-    "get_ssh_service", "python_cmd", "temp_dir", "path_sep", "hash_cmd",
-    "run_command_via_file",
+    "get_ssh_service", "python_cmd", "temp_dir", "path_sep", "hash_cmd", "ps_literal",
+    "run_command_via_file", "run_tool_probe",
 ]
+
+_PROBE_TIMEOUT_S = 30.0
+# Shell and OS not-found messages. A probe printing one of these has not found
+# the tool even when the remote shell exited 0 (cmd, PowerShell, wsl wrappers).
+_NOT_FOUND_MARKERS = ("command not found", "not recognized as", "no such file")
+
+
+class _ToolProbeFailedError(RuntimeError):
+    """A tool's check command exited nonzero or reported the tool as not found."""
+
+
+async def run_tool_probe(ssh: SSHService, integration: dict[str, Any], check_cmd: str) -> str | None:
+    """Run a tool's ``check_command`` and return its first output line (the version).
+
+    Raises ``RuntimeError`` (via a private subclass) when the command exits
+    nonzero or prints a not-found message. Connection-level SSH failures propagate.
+    """
+    stdout, stderr, exit_code = await ssh.run_command_full(
+        integration, check_cmd, timeout_seconds=_PROBE_TIMEOUT_S,
+    )
+    combined = "\n".join(part for part in (stdout, stderr) if part.strip())
+    if exit_code != 0:
+        raise _ToolProbeFailedError(f"check command exited {exit_code}: {combined.strip()[:300]}")
+    if any(marker in combined.lower() for marker in _NOT_FOUND_MARKERS):
+        raise _ToolProbeFailedError(f"check command reported tool not found: {combined.strip()[:300]}")
+    lines = combined.strip().splitlines()
+    return lines[0] if lines else None
 
 
 async def get_ssh_service(settings: Settings) -> SSHService:
@@ -54,6 +81,11 @@ def _posix_quote(s: str) -> str:
     """Shell-escape a string for POSIX sh (like shlex.quote)."""
     import shlex
     return shlex.quote(s)
+
+
+def ps_literal(s: str) -> str:
+    """Return ``s`` as a PowerShell single-quoted literal (embedded quotes doubled)."""
+    return "'" + s.replace("'", "''") + "'"
 
 
 async def run_command_via_file(

@@ -243,6 +243,11 @@ export interface PageRowViewer {
 
 /** How the selected row's detail panel renders. */
 export interface PageDetailConfig {
+  /** GET endpoint template with `{id}` returning one row. When a window is
+   * opened with an entity id (a deep link such as a global search hit), the
+   * page fetches that row from here and selects it, so the detail panel opens
+   * for records outside the loaded list page. Unset -> the entity id is ignored. */
+  rowEndpoint?: string;
   /** Per-field custom detail renderers (keyed by row field). When present for a
    * field, the detail panel uses it instead of the generic <StructuredValue>
    * (e.g. the LLM-log prompt/response rendered as a chat transcript). */

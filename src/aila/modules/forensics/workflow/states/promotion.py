@@ -1,9 +1,12 @@
-"""Lead promotion state handler.
+"""Lead promotion state handlers.
 
-Scores artifacts, promotes high-confidence leads, and builds a
-structured **Valuable Items** summary organized by category. The
-summary is persisted so that the freeflow agent can inject it as
-context before every investigation step.
+Both workflows promote investigator-written artifacts to leads. Full
+analysis (``state_promotion``) promotes every unpromoted investigator
+artifact of the project and builds a structured **Valuable Items**
+summary organized by category, which the freeflow agent injects as
+context before every investigation step. Freeflow
+(``state_freeflow_promotion``) promotes the artifacts the finished
+investigation wrote before its writeup.
 """
 from __future__ import annotations
 
@@ -11,7 +14,7 @@ import json
 import logging
 from typing import Any
 
-__all__ = ["state_promotion"]
+__all__ = ["state_freeflow_promotion", "state_promotion"]
 
 _log = logging.getLogger(__name__)
 
@@ -75,6 +78,10 @@ _REASON_SKIP_KEYS: frozenset[str] = frozenset({
     "_type",
     "record_type",
     "record_name",
+    # The operator's question and requested answer format restate what was
+    # asked, not what was found; a keyword there is not evidence.
+    "question",
+    "answer_format",
 })
 
 # Path segments that name the *scanner*, not the evidence. A dissect
@@ -98,11 +105,11 @@ _REASON_SKIP_PATH_SEGMENTS: frozenset[str] = frozenset({
 _MATCH_EXCERPT_LEN = 160
 
 
-async def state_promotion(
-    input: dict[str, Any],
-    services: Any,
-) -> dict[str, Any]:
-    """Score investigator-emitted artefacts and build the Valuable Items summary.
+async def _promote_investigator_artifacts(
+    project_id: str,
+    investigation_id: str | None,
+) -> tuple[int, list[dict[str, Any]], list[Any]]:
+    """Create leads for unpromoted investigator artefacts of a project.
 
     **Lead source rule (honest):** only artefacts with a
     ``source_investigation_id`` -- i.e. rows the investigator itself
@@ -110,11 +117,14 @@ async def state_promotion(
     become leads; they populate Valuable Items / Findings but NOT the
     Top Leads panel. The latter is a panel of agent conclusions, not
     keyword heuristics over raw tool output.
+
+    ``investigation_id`` narrows the candidates to the artefacts one
+    investigation wrote. An artefact that already has a lead is skipped,
+    so a retried state or a later full-analysis run does not promote it
+    twice.
+
+    Returns ``(leads_created, top_leads, all_project_artifacts)``.
     """
-    project_id = input.get("project_id", "")
-
-    await services.emitter.emit("promotion", "Scoring investigator findings and building Valuable Items list...")
-
     from sqlmodel import select
 
     from aila.modules.forensics.db_models import ArtifactRecord, LeadRecord
@@ -122,16 +132,20 @@ async def state_promotion(
 
     leads_created = 0
     top_leads: list[dict[str, Any]] = []
-    all_artifacts: list[Any] = []
 
     async with UnitOfWork() as uow:
-        artifacts = (await uow.session.exec(
+        artifacts = list((await uow.session.exec(
             select(ArtifactRecord).where(ArtifactRecord.project_id == project_id)
-        )).all()
-        all_artifacts = list(artifacts)
+        )).all())
+        promoted_ids = set((await uow.session.exec(
+            select(LeadRecord.artifact_id).where(LeadRecord.project_id == project_id)
+        )).all())
 
         investigator_rows = [
-            a for a in artifacts if a.source_investigation_id
+            a for a in artifacts
+            if a.source_investigation_id
+            and a.id not in promoted_ids
+            and (investigation_id is None or a.source_investigation_id == investigation_id)
         ]
 
         for artifact in investigator_rows:
@@ -167,6 +181,20 @@ async def state_promotion(
         await uow.commit()
 
     top_leads.sort(key=lambda x: x["score"], reverse=True)
+    return leads_created, top_leads, artifacts
+
+
+async def state_promotion(
+    input: dict[str, Any],
+    services: Any,
+) -> dict[str, Any]:
+    """Full analysis: promote every unpromoted investigator artefact of the
+    project and build the Valuable Items summary."""
+    project_id = input.get("project_id", "")
+
+    await services.emitter.emit("promotion", "Scoring investigator findings and building Valuable Items list...")
+
+    leads_created, top_leads, all_artifacts = await _promote_investigator_artifacts(project_id, None)
     valuable_items = _build_valuable_items(all_artifacts)
 
     await services.emitter.emit(
@@ -189,6 +217,28 @@ async def state_promotion(
             "analyzer_os": input.get("analyzer_os", "linux"),
         },
     )
+
+
+async def state_freeflow_promotion(
+    input: dict[str, Any],
+    services: Any,
+) -> dict[str, Any]:
+    """Freeflow: promote the artefacts this investigation wrote, then hand
+    the freeflow result to the writeup unchanged."""
+    project_id = input.get("project_id", "")
+    investigation_id = input.get("investigation_id", "")
+
+    leads_created, top_leads, _ = await _promote_investigator_artifacts(project_id, investigation_id)
+
+    await services.emitter.emit(
+        "promotion",
+        f"Promoted {leads_created} lead(s) from this investigation.",
+        {"lead_count": leads_created, "high_confidence": len(top_leads)},
+    )
+
+    from aila.platform.workflows.types import StateResult
+
+    return StateResult(next_state="writeup", output=dict(input))
 
 
 def _build_valuable_items(artifacts: list[Any]) -> dict[str, list[dict[str, Any]]]:
@@ -585,3 +635,5 @@ def _build_reason(artifact: Any, score: float) -> tuple[str, list[dict[str, str]
 
 state_promotion.parallel_safe = state_promotion_parallel_safe  # type: ignore[attr-defined]
 state_promotion.writes_fields = state_promotion_writes_fields  # type: ignore[attr-defined]
+state_freeflow_promotion.parallel_safe = state_promotion_parallel_safe  # type: ignore[attr-defined]
+state_freeflow_promotion.writes_fields = ["leads"]  # type: ignore[attr-defined]

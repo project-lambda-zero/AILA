@@ -33,10 +33,18 @@ Gating: :func:`is_prompt_layout_enabled` resolves
 Default False -- current behaviour is byte-identical.
 
 Investigation-scoped cache TTL: :func:`resolve_cache_ttl_seconds`
-returns the operator-configured lifetime hint the client can attach
-to a cache-control block when the provider supports it (Anthropic's
-``ttl`` field on ``cache_control``). Default 0 = provider default
-(Anthropic 5 min, OpenAI up to 24 h on recent models).
+returns the operator-configured lifetime hint (``platform.
+prompt_cache_ttl_seconds``). :func:`annotate_stable_prefix` is where it
+reaches the wire: the LLM client runs it over the message list of every
+provider request. For a Claude-family model, which caches only on
+request, it puts ``cache_control`` on the last text block of the leading
+system message(s) -- the stable prefix every caller keeps identical across the
+turns of an investigation. Anthropic accepts two ``ttl`` values, so a
+positive TTL renders as ``"5m"`` (1-300 s) or ``"1h"`` (301 s and above,
+the longest lifetime the provider offers); ``0`` sends
+``{"type": "ephemeral"}`` with no ``ttl`` and the provider applies its
+5 minute default. Any other model, including providers that cache
+automatically, gets its request back unchanged.
 
 Cache-hit-rate gauge:
 
@@ -72,6 +80,7 @@ __all__ = [
     "PromptLayoutBuilder",
     "PromptSegment",
     "PromptSegmentKind",
+    "annotate_stable_prefix",
     "assert_prefix_stable",
     "compute_cache_hit_rate",
     "extract_cache_usage",
@@ -365,14 +374,13 @@ def is_prompt_layout_enabled(registry: ConfigRegistry | None) -> bool:
 
 
 def resolve_cache_ttl_seconds(registry: ConfigRegistry | None) -> int:
-    """Return the investigation-scoped prompt-cache TTL in seconds.
+    """Return the operator-configured prompt-cache TTL in seconds.
 
     ``0`` means "use the provider default" (Anthropic 5 min ephemeral
-    cache, OpenAI up to 24 h on recent models). A positive value is
-    the operator-configured lifetime hint the client can forward to
-    the provider (Anthropic honours it on ``cache_control.ttl``;
-    OpenAI ignores it, which is safe -- OpenAI keeps its own 24 h
-    default).
+    cache). A positive value is the lifetime :func:`annotate_stable_prefix`
+    maps onto ``cache_control.ttl`` for models that need an explicit
+    marker. Automatic-cache models never receive the marker, so the value
+    does not reach them.
     """
     if registry is None:
         return 0
@@ -389,6 +397,79 @@ def resolve_cache_ttl_seconds(registry: ConfigRegistry | None) -> int:
         _log.debug("prompt_cache_ttl_seconds not an int (%r): %s", raw, exc)
         return 0
     return max(0, value)
+
+
+# Anthropic's explicit cache_control accepts two lifetimes: the default
+# "5m" and the extended "1h". A positive TTL up to five minutes maps to
+# "5m"; anything longer maps to "1h", the longest the provider offers.
+_FIVE_MINUTE_TTL_MAX_S: int = 300
+
+
+def _supports_explicit_prompt_cache(model_id: str) -> bool:
+    """True for Claude-family model ids, which cache only with an explicit marker.
+
+    Gateway ids are ``vendor/model``; the family is matched on the final
+    path segment so ``anthropic/claude-sonnet-4.5`` and ``claude-sonnet-4.5``
+    both qualify.
+    """
+    return "claude" in model_id.rsplit("/", 1)[-1].lower()
+
+
+def _cache_control_marker(ttl_seconds: int) -> dict[str, str]:
+    if ttl_seconds <= 0:
+        return {"type": "ephemeral"}
+    if ttl_seconds <= _FIVE_MINUTE_TTL_MAX_S:
+        return {"type": "ephemeral", "ttl": "5m"}
+    return {"type": "ephemeral", "ttl": "1h"}
+
+
+def _with_breakpoint(message: dict[str, Any], marker: dict[str, str]) -> dict[str, Any] | None:
+    """Return a copy of ``message`` with ``marker`` on its last non-empty text part.
+
+    Returns None when the message has no text to mark. The caller's message
+    and any content list it holds are left untouched.
+    """
+    content = message.get("content")
+    if isinstance(content, str):
+        parts: list[Any] = [{"type": "text", "text": content}] if content else []
+    elif isinstance(content, list):
+        parts = list(content)
+    else:
+        return None
+    for index in range(len(parts) - 1, -1, -1):
+        part = parts[index]
+        if isinstance(part, dict) and part.get("type") == "text" and part.get("text"):
+            parts[index] = {**part, "cache_control": marker}
+            return {**message, "content": parts}
+    return None
+
+
+def annotate_stable_prefix(
+    messages: list[dict[str, Any]],
+    *,
+    model_id: str,
+    ttl_seconds: int,
+) -> list[dict[str, Any]]:
+    """Return ``messages`` with ``cache_control`` on the stable system prefix.
+
+    The stable prefix is the leading run of ``system`` messages. The marker
+    goes on its last text block, so the cached span covers the tool
+    definitions and the system text before it. Returns ``messages`` itself
+    when the model caches automatically or the prefix has no text to mark;
+    otherwise returns a new list and leaves the caller's list and messages
+    unchanged.
+    """
+    if not _supports_explicit_prompt_cache(model_id):
+        return messages
+    leading_end = 0
+    while leading_end < len(messages) and messages[leading_end].get("role") == "system":
+        leading_end += 1
+    marker = _cache_control_marker(ttl_seconds)
+    for index in range(leading_end - 1, -1, -1):
+        marked = _with_breakpoint(messages[index], marker)
+        if marked is not None:
+            return [*messages[:index], marked, *messages[index + 1:]]
+    return messages
 
 
 # ---------------------------------------------------------------------------

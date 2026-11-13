@@ -9,8 +9,7 @@
  */
 import { useQuery } from "@tanstack/react-query";
 
-import { useAuth } from "./auth";
-import { API_BASE, ApiError, apiFetch } from "./client";
+import { ApiError, apiFetch, authorizedFetch } from "./client";
 import {
   asRecord,
   readBool,
@@ -78,6 +77,7 @@ export interface ProjectSummary {
   analyzer_os: string;
   project_kind: string;
   status: string;
+  failure_reason?: string | null;
   evidence_count: number;
   artifact_count: number;
   lead_count: number;
@@ -97,6 +97,7 @@ export function parseProjectSummary(o: Obj): ProjectSummary {
     analyzer_os: str(o, "analyzer_os"),
     project_kind: str(o, "project_kind"),
     status: str(o, "status"),
+    failure_reason: readStr(o, "failure_reason"),
     evidence_count: readNum(o, "evidence_count") ?? 0,
     artifact_count: readNum(o, "artifact_count") ?? 0,
     lead_count: readNum(o, "lead_count") ?? 0,
@@ -124,6 +125,16 @@ export function parseEvidenceItem(o: Obj): EvidenceItem {
     file_hash_sha256: readStr(o, "file_hash_sha256"),
     size_bytes: readNum(o, "size_bytes"),
   };
+}
+
+export interface EvidencePage {
+  items: EvidenceItem[];
+  total: number | null;
+}
+
+export function parseEvidencePage(raw: unknown): EvidencePage {
+  const o = asRecord(raw) ?? {};
+  return { items: parseRows(o.items, parseEvidenceItem), total: readNum(o, "total") };
 }
 
 /* --- artifacts -------------------------------------------------------- */
@@ -513,12 +524,8 @@ export function parseStructuredAnalysis(raw: unknown, sectionKeys: readonly stri
  * Reads the response as a Blob so binary payloads (carved files) survive;
  * apiFetch would decode them as UTF-8 text. Throws on any non-2xx. */
 export async function downloadForensicsFile(path: string, filename: string): Promise<void> {
-  const token = useAuth.getState().token;
-  const res = await fetch(API_BASE + path, {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-  });
+  const res = await authorizedFetch(path);
   if (res.status === 401) {
-    useAuth.getState().logout();
     throw new Error("Session expired -- sign in again.");
   }
   if (!res.ok) {

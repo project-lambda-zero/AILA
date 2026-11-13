@@ -13,11 +13,17 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import BaseModel, ConfigDict
 
+from aila.modules.malware.contracts.playbook import MalwarePlaybookStep
+from aila.modules.vr.contracts.pattern import VRPatternCreate
+from aila.platform.agents.claim_verifier import _ExtractorProbeSpec
+from aila.platform.contracts.reasoning import LedgerWrite, ReasoningTurnDecision
 from aila.platform.llm.client import (
     AilaLLMClient,
     LLMResponse,
     _is_strict_schema_rejection,
+    _make_strict_schema,
     _schema_has_open_object,
 )
 from aila.platform.llm.errors import LLMError
@@ -140,3 +146,122 @@ async def test_non_schema_error_propagates(monkeypatch: pytest.MonkeyPatch) -> N
         await client.chat_json("scoring", [{"role": "user", "content": "x"}], _OPEN)
     assert "inactive" in str(excinfo.value)
     assert mock.call_count == 1
+
+
+_OPEN_OBJECT = {"additionalProperties": True, "title": "Payload", "type": "object"}
+
+
+def test_free_form_payload_stays_open() -> None:
+    schema = _make_strict_schema(LedgerWrite.model_json_schema())
+    assert schema["properties"]["payload"] == _OPEN_OBJECT
+
+
+def test_reasoning_decision_free_form_fields_stay_open() -> None:
+    props = _make_strict_schema(ReasoningTurnDecision.model_json_schema())["properties"]
+    for field in ("observables", "edit_patches", "payload"):
+        assert props[field]["additionalProperties"] is True, field
+        assert "properties" not in props[field], field
+
+
+def test_probe_args_stay_open() -> None:
+    props = _make_strict_schema(_ExtractorProbeSpec.model_json_schema())["properties"]
+    assert props["args"]["additionalProperties"] is True
+    assert "properties" not in props["args"]
+
+
+def test_pattern_applicability_and_provenance_stay_open() -> None:
+    props = _make_strict_schema(VRPatternCreate.model_json_schema())["properties"]
+    for field in ("applicability", "provenance"):
+        assert props[field]["additionalProperties"] is True, field
+        assert "properties" not in props[field], field
+
+
+def test_playbook_step_free_form_fields_stay_open() -> None:
+    props = _make_strict_schema(MalwarePlaybookStep.model_json_schema())["properties"]
+    for field in ("args", "expects"):
+        assert props[field]["additionalProperties"] is True, field
+        assert "properties" not in props[field], field
+
+
+class _Child(BaseModel):
+    x: int
+
+
+class _Parent(BaseModel):
+    child: _Child
+    note: str = "n"
+
+
+def test_declared_child_model_is_closed_and_fully_required() -> None:
+    schema = _make_strict_schema(_Parent.model_json_schema())
+    child = schema["$defs"]["_Child"]
+    assert child["additionalProperties"] is False
+    assert child["required"] == ["x"]
+
+
+def test_explicitly_closed_property_less_object_stays_closed() -> None:
+    closed = {"type": "object", "additionalProperties": False}
+    result = _make_strict_schema(closed)
+    assert result["additionalProperties"] is False
+    assert result["properties"] == {}
+    assert "required" not in result
+
+
+def test_empty_closed_model_emits_empty_properties_and_closed() -> None:
+    class _Empty(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
+    result = _make_strict_schema(_Empty.model_json_schema())
+    assert result["properties"] == {}
+    assert result["additionalProperties"] is False
+
+
+def test_open_mapping_with_empty_properties_stays_open_without_required() -> None:
+    schema = {"type": "object", "properties": {}, "additionalProperties": True}
+    assert _make_strict_schema(schema) == {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": True,
+    }
+
+
+def test_closed_mapping_with_empty_properties_stays_closed() -> None:
+    result = _make_strict_schema(
+        {"type": "object", "properties": {}, "additionalProperties": False},
+    )
+    assert result["properties"] == {}
+    assert result["additionalProperties"] is False
+    assert "required" not in result
+
+
+def test_open_mapping_normalizes_dict_valued_additional_properties() -> None:
+    schema = {
+        "type": "object",
+        "additionalProperties": {"$ref": "#/$defs/Child"},
+        "$defs": {"Child": {"type": "object", "properties": {"x": {"type": "integer"}}}},
+    }
+    result = _make_strict_schema(schema)
+    assert result["additionalProperties"] == {"$ref": "#/$defs/Child"}
+    assert "required" not in result
+    child = result["$defs"]["Child"]
+    assert child["additionalProperties"] is False
+    assert child["required"] == ["x"]
+
+
+def test_open_mapping_recurses_into_value_items_and_anyof() -> None:
+    schema = {
+        "type": "object",
+        "additionalProperties": {
+            "type": "array",
+            "items": {"type": "object", "properties": {"y": {"type": "string"}}},
+        },
+        "anyOf": [{"type": "object", "properties": {"z": {"type": "integer"}}}],
+    }
+    result = _make_strict_schema(schema)
+    assert "required" not in result
+    items = result["additionalProperties"]["items"]
+    assert items["additionalProperties"] is False
+    assert items["required"] == ["y"]
+    branch = result["anyOf"][0]
+    assert branch["additionalProperties"] is False
+    assert branch["required"] == ["z"]

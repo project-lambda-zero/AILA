@@ -383,6 +383,9 @@ export const PAGE_CONFIGS = {
   "malware:targets": {
     title: "malware \u00b7 targets",
     endpoint: "/malware/targets",
+    rowEndpoint: "/malware/targets/{id}",
+    pagination: true,
+    paginationParams: "offset",
     columns: [c("display_name", "name"), c("kind"), c("primary_language", "lang"), c("status"), c("analysis_state", "analysis"), c("uploaded_filename", "file"), c("created_at", "created")],
     filters: [{ name: "display_name", label: "name", type: "text" }, { name: "status", label: "status", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
   },
@@ -399,12 +402,16 @@ export const PAGE_CONFIGS = {
   "malware:investigations": {
     title: "malware \u00b7 investigations",
     endpoint: "/malware/investigations",
+    pagination: true,
+    paginationParams: "offset",
     columns: [c("title"), c("kind"), c("status"), c("strategy_family", "strategy"), c("branch_count", "branches"), c("message_count", "turns"), c("outcome_count", "outcomes"), c("cost_actual_usd", "cost $")],
     filters: [{ name: "title", label: "title", type: "text" }, { name: "status", label: "status", type: "select" }],
   },
   "malware:observations": {
     title: "malware \u00b7 observations",
     endpoint: "/malware/observations",
+    pagination: true,
+    paginationParams: "offset",
     scopeFrom: { endpoint: "/malware/targets", param: "target_id" },
     columns: [c("kind"), c("polarity"), c("source"), c("target_id", "target"), c("investigation_id", "investigation"), c("created_at", "created")],
     filters: [{ name: "kind", label: "kind", type: "text" }, { name: "polarity", label: "polarity", type: "select" }, { name: "created_at", label: "created", type: "date-range" }],
@@ -418,6 +425,8 @@ export const PAGE_CONFIGS = {
   "malware:findings": {
     title: "malware \u00b7 findings",
     endpoint: "/malware/findings",
+    pagination: true,
+    paginationParams: "offset",
     columns: [
       c("kind"),
       c("confidence"),
@@ -654,7 +663,13 @@ export const PAGE_CONFIGS = {
         method: "POST",
         endpoint: "/tasks/drain",
         destructive: true,
-        confirm: "Drain the queue? This rejects queued tasks.",
+        confirm: "Drain the queue? New task submissions from every caller are rejected until submissions are resumed; queued tasks still run.",
+      },
+      {
+        label: "resume submissions",
+        method: "POST",
+        endpoint: "/tasks/undrain",
+        confirm: "Resume task submissions?",
       },
     ],
   },

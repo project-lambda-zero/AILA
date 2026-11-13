@@ -37,7 +37,6 @@ from __future__ import annotations
 import json
 import logging
 import math
-from collections.abc import AsyncGenerator
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
@@ -47,15 +46,14 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import func as sa_func
-from sqlmodel import select
+from sqlmodel import col, select
 
 from aila.api.schemas.common import PaginatedResponse
 from aila.api.schemas.envelope import DataEnvelope
 from aila.modules.forensics.config_schema import ForensicsConfigSchema
 from aila.platform.contracts.auth import AuthContext, require_auth
 from aila.platform.exceptions import AILAError
-from aila.platform.services.redis_pool import pool_available
-from aila.platform.tasks.progress import ProgressStream
+from aila.platform.services.audit import record_audit_event
 from aila.platform.tasks.queue import qualified_task_name
 from aila.platform.uow import UnitOfWork
 from aila.storage.registry import ConfigRegistry
@@ -358,7 +356,7 @@ class NetworkAnalysis(BaseModel):
 
 
 class RegistryAnalysis(BaseModel):
-    """Windows registry analysis result."""
+    """Host configuration and persistence artifacts grouped by bucket."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -370,10 +368,28 @@ class RegistryAnalysis(BaseModel):
     recent_docs: list[dict[str, Any]] = Field(default_factory=list)
     network_interfaces: list[dict[str, Any]] = Field(default_factory=list)
     shellbags: list[dict[str, Any]] = Field(default_factory=list)
-    amcache: list[dict[str, Any]] = Field(default_factory=list)
     shimcache: list[dict[str, Any]] = Field(default_factory=list)
-    bam: list[dict[str, Any]] = Field(default_factory=list)
-    security_packages: list[dict[str, Any]] = Field(default_factory=list)
+
+
+# Disk-collector artifact type (dissect query name with ``.`` -> ``_``) ->
+# RegistryAnalysis bucket. Keys must be types the disk collector emits.
+_REGISTRY_BUCKET_BY_TYPE: dict[str, str] = {
+    "runkeys": "autoruns",
+    "startupinfo": "autoruns",
+    "plist_launchagents": "autoruns",
+    "plist_launchdaemons": "autoruns",
+    "plist_loginitems": "autoruns",
+    "services": "services",
+    "tasks": "services",
+    "apps_installed": "installed_software",
+    "users": "user_accounts",
+    "usb": "usb_history",
+    "mru_recentdocs": "recent_docs",
+    "recently_used": "recent_docs",
+    "ips": "network_interfaces",
+    "shellbags": "shellbags",
+    "prefetch": "shimcache",
+}
 
 
 class TimelineEntry(BaseModel):
@@ -468,6 +484,10 @@ _TYPED_INV_ROWS = {
 _CONFIDENCE_RANK: dict[Any, int] = {
     "confirmed": 3, "high": 2, "medium": 1, "low": 0,
     "caveated": 0, "unknown": 0, "": 0, None: 0,
+}
+_INVESTIGATION_SUMMARY_CONFIDENCE_RANK: dict[Any, int] = {
+    "exact": 3, "confirmed": 3, "strong": 2, "high": 2, "medium": 1,
+    "low": 0, "caveated": 0, "unknown": 0, "": 0, None: 0,
 }
 _SEVERITY_RANK: dict[Any, int] = {
     "critical": 3, "high": 2, "medium": 1, "low": 0,
@@ -635,7 +655,7 @@ def _passes_bar(row: Any, payload: dict[str, Any], bar: int) -> bool:
             return True
         if atype == "investigation_summary":
             conf = (payload.get("confidence") or "").lower()
-            return _CONFIDENCE_RANK.get(conf, 0) >= bar
+            return _INVESTIGATION_SUMMARY_CONFIDENCE_RANK.get(conf, 0) >= bar
         return False
 
     # --- collector rows ---------------------------------------------------
@@ -900,6 +920,7 @@ def create_forensics_router() -> APIRouter:
             analyzer_os=record.analyzer_os,
             project_kind=record.project_kind,
             status=record.status,
+            failure_reason=record.failure_reason,
             created_at=record.created_at,
             updated_at=record.updated_at,
         ))
@@ -986,6 +1007,7 @@ def create_forensics_router() -> APIRouter:
                 analyzer_os=r.analyzer_os,
                 project_kind=r.project_kind,
                 status=r.status,
+                failure_reason=r.failure_reason,
                 evidence_count=evidence_by_pid.get(r.id, 0),
                 artifact_count=artifact_by_pid.get(r.id, 0),
                 lead_count=lead_by_pid.get(r.id, 0),
@@ -1068,6 +1090,7 @@ def create_forensics_router() -> APIRouter:
             analyzer_os=project.analyzer_os,
             project_kind=project.project_kind,
             status=project.status,
+            failure_reason=project.failure_reason,
             evidence_count=evidence_count,
             artifact_count=artifact_count,
             lead_count=lead_count,
@@ -1115,6 +1138,11 @@ def create_forensics_router() -> APIRouter:
             )).first()
             if system is None:
                 raise HTTPException(status_code=404, detail="System not found.")
+            # One analysis pipeline per project: readiness may already have
+            # enqueued one, and two would race on ArtifactRecord inserts.
+            existing_task_id = await _active_analysis_task_id(uow.session, project_id)
+        if existing_task_id is not None:
+            return DataEnvelope(data={"task_id": existing_task_id, "status": "already_queued"})
 
         integration = {
             "name": system.name, "host": system.host, "username": system.username,
@@ -1128,12 +1156,15 @@ def create_forensics_router() -> APIRouter:
         handle = await task_queue.submit(
             track="forensics",
             fn=run_forensics_analysis,
+            # Same kwargs as the readiness auto-enqueue, so concurrent
+            # submits of one project share an input hash and dedupe.
             kwargs={
                 "project_id": project_id,
                 "mode": "full_analysis",
                 "integration": integration,
                 "analyzer_os": project.analyzer_os,
                 "evidence_directory": project.evidence_directory,
+                "project_kind": project.project_kind,
             },
             user_id=auth.user_id,
             group_id=auth.role,
@@ -1230,6 +1261,19 @@ def create_forensics_router() -> APIRouter:
                 )
             )
             await uow.session.delete(project)
+            record_audit_event(
+                uow.session,
+                run_id=project_id,
+                stage="forensics",
+                action="project_deleted",
+                target=f"project:{project_id}",
+                user_id=auth.user_id,
+                team_id=auth.team_id,
+                details={
+                    "project_id": project_id,
+                    "investigations_deleted": len(inv_ids),
+                },
+            )
             await uow.commit()
 
     @router.post(
@@ -1284,6 +1328,7 @@ def create_forensics_router() -> APIRouter:
             integration=integration,
             system_id=system.id,
             system_name=system.name,
+            evidence_directory=project.evidence_directory,
             analyzer_os=project.analyzer_os,
             progress_cb=_log_progress,
         )
@@ -1339,175 +1384,9 @@ def create_forensics_router() -> APIRouter:
 
 
     @router.get(
-        "/projects/{project_id}/readiness-check/stream",
-        summary="Stream readiness check progress via SSE.",
-        response_class=StreamingResponse,
-        responses={
-            200: {
-                "description": "SSE stream of per-tool readiness check progress",
-                "content": {"text/event-stream": {"schema": {"type": "string"}}},
-            }
-        },
-    )
-    @limiter.limit("10/minute")
-    async def stream_readiness_check(
-        request: Request,
-        project_id: str,
-        auth: AuthContext = Depends(require_auth),
-    ) -> StreamingResponse:
-        """Run the readiness check and stream per-tool progress as SSE.
-
-        Each event is a JSON object with fields:
-        - ``stage``: ``"start"`` | ``"checking"`` | ``"installing"`` | ``"tool_done"`` | ``"done"``
-        - ``tool``: tool name (absent on start/done events)
-        - ``status``: ``"installed"`` | ``"missing"`` | ``"skipped"`` (on tool_done)
-        - ``message``: human-readable description
-        - ``total``: total tool count (on start/done)
-        - ``installed_count`` / ``missing_count``: tallies (on done)
-        - ``ready``: bool (on done)
-        """
-        from aila.api.deps import get_task_queue
-        from aila.api.sse_gate import enforce_sse_cap
-        from aila.modules.forensics.db_models import ForensicsProjectRecord
-        from aila.modules.forensics.services.machine_readiness import MachineReadinessService
-        from aila.storage.db_models import ManagedSystemRecord
-
-        # #60 global SSE ceiling: refuse new streams when ACTIVE_SSE is
-        # at or above the configured cap.
-        enforce_sse_cap()
-        async with UnitOfWork() as uow:
-            project = (await uow.session.exec(
-                select(ForensicsProjectRecord).where(ForensicsProjectRecord.id == project_id)
-            )).first()
-            if project is None:
-                raise HTTPException(status_code=404, detail=f"Project {project_id} not found.")
-            _require_project_ownership(project, auth)
-
-            system = (await uow.session.exec(
-                select(ManagedSystemRecord).where(ManagedSystemRecord.id == project.system_id)
-            )).first()
-            if system is None:
-                raise HTTPException(status_code=404, detail=f"System {project.system_id} not found.")
-
-        integration = {
-            "name": system.name,
-            "host": system.host,
-            "username": system.username,
-            "port": system.port,
-            "private_key_path": system.private_key_path,
-            "password_secret_id": system.password_secret_id,
-            "known_hosts_path": system.known_hosts_path,
-            "host_key_fingerprint": system.host_key_fingerprint,
-        }
-
-        # Count total tools to include in start event
-        import json as _json
-        from pathlib import Path
-
-        from aila.config import get_settings
-        from aila.platform.sse import stream_from_worker
-        _data_path = Path(__file__).parent / "data" / "tool_requirements.json"
-        _reqs = _json.loads(_data_path.read_text(encoding="utf-8"))
-        total_tools = sum(len(v) for v in _reqs.values())
-
-        async def _worker(progress_cb: Any) -> None:
-            svc = MachineReadinessService(get_settings())
-            result = await svc.check_readiness(
-                integration=integration,
-                system_id=system.id,
-                system_name=system.name,
-                analyzer_os=project.analyzer_os,
-                progress_cb=progress_cb,
-            )
-            if result.ready:
-                task_queue = get_task_queue("forensics", request)
-                async with UnitOfWork() as _uow:
-                    # fix #59-3: skip enqueue if a full-analysis task is
-                    # already active for this project (double-click / prior
-                    # submit still in flight).
-                    existing_task_id = await _active_analysis_task_id(
-                        _uow.session, project_id,
-                    )
-                    proj = None
-                    if existing_task_id is not None:
-                        result.already_queued = True
-                        result.existing_task_id = existing_task_id
-                    else:
-                        proj = (await _uow.session.exec(
-                            select(ForensicsProjectRecord).where(
-                                ForensicsProjectRecord.id == project_id
-                            )
-                        )).first()
-                    if proj and proj.status == ProjectStatus.CREATED.value:
-                        proj.status = ProjectStatus.READY.value
-                        _uow.session.add(proj)
-                        await _uow.session.commit()
-
-                        from aila.modules.forensics.workflow.task import run_forensics_analysis
-                        enqueue_mode = (
-                            "raw_directory"
-                            if project.project_kind == "raw_directory"
-                            else "full_analysis"
-                        )
-                        await task_queue.submit(
-                            track="forensics",
-                            fn=run_forensics_analysis,
-                            kwargs={
-                                "project_id": project_id,
-                                "mode": enqueue_mode,
-                                "integration": integration,
-                                "analyzer_os": project.analyzer_os,
-                                "evidence_directory": project.evidence_directory,
-                                "project_kind": project.project_kind,
-                            },
-                            user_id=auth.user_id,
-                            group_id=auth.role,
-                            team_id=auth.team_id,
-                        )
-
-            await progress_cb({
-                "stage": "done",
-                "ready": result.ready,
-                "already_queued": result.already_queued,
-                "existing_task_id": result.existing_task_id,
-                "installed_count": sum(1 for t in result.tools if t.status == "installed"),
-                "missing_count": sum(1 for t in result.tools if t.status == "missing"),
-                "total": len(result.tools),
-                "message": result.message,
-            })
-
-        from aila.api.metrics import ACTIVE_SSE
-
-        async def _counted_readiness_stream() -> AsyncGenerator[str, None]:
-            # #60 global SSE ceiling: count this stream against ACTIVE_SSE.
-            # stream_from_worker is a platform-layer helper that must not
-            # import the api-layer gauge, so the count is managed here.
-            # dec() runs on every exit path via the try/finally.
-            ACTIVE_SSE.inc()
-            try:
-                async for frame in stream_from_worker(
-                    _worker,
-                    start_event={
-                        "stage": "start",
-                        "total": total_tools,
-                        "os": project.analyzer_os,
-                        "message": f"Starting readiness check on {system.name} ({project.analyzer_os})",
-                    },
-                ):
-                    yield frame
-            finally:
-                ACTIVE_SSE.dec()
-
-        return StreamingResponse(
-            _counted_readiness_stream(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
-
-    @router.get(
         "/projects/{project_id}/evidence",
-        response_model=DataEnvelope[list[EvidenceItem]],
-        summary="List evidence files for a project.",
+        response_model=DataEnvelope[PaginatedResponse[EvidenceItem]],
+        summary="List evidence files for a project, paginated.",
     )
     @limiter.limit("60/minute")
     async def list_evidence(
@@ -1516,16 +1395,11 @@ def create_forensics_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=100, ge=1, le=500),
-    ) -> DataEnvelope[list[EvidenceItem]]:
-        # SQL-level pagination (finding 59-3.4): the previous handler
-        # fetched every ProjectEvidenceRecord row for the project into
-        # memory. A project with thousands of evidence files blew both
-        # the response body size limit and the SQLModel row buffer at
-        # the same time. Applying LIMIT/OFFSET on a stable ORDER BY
-        # (created_at DESC, id ASC tiebreak) keeps the response bounded
-        # to page_size items while preserving the existing
-        # DataEnvelope[list[EvidenceItem]] envelope so callers do not
-        # need a schema migration.
+    ) -> DataEnvelope[PaginatedResponse[EvidenceItem]]:
+        # SQL-level pagination (finding 59-3.4): LIMIT/OFFSET on a stable
+        # ORDER BY (created_at DESC, id ASC tiebreak) bounds the response to
+        # page_size items. The page carries the project's evidence total so
+        # a caller can tell a partial page from the whole set.
         del request
 
         from aila.modules.forensics.db_models import ForensicsProjectRecord, ProjectEvidenceRecord
@@ -1538,6 +1412,11 @@ def create_forensics_router() -> APIRouter:
                 raise HTTPException(status_code=404, detail=f"Project {project_id} not found.")
             _require_project_ownership(project, auth)
 
+            total = (await uow.session.exec(
+                select(sa_func.count()).select_from(ProjectEvidenceRecord).where(
+                    ProjectEvidenceRecord.project_id == project_id
+                )
+            )).one()
             rows = (await uow.session.exec(
                 select(ProjectEvidenceRecord)
                 .where(ProjectEvidenceRecord.project_id == project_id)
@@ -1559,7 +1438,10 @@ def create_forensics_router() -> APIRouter:
             )
             for r in rows
         ]
-        return DataEnvelope(data=items)
+        return DataEnvelope(data=PaginatedResponse(
+            total=total, page=page, page_size=page_size,
+            pages=max(1, math.ceil(total / page_size)), items=items,
+        ))
 
     @router.get(
         "/projects/{project_id}/findings",
@@ -1889,6 +1771,7 @@ def create_forensics_router() -> APIRouter:
 
         from aila.api.deps import get_task_queue
         from aila.modules.forensics.db_models import ForensicsProjectRecord, InvestigationRunRecord
+        from aila.modules.forensics.services.integration import build_integration_payload
         from aila.modules.forensics.workflow.task import run_forensics_investigation
         from aila.storage.db_models import ManagedSystemRecord
 
@@ -1935,16 +1818,7 @@ def create_forensics_router() -> APIRouter:
             await uow.session.commit()
             await uow.session.refresh(record)
 
-            integration = {
-                "name": system.name,
-                "host": system.host,
-                "username": system.username,
-                "port": system.port,
-                "private_key_path": system.private_key_path,
-                "password_secret_id": system.password_secret_id,
-                "known_hosts_path": system.known_hosts_path,
-                "host_key_fingerprint": system.host_key_fingerprint,
-            }
+            integration = build_integration_payload(system)
 
         try:
             handle = await task_queue.submit(
@@ -2026,6 +1900,7 @@ def create_forensics_router() -> APIRouter:
             ForensicsProjectRecord,
             InvestigationRunRecord,
         )
+        from aila.modules.forensics.services.integration import build_integration_payload
         from aila.modules.forensics.workflow.task import run_forensics_investigation
         from aila.storage.db_models import ManagedSystemRecord
 
@@ -2092,16 +1967,7 @@ def create_forensics_router() -> APIRouter:
             await uow.session.commit()
             await uow.session.refresh(record)
 
-            integration = {
-                "name": system.name,
-                "host": system.host,
-                "username": system.username,
-                "port": system.port,
-                "private_key_path": system.private_key_path,
-                "password_secret_id": system.password_secret_id,
-                "known_hosts_path": system.known_hosts_path,
-                "host_key_fingerprint": system.host_key_fingerprint,
-            }
+            integration = build_integration_payload(system)
 
         try:
             handle = await task_queue.submit(
@@ -2439,134 +2305,6 @@ def create_forensics_router() -> APIRouter:
             )
         )
 
-
-    @router.get(
-        "/projects/{project_id}/investigations/{investigation_id}/events",
-        summary="Stream investigation progress via SSE.",
-        response_class=StreamingResponse,
-        responses={
-            200: {
-                "description": "SSE event stream with investigation progress updates",
-                "content": {
-                    "text/event-stream": {
-                        "schema": {"type": "string"},
-                    },
-                },
-            },
-        },
-    )
-    @limiter.limit("30/minute")
-    async def stream_investigation_events(
-        request: Request,
-        project_id: str,
-        investigation_id: str,
-        last_id: str = Query(default="0"),
-        auth: AuthContext = Depends(require_auth),
-    ) -> StreamingResponse:
-        """Stream investigation agent progress via Server-Sent Events.
-
-        Replays past events on connect, then streams live updates until
-        the investigation reaches a terminal state (completed / failed).
-        """
-        from aila.api.sse_gate import enforce_sse_cap
-        from aila.modules.forensics.db_models import ForensicsProjectRecord, InvestigationRunRecord
-
-        # #60 global SSE ceiling: refuse new streams when ACTIVE_SSE is
-        # at or above the configured cap.
-        enforce_sse_cap()
-
-        async with UnitOfWork() as uow:
-            project = (await uow.session.exec(
-                select(ForensicsProjectRecord).where(ForensicsProjectRecord.id == project_id)
-            )).first()
-            if project is None:
-                raise HTTPException(status_code=404, detail=f"Project {project_id} not found.")
-            _require_project_ownership(project, auth)
-
-            inv = (await uow.session.exec(
-                select(InvestigationRunRecord).where(InvestigationRunRecord.id == investigation_id)
-            )).first()
-            if inv is None or inv.project_id != project_id:
-                raise HTTPException(status_code=404, detail="Investigation not found.")
-
-        task_id = inv.task_id
-
-        if not pool_available() or not task_id:
-            async def _no_stream() -> AsyncGenerator[str, None]:
-                msg = json.dumps(
-                    {"message": "No progress stream available -- Redis not configured or task not yet queued"}
-                )
-                yield f"data: {msg}\n\n"
-
-            return StreamingResponse(
-                _no_stream(),
-                media_type="text/event-stream",
-                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-            )
-
-        _INV_TERMINAL = frozenset({"completed", "failed"})
-
-        async def _fetch_inv_status() -> str | None:
-            async with UnitOfWork() as _uow:
-                r = (await _uow.session.exec(
-                    select(InvestigationRunRecord).where(InvestigationRunRecord.id == investigation_id)
-                )).first()
-                return r.status if r else None
-
-        async def _inv_sse_generator() -> AsyncGenerator[str, None]:
-            # #60 global SSE ceiling: count this stream against ACTIVE_SSE
-            # so the process-wide gauge (and enforce_sse_cap above) sees
-            # module SSE endpoints too. dec() runs on every exit path
-            # (normal completion, client disconnect, mid-stream exception)
-            # via the try/finally.
-            from aila.api.metrics import ACTIVE_SSE
-
-            ACTIVE_SSE.inc()
-            try:
-                stream = ProgressStream()
-
-                yield f"data: {json.dumps({'stage': 'stream', 'message': 'Connected', 'percent': 0})}\n\n"
-
-                resume_from = last_id
-                latest_stage = "queued"
-                try:
-                    catchup_events = await stream.catchup(task_id, last_id)
-                    for event_id, event in catchup_events:
-                        yield f"id: {event_id}\ndata: {json.dumps(event)}\n\n"
-                        resume_from = event_id
-                        if event.get("stage"):
-                            latest_stage = event["stage"]
-                except (RuntimeError, OSError, TimeoutError, ConnectionError) as exc:
-                    _log.warning("Investigation SSE catchup failed for %s: %s", task_id, exc)
-
-                current_status = await _fetch_inv_status()
-                if current_status in _INV_TERMINAL:
-                    yield f"event: done\ndata: {json.dumps({'status': current_status})}\n\n"
-                    return
-
-                async for event_id, event in stream.stream_events(task_id, resume_from):
-                    if event.get("type") == "ping":
-                        current_status = await _fetch_inv_status()
-                        if current_status in _INV_TERMINAL:
-                            yield f"event: done\ndata: {json.dumps({'status': current_status})}\n\n"
-                            return
-                        yield f"data: {json.dumps({'stage': 'heartbeat', 'message': f'Investigation running (stage={latest_stage})', 'percent': None})}\n\n"
-                        continue
-
-                    yield f"id: {event_id}\ndata: {json.dumps(event)}\n\n"
-                    if event.get("stage"):
-                        latest_stage = event["stage"]
-                    if event.get("stage") in _INV_TERMINAL:
-                        yield f"event: done\ndata: {json.dumps({'status': event['stage']})}\n\n"
-                        return
-            finally:
-                ACTIVE_SSE.dec()
-
-        return StreamingResponse(
-            _inv_sse_generator(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
 
     @router.get(
         "/projects/{project_id}/answers",
@@ -3196,63 +2934,22 @@ def create_forensics_router() -> APIRouter:
                 raise HTTPException(status_code=404, detail=f"Project {project_id} not found.")
             _require_project_ownership(project, auth)
 
-            from sqlmodel import or_
-
             rows = (await uow.session.exec(
                 select(ArtifactRecord).where(
                     ArtifactRecord.project_id == project_id,
-                    or_(
-                        ArtifactRecord.artifact_family == "registry",
-                        ArtifactRecord.artifact_family == "filesystem",
-                        ArtifactRecord.artifact_family == "execution",
-                    ),
+                    ArtifactRecord.source_tool == "dissect",
+                    col(ArtifactRecord.artifact_type).in_(_REGISTRY_BUCKET_BY_TYPE),
                 )
             )).all()
 
-        _REG_TYPE_TO_BUCKET: dict[str, str] = {
-            "runkeys": "autoruns",
-            "startup": "autoruns",
-            "services": "services",
-            "apps_installed": "installed_software",
-            "users": "user_accounts",
-            "usb": "usb_history",
-            "recentfiles": "recent_docs",
-            "shellbags": "shellbags",
-            "registry_hivelist": "autoruns",
-            "shell_history_powershell": "autoruns",
-            "prefetch": "shimcache",
-            "tasks": "services",
-        }
-
-        buckets: dict[str, list[dict[str, Any]]] = {
-            "autoruns": [], "services": [], "installed_software": [],
-            "user_accounts": [], "usb_history": [], "recent_docs": [],
-            "network_interfaces": [], "shellbags": [], "amcache": [],
-            "shimcache": [], "bam": [], "security_packages": [],
-        }
-
+        buckets: dict[str, list[dict[str, Any]]] = {name: [] for name in RegistryAnalysis.model_fields}
         for row in rows:
             data = json.loads(row.data_json)
             data["_artifact_type"] = row.artifact_type
             data["_artifact_family"] = row.artifact_family
-            bucket_name = _REG_TYPE_TO_BUCKET.get(row.artifact_type)
-            if bucket_name and bucket_name in buckets:
-                buckets[bucket_name].append(data)
+            buckets[_REGISTRY_BUCKET_BY_TYPE[row.artifact_type]].append(data)
 
-        return DataEnvelope(data=RegistryAnalysis(
-            autoruns=buckets["autoruns"],
-            services=buckets["services"],
-            installed_software=buckets["installed_software"],
-            user_accounts=buckets["user_accounts"],
-            usb_history=buckets["usb_history"],
-            recent_docs=buckets["recent_docs"],
-            network_interfaces=buckets["network_interfaces"],
-            shellbags=buckets["shellbags"],
-            amcache=buckets["amcache"],
-            shimcache=buckets["shimcache"],
-            bam=buckets["bam"],
-            security_packages=buckets["security_packages"],
-        ))
+        return DataEnvelope(data=RegistryAnalysis(**buckets))
 
     @router.get(
         "/projects/{project_id}/timeline",
@@ -4038,10 +3735,27 @@ def create_forensics_router() -> APIRouter:
                 if task_cancelled:
                     task_id_for_finalize = inv.task_id
 
+            prior_status = inv.status
             inv.status = InvestigationStatus.CANCELLED.value
             if not inv.final_answer:
                 inv.final_answer = "Cancelled by analyst."
             uow.session.add(inv)
+            record_audit_event(
+                uow.session,
+                run_id=investigation_id,
+                stage="forensics",
+                action="investigation_cancelled",
+                target=f"investigation:{investigation_id}",
+                user_id=auth.user_id,
+                team_id=auth.team_id,
+                details={
+                    "investigation_id": investigation_id,
+                    "project_id": project_id,
+                    "prior_status": prior_status,
+                    "new_status": InvestigationStatus.CANCELLED.value,
+                    "task_cancelled": task_cancelled,
+                },
+            )
             await uow.commit()
 
         # Post-commit: drop the ARQ in-progress key. Runs outside the UoW so

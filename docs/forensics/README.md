@@ -365,14 +365,7 @@ Both Linux (`apt`, `pip3`) and Windows (`winget`, `pip`) install paths are defin
 
 ### CAPA integration
 
-The `strings` runner exposes a `capa` action for MITRE ATT&CK capability mapping on PE binaries. The runner needs both the rules and signatures pointed at the analyzer's filesystem:
-
-| Variable | Resolves via | Purpose |
-|---|---|---|
-| `AILA_FORENSICS_CAPA_RULES` (env) or `capa_rules` (ConfigRegistry) | env → DB → schema default | Path to the capa rules directory on the analyzer |
-| `AILA_FORENSICS_CAPA_SIGS` (env) or `capa_sigs` (ConfigRegistry) | env → DB → schema default | Path to the capa signatures directory on the analyzer |
-
-The investigator invokes capa with both paths supplied explicitly: `capa -q -j -r <rules> -s <sigs> <input_file>` (`-j` for JSON; the agent walks `rules.*` to extract matches). When the values are unset, the strings runner skips capa and reports it in the artifact log.
+The `strings_runner` tool exposes a `capa` action (`src/aila/modules/forensics/tools/strings_runner.py`) for capability detection on binaries. It runs `capa <file>` on the analyzer (`capa.exe "<file>"` on Windows analyzers) using the rule and signature set bundled with the capa install. The module has no configuration keys for capa; the rules and signatures are not passed as arguments.
 
 ---
 
@@ -395,6 +388,8 @@ intake → collection → deep_analysis → promotion → resolution → writeup
 | **Resolution**    | Maps each user question to artifact families and attempts automatic answers from existing evidence and promoted leads                                                                                                                                                                                                        |
 | **Write-Up**      | LLM generates a 15-section DFIR / malware-analysis report with inline `artifact_id` citations                                                                                                                                                                                                                                |
 | **Response Emit** | Assembles the terminal `PlatformResponse` payload                                                                                                                                                                                                                                                                            |
+
+Every stage declares `on_failure="analysis_failed"`. When a stage raises after its retries, times out, or fails output validation, the run moves to `analysis_failed`, which sets a still-active project (created, ready, analyzing) to `failed` with a `failure_reason` naming the failed stage and error class, then ends at `__failed__`. A failure status intake already wrote, with its own reason, is kept. `FORENSICS_RAW_DIRECTORY_V1` uses the same failure state for its intake.
 
 ### `FORENSICS_FREEFLOW_V1`
 
@@ -419,6 +414,19 @@ The freeflow investigator is strategy-neutral by design. Replaces the prior stra
 - The agent sees the full normalized artifact graph (not a curated subset), the Valuable Items rollup, and the running history of prior steps.
 - The agent picks its own tool: shell command, Python script (uploaded via `ScriptTool`), or a structured Dissect / Volatility / tshark / Zeek action.
 - Output is graded twice per investigation: (a) answer correctness; (b) whether a DFIR / CTF-grade report can be produced from the captured trajectory alone, without re-running the case.
+
+### Stop semantics
+
+The investigate loop reads the investigation row's status at the top of every turn, before any provider or tool call. The persisted status decides what happens next:
+
+| Persisted status | Loop behavior | Final status written by freeflow |
+| --- | --- | --- |
+| `pending`, `running` | Runs the turn | Set by the answer / failure path |
+| `paused` (lifecycle pause) | Stops at the turn boundary | `paused` is left intact |
+| `cancelled` (analyst Stop, or cost-ceiling monitor) | Stops at the turn boundary | `cancelled`, or `exhausted` when the cost ceiling was crossed |
+| `completed`, `exhausted`, `failed` | Stops at the turn boundary | The stopped status is left intact |
+
+A stop observed before turn 1 makes no provider or tool call and does not mark the investigation `failed`. A paused or terminal stop never overwrites the status that is already persisted.
 
 ---
 
@@ -467,7 +475,6 @@ The module has no frontend directory. Forensics UI lives in the shared console s
 | `ArtifactExplorer`      | Browse all extracted artifacts by family and type          |
 | `LeadScoreCard`         | Top promoted leads with scoring breakdown                  |
 | `MachineReadinessCheck` | Tool installation status (green / red per tool)            |
-| `ReadinessStreamPanel`  | Live SSE stream of the readiness check while it runs       |
 | `RetrieveFilePanel`     | Pull a specific file out of a disk image                   |
 | `FetchRawFilePanel`     | Fetch a file or directory from a raw-directory project     |
 
@@ -487,8 +494,7 @@ All endpoints use `DataEnvelope[T]`, platform auth, and rate limiting.
 | `DELETE` | `/forensics/projects/:id`                                           | Delete project + all its data                                    |
 | `POST` | `/forensics/projects/:id/full-analysis`                               | Trigger the full-analysis pipeline                               |
 | `POST` | `/forensics/projects/:id/readiness-check`                             | Check analyzer-machine tool readiness                            |
-| `GET`  | `/forensics/projects/:id/readiness-check/stream`                      | Stream readiness check progress via SSE                          |
-| `GET`  | `/forensics/projects/:id/evidence`                                    | List evidence files                                              |
+| `GET`  | `/forensics/projects/:id/evidence`                                    | List evidence files (paginated, with total)                      |
 | `GET`  | `/forensics/projects/:id/findings`                                    | Confident findings extracted from artifacts                      |
 | `GET`  | `/forensics/projects/:id/artifacts`                                   | Query artifacts (family / type filter, paginated)                |
 | `GET`  | `/forensics/projects/:id/leads`                                       | Top promoted leads                                               |
@@ -498,7 +504,6 @@ All endpoints use `DataEnvelope[T]`, platform auth, and rate limiting.
 | `GET`  | `/forensics/projects/:id/investigations/:iid`                         | Investigation detail with agent steps                            |
 | `GET`  | `/forensics/projects/:id/investigations/:iid/reasoning-graphs`        | Durable reasoning-graph snapshots                                |
 | `GET`  | `/forensics/projects/:id/investigations/:iid/reasoning-graphs/diff`   | Diff two reasoning-graph snapshots                               |
-| `GET`  | `/forensics/projects/:id/investigations/:iid/events`                  | Stream investigation progress via SSE                            |
 | `POST` | `/forensics/projects/:id/investigations/:iid/cancel`                  | Hard-cancel a running investigation                              |
 | `POST` | `/forensics/projects/:id/investigations/:iid/tag`                     | Tag an investigation step as solid evidence                      |
 | `GET`  | `/forensics/projects/:id/answers`                                     | Answered questions                                               |

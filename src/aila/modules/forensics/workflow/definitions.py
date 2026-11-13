@@ -9,10 +9,12 @@ Mirrors the vulnerability module's architecture (Phase 180/183):
   giving us cursor persistence, audit trails, retries, and resumability.
 
 - ``FORENSICS_FULL_ANALYSIS_V1`` -- full evidence pipeline:
-  ``intake -> collection -> deep_analysis -> promotion -> resolution -> writeup -> response_emit -> __succeeded__``
+  ``intake -> collection -> deep_analysis -> promotion -> resolution -> writeup -> response_emit -> __succeeded__``;
+  any state's failure routes to ``analysis_failed -> __failed__``, which marks
+  the project failed with a reason.
 
 - ``FORENSICS_FREEFLOW_V1`` -- bounded investigation:
-  ``freeflow -> writeup -> response_emit -> __succeeded__``
+  ``freeflow -> promotion -> writeup -> response_emit -> __succeeded__``
 
 Every ``StateSpec`` declares ``on_success`` to make the graph edges
 statically visible (not just dynamically returned by handlers).
@@ -20,6 +22,7 @@ statically visible (not just dynamically returned by handlers).
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import TYPE_CHECKING, Any, cast
 
 from aila.modules.forensics.config_schema import FORENSICS_DEFAULTS
@@ -28,11 +31,12 @@ from aila.modules.forensics.workflow.states.collection import state_collection
 from aila.modules.forensics.workflow.states.deep_analysis import state_deep_analysis
 from aila.modules.forensics.workflow.states.freeflow import state_freeflow
 from aila.modules.forensics.workflow.states.intake import state_intake
-from aila.modules.forensics.workflow.states.promotion import state_promotion
+from aila.modules.forensics.workflow.states.promotion import state_freeflow_promotion, state_promotion
 from aila.modules.forensics.workflow.states.resolution import state_resolution
 from aila.modules.forensics.workflow.states.writeup import state_writeup
 from aila.platform.exceptions import AILAError
 from aila.platform.workflows.types import (
+    RESERVED_FAILED,
     RESERVED_SUCCEEDED,
     HandlerFn,
     StateResult,
@@ -41,6 +45,7 @@ from aila.platform.workflows.types import (
 )
 
 if TYPE_CHECKING:
+    from aila.modules.forensics.workflow.services import ForensicsWorkflowServices
     from aila.platform.workflows.types import WorkflowServices
 
 __all__ = [
@@ -135,6 +140,72 @@ async def _state_response_emit(
     )
 
 
+_FAILURE_REASON_MAX_CHARS = 500
+
+
+async def _state_analysis_failed(
+    input: dict[str, Any], services: ForensicsWorkflowServices,
+) -> StateResult:
+    """Failure terminal for project analysis runs: mark the project failed.
+
+    The engine routes here from any state's ``on_failure`` with only the
+    failure facts (``failed_state`` / ``error_class`` / ``error_message`` on a
+    raise or timeout, ``previous_state`` / ``error`` / ``error_detail`` on an
+    output-validation failure), so the project id comes from the run's
+    ``TaskRecord`` kwargs (``run_id`` is the task id). Only an active project
+    (created / ready / analyzing) is moved to failed, so a terminal status
+    another path already wrote (intake's own failure and reason) stands.
+    """
+    from sqlmodel import select as _select
+
+    from aila.modules.forensics.db_models import ForensicsProjectRecord
+    from aila.platform.tasks.models import TaskRecord
+    from aila.platform.uow import UnitOfWork
+
+    failed_state = str(input.get("failed_state") or input.get("previous_state") or "unknown")
+    error = str(input.get("error_class") or input.get("error") or "unknown error")
+    detail = input.get("error_message") or input.get("error_detail")
+    reason = f"{failed_state} failed: {error}"
+    if detail and detail != error:
+        reason = f"{reason}: {detail}"
+    reason = reason[:_FAILURE_REASON_MAX_CHARS]
+
+    project_id = ""
+    project_status: str | None = None
+    async with UnitOfWork() as uow:
+        task = (await uow.session.exec(
+            _select(TaskRecord).where(TaskRecord.id == services.run_id)
+        )).first()
+        if task is not None and task.kwargs_json:
+            project_id = str(json.loads(task.kwargs_json).get("project_id") or "")
+        if project_id:
+            proj = (await uow.session.exec(
+                _select(ForensicsProjectRecord).where(ForensicsProjectRecord.id == project_id)
+            )).first()
+            if proj is not None:
+                if proj.status in {
+                    ProjectStatus.CREATED.value,
+                    ProjectStatus.READY.value,
+                    ProjectStatus.ANALYZING.value,
+                }:
+                    proj.status = ProjectStatus.FAILED.value
+                    proj.failure_reason = reason
+                    uow.session.add(proj)
+                project_status = proj.status
+        await uow.commit()
+
+    return StateResult(
+        next_state=RESERVED_FAILED,
+        output={
+            "project_id": project_id,
+            "status": project_status,
+            "failed_state": failed_state,
+            "error_class": error,
+            "failure_reason": reason,
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # Mode: FULL_ANALYSIS
 # ---------------------------------------------------------------------------
@@ -150,6 +221,7 @@ FORENSICS_FULL_ANALYSIS_V1: WorkflowDefinition = WorkflowDefinition(
             max_retries=2,
             retriable_on=_SSH_TRANSIENT,
             on_success="collection",
+            on_failure="analysis_failed",
         ),
         "collection": StateSpec(
             handler=_h(state_collection),
@@ -157,6 +229,7 @@ FORENSICS_FULL_ANALYSIS_V1: WorkflowDefinition = WorkflowDefinition(
             max_retries=1,
             retriable_on=_SSH_TRANSIENT,
             on_success="deep_analysis",
+            on_failure="analysis_failed",
         ),
         "deep_analysis": StateSpec(
             handler=_h(state_deep_analysis),
@@ -164,29 +237,39 @@ FORENSICS_FULL_ANALYSIS_V1: WorkflowDefinition = WorkflowDefinition(
             max_retries=1,
             retriable_on=_SSH_TRANSIENT,
             on_success="promotion",
+            on_failure="analysis_failed",
         ),
         "promotion": StateSpec(
             handler=_h(state_promotion),
             timeout_s=300.0,
             max_retries=1,
             on_success="resolution",
+            on_failure="analysis_failed",
         ),
         "resolution": StateSpec(
             handler=_h(state_resolution),
             timeout_s=300.0,
             max_retries=1,
             on_success="writeup",
+            on_failure="analysis_failed",
         ),
         "writeup": StateSpec(
             handler=_h(state_writeup),
             timeout_s=600.0,
             max_retries=1,
             on_success="response_emit",
+            on_failure="analysis_failed",
         ),
         "response_emit": StateSpec(
             handler=_h(_state_response_emit),
             timeout_s=30.0,
             on_success=RESERVED_SUCCEEDED,
+            on_failure="analysis_failed",
+        ),
+        "analysis_failed": StateSpec(
+            handler=_h(_state_analysis_failed),
+            timeout_s=30.0,
+            on_success=RESERVED_FAILED,
         ),
     },
     services_factory=_build_services,
@@ -207,6 +290,12 @@ FORENSICS_FREEFLOW_V1: WorkflowDefinition = WorkflowDefinition(
             timeout_s=6000.0,
             max_retries=1,
             retriable_on=_SSH_TRANSIENT,
+            on_success="promotion",
+        ),
+        "promotion": StateSpec(
+            handler=_h(state_freeflow_promotion),
+            timeout_s=300.0,
+            max_retries=1,
             on_success="writeup",
         ),
         "writeup": StateSpec(
@@ -245,6 +334,12 @@ FORENSICS_RAW_DIRECTORY_V1: WorkflowDefinition = WorkflowDefinition(
             max_retries=2,
             retriable_on=_SSH_TRANSIENT,
             on_success=RESERVED_SUCCEEDED,
+            on_failure="analysis_failed",
+        ),
+        "analysis_failed": StateSpec(
+            handler=_h(_state_analysis_failed),
+            timeout_s=30.0,
+            on_success=RESERVED_FAILED,
         ),
     },
     services_factory=_build_services,

@@ -7,7 +7,6 @@ Endpoints under test:
   GET  /tasks         -- list tasks (admin sees all)
   GET  /tasks/{id}    -- single task detail
   POST /analyze       -- scan submission (503 without platform)
-  POST /task          -- freeform task submission (503 without platform)
 
 Uses async_client with a real test DB. TaskRecords are seeded directly
 via DB to test the read path independently of the write path (which
@@ -152,25 +151,6 @@ async def test_post_analyze_returns_503_without_platform(
     resp = await async_client.post(
         "/analyze",
         json={"query_text": "scan web01 for vulnerabilities", "targets": ["web01"]},
-        headers=headers,
-    )
-    assert resp.status_code == 503, resp.text
-    assert "Platform not initialized" in resp.json()["detail"]
-
-
-async def test_post_task_returns_503_without_platform(
-    async_client: AsyncClient,
-    operator_token: str,
-) -> None:
-    """POST /task with platform=None returns 503.
-
-    Proves: route is wired, auth passes (operator role), and the platform
-    dependency check correctly surfaces 503 instead of a 500 crash.
-    """
-    headers = {"Authorization": f"Bearer {operator_token}"}
-    resp = await async_client.post(
-        "/task",
-        json={"query_text": "test query"},
         headers=headers,
     )
     assert resp.status_code == 503, resp.text

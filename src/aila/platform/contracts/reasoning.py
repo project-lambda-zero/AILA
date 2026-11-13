@@ -39,8 +39,15 @@ __all__ = [
     "ResolvedHypothesis",
 ]
 
+# ``script_execute`` and ``artifact_query`` are forensics-only actions: a
+# module that has no handler for one rejects it explicitly through
+# ``AgentTurnRunnerBase._maybe_reject_unsupported_action``. For
+# ``artifact_query`` the search text rides in ``command`` and the optional
+# family/type filters in the ``_artifact_family`` / ``_artifact_type``
+# observables (both read by the forensics investigator).
 ReasoningAction = Literal[
     "script_execute",
+    "artifact_query",
     "tool_run",
     "reasoning",
     "recall",
@@ -233,6 +240,12 @@ class ReasoningCaseState(BaseModel):
     # hypothesis.opened_at_turn). 0 means "never absorbed with a turn
     # number" (legacy rows). Filled in by ``absorb(turn_number=N)``.
     current_turn: int = 0
+
+    # Rejected/resolved hypothesis ids that have consumed their one
+    # evidence-backed revival on this branch. Persisted in case_state_json
+    # so later confirmed re-emits cannot reopen the same id repeatedly.
+    # Defaults empty for states serialized before bounded revival existed.
+    revived_hypothesis_ids: list[str] = Field(default_factory=list)
 
     @field_validator("observables")
     @classmethod
@@ -620,8 +633,9 @@ class ReasoningTurnDecision(BaseModel):
             ``args`` key missing/wrong-type → fail naming the
             specific missing field.
           * Any other action (``reasoning``, ``submit``,
-            ``script_execute``) → no check on ``command`` (those
-            actions don't use it).
+            ``script_execute``, ``artifact_query``) → no check on
+            ``command`` (those actions don't use it as a tool dispatch;
+            ``artifact_query`` carries free search text there).
         """
         import json as _json
 

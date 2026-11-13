@@ -2,8 +2,9 @@
 
 LLMError is the base for all LLM-related failures.
 LLMDisabledError signals the kill switch is active -- callers receive this
-when ConfigRegistry has llm_kill_switch=True.  It is NOT raised as an
-exception; the client returns it as a structured error response (per D-08).
+when ConfigRegistry has llm_kill_switch=True.  The client itself does not
+raise it; it returns a structured response with ``disabled=True`` (per D-08).
+Callers that cannot proceed without the LLM raise this type from that flag.
 """
 
 from __future__ import annotations
@@ -21,6 +22,13 @@ class LLMError(Exception):
         super().__init__(message)
         self.message = message
         self.retryable = retryable
+
+
+class LLMTruncationError(LLMError):
+    """Structured output was cut off at the model's output-token limit.
+
+    This is a retryable model-quality failure, not an infrastructure failure.
+    """
 
 
 class LLMDisabledError(LLMError):

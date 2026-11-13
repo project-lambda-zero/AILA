@@ -127,6 +127,31 @@ class ModuleHealthResult:
 
 
 @dataclass(frozen=True, slots=True)
+class SearchEntity:
+    """One module-owned hit returned by ``ModuleProtocol.search_entities``.
+
+    The lightweight contract between a module and the global search router
+    (``GET /search``). Distinct from ``SearchResult`` (the Pydantic API response
+    model): the router maps each hit onto ``SearchResult`` and stamps
+    ``module_id`` from the registered module that produced it, so a module
+    never labels its own hits.
+
+    Attributes:
+        entity_type: Noun naming what was matched (e.g. ``"target"``,
+            ``"investigation"``). The UI routes a hit by ``(module_id,
+            entity_type)``, and ``GET /search?entity_types=`` filters on it.
+        entity_id: Primary key of the matched row, the id the UI opens.
+        title: Display text of the hit (the matched name or title).
+        snippet: Short one-line context shown beside the title.
+    """
+
+    entity_type: str
+    entity_id: str
+    title: str
+    snippet: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class ModuleCapabilityProfile:
     """Describes one action that a module can handle.
 
@@ -444,22 +469,35 @@ class ModuleProtocol(Protocol):
         """
         return {}
 
-    def search_entities(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
-        """Return module-registered searchable entities matching query (D-37/D-28).
+    async def search_entities(
+        self,
+        session: Any,
+        query: str,
+        *,
+        team_id: str | None,
+        limit: int,
+    ) -> list[SearchEntity]:
+        """Return this module's rows whose display text matches ``query``.
 
-        Called by GET /search. Each dict must contain at minimum:
-        entity_type, entity_id, title, snippet.
+        Called by GET /search with the router's team-scoped session, the same
+        session ``latest_findings`` receives. Implementations MUST query through
+        ``session`` and MUST NOT open their own unit of work: an unscoped session
+        bypasses the caller's team boundary.
 
-        OPTIONAL -- platform checks hasattr() before calling.
+        OPTIONAL -- the default returns no hits.
 
         Args:
-            query: Raw search string from the client.
-            limit: Maximum number of results to return.
+            session: Active AsyncSession bound to the caller's TeamContext.
+            query: Trimmed, non-empty search string from the client. Match it
+                literally: ``%`` and ``_`` are not wildcards (use
+                ``autoescape=True``).
+            team_id: Caller's team id. When provided, implementations MUST
+                restrict hits to that team. ``None`` means god-tier (TEAM-06) and
+                no team filter is applied.
+            limit: Maximum number of hits to return.
 
         Returns:
-            List of entity dicts, e.g.:
-                [{'entity_type': 'cve', 'entity_id': 'CVE-2023-0001',
-                  'title': 'CVE-2023-0001', 'snippet': 'openssl 1.0.2'}]
+            At most ``limit`` matching hits.
         """
         return []
 
@@ -517,6 +555,19 @@ class ModuleProtocol(Protocol):
                                              ['vr.false_positive']}}}
         """
         return {}
+
+    async def finding_exists(self, finding_id: str, session: Any) -> bool:
+        """Return True when ``finding_id`` is a finding this module owns that ``session`` can see.
+
+        Called by ``POST /findings/{finding_id}/transition`` for the module
+        named in the request body, before any workflow state is read or
+        written. ``session`` is bound to the caller's TeamContext, so a
+        query on a team-scoped table returns only the caller's team's rows
+        (every row for a god-tier admin); an implementation answers from
+        such a query and adds no team logic of its own. Default False: a
+        module that owns no findings has none to transition.
+        """
+        return False
 
     def persona_router(self) -> type[PersonaRouter] | None:
         """Return the module's platform-owned :class:`PersonaRouter` subclass.

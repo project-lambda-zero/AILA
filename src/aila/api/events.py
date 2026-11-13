@@ -33,11 +33,16 @@ the JSON ``type`` key carry the same value):
     processes arrive through the Redis domain-event bridge. Delivered to
     every active user of the investigation's team (primary team or team
     membership) and to god-tier admins (users without a team).
+``project.status_changed``
+    A project's ``status`` column changed and the write committed (forensics
+    projects). ``data`` is ``{module, project_id, status, previous_status}``;
+    produced and delivered exactly like ``investigation.status_changed``.
 """
 from __future__ import annotations
 
 __all__ = [
     "INVESTIGATION_STATUS_CHANGED",
+    "PROJECT_STATUS_CHANGED",
     "QUEUE_MAXSIZE",
     "emit_platform_event",
     "install_investigation_status_forwarder",
@@ -64,6 +69,13 @@ from ..storage.database import async_session_scope
 from ..storage.db_models import TeamMemberRecord, UserRecord
 
 INVESTIGATION_STATUS_CHANGED = "investigation.status_changed"
+PROJECT_STATUS_CHANGED = "project.status_changed"
+
+# ``entity_kind`` -> (SSE event type, payload key carrying the entity id).
+_STATUS_FRAMES: dict[str, tuple[str, str]] = {
+    "investigation": (INVESTIGATION_STATUS_CHANGED, "investigation_id"),
+    "project": (PROJECT_STATUS_CHANGED, "project_id"),
+}
 
 _log = logging.getLogger(__name__)
 
@@ -143,27 +155,28 @@ async def investigation_status_recipients(team_id: str | None) -> list[str]:
 
 async def _deliver_investigation_status(event: EntityStatusChanged) -> None:
     payload = event.payload
+    event_type, id_key = _STATUS_FRAMES[payload.entity_kind]
     data = {
         "module": payload.module_id,
-        "investigation_id": payload.entity_id,
+        id_key: payload.entity_id,
         "status": payload.status,
         "previous_status": payload.previous_status,
     }
     for user_id in await investigation_status_recipients(event.team_id):
-        await emit_platform_event(user_id, INVESTIGATION_STATUS_CHANGED, data)
+        await emit_platform_event(user_id, event_type, data)
 
 
 _forwarder_loop: asyncio.AbstractEventLoop | None = None
 
 
 def _forward_investigation_status(event: DomainEvent) -> None:
-    """DomainEventBus subscriber: push investigation status changes to SSE.
+    """DomainEventBus subscriber: push investigation and project status changes to SSE.
 
     Runs on whatever thread published (request handler, consumer task,
     worker thread), so delivery is handed to the API event loop that owns
     the SSE queues.
     """
-    if not isinstance(event, EntityStatusChanged) or event.payload.entity_kind != "investigation":
+    if not isinstance(event, EntityStatusChanged) or event.payload.entity_kind not in _STATUS_FRAMES:
         return
     loop = _forwarder_loop
     if loop is None or loop.is_closed():
@@ -173,7 +186,7 @@ def _forward_investigation_status(event: DomainEvent) -> None:
     def _log_failure(done: Future[None]) -> None:
         if not done.cancelled() and (exc := done.exception()) is not None:
             _log.warning(
-                "investigation status push failed for %s: %s",
+                "status push failed for %s: %s",
                 event.payload.entity_id,
                 exc,
             )

@@ -2138,7 +2138,7 @@ class TestHealWithoutJournal:
     ) -> None:
         """Substring matching: a heal that dispatches through a private
         wrapper (``self._flip_status(...)`` or
-        ``_fan_out_reenqueue_submit(...)``) still fires -- exact-match
+        ``_prepare_reenqueue_sends(...)``) still fires -- exact-match
         would silently skip every heal that owns a module-private
         mutation helper, which is the exact shape
         ``state_reconciler.reconcile`` and
@@ -2181,13 +2181,13 @@ class TestHealWithoutJournal:
         """Substring matching catches
         ``investigation_lifecycle.reenqueue_investigation`` shape: heal-
         marked function dispatching to a longer-named private helper
-        whose name contains the marker (``_fan_out_reenqueue_submit``).
+        whose name contains the marker (``_prepare_reenqueue_sends``).
         """
         src = _write(
             tmp_path,
             "aila/platform/services/lifecycle.py",
             "async def reenqueue_investigation(inv):\n"
-            "    await _fan_out_reenqueue_submit(inv)\n",
+            "    await _prepare_reenqueue_sends(inv)\n",
         )
         assert "heal_without_journal" in _rules(_audit(src))
 

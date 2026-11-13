@@ -22,7 +22,6 @@ __all__ = [
     "ScanSubmissionRequest",
     "ScanStatusResponse",
     "TaskActionResponse",
-    "TaskCreateRequest",
     "TaskListResponse",
     "TaskResponse",
     "TaskSubmitResponse",
@@ -74,14 +73,8 @@ class TaskListResponse(APIModel):
     total: int = Field(description="Total number of matching tasks")
 
 
-class TaskCreateRequest(APIModel):
-    """Request body for POST /task freeform query (D-09, TASK-01)."""
-
-    query_text: str = Field(..., min_length=1, description="Freeform query text for AILAPlatform.handle()")
-
-
 class TaskSubmitResponse(APIModel):
-    """Response for POST /task and POST /analyze (ASYNC-01, TASK-01)."""
+    """Response for POST /analyze (ASYNC-01, TASK-01)."""
 
     run_id: str
     status: Literal["submitted"] = "submitted"
@@ -98,13 +91,14 @@ class TaskActionResponse(APIModel):
 
 
 class DrainQueueResponse(APIModel):
-    """Response for POST /tasks/drain (OPS-05).
+    """Response for POST /tasks/drain and POST /tasks/undrain (OPS-05, #434).
 
-    Returns the number of pending tasks and whether draining is active.
+    Returns the number of queued tasks and whether the deployment-wide drain is
+    in effect after the call.
     """
 
     pending: int = Field(description="Number of tasks still pending in the queue")
-    draining: bool = Field(description="Whether the queue is now in draining mode")
+    draining: bool = Field(description="Whether new submissions are now rejected for every caller")
 
 
 class ScanStatusResponse(APIModel):

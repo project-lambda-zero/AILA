@@ -95,6 +95,10 @@ _PLATFORM_DYNAMIC_FAMILIES: tuple[DynamicKeyFamily, ...] = (
     DynamicKeyFamily("llm_tool_timeout_s_", float, description="Per-task-type per-tool timeout (s)."),
     DynamicKeyFamily("llm_data_direction_", str, description="Per-task-type data-direction constraint."),
     DynamicKeyFamily("llm_budget_max_total_tokens_", int, description="Per-task-type token budget ceiling."),
+    DynamicKeyFamily(
+        "llm_seal_store_content_", bool,
+        description="Per-task-type opt-in to store full prompt and response bodies in the LLM seal.",
+    ),
     # Per-team monthly budget ceiling (USD).
     DynamicKeyFamily("llm_monthly_budget_usd_", float, description="Per-team monthly budget ceiling (USD)."),
     # Per-model pricing (USD per 1k tokens). Suffix is the normalized model
@@ -850,13 +854,12 @@ class PlatformConfigSchema(BaseModel):
         ),
     )
 
-    # ENHANCEMENT #155 -- investigation-scoped prompt-cache TTL in
-    # seconds. Forwarded to the provider as a cache-control lifetime
-    # hint where the provider supports it (Anthropic honours the ttl
-    # field on ``cache_control``; OpenAI ignores it and keeps its own
-    # 24 h default, which is safe). ``0`` = provider default (Anthropic
-    # ~5 min ephemeral cache). Set to 3600 or 86400 for longer-lived
-    # investigations. Read via
+    # ENHANCEMENT #155 -- prompt-cache TTL in seconds. Applied as
+    # ``cache_control`` on the stable system prefix of Claude-family
+    # requests; automatic-cache models (OpenAI, Google) receive no marker.
+    # 1..300 selects the 5-minute lifetime, 301 and above the 1-hour
+    # lifetime; 0 sends the bare marker so the provider default (5 minutes)
+    # applies. Read via
     # :func:`aila.platform.llm.prompt_layout.resolve_cache_ttl_seconds`.
     prompt_cache_ttl_seconds: int = 0
 

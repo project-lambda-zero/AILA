@@ -44,8 +44,9 @@ from ..observability import GEN_AI_OPERATION_CHAT, gen_ai_span
 from .cancellation import LLMCancelledError, is_run_cancelled
 from .config import LLMConfigProvider
 from .correlation import current_module_id, resolve_run_id
-from .errors import LLMError
+from .errors import LLMError, LLMTruncationError
 from .pipeline import PipelineRunner
+from .prompt_layout import annotate_stable_prefix, resolve_cache_ttl_seconds
 
 if TYPE_CHECKING:
     from ...storage.registry import ConfigRegistry
@@ -297,45 +298,6 @@ def _clean_and_repair_json(content: str) -> str:
                 pass
 
     return cleaned
-
-
-def _inject_strict_schema_requirements(schema: dict[str, Any]) -> dict[str, Any]:
-    """Recursively inject OpenAI strict structured output requirements.
-
-    OpenAI strict mode requires two things on every object in the schema:
-    1. additionalProperties: false
-    2. required: [...all property names...]
-
-    Pydantic's model_json_schema() omits additionalProperties and only includes
-    required for fields without defaults. This function injects both.
-    """
-    import copy
-    schema = copy.deepcopy(schema)
-
-    def _fix(node: dict[str, Any]) -> None:
-        if node.get("type") == "object":
-            node["additionalProperties"] = False
-            # OpenAI strict mode requires all properties listed in required
-            props = node.get("properties")
-            if isinstance(props, dict) and props:
-                node["required"] = sorted(props.keys())
-        for key in ("properties", "$defs", "definitions"):
-            container = node.get(key)
-            if isinstance(container, dict):
-                for child in container.values():
-                    if isinstance(child, dict):
-                        _fix(child)
-        for key in ("items", "anyOf", "oneOf", "allOf"):
-            val = node.get(key)
-            if isinstance(val, dict):
-                _fix(val)
-            elif isinstance(val, list):
-                for item in val:
-                    if isinstance(item, dict):
-                        _fix(item)
-
-    _fix(schema)
-    return schema
 
 
 @dataclass(frozen=True, slots=True)
@@ -1332,7 +1294,10 @@ class AilaLLMClient:
                 await asyncio.sleep(delay)
             except LLMError as exc:
                 if exc.retryable:
-                    _record_llm_error(routing.base_url, kind="unknown")
+                    # Truncated structured output is a model-quality failure,
+                    # not an infrastructure failure: the endpoint stays healthy.
+                    if not isinstance(exc, LLMTruncationError):
+                        _record_llm_error(routing.base_url, kind="unknown")
                     if self._commit_gate_blocks_retry(
                         call_state, exc, attempt, routing.model_id
                     ):
@@ -1784,7 +1749,11 @@ class AilaLLMClient:
         """
         kwargs: dict[str, Any] = {
             "model": routing.model_id,
-            "messages": messages,
+            "messages": annotate_stable_prefix(
+                messages,
+                model_id=routing.model_id,
+                ttl_seconds=resolve_cache_ttl_seconds(self._config.registry),
+            ),
             "max_tokens": routing.max_tokens,
         }
         if _model_supports_temperature(routing.model_id):
@@ -2008,7 +1977,11 @@ class AilaLLMClient:
             # Call the model again
             kwargs: dict[str, Any] = {
                 "model": routing.model_id,
-                "messages": messages,
+                "messages": annotate_stable_prefix(
+                    messages,
+                    model_id=routing.model_id,
+                    ttl_seconds=resolve_cache_ttl_seconds(self._config.registry),
+                ),
                 "max_tokens": routing.max_tokens,
                 "tools": tools,
             }
@@ -2077,7 +2050,7 @@ class AilaLLMClient:
         try:
             json.loads(content)
         except json.JSONDecodeError:
-            raise LLMError(
+            raise LLMTruncationError(
                 "LLM response was truncated (max_tokens hit) -- "
                 "incomplete JSON received. Increase max_tokens for this task_type.",
                 retryable=True,
@@ -2177,9 +2150,17 @@ def _make_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
     Strict mode requires additionalProperties: false on every object and
     all properties listed in required.  Pydantic does not add these by
     default.  This function adds them non-destructively (copies dicts).
+
+    Free-form objects (``dict[str, Any]``: type object, no declared properties,
+    not explicitly closed) stay open. Nested schemas are still normalized.
     """
     schema = dict(schema)
-    if schema.get("type") == "object":
+    free_form = (
+        schema.get("type") == "object"
+        and not schema.get("properties")
+        and schema.get("additionalProperties") is not False
+    )
+    if schema.get("type") == "object" and not free_form:
         props = schema.get("properties", {})
         schema["properties"] = {k: _make_strict_schema(v) for k, v in props.items()}
         schema["additionalProperties"] = False
@@ -2194,6 +2175,8 @@ def _make_strict_schema(schema: dict[str, Any]) -> dict[str, Any]:
         schema["anyOf"] = [_make_strict_schema(s) for s in schema["anyOf"]]
     if "$defs" in schema:
         schema["$defs"] = {k: _make_strict_schema(v) for k, v in schema["$defs"].items()}
+    if isinstance(schema.get("additionalProperties"), dict):
+        schema["additionalProperties"] = _make_strict_schema(schema["additionalProperties"])
     return schema
 
 

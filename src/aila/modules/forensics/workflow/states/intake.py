@@ -2,8 +2,16 @@
 
 Scans the evidence directory on the analyzer machine, classifies files
 by type (disk_image, memory_dump, pcap, etc.), and persists
-``ProjectEvidenceRecord`` rows. SHA-256 hashing is deferred to downstream
-tools; doing it here blocks the whole workflow for hours on large images.
+``ProjectEvidenceRecord`` rows.
+
+Intake is the single evidence hashing path. Each file whose size is at or
+below ``ForensicsConfigSchema.intake_hash_max_bytes`` is hashed on the
+analyzer via ``_compute_file_hash`` and the digest is stored in
+``file_hash_sha256``. Files above the cap and files whose hash command fails
+keep a null digest; ``metadata_json`` records the ``hash_status``
+(``computed``, ``deferred_over_cap`` or ``failed``) so an unhashed file is
+distinguishable from a missing value. A row that already holds a digest for
+an unchanged size is not re-hashed.
 """
 from __future__ import annotations
 
@@ -14,6 +22,7 @@ from typing import Any
 from pydantic import ValidationError
 from sqlmodel import select as _select
 
+from aila.modules.forensics.config_schema import ForensicsConfigSchema
 from aila.modules.forensics.contracts.status import ProjectStatus
 from aila.modules.forensics.db_models import ForensicsProjectRecord, ProjectEvidenceRecord
 from aila.modules.forensics.workflow.inputs import IntakeInput
@@ -24,6 +33,7 @@ from aila.platform.events import (
 )
 from aila.platform.exceptions import AILAError
 from aila.platform.uow import UnitOfWork
+from aila.storage.registry import ConfigRegistry
 
 __all__ = ["state_intake"]
 
@@ -33,9 +43,61 @@ state_intake_parallel_safe = False
 state_intake_writes_fields = ["evidence_files", "active_lanes"]
 
 
-async def _set_project_status(project_id: str, status: ProjectStatus) -> None:
-    """Single UoW open to update project.status -- avoids the earlier pattern
-    of opening 3–4 separate sessions per handler invocation."""
+async def _intake_hash_cap_bytes() -> int:
+    """Resolve ``forensics.intake_hash_max_bytes`` through ConfigRegistry.
+
+    Falls back to the ForensicsConfigSchema field default when the key is
+    unset, the registry read fails, or the value is not an integer, so a
+    transient DB blip does not fail intake.
+    """
+    default = int(ForensicsConfigSchema.model_fields["intake_hash_max_bytes"].default)
+    try:
+        raw = await ConfigRegistry().get("forensics", "intake_hash_max_bytes")
+    except (OSError, RuntimeError, AILAError) as exc:
+        _log.warning("forensics.intake_hash_max_bytes registry read failed (%s); using default %d", exc, default)
+        return default
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        _log.warning("forensics.intake_hash_max_bytes config value %r not an integer; using default %d", raw, default)
+        return default
+
+
+async def _hash_evidence_file(
+    ssh: Any,
+    integration: dict[str, Any],
+    analyzer_os: str,
+    file_path: str,
+    size_bytes: int,
+    cap_bytes: int,
+) -> tuple[str | None, str]:
+    """Return ``(digest, hash_status)`` for one evidence file.
+
+    ``hash_status`` is one of ``computed``, ``deferred_over_cap`` or
+    ``failed``. The digest is non-null only when the status is ``computed``.
+    Files over the cap are never sent to the analyzer.
+    """
+    from aila.modules.forensics.services.evidence_classifier import _compute_file_hash
+
+    if size_bytes > cap_bytes:
+        return None, "deferred_over_cap"
+    digest = await _compute_file_hash(ssh, integration, file_path, analyzer_os)
+    if digest is None:
+        return None, "failed"
+    return digest, "computed"
+
+
+async def _set_project_status(
+    project_id: str,
+    status: ProjectStatus,
+    failure_reason: str | None = None,
+) -> None:
+    """Single UoW open to update project.status and failure_reason together.
+
+    ``failure_reason`` is written on every call, so any non-failed status
+    clears a reason left by an earlier failed intake."""
     if not project_id:
         return
     async with UnitOfWork() as uow:
@@ -44,8 +106,14 @@ async def _set_project_status(project_id: str, status: ProjectStatus) -> None:
         )).first()
         if proj is not None:
             proj.status = status.value
+            proj.failure_reason = failure_reason
             uow.session.add(proj)
             await uow.commit()
+
+
+def _intake_failure_reason(exc: BaseException) -> str:
+    """Bounded, non-empty failure reason recorded on the project row."""
+    return f"intake failed: {type(exc).__name__}: {str(exc)[:500]}"
 
 
 async def uow_prefetch_evidence(project_id: str) -> list[ProjectEvidenceRecord]:
@@ -88,7 +156,7 @@ async def state_intake(
             f"Intake aborted: {msg}",
             {"stage": "config_error", "project_id": pid, "errors": exc.errors()},
         )
-        await _set_project_status(pid, ProjectStatus.FAILED)
+        await _set_project_status(pid, ProjectStatus.FAILED, _intake_failure_reason(exc))
         raise
 
     project_id = data.project_id
@@ -154,7 +222,7 @@ async def state_intake(
             f"Evidence scan FAILED: {str(exc)[:200]}",
             {"stage": "scan_failed", "error": str(exc)},
         )
-        await _set_project_status(project_id, ProjectStatus.FAILED)
+        await _set_project_status(project_id, ProjectStatus.FAILED, _intake_failure_reason(exc))
         raise
 
     files = result.get("files", [])
@@ -190,18 +258,38 @@ async def state_intake(
     existing_by_path: dict[str, ProjectEvidenceRecord] = {
         row.file_path: row for row in existing_rows
     }
+
+    # Hash before opening the UoW: each hash is a remote command that can
+    # take minutes, and no DB transaction should be held across it.
+    from aila.modules.forensics.tools._ssh_helper import get_ssh_service
+
+    cap_bytes = await _intake_hash_cap_bytes()
+    ssh = await get_ssh_service(services.settings)
+    hashes: dict[str, tuple[str | None, str]] = {}
+    for f in files:
+        prior = existing_by_path.get(f["file_path"])
+        # A stored digest is only ever written with status "computed", so a
+        # digest on an unchanged file means it is already hashed.
+        if prior is not None and prior.file_hash_sha256 and prior.size_bytes == f["size_bytes"]:
+            hashes[f["file_path"]] = (prior.file_hash_sha256, "computed")
+            continue
+        hashes[f["file_path"]] = await _hash_evidence_file(
+            ssh, integration, analyzer_os, f["file_path"], f["size_bytes"], cap_bytes,
+        )
+
     inserted_count = 0
     updated_count = 0
     async with UnitOfWork() as uow:
         for f in files:
+            sha, hash_status = hashes[f["file_path"]]
             extras = {
                 k: v for k, v in f.items()
-                if k not in ("file_path", "evidence_type", "size_bytes", "sha256", "file_name")
+                if k not in ("file_path", "evidence_type", "size_bytes", "file_name")
             }
-            meta_json = json.dumps(extras) if extras else None
+            extras["hash_status"] = hash_status
+            meta_json = json.dumps(extras)
             etype = f.get("evidence_type", "unknown")
             sbytes = f.get("size_bytes")
-            sha = f.get("sha256")
             existing = existing_by_path.get(f["file_path"])
             if existing is not None:
                 # Re-fetch under this session so updates flush on commit.
@@ -216,10 +304,10 @@ async def state_intake(
                     if row.size_bytes != sbytes and sbytes is not None:
                         row.size_bytes = sbytes
                         changed = True
-                    if sha and row.file_hash_sha256 != sha:
+                    if row.file_hash_sha256 != sha:
                         row.file_hash_sha256 = sha
                         changed = True
-                    if meta_json and row.metadata_json != meta_json:
+                    if row.metadata_json != meta_json:
                         row.metadata_json = meta_json
                         changed = True
                     if changed:

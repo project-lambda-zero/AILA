@@ -3,17 +3,20 @@
 Pure-unit tests for the submit-time gates added to
 :mod:`aila.modules.vr.agents.vuln_researcher` and the deterministic
 distinctness score in :mod:`aila.modules.vr.services.distinctness`.
-No DB, no engine, no live LLM: the gates read a decision + case_state
-in memory and either pass, swap the action to ``tool_run``, or stamp
-the payload.
+No DB, no live LLM: the gates read a decision + case_state
+in memory and either pass, swap the action to ``reasoning`` carrying the
+rejection text, or stamp the payload.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
 
 from aila.modules.vr.agents.vuln_researcher import (
+    _HYDRATION_MAX_CITATIONS,
+    _HYDRATION_MAX_TEXT_CHARS,
     HonestVulnResearcher,
     _extract_cited_tool_pairs,
 )
@@ -23,13 +26,15 @@ from aila.modules.vr.services.distinctness import (
     extract_corpus_texts,
     tokenize,
 )
+from aila.platform.agents.prompt_sections import render_active_directives_section
 from aila.platform.contracts.reasoning import (
     EvidenceProvenance,
     Hypothesis,
     ReasoningCaseState,
     ReasoningTurnDecision,
+    RejectedHypothesis,
 )
-
+from aila.platform.services.reasoning import CyberReasoningEngine
 
 # ---------------------------------------------------------------------------
 # Helpers.
@@ -80,6 +85,18 @@ def _make_submit(
 
 def _empty_case() -> ReasoningCaseState:
     return ReasoningCaseState()
+
+
+def _assert_gate_reset(
+    r: HonestVulnResearcher,
+    case: ReasoningCaseState,
+    gate: str,
+) -> None:
+    assert f"_gate.{gate}.reject_count" not in case.observables
+    assert f"_directive.gate.{gate}.rejected" not in case.observables
+    assert f"gate.{gate}.rejected" not in render_active_directives_section(case)
+    assert gate not in r._wave2_rejections
+    assert gate not in r._settled_wave2_gates
 
 
 # ---------------------------------------------------------------------------
@@ -151,10 +168,44 @@ def test_positive_submit_rejected_when_refs_and_confirmation_missing() -> None:
     out = r._maybe_reject_positive_submit_without_confirmed_evidence(
         decision=decision, case_state=case, turn_number=1,
     )
-    assert out.action == "tool_run"
+    assert out.action == "reasoning"
     assert out.payload["_gate.positive_submit_refs.rejected"] is True
     assert case.observables["_gate.positive_submit_refs.reject_count"] == 1
-    assert "_gate.positive_submit_refs.directive" in case.observables
+    assert isinstance(
+        case.observables["_directive.gate.positive_submit_refs.rejected"], str,
+    )
+
+
+def test_rejected_positive_submit_surfaces_directive_in_active_directives_section() -> None:
+    r = _make_researcher()
+    case = _empty_case()
+    decision = _make_submit(answer="heap overflow in decode_frame", payload={})
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=1,
+    )
+    assert out.action == "reasoning"
+    assert "Original submit attempt:\nheap overflow in decode_frame" in out.reasoning
+    body = case.observables["_directive.gate.positive_submit_refs.rejected"]
+    assert "Rejection 1/3 on this branch" in body
+    section = render_active_directives_section(case)
+    assert "## directive: gate.positive_submit_refs.rejected" in section
+    assert body in section
+
+
+def test_rejected_positive_submit_directive_tracks_latest_rejection() -> None:
+    r = _make_researcher()
+    case = _empty_case()
+    r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(payload={}), case_state=case, turn_number=1,
+    )
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(payload={}), case_state=case, turn_number=2,
+    )
+    assert out.action == "reasoning"
+    body = case.observables["_directive.gate.positive_submit_refs.rejected"]
+    assert "Rejection 2/3 on this branch" in body
+    assert case.observables["_gate.positive_submit_refs.reject_count"] == 2
+    assert body in render_active_directives_section(case)
 
 
 def test_positive_submit_passes_when_refs_and_confirmation_present() -> None:
@@ -173,11 +224,218 @@ def test_positive_submit_passes_when_refs_and_confirmation_present() -> None:
     assert "_gate.positive_submit_refs.reject_count" not in case.observables
 
 
+def test_positive_submit_hydrates_matching_answer_citation() -> None:
+    r = _make_researcher()
+    case = _empty_case()
+    case.hypotheses = [
+        Hypothesis(id="h1", claim="stack overflow", confirmed_by="src/x.c:12"),
+    ]
+    observation_id = "audit_mcp.read_function.src_x_c"
+    case.observables[observation_id] = (
+        "=== src/x.c:12-12 [decode_frame] ===\nmemcpy(dst, src, len);"
+    )
+    decision = _make_submit(answer="Unbounded copy at src/x.c:12", payload={})
+
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=1,
+    )
+
+    assert out.action == "submit"
+    assert out.payload["evidence_refs"] == [
+        {
+            "kind": "source_citation",
+            "ref": f"src/x.c:12 [{observation_id}]",
+        },
+    ]
+    advisory = out.payload["positive_submit_evidence_hydration_advisory"]
+    assert advisory["hydrated"] == [
+        {"citation": "src/x.c:12", "observation_id": observation_id},
+    ]
+
+
+def _hydration_case(
+    observation_key: str, body: str, *, confirmed: bool = True,
+) -> ReasoningCaseState:
+    case = _empty_case()
+    if confirmed:
+        case.hypotheses = [
+            Hypothesis(id="h1", claim="stack overflow", confirmed_by="src/x.c:12"),
+        ]
+    case.observables[observation_key] = body
+    return case
+
+
+def test_positive_submit_rejects_fabricated_citation_without_match() -> None:
+    r = _make_researcher()
+    case = _hydration_case(
+        "audit_mcp.read_function.src_x_c",
+        "=== src/x.c:12-12 [decode_frame] ===\nmemcpy(dst, src, len);",
+    )
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(answer="Copy at src/x.c:99", payload={}),
+        case_state=case, turn_number=1,
+    )
+    assert out.action == "reasoning"
+    assert "evidence_refs" not in out.payload
+    assert "positive_submit_evidence_hydration_advisory" not in out.payload
+
+
+def test_positive_submit_rejects_same_path_citation_outside_header_range() -> None:
+    r = _make_researcher()
+    for answer in ("Copy at src/x.c:21", "Copy at src/x.c:20-21"):
+        case = _hydration_case(
+            "audit_mcp.read_function.src_x_c",
+            "=== src/x.c:10-20 [decode_frame] ===\nmemcpy(dst, src, len);",
+        )
+        out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+            decision=_make_submit(answer=answer, payload={}),
+            case_state=case, turn_number=1,
+        )
+        assert out.action == "reasoning", answer
+        assert "evidence_refs" not in out.payload, answer
+
+
+def test_non_tool_observable_with_coordinate_header_is_not_a_match_source() -> None:
+    r = _make_researcher()
+    body = "=== src/x.c:12-12 [decode_frame] ===\nmemcpy(dst, src, len);"
+    for key in ("_directive.gate.note", "_recall.src_x_c", "scratch.src_x_c"):
+        case = _hydration_case(key, body)
+        out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+            decision=_make_submit(answer="Copy at src/x.c:12", payload={}),
+            case_state=case, turn_number=1,
+        )
+        assert out.action == "reasoning", key
+        assert "evidence_refs" not in out.payload, key
+
+
+def test_no_body_observation_does_not_hydrate() -> None:
+    r = _make_researcher()
+    case = _hydration_case(
+        "audit_mcp.read_function.src_x_c",
+        "=== src/x.c:12-12 [decode_frame] ===\n"
+        "!! NO BODY AVAILABLE !! not found\n",
+    )
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(answer="Copy at src/x.c:12", payload={}),
+        case_state=case, turn_number=1,
+    )
+    assert out.action == "reasoning"
+    assert "evidence_refs" not in out.payload
+
+
+def test_hydration_collects_answer_source_and_sink_citations_in_order() -> None:
+    r = _make_researcher()
+    case = _hydration_case(
+        "audit_mcp.read_function.x", "=== src/x.c:10-20 [a] ===\nbody",
+    )
+    case.observables["rea.asm.y"] = "=== src/y.c:3-9 [b] ===\nbody"
+    decision = _make_submit(
+        answer="src/x.c:12 then src/x.c:12 again",
+        payload={"source_ref": "src/x.c:12", "sink_ref": "src/y.c:3-4"},
+    )
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=1,
+    )
+    assert out.action == "submit"
+    assert out.payload["evidence_refs"] == [
+        {"kind": "source_citation", "ref": "src/x.c:12 [audit_mcp.read_function.x]"},
+        {"kind": "source_citation", "ref": "src/y.c:3-4 [rea.asm.y]"},
+    ]
+    assert out.payload["positive_submit_evidence_hydration_advisory"]["hydrated"] == [
+        {"citation": "src/x.c:12", "observation_id": "audit_mcp.read_function.x"},
+        {"citation": "src/y.c:3-4", "observation_id": "rea.asm.y"},
+    ]
+
+
+def test_hydration_caps_citation_count_and_text_length() -> None:
+    r = _make_researcher()
+    case = _hydration_case(
+        "audit_mcp.search_functions.all",
+        "\n".join(f"=== f{i}.c:1-1 [fn] ===\nbody" for i in range(20)),
+    )
+    answer = " ".join(f"f{i}.c:1" for i in range(20))
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(answer=answer, payload={}),
+        case_state=case, turn_number=1,
+    )
+    assert out.action == "submit"
+    assert len(out.payload["evidence_refs"]) == _HYDRATION_MAX_CITATIONS
+    assert out.payload["evidence_refs"][0]["ref"] == (
+        "f0.c:1 [audit_mcp.search_functions.all]"
+    )
+
+    late = _hydration_case(
+        "audit_mcp.read_function.late", "=== src/late.c:5-5 [f] ===\nbody",
+    )
+    beyond_cap = "x" * _HYDRATION_MAX_TEXT_CHARS + " src/late.c:5"
+    out = _make_researcher()._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(answer=beyond_cap, payload={}),
+        case_state=late, turn_number=1,
+    )
+    assert out.action == "reasoning"
+    assert "evidence_refs" not in out.payload
+
+
+def test_existing_valid_refs_are_not_rewritten_by_hydration() -> None:
+    r = _make_researcher()
+    case = _hydration_case(
+        "audit_mcp.read_function.src_x_c",
+        "=== src/x.c:12-12 [decode_frame] ===\nbody",
+    )
+    refs = [{"kind": "source_citation", "ref": "msg-7"}]
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(answer="Copy at src/x.c:12", payload={"evidence_refs": refs}),
+        case_state=case, turn_number=1,
+    )
+    assert out.action == "submit"
+    assert out.payload["evidence_refs"] == refs
+    assert "positive_submit_evidence_hydration_advisory" not in out.payload
+
+
+def test_hydrated_refs_alone_do_not_pass_without_live_confirmed_hypothesis() -> None:
+    r = _make_researcher()
+    case = _hydration_case(
+        "audit_mcp.read_function.src_x_c",
+        "=== src/x.c:12-12 [decode_frame] ===\nbody",
+        confirmed=False,
+    )
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(answer="Copy at src/x.c:12", payload={}),
+        case_state=case, turn_number=1,
+    )
+    assert out.action == "reasoning"
+    body = case.observables["_directive.gate.positive_submit_refs.rejected"]
+    assert "`confirmed_by`" in body
+    assert "payload.evidence_refs is empty" not in body
+    assert out.payload["positive_submit_evidence_hydration_advisory"]["hydrated"] == [
+        {"citation": "src/x.c:12", "observation_id": "audit_mcp.read_function.src_x_c"},
+    ]
+
+
+def test_hydrated_rejection_replays_same_turn() -> None:
+    r = _make_researcher()
+    case = _hydration_case(
+        "audit_mcp.read_function.src_x_c",
+        "=== src/x.c:12-12 [decode_frame] ===\nbody",
+        confirmed=False,
+    )
+    decision = _make_submit(answer="Copy at src/x.c:12", payload={})
+    first = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=1,
+    )
+    second = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=1,
+    )
+    assert second is first
+    assert case.observables["_gate.positive_submit_refs.reject_count"] == 1
+
+
 def test_positive_submit_forces_through_over_cap() -> None:
     r = _make_researcher()
     r._unresolved_hyp_reject_cap = 1
     case = _empty_case()
     case.observables["_gate.positive_submit_refs.reject_count"] = 1
+    case.observables["_directive.gate.positive_submit_refs.rejected"] = "stale"
     decision = _make_submit(payload={})
     out = r._maybe_reject_positive_submit_without_confirmed_evidence(
         decision=decision, case_state=case, turn_number=2,
@@ -187,6 +445,8 @@ def test_positive_submit_forces_through_over_cap() -> None:
     assert out.payload["positive_submit_evidence_advisory"][
         "forced_through_after_rejects"
     ] == 1
+    assert "_directive.gate.positive_submit_refs.rejected" not in case.observables
+    assert "_gate.positive_submit_refs.reject_count" not in case.observables
 
 
 def test_positive_gate_off_when_toggle_disabled() -> None:
@@ -197,6 +457,171 @@ def test_positive_gate_off_when_toggle_disabled() -> None:
         decision=decision, case_state=_empty_case(), turn_number=1,
     )
     assert out is decision
+
+
+# ---------------------------------------------------------------------------
+# #301: a submit gate sees the same revival view absorb will admit.
+# ---------------------------------------------------------------------------
+
+
+def _revival_case(*, revived: list[str]) -> ReasoningCaseState:
+    return ReasoningCaseState(
+        rejected=[RejectedHypothesis(id="H1", claim="c", reason="disproved")],
+        revived_hypothesis_ids=revived,
+    )
+
+
+def _revival_submit(*, confirmed_by: str, rejected: list[str] | None = None) -> ReasoningTurnDecision:
+    decision = _make_submit(payload={"evidence_refs": ["audit_mcp:read_function#1"]})
+    decision.hypotheses = [
+        Hypothesis(id="H1", claim="c", confirmed_by=confirmed_by),
+    ]
+    decision.rejected = [
+        RejectedHypothesis(id=rid, claim="c", reason="same-decision") for rid in (rejected or [])
+    ]
+    return decision
+
+
+def test_positive_submit_refuses_second_revival_of_terminal_id() -> None:
+    """A refused second revival must not satisfy the confirmed-citation gate.
+
+    H1 was already revived once (``revived_hypothesis_ids``); absorb will
+    refuse this re-emit, so the submit gate must not count it either.
+    """
+    r = _make_researcher()
+    case = _revival_case(revived=["H1"])
+    decision = _revival_submit(confirmed_by="src/x.py:1")
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=3,
+    )
+    assert out.action == "reasoning"
+    assert out.payload["_gate.positive_submit_refs.rejected"] is True
+    assert "no live hypothesis carries a `confirmed_by` citation" in (
+        case.observables["_directive.gate.positive_submit_refs.rejected"]
+    )
+
+
+def test_positive_submit_accepts_first_revival_of_terminal_id() -> None:
+    r = _make_researcher()
+    case = _revival_case(revived=[])
+    decision = _revival_submit(confirmed_by="src/x.py:1")
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=2,
+    )
+    assert out.action == "submit"
+
+
+def test_positive_submit_ignores_confirmation_rejected_same_decision() -> None:
+    r = _make_researcher()
+    case = _revival_case(revived=[])
+    decision = _revival_submit(confirmed_by="src/x.py:1", rejected=["H1"])
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=2,
+    )
+    assert out.action == "reasoning"
+
+
+def test_positive_submit_ignores_unsupported_revival_reemit() -> None:
+    r = _make_researcher()
+    case = _revival_case(revived=[])
+    decision = _revival_submit(confirmed_by="")
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=2,
+    )
+    assert out.action == "reasoning"
+
+
+def test_async_submit_chain_does_not_submit_refused_second_revival() -> None:
+    """The async dispatcher must not terminal-submit a refused revival.
+
+    The positive-submit gate runs first and short-circuits, so no
+    DB-reading gate is reached.
+    """
+    r = _make_researcher()
+    case = _revival_case(revived=["H1"])
+    decision = _revival_submit(confirmed_by="src/x.py:1")
+    out = asyncio.run(
+        r._apply_wave2_submit_gates(
+            decision=decision,
+            case_state=case,
+            turn_number=3,
+            prior_outcomes=None,
+        ),
+    )
+    assert out.action == "reasoning"
+
+
+def test_sync_submit_chain_does_not_submit_refused_second_revival() -> None:
+    """The fanout hook runs the same gate; a refused revival must not pass."""
+    r = _make_researcher()
+    case = _revival_case(revived=["H1"])
+    decision = _revival_submit(confirmed_by="src/x.py:1")
+    out = r._wave2_submit_gates_sync(
+        decision=decision, case_state=case, turn_number=3,
+    )
+    assert out.action == "reasoning"
+
+
+def _merged_overlap_case() -> ReasoningCaseState:
+    """Merged branch state: H1 live and terminal, already revived once."""
+    return ReasoningCaseState(
+        hypotheses=[Hypothesis(id="H1", claim="c", confirmed_by="src/x.py:1")],
+        rejected=[RejectedHypothesis(id="H1", claim="c", reason="closed")],
+        revived_hypothesis_ids=["H1"],
+    )
+
+
+def test_confirmed_open_excludes_merged_live_terminal_overlap_without_decision() -> None:
+    r = _make_researcher()
+    confirmed = r._confirmed_open_hypotheses(
+        case_state=_merged_overlap_case(), decision=None,
+    )
+    assert confirmed == []
+
+
+def test_positive_submit_refs_cannot_pass_merged_live_terminal_overlap() -> None:
+    """Refs alone must not pass: absorb drops the live H1 and refuses the revival."""
+    r = _make_researcher()
+    refs = {"evidence_refs": ["audit_mcp:read_function#1"]}
+
+    bare = _make_submit(payload=dict(refs))
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=bare, case_state=_merged_overlap_case(), turn_number=3,
+    )
+    assert out.action == "reasoning"
+
+    reemit = _revival_submit(confirmed_by="src/x.py:2")
+    reemit.payload = dict(refs)
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=reemit, case_state=_merged_overlap_case(), turn_number=3,
+    )
+    assert out.action == "reasoning"
+
+
+def test_positive_submit_accepts_live_revival_after_absorb() -> None:
+    """Preservation: a first revival that absorb admits passes the gate."""
+    engine = CyberReasoningEngine(None)  # type: ignore[arg-type]
+    initial = ReasoningCaseState(
+        rejected=[RejectedHypothesis(id="H1", claim="c", reason="old")],
+    )
+    after = engine.absorb(
+        initial,
+        ReasoningTurnDecision(
+            reasoning="revive",
+            action="reasoning",
+            hypotheses=[Hypothesis(id="H1", claim="c", confirmed_by="src/x.py:1")],
+        ),
+        turn_number=2,
+    )
+    assert after.rejected == []
+    assert after.revived_hypothesis_ids == ["H1"]
+
+    r = _make_researcher()
+    decision = _make_submit(payload={"evidence_refs": ["audit_mcp:read_function#1"]})
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=after, turn_number=3,
+    )
+    assert out.action == "submit"
 
 
 # ---------------------------------------------------------------------------
@@ -221,8 +646,11 @@ def test_negative_submit_rejected_when_cited_observable_has_positive_marker() ->
     out = r._maybe_reject_negative_submit_contradicting_observable(
         decision=decision, case_state=case, turn_number=1,
     )
-    assert out.action == "tool_run"
+    assert out.action == "reasoning"
     assert out.payload["_gate.contradiction_observable.rejected"] is True
+    assert isinstance(
+        case.observables["_directive.gate.contradiction_observable.rejected"], str,
+    )
 
 
 def test_negative_submit_passes_when_no_positive_marker_in_cited_observable() -> None:
@@ -316,31 +744,41 @@ def test_distinctness_stamp_skipped_on_negative_polarity() -> None:
 
 
 # ---------------------------------------------------------------------------
-# F6 gate-namespace hygiene.
+# Gate counter and directive lifecycle.
 # ---------------------------------------------------------------------------
 
 
-def test_gate_counters_use_reserved_gate_prefix() -> None:
-    r = _make_researcher()
-    case = _empty_case()
-    decision = _make_submit(payload={})
-    r._maybe_reject_positive_submit_without_confirmed_evidence(
-        decision=decision, case_state=case, turn_number=1,
+def test_agent_observable_write_cannot_forge_gate_counter() -> None:
+    """A turn decision that sets the gate's reject counter past the cap is
+    absorbed without touching the counter, so the next unsupported positive
+    submit is rejected as a first rejection instead of forced through."""
+    key = "_gate.positive_submit_refs.reject_count"
+    engine = CyberReasoningEngine(None)  # type: ignore[arg-type]  # absorb does no LLM I/O
+    case = engine.absorb(
+        _empty_case(),
+        ReasoningTurnDecision(
+            action="reasoning",
+            reasoning="r",
+            provenance=EvidenceProvenance(),
+            observables={key: 99},
+        ),
+        turn_number=1,
     )
-    reserved_keys = [k for k in case.observables if k.startswith("_gate.")]
-    plain_keys = [
-        k for k in case.observables
-        if not k.startswith("_") and not k.startswith("_gate.")
-    ]
-    assert reserved_keys, "gate must write under _gate.*"
-    assert not plain_keys, "gate must NOT pollute agent scratchpad namespace"
+    assert key not in case.observables
+
+    out = _make_researcher()._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(payload={}), case_state=case, turn_number=2,
+    )
+
+    assert out.action == "reasoning"
+    assert case.observables[key] == 1
 
 
 def test_gate_pass_clears_counter_and_directive() -> None:
     r = _make_researcher()
     case = _empty_case()
     case.observables["_gate.positive_submit_refs.reject_count"] = 2
-    case.observables["_gate.positive_submit_refs.directive"] = "stale"
+    case.observables["_directive.gate.positive_submit_refs.rejected"] = "stale"
     case.hypotheses = [
         Hypothesis(id="h1", claim="x", confirmed_by="foo:1"),
     ]
@@ -351,7 +789,8 @@ def test_gate_pass_clears_counter_and_directive() -> None:
         decision=decision, case_state=case, turn_number=3,
     )
     assert "_gate.positive_submit_refs.reject_count" not in case.observables
-    assert "_gate.positive_submit_refs.directive" not in case.observables
+    assert "_directive.gate.positive_submit_refs.rejected" not in case.observables
+    assert "gate.positive_submit_refs.rejected" not in render_active_directives_section(case)
 
 
 # ---------------------------------------------------------------------------
@@ -483,3 +922,380 @@ async def test_kill_criterion_writes_discovery_when_not_refuted(
     _, payload = next((k, v) for k, v in calls if k == "discovery")
     assert payload["hypothesis_id"] == "h2"
     assert payload["matched_observable"] == "audit_mcp:read_function#7"
+
+
+# ---------------------------------------------------------------------------
+# #298 / #299 settled wave-2 gates: a same-turn force-through must not be
+# re-armed by the fanout hook, and each gate evaluates once per turn.
+# ---------------------------------------------------------------------------
+
+
+async def _passthrough_draft_pending(
+    *, decision: ReasoningTurnDecision, case_state: ReasoningCaseState, turn_number: int,
+) -> ReasoningTurnDecision:
+    return decision
+
+
+async def _no_prior_outcomes() -> list[dict[str, Any]]:
+    return []
+
+
+def _stub_async_hooks(monkeypatch: pytest.MonkeyPatch, r: HonestVulnResearcher) -> None:
+    monkeypatch.setattr(r, "_draft_pending_check", _passthrough_draft_pending)
+    monkeypatch.setattr(r, "_load_prior_outcomes", _no_prior_outcomes)
+
+
+def _isolate_positive_gate(r: HonestVulnResearcher) -> None:
+    """Disable the DB-reading, telemetry, and distinctness-stamp paths so only
+    the in-memory positive/negative gates are exercised (no UnitOfWork, no engine)."""
+    r._tool_telemetry_crosscheck_enabled = False
+    r._tool_work_floor_probes = 0
+    r._distinctness_score_enabled = False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("gate", "method_name", "toggle", "disabled_value", "is_async"),
+    [
+        (
+            "positive_submit_refs",
+            "_maybe_reject_positive_submit_without_confirmed_evidence",
+            "_require_confirmed_evidence_on_positive_submit",
+            False,
+            False,
+        ),
+        (
+            "contradiction_observable",
+            "_maybe_reject_negative_submit_contradicting_observable",
+            "_contradiction_gate_enabled",
+            False,
+            False,
+        ),
+        (
+            "tool_telemetry",
+            "_maybe_reject_submit_with_uncalled_tool_cite",
+            "_tool_telemetry_crosscheck_enabled",
+            False,
+            True,
+        ),
+        (
+            "tool_work_floor",
+            "_maybe_reject_positive_submit_below_tool_work_floor",
+            "_tool_work_floor_probes",
+            0,
+            True,
+        ),
+    ],
+)
+async def test_disabled_wave2_gate_resets_rejection_without_settling(
+    gate: str,
+    method_name: str,
+    toggle: str,
+    disabled_value: bool | int,
+    is_async: bool,
+) -> None:
+    r = _make_researcher()
+    case = _empty_case()
+    decision = _make_submit(payload={})
+    rejected = r._reject_or_force(
+        gate=gate,
+        decision=decision,
+        case_state=case,
+        turn_number=4,
+        directive="mandatory rejection",
+        payload_advisory_key=f"{gate}_advisory",
+        advisory_payload={},
+        log_label=gate,
+    )
+    assert rejected.action == "reasoning"
+    assert r._settled_wave2_gates[gate] == 4
+
+    setattr(r, toggle, disabled_value)
+    method = getattr(r, method_name)
+    out = method(decision=decision, case_state=case, turn_number=4)
+    if is_async:
+        out = await out
+
+    assert out is decision
+    _assert_gate_reset(r, case, gate)
+
+
+def test_disabled_positive_gate_reevaluates_when_reenabled() -> None:
+    r = _make_researcher()
+    case = _empty_case()
+    decision = _make_submit(payload={})
+    first = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=1,
+    )
+    assert first.action == "reasoning"
+
+    r._require_confirmed_evidence_on_positive_submit = False
+    disabled = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=1,
+    )
+    assert disabled is decision
+    _assert_gate_reset(r, case, "positive_submit_refs")
+
+    r._require_confirmed_evidence_on_positive_submit = True
+    same_turn = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=1,
+    )
+    assert same_turn.action == "reasoning"
+    assert same_turn is not first
+    assert case.observables["_gate.positive_submit_refs.reject_count"] == 1
+
+    r._require_confirmed_evidence_on_positive_submit = False
+    r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=1,
+    )
+    _assert_gate_reset(r, case, "positive_submit_refs")
+    r._require_confirmed_evidence_on_positive_submit = True
+    later_turn = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=decision, case_state=case, turn_number=2,
+    )
+    assert later_turn.action == "reasoning"
+    assert case.observables["_gate.positive_submit_refs.reject_count"] == 1
+
+
+def test_disabled_contradiction_gate_reevaluates_same_turn_when_reenabled() -> None:
+    r = _make_researcher()
+    case = _empty_case()
+    case.observables["audit_mcp:read_function#42"] = (
+        "trace shows ASan: heap-buffer-overflow at decode_frame+0x14"
+    )
+    decision = ReasoningTurnDecision(
+        action="submit",
+        answer="no vulnerability found",
+        reasoning="test",
+        confidence="strong",
+        provenance=EvidenceProvenance(),
+        payload={"evidence_refs": ["audit_mcp:read_function#42"]},
+    )
+    first = r._maybe_reject_negative_submit_contradicting_observable(
+        decision=decision, case_state=case, turn_number=1,
+    )
+    assert first.action == "reasoning"
+
+    r._contradiction_gate_enabled = False
+    disabled = r._maybe_reject_negative_submit_contradicting_observable(
+        decision=decision, case_state=case, turn_number=1,
+    )
+    assert disabled is decision
+    _assert_gate_reset(r, case, "contradiction_observable")
+
+    r._contradiction_gate_enabled = True
+    reenabled = r._maybe_reject_negative_submit_contradicting_observable(
+        decision=decision, case_state=case, turn_number=1,
+    )
+    assert reenabled.action == "reasoning"
+    assert reenabled is not first
+    assert case.observables["_gate.contradiction_observable.reject_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_forced_positive_gate_settles_through_async_and_fanout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    r = _make_researcher()
+    _isolate_positive_gate(r)
+    _stub_async_hooks(monkeypatch, r)
+    r._unresolved_hyp_reject_cap = 1
+    case = _empty_case()
+    case.observables["_gate.positive_submit_refs.reject_count"] = 1
+
+    decision = await r._maybe_reject_submit_when_draft_pending(
+        decision=_make_submit(payload={}), case_state=case, turn_number=1,
+    )
+    assert decision.action == "submit"
+    assert "positive_submit_evidence_advisory" in decision.payload
+    assert "_gate.positive_submit_refs.reject_count" not in case.observables
+
+    out = r._maybe_reject_fanout_submit(
+        decision=decision, inv=None, case_state=case, turn_number=1,
+    )
+    assert out.action == "submit"
+    assert "positive_submit_evidence_advisory" in out.payload
+    assert "_gate.positive_submit_refs.reject_count" not in case.observables
+
+
+def test_forced_positive_gate_does_not_skip_independent_negative_gate() -> None:
+    r = _make_researcher()
+    _isolate_positive_gate(r)
+    r._unresolved_hyp_reject_cap = 1
+    case = _empty_case()
+    case.observables["_gate.positive_submit_refs.reject_count"] = 1
+    case.observables["audit_mcp:read_function#42"] = (
+        "trace shows ASan: heap-buffer-overflow at decode_frame+0x14"
+    )
+
+    forced = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(payload={}), case_state=case, turn_number=1,
+    )
+    assert forced.action == "submit"
+
+    negative = ReasoningTurnDecision(
+        action="submit",
+        answer="no vulnerability found",
+        reasoning="test",
+        confidence="strong",
+        provenance=EvidenceProvenance(),
+        payload={"evidence_refs": ["audit_mcp:read_function#42"]},
+    )
+    out = r._maybe_reject_fanout_submit(
+        decision=negative, inv=None, case_state=case, turn_number=1,
+    )
+    assert out.action == "reasoning"
+    assert out.payload["_gate.contradiction_observable.rejected"] is True
+    assert case.observables["_gate.contradiction_observable.reject_count"] == 1
+
+
+def test_forced_positive_gate_reevaluates_next_turn() -> None:
+    r = _make_researcher()
+    _isolate_positive_gate(r)
+    r._unresolved_hyp_reject_cap = 1
+    case = _empty_case()
+    case.observables["_gate.positive_submit_refs.reject_count"] = 1
+
+    forced = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(payload={}), case_state=case, turn_number=1,
+    )
+    assert forced.action == "submit"
+
+    out = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=_make_submit(payload={}), case_state=case, turn_number=2,
+    )
+    assert out.action == "reasoning"
+    assert case.observables["_gate.positive_submit_refs.reject_count"] == 1
+
+
+def test_fanout_fallback_evaluates_unsettled_positive_gate() -> None:
+    r = _make_researcher()
+    _isolate_positive_gate(r)
+    case = _empty_case()
+
+    out = r._maybe_reject_fanout_submit(
+        decision=_make_submit(payload={}), inv=None, case_state=case, turn_number=1,
+    )
+    assert out.action == "reasoning"
+    assert case.observables["_gate.positive_submit_refs.reject_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_forced_positive_chain_and_fanout_evaluate_kind_once_per_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    r = _make_researcher()
+    _isolate_positive_gate(r)
+    _stub_async_hooks(monkeypatch, r)
+    r._unresolved_hyp_reject_cap = 1
+    case = _empty_case()
+    case.observables["_gate.positive_submit_refs.reject_count"] = 1
+
+    kind_calls: list[str] = []
+    original_kind = r._terminal_outcome_kind
+
+    def _counting_kind(decision: ReasoningTurnDecision) -> Any:
+        kind_calls.append(decision.action)
+        return original_kind(decision)
+
+    r._terminal_outcome_kind = _counting_kind  # type: ignore[method-assign]
+
+    decision = await r._maybe_reject_submit_when_draft_pending(
+        decision=_make_submit(payload={}), case_state=case, turn_number=1,
+    )
+    r._maybe_reject_fanout_submit(
+        decision=decision, inv=None, case_state=case, turn_number=1,
+    )
+    # Async chain: positive gate (forced, settled) + negative gate (positive
+    # polarity, settled). Fanout: both gates already settled this turn, so
+    # neither re-derives the terminal kind.
+    assert len(kind_calls) == 2
+
+
+def test_rejected_positive_submit_replays_same_turn_decision() -> None:
+    r = _make_researcher()
+    _isolate_positive_gate(r)
+    r._unresolved_hyp_reject_cap = 1
+    case = _empty_case()
+    original_submit = _make_submit(payload={})
+
+    kind_calls: list[str] = []
+    original_kind = r._terminal_outcome_kind
+
+    def _counting_kind(decision: ReasoningTurnDecision) -> Any:
+        kind_calls.append(decision.action)
+        return original_kind(decision)
+
+    r._terminal_outcome_kind = _counting_kind  # type: ignore[method-assign]
+
+    first = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=original_submit, case_state=case, turn_number=1,
+    )
+    second = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=original_submit, case_state=case, turn_number=1,
+    )
+
+    assert first.action == "reasoning"
+    assert "Original submit attempt:\nfound a heap overflow in decode_frame" in first.reasoning
+    assert second == first
+    assert kind_calls == ["submit"]
+    assert case.observables["_gate.positive_submit_refs.reject_count"] == 1
+    assert case.observables["_directive.gate.positive_submit_refs.rejected"] in (
+        render_active_directives_section(case)
+    )
+
+    later = r._maybe_reject_positive_submit_without_confirmed_evidence(
+        decision=original_submit, case_state=case, turn_number=2,
+    )
+    assert later.action == "submit"
+    assert "positive_submit_evidence_advisory" in later.payload
+    assert kind_calls == ["submit", "submit"]
+
+
+def test_rejected_contradiction_gate_replays_same_turn_decision() -> None:
+    r = _make_researcher()
+    _isolate_positive_gate(r)
+    r._unresolved_hyp_reject_cap = 1
+    case = _empty_case()
+    case.observables["audit_mcp:read_function#42"] = (
+        "trace shows ASan: heap-buffer-overflow at decode_frame+0x14"
+    )
+    original_submit = ReasoningTurnDecision(
+        action="submit",
+        answer="no vulnerability found",
+        reasoning="test",
+        confidence="strong",
+        provenance=EvidenceProvenance(),
+        payload={"evidence_refs": ["audit_mcp:read_function#42"]},
+    )
+
+    kind_calls: list[str] = []
+    original_kind = r._terminal_outcome_kind
+
+    def _counting_kind(decision: ReasoningTurnDecision) -> Any:
+        kind_calls.append(decision.action)
+        return original_kind(decision)
+
+    r._terminal_outcome_kind = _counting_kind  # type: ignore[method-assign]
+
+    first = r._maybe_reject_negative_submit_contradicting_observable(
+        decision=original_submit, case_state=case, turn_number=1,
+    )
+    second = r._maybe_reject_negative_submit_contradicting_observable(
+        decision=original_submit, case_state=case, turn_number=1,
+    )
+
+    assert first.action == "reasoning"
+    assert second == first
+    assert kind_calls == ["submit"]
+    assert case.observables["_gate.contradiction_observable.reject_count"] == 1
+    assert case.observables["_directive.gate.contradiction_observable.rejected"] in (
+        render_active_directives_section(case)
+    )
+
+    later = r._maybe_reject_negative_submit_contradicting_observable(
+        decision=original_submit, case_state=case, turn_number=2,
+    )
+    assert later.action == "submit"
+    assert "contradiction_observable_advisory" in later.payload
+    assert kind_calls == ["submit", "submit"]

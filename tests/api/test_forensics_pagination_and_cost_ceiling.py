@@ -163,7 +163,7 @@ async def test_list_investigations_returns_bounded_page(test_db) -> None:
 
 
 async def test_list_evidence_returns_bounded_page(test_db) -> None:
-    """list_evidence honours ``page_size`` at the SQL layer."""
+    """list_evidence honours ``page_size`` and reports the project total."""
     suffix = uuid4().hex[:8]
     pid = await _seed_project(suffix)
     async with async_session_scope() as session:
@@ -183,7 +183,19 @@ async def test_list_evidence_returns_bounded_page(test_db) -> None:
         page=1,
         page_size=2,
     )
-    assert len(envelope.data) == 2
+    assert len(envelope.data.items) == 2
+    assert envelope.data.total == 5
+    assert envelope.data.pages == 3
+
+    last = await list_evidence(
+        request=_Req(),
+        project_id=pid,
+        auth=_admin(),
+        page=3,
+        page_size=2,
+    )
+    assert len(last.data.items) == 1
+    assert last.data.total == 5
 
 
 async def test_list_findings_page_caps_artifact_fetch(test_db) -> None:
@@ -360,7 +372,7 @@ async def test_freeflow_cost_ceiling_triggers_investigation_cancel(test_db) -> N
     assert float(outcome["actual_usd"]) == pytest.approx(2.0)
 
     # The investigation row is flipped to CANCELLED so the investigator
-    # loop halts at its next _is_cancelled check.
+    # loop halts at its next _stop_status check.
     async with async_session_scope() as session:
         row = (await session.exec(
             select(InvestigationRunRecord).where(InvestigationRunRecord.id == inv_id)

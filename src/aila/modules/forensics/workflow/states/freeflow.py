@@ -10,11 +10,11 @@ Cost-ceiling enforcement (finding 59-3.6): the operator-tunable
 spend per investigation. A background monitor coroutine polls
 ``LLMCostRecord.cost_usd`` summed over ``run_id == investigation_id`` and,
 when the cap is crossed, flips the investigation row's status to
-``cancelled`` -- which ``HonestInvestigator._is_cancelled()`` sees at the
+``cancelled`` -- which ``HonestInvestigator._stop_status()`` sees at the
 top of each turn, terminating the loop by the same code path as the
 operator-initiated Stop button. On return the handler overrides the
 final status to ``exhausted`` so the UI can distinguish budget cap from
-manual cancel. The turn cap (``_HARD_TURN_CAP=50`` in investigator.py) and
+manual cancel. The turn cap (``FORENSICS_HARD_TURN_CAP`` in config_schema.py) and
 this cost cap are ANDed: whichever fires first halts the run.
 """
 from __future__ import annotations
@@ -34,6 +34,7 @@ from aila.modules.forensics.db_models import InvestigationRunRecord
 from aila.modules.forensics.workflow.inputs import FreeFlowInput
 from aila.platform.exceptions import AILAError
 from aila.platform.llm.cost_record import LLMCostRecord
+from aila.platform.llm.errors import LLMError
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import StateResult
 from aila.storage.registry import ConfigRegistry
@@ -116,7 +117,7 @@ def _freeflow_cost_ceiling_exceeded(actual_usd: float, cap_usd: float) -> bool:
 async def _flip_investigation_cancelled(investigation_id: str) -> bool:
     """Force the investigation status to ``cancelled``.
 
-    ``HonestInvestigator._is_cancelled()`` polls this column at the top
+    ``HonestInvestigator._stop_status()`` polls this column at the top
     of every turn; flipping it here halts the loop at the next turn
     boundary via the same code path as the operator Stop button. Returns
     True when the row was flipped this call (idempotent: a second call
@@ -286,7 +287,7 @@ async def state_freeflow(
             "agent.investigate() returned: steps=%d, answer=%s",
             len(result.get("steps", [])), bool(result.get("answer")),
         )
-    except (OSError, TimeoutError, RuntimeError, ValueError, KeyError, AILAError) as exc:
+    except (OSError, TimeoutError, RuntimeError, ValueError, KeyError, AILAError, LLMError) as exc:
         _log.exception("agent.investigate() FAILED: %s", exc)
         await services.emitter.emit(
             "freeflow",
@@ -315,10 +316,18 @@ async def state_freeflow(
     #
     # Exception: when the analyst cancelled via the Stop button, the
     # investigator may return with zero steps if the cancel arrived
-    # between startup and turn 1. That's not a failure.
+    # between startup and turn 1. That's not a failure. The same holds
+    # for a paused or terminal stop: the investigator returned at a turn
+    # boundary with the persisted status it observed.
     steps_list = result.get("steps", []) or []
     cancelled = bool(result.get("cancelled"))
-    if not steps_list and not cancelled:
+    # A cancelled stop is preserved like any other stop: the row already
+    # holds ``cancelled`` (written by the operator or the cost monitor), so
+    # the answer branch below must not overwrite it with ``completed``.
+    stopped_status = result.get("stopped_status") or (
+        InvestigationStatus.CANCELLED.value if cancelled else None
+    )
+    if not steps_list and not stopped_status:
         reason = "agent produced zero steps -- see worker log"
         _log.error("state_freeflow zero-step result inv_id=%s -- marking FAILED", data.investigation_id)
         await services.emitter.emit(
@@ -345,35 +354,38 @@ async def state_freeflow(
     cost_ceiling_hit = bool(cost_outcome.get("hit"))
     if cost_ceiling_hit:
         final_status = InvestigationStatus.EXHAUSTED.value
+    elif stopped_status:
+        # Paused or terminal stop: the persisted status is authoritative
+        # and is left untouched below.
+        final_status = stopped_status
     elif has_answer:
         final_status = InvestigationStatus.COMPLETED.value
-    elif cancelled:
-        final_status = InvestigationStatus.CANCELLED.value
     else:
         final_status = InvestigationStatus.FAILED.value
-    try:
-        async with UnitOfWork() as status_uow:
-            inv = (await status_uow.session.exec(
-                _select(InvestigationRunRecord).where(
-                    InvestigationRunRecord.id == data.investigation_id
-                )
-            )).first()
-            if inv is not None:
-                inv.status = final_status
-                if cost_ceiling_hit:
-                    actual_usd = float(cost_outcome.get("actual_usd", 0.0))
-                    inv.final_answer = (
-                        f"{_BUDGET_EXHAUSTED_PREFIX}"
-                        f"${actual_usd:.2f}/${cost_cap_usd:.2f}>"
+    if cost_ceiling_hit or not stopped_status:
+        try:
+            async with UnitOfWork() as status_uow:
+                inv = (await status_uow.session.exec(
+                    _select(InvestigationRunRecord).where(
+                        InvestigationRunRecord.id == data.investigation_id
                     )
-                    inv.confidence = "caveated"
-                elif has_answer:
-                    inv.final_answer = str(result.get('answer', ''))[:2000]
-                    inv.confidence = result.get('confidence', 'caveated')
-                status_uow.session.add(inv)
-                await status_uow.commit()
-    except (OSError, RuntimeError, AILAError):
-        _log.exception('Failed to set investigation status=%s', final_status)
+                )).first()
+                if inv is not None:
+                    inv.status = final_status
+                    if cost_ceiling_hit:
+                        actual_usd = float(cost_outcome.get("actual_usd", 0.0))
+                        inv.final_answer = (
+                            f"{_BUDGET_EXHAUSTED_PREFIX}"
+                            f"${actual_usd:.2f}/${cost_cap_usd:.2f}>"
+                        )
+                        inv.confidence = "caveated"
+                    elif has_answer:
+                        inv.final_answer = str(result.get('answer', ''))[:2000]
+                        inv.confidence = result.get('confidence', 'caveated')
+                    status_uow.session.add(inv)
+                    await status_uow.commit()
+        except (OSError, RuntimeError, AILAError):
+            _log.exception('Failed to set investigation status=%s', final_status)
 
     await services.emitter.emit(
         'freeflow',
@@ -383,7 +395,7 @@ async def state_freeflow(
 
     _log.info('state_freeflow %s: inv_id=%s', final_status, data.investigation_id)
     return StateResult(
-        next_state="writeup",
+        next_state="promotion",
         output={
             "investigation_id": data.investigation_id,
             "project_id": data.project_id,

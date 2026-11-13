@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from aila.config import Settings
+from aila.modules.forensics.tools._ssh_helper import run_tool_probe
 from aila.platform.exceptions import AILAError
 from aila.platform.services.runtime import run_blocking_io
 
@@ -456,7 +457,7 @@ class OfflineInstallerService:
             _log.info("No check_cmd for %s -- assuming success", tool_name)
             return True
         try:
-            await ssh.run_command(integration, check_cmd, timeout_seconds=30.0)
+            await run_tool_probe(ssh, integration, check_cmd)
             _log.info("Offline install verified for %s", tool_name)
             return True
         except (OSError, TimeoutError, RuntimeError, AILAError):

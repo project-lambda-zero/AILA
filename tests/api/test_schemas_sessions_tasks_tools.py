@@ -24,7 +24,6 @@ from aila.api.schemas.sessions import (
 )
 from aila.api.schemas.tasks import (
     ScanSubmissionRequest,
-    TaskCreateRequest,
     TaskResponse,
     TaskSubmitResponse,
 )
@@ -236,20 +235,6 @@ class TestScanSubmissionRequest:
         """extra='forbid' rejects unknown fields."""
         with pytest.raises(ValidationError, match="extra_forbidden"):
             ScanSubmissionRequest(query_text="scan", module_id="vuln")
-
-
-class TestTaskCreateRequest:
-    """TaskCreateRequest field validation."""
-
-    def test_valid_query(self) -> None:
-        """Non-empty query_text accepted."""
-        req = TaskCreateRequest(query_text="show vulnerabilities")
-        assert req.query_text == "show vulnerabilities"
-
-    def test_empty_query_rejected(self) -> None:
-        """Empty query_text rejected (min_length=1)."""
-        with pytest.raises(ValidationError, match="String should have at least 1 character"):
-            TaskCreateRequest(query_text="")
 
 
 # ---------------------------------------------------------------------------

@@ -44,11 +44,13 @@ from sqlmodel import select
 
 from aila.platform.tasks.context import TaskContext
 from aila.platform.workflows import (
+    RESERVED_FAILED,
     DurableStateMachine,
     WorkflowConflictError,
     WorkflowDefinition,
     default_backoff,
 )
+from aila.platform.workflows.run_lifecycle import finalize_run
 
 __all__ = [
     "PlatformTask",
@@ -189,6 +191,25 @@ async def _ensure_run_record(run_id: str, query_text: str) -> None:
         await session.commit()
 
 
+async def _workflow_run_status(run_id: str) -> str | None:
+    """Return the ``WorkflowRunRecord.status`` the engine recorded for ``run_id``.
+
+    The engine closes the run row in the same transaction as the terminal
+    cursor (``run_lifecycle.finalize_run``): ``completed`` for
+    ``__succeeded__``, ``failed`` for ``__failed__`` / ``__crashed__``,
+    ``cancelled`` for ``__cancelled__``. A normal return from
+    ``DurableStateMachine.execute`` therefore carries its outcome here.
+    """
+    from aila.storage.database import async_session_scope
+    from aila.storage.db_models import WorkflowRunRecord
+
+    status_col = WorkflowRunRecord.__table__.c.status  # type: ignore[attr-defined]
+    id_col = WorkflowRunRecord.__table__.c.id  # type: ignore[attr-defined]
+    async with async_session_scope() as session:
+        row = (await session.execute(sa.select(status_col).where(id_col == run_id))).first()
+    return None if row is None else str(row[0])
+
+
 async def _update_plan_json(run_id: str, plan: dict[str, Any]) -> None:
     """Persist ``plan_json`` for ``run_id`` (D-13).
 
@@ -221,6 +242,33 @@ async def _update_plan_json(run_id: str, plan: dict[str, Any]) -> None:
                 f"WorkflowRunRecord missing for run_id={run_id!r} "
                 "-- plan_json not persisted"
             )
+        await session.commit()
+
+
+async def _fail_run_before_handoff(run_id: str, definition: WorkflowDefinition) -> None:
+    """Close a dispatcher run ``failed`` when the dispatch layer will not hand it off.
+
+    Called when the dispatcher produced no usable ``selected_definition_id``, or
+    selected a key that is not in ``dispatches_to``. A cursor already owned by
+    another definition means the handoff happened and that inner definition owns
+    the terminal, so nothing is written. The cursor row is locked so the check
+    serializes against the engine's handoff.
+    """
+    from aila.storage.database import async_session_scope
+    from aila.storage.db_models import WorkflowStateCursor
+
+    cursor_table = WorkflowStateCursor.__table__  # type: ignore[attr-defined]
+    async with async_session_scope() as session:
+        owner = (
+            await session.execute(
+                sa.select(cursor_table.c.definition_id)
+                .where(cursor_table.c.run_id == run_id)
+                .with_for_update()
+            )
+        ).first()
+        if owner is not None and owner[0] != definition.definition_id:
+            return
+        await finalize_run(session, run_id, definition, RESERVED_FAILED)
         await session.commit()
 
 
@@ -300,6 +348,7 @@ async def _run_two_phase_dispatch(
             dispatcher_error_class=dispatcher_output.get("error_class"),
             dispatcher_failed_state=dispatcher_output.get("failed_state"),
         )
+        await _fail_run_before_handoff(run_id, definition)
         return {
             "response": None,
             "error": "dispatcher_failed",
@@ -322,6 +371,7 @@ async def _run_two_phase_dispatch(
         }
 
     if selected_id not in definition.dispatches_to:
+        await _fail_run_before_handoff(run_id, definition)
         raise WorkflowConflictError(
             f"selected_definition_id {selected_id!r} not in dispatches_to "
             f"(run_id={run_id!r}, available={sorted(definition.dispatches_to.keys())})"
@@ -537,11 +587,18 @@ def platform_task(
                     # its return shape; we only require it be a dict.
                     result = await fn(task_context, **kwargs)
 
-                _stash_outcome(
-                    job_id,
-                    job_try,
-                    _JobOutcome(kind="success", result=result),
-                )
+                # The engine returns normally for every terminal cursor, so
+                # a workflow run's outcome is read from the run row it
+                # closed: a failed or crashed run is not a success, and a
+                # cancelled run is recorded cancelled.
+                outcome = _JobOutcome(kind="success", result=result)
+                if definition is not None:
+                    run_status = await _workflow_run_status(task_context.task_id)
+                    if run_status == "failed":
+                        outcome = _JobOutcome(kind="workflow_failed", result=result)
+                    elif run_status == "cancelled":
+                        outcome = _JobOutcome(kind="cancelled", result=result)
+                _stash_outcome(job_id, job_try, outcome)
                 return result
 
             except WorkflowConflictError as conflict:

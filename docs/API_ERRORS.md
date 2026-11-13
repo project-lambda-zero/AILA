@@ -69,6 +69,7 @@ server-side via `logger.exception(...)`.
 | `ROUTER_ERROR` | 500 | `RouterError` | Internal LLM/OmniRoute routing failure. |
 | `MODULE_PLATFORM_NOT_READY` | 503 | `ModulePlatformNotReadyError` | A module runtime is still initializing. |
 | `CONFIG_VALUE_MISSING` | 500 | `ConfigValueMissingError` | A required `ConfigRegistry` entry is absent. |
+| `DUPLICATE_RESOURCE` | 409 | `DuplicateResourceError` | A record that must be unique already exists (e.g. a second operator review from the same reviewer branch on one outcome). |
 | `WORKER_UNREACHABLE` | 503 | `WorkerUnreachableError` | The background task worker is unreachable. |
 | `VALIDATION_ERROR` | 422 | `RequestValidationError` | Request body or query/path params fail Pydantic validation. |
 | `INTERNAL_ERROR` | 500 | any otherwise-unhandled `Exception` | The generic last-resort handler. |
@@ -138,8 +139,8 @@ route that raises `HTTPException` directly.
 | Endpoint Category | Required Role |
 |-------------------|---------------|
 | `POST /auth/keys`, `DELETE /auth/keys/{id}` | admin |
-| `PUT /config/{ns}/{key}` | admin |
-| `POST /analyze`, `POST /task` | operator |
+| `PUT /config/{ns}/{key}`, task queue depth, drain, and requeue | admin with no team scope (god-tier) |
+| `POST /analyze` | operator |
 | All GET endpoints, `POST /sessions` | reader |
 
 ---
@@ -214,6 +215,13 @@ route's OpenAPI documentation for the exact shape it returns.
 - **When:** `DELETE /auth/keys/{id}` on an already-revoked key
 - **Response:** `{"detail": "Key already revoked"}`
 
+### Duplicate operator outcome review
+
+- **When:** `POST /malware/outcomes/{outcome_id}/reviews` with a `reviewer_branch_id` that already has a review on that outcome
+- **Response:** `{"code": "DUPLICATE_RESOURCE", "message": "A matching record already exists.", "hint": "...", "trace_id": "..."}`
+- **Effect:** No review row is written and the outcome's state and dispatch status are unchanged
+- **Fix:** Reuse the existing review, or submit from a different reviewer branch
+
 ### DAG cycle detected
 
 - **When:** Task submission creates a dependency cycle
@@ -237,7 +245,7 @@ route's OpenAPI documentation for the exact shape it returns.
 
 ### Platform not initialized
 
-- **When:** `POST /analyze`, `POST /task`, or session message endpoints called before platform startup completes
+- **When:** `POST /analyze` or session message endpoints called before platform startup completes
 - **Response:** `{"detail": "Platform not initialized -- check server logs for startup errors and restart the API server"}`
 - **Fix:** Wait for startup to complete; check server logs for initialization errors
 
@@ -281,7 +289,7 @@ data: {"message": "Redis not configured \u2014 no progress stream available"}
 |--------|---------|---------------|
 | 200 | Success | GET, PUT, POST (sync responses) |
 | 201 | Created | POST /sessions, POST /auth/keys |
-| 202 | Accepted | POST /analyze, POST /task (async) |
+| 202 | Accepted | POST /analyze (async) |
 | 401 | Unauthorized | Missing/invalid/expired/revoked token |
 | 403 | Forbidden | Insufficient role for endpoint |
 | 404 | Not Found | Resource missing or not accessible |

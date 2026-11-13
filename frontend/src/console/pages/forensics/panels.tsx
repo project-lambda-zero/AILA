@@ -8,7 +8,7 @@
  * key/value); NEVER as a raw JSON blob.
  */
 import type { CSSProperties, JSX, ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { isValidElement, useMemo, useState } from "react";
 
 import { css } from "../../css";
 import StructuredValue from "../StructuredValue";
@@ -240,6 +240,7 @@ export function renderValue(v: unknown): ReactNode {
   if (typeof v === "boolean") return v ? "true" : "false";
   if (typeof v === "number") return String(v);
   if (typeof v === "string") return v;
+  if (isValidElement(v)) return v;
   return <StructuredValue value={v} />;
 }
 

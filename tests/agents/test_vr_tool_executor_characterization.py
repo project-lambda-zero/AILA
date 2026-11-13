@@ -403,18 +403,26 @@ def test_apply_observables_delta_merges_and_caps() -> None:
     assert "_directive.keep" in capped
 
 
-def test_merge_and_report_eviction_surfaces_dropped_keys() -> None:
+@pytest.mark.parametrize(
+    ("reserved_key", "reserved_value"),
+    [("_directive.keep", "steer"), ("_gate.positive_submit_refs.reject_count", 2)],
+)
+def test_merge_and_report_eviction_surfaces_dropped_keys(
+    reserved_key: str, reserved_value: object,
+) -> None:
     """The eviction-reporting merge drops the OLDEST non-reserved keys past
-    the cap, keeps reserved keys, and returns exactly what fell out so the
-    caller can burn it before it leaves the live case state."""
-    seed = {"observables": {"_directive.keep": "steer", "old": "AAA", "mid": "BBB"}}
+    the cap, keeps reserved keys (steering directives and submit-gate
+    reject counters, which a trim would otherwise reset), and returns
+    exactly what fell out so the caller can burn it before it leaves the
+    live case state."""
+    seed = {"observables": {reserved_key: reserved_value, "old": "AAA", "mid": "BBB"}}
     new_json, evicted = ToolExecutor._merge_and_report_eviction(
         json.dumps(seed), {"new": "CCC"}, cap=2,
     )
     kept = json.loads(new_json)["observables"]
     # cap=2 with one reserved key keeps the reserved key + the single
     # newest non-reserved key; the two older non-reserved keys evict.
-    assert set(kept) == {"_directive.keep", "new"}
+    assert kept == {reserved_key: reserved_value, "new": "CCC"}
     assert evicted == {"old": "AAA", "mid": "BBB"}
 
 

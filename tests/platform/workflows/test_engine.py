@@ -8,7 +8,10 @@
 """
 from __future__ import annotations
 
+import functools
+
 import pytest
+import sqlalchemy as sa
 
 from aila.platform.workflows import (
     DurableStateMachine,
@@ -17,7 +20,7 @@ from aila.platform.workflows import (
     WorkflowDefinition,
 )
 from aila.storage.database import async_session_scope
-from aila.storage.db_models import WorkflowStateCursor
+from aila.storage.db_models import WorkflowRunRecord, WorkflowStateCursor
 
 
 @pytest.mark.asyncio
@@ -293,3 +296,119 @@ async def test_phase_handoff_not_triggered_on_non_terminal_cursor(
             )
         ).scalars().all()
         assert handoff_rows == []
+
+
+# ---- #364: WorkflowRunRecord lifecycle at the outermost terminal boundary ----
+
+
+async def _read_run(run_id: str) -> WorkflowRunRecord:
+    """Fresh-session read so assertions see committed state only."""
+    async with async_session_scope() as session:
+        record = await session.get(WorkflowRunRecord, run_id)
+    assert record is not None
+    return record
+
+
+def _single_state_definition(definition_id: str, handler, **spec_kwargs) -> WorkflowDefinition:
+    from tests.platform.workflows.conftest import toy_services_factory
+
+    return WorkflowDefinition(
+        definition_id=definition_id,
+        start_state="start",
+        states={"start": StateSpec(handler=handler, **spec_kwargs)},
+        services_factory=toy_services_factory,
+    )
+
+
+async def _goes_to(next_state: str, state_input: dict, services: object) -> StateResult:
+    return StateResult(next_state=next_state, output={"reached": next_state})
+
+
+async def _raises(state_input: dict, services: object) -> StateResult:
+    raise RuntimeError("synthetic handler failure")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("label", "spec_kwargs", "expected_cursor", "expected_status"),
+    [
+        ("succeeded", {}, "__succeeded__", "completed"),
+        ("failed", {"on_failure": "__failed__"}, "__failed__", "failed"),
+        ("crashed", {}, "__crashed__", "failed"),
+        ("cancelled", {}, "__cancelled__", "cancelled"),
+    ],
+)
+async def test_terminal_transition_finalizes_run_record(
+    workflow_run_id: str,
+    label: str,
+    spec_kwargs: dict,
+    expected_cursor: str,
+    expected_status: str,
+) -> None:
+    if label == "succeeded":
+        handler = functools.partial(_goes_to, "__succeeded__")
+    elif label == "cancelled":
+        handler = functools.partial(_goes_to, "__cancelled__")
+    elif label == "crashed":
+        handler = functools.partial(_goes_to, "no_such_state")
+    else:
+        handler = _raises
+    definition = _single_state_definition(f"test.lifecycle.{label}.v1", handler, **spec_kwargs)
+
+    await DurableStateMachine.execute(workflow_run_id, definition, {})
+
+    async with async_session_scope() as session:
+        cursor = await session.get(WorkflowStateCursor, workflow_run_id)
+    assert cursor is not None
+    assert cursor.current_state == expected_cursor
+    record = await _read_run(workflow_run_id)
+    assert record.status == expected_status
+    assert record.completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_terminal_retry_keeps_recorded_outcome(workflow_run_id: str) -> None:
+    calls = {"n": 0}
+
+    async def counted(state_input: dict, services: object) -> StateResult:
+        calls["n"] += 1
+        return StateResult(next_state="__succeeded__", output={"n": calls["n"]})
+
+    definition = _single_state_definition("test.lifecycle.retry.v1", counted)
+    await DurableStateMachine.execute(workflow_run_id, definition, {})
+    first = await _read_run(workflow_run_id)
+
+    out = await DurableStateMachine.execute(workflow_run_id, definition, {})
+
+    second = await _read_run(workflow_run_id)
+    assert out == {"n": 1}
+    assert calls["n"] == 1
+    assert second.status == "completed"
+    assert second.completed_at == first.completed_at
+
+
+@pytest.mark.asyncio
+async def test_new_attempt_after_cleared_terminal_cursor_records_its_own_outcome(
+    workflow_run_id: str,
+) -> None:
+    """A requeued run whose terminal cursor the reaper deleted starts a fresh
+    cursor; the run row reopens so the new attempt's outcome is recorded."""
+    crashing = _single_state_definition(
+        "test.lifecycle.reopen.v1", functools.partial(_goes_to, "no_such_state"),
+    )
+    await DurableStateMachine.execute(workflow_run_id, crashing, {})
+    assert (await _read_run(workflow_run_id)).status == "failed"
+    async with async_session_scope() as session:
+        await session.execute(
+            sa.delete(WorkflowStateCursor).where(WorkflowStateCursor.run_id == workflow_run_id)
+        )
+        await session.commit()
+
+    succeeding = _single_state_definition(
+        "test.lifecycle.reopen.v1", functools.partial(_goes_to, "__succeeded__"),
+    )
+    await DurableStateMachine.execute(workflow_run_id, succeeding, {})
+
+    record = await _read_run(workflow_run_id)
+    assert record.status == "completed"
+    assert record.completed_at is not None

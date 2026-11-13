@@ -8,6 +8,7 @@ from sqlalchemy import BigInteger, Column, DateTime, Text
 from sqlmodel import Field, SQLModel
 
 from aila.platform.contracts import utc_now
+from aila.platform.events.entity_status import track_status_changes
 
 __all__ = ["ForensicsProjectRecord", "ProjectEvidenceRecord"]
 
@@ -29,9 +30,21 @@ class ForensicsProjectRecord(SQLModel, table=True):
     analyzer_os: str = Field(default="linux", max_length=16)
     project_kind: str = Field(default="disk_evidence", max_length=32, index=True)
     status: str = Field(default="created", index=True)
+    # Cause recorded when intake fails; cleared by any non-failed status write.
+    failure_reason: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     team_id: str | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
-    updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+    updated_at: datetime = Field(
+        default_factory=utc_now,
+        sa_type=DateTime(timezone=True),
+        sa_column_kwargs={"onupdate": utc_now},
+    )
+
+
+# Every committed status transition is announced as an
+# ``entity.status_changed`` domain event (worker writes reach the API
+# process via the Redis bridge) and pushed to the team's SSE streams.
+track_status_changes(ForensicsProjectRecord, module_id="forensics", entity_kind="project")
 
 
 class ProjectEvidenceRecord(SQLModel, table=True):

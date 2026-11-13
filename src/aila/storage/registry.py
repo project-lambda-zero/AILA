@@ -26,9 +26,9 @@ import time
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass as _dc_dataclass
-from typing import Any, Protocol
+from typing import Annotated, Any, Protocol
 
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter, ValidationError
 from pydantic_core import PydanticUndefined
 from sqlmodel import select
 
@@ -687,7 +687,9 @@ class ConfigRegistry:
     async def set(self, namespace: str, key: str, value: str) -> None:
         """Persist value to DB after type-validating against registered schema.
         Raises ValueError if namespace/key is not in any registered schema.
-        Raises ValueError if value cannot be cast to the field's declared type.
+        Raises ValueError if value cannot be cast to the field's declared type
+        or violates the field's constraints (ge/le/gt/lt, max_length, ...). This
+        check runs before the unchanged-value short-circuit and before any write.
 
         For security-relevant keys (D-11), emits a config_security_change
         PlatformEvent with old and new values after a successful write (D-12).
@@ -699,14 +701,15 @@ class ConfigRegistry:
         if field_info is None:
             raise ValueError(f"Key '{key}' not found in schema for namespace '{namespace}'.")
 
-        # Validate by casting -- raises ValueError on bad input
-        _cast_value(value, field_info)
+        # Validate the full field contract (type + pydantic constraints) before
+        # the unchanged-value short-circuit and before any DB access, so an
+        # invalid value can never be accepted by matching the stored value.
+        cast_new = _validate_field_value(namespace, key, field_info, value)
 
         # Capture old value BEFORE write for audit (D-12: read old before write)
         old_value = await self.get(namespace, key)
 
         # OPS-07: Skip write if value is unchanged (config idempotency)
-        cast_new = _cast_value(value, field_info)
         if old_value == cast_new:
             _log.debug("Config %s/%s unchanged, skipping write", namespace, key)
             return
@@ -915,6 +918,35 @@ def _cast_value(raw: str, field_info: Any) -> Any:
             return False
         raise ValueError(f"Cannot parse {raw!r} as bool.")
     return str(raw)
+
+
+def _validate_field_value(namespace: str, key: str, field_info: Any, raw: str) -> Any:
+    """Cast ``raw`` to the field's declared type and enforce its full contract.
+
+    The pydantic constraints carried on the field (ge/le/gt/lt, max_length, ...)
+    are applied through a TypeAdapter over ``Annotated[annotation, *metadata]``.
+    Failures raise a bounded ValueError naming the field and the violated
+    constraint. The raw value is never echoed, since config values may be secrets.
+    """
+    where = f"{namespace}.{key}"
+    try:
+        cast_value = _cast_value(raw, field_info)
+    except ValueError:
+        type_name = _field_type_name(field_info)
+        detail = (
+            "Cannot parse value as bool."
+            if type_name == "bool"
+            else f"expected {type_name}."
+        )
+        raise ValueError(f"Invalid value for {where}: {detail}") from None
+    annotation = field_info.annotation
+    metadata = getattr(field_info, "metadata", ())
+    target = Annotated[annotation, *metadata] if metadata else annotation
+    try:
+        return TypeAdapter(target).validate_python(cast_value)
+    except ValidationError as exc:
+        constraint = exc.errors()[0]["msg"]
+        raise ValueError(f"Invalid value for {where}: {constraint}") from None
 
 
 def _field_type_name(field_info: Any) -> str:

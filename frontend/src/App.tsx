@@ -32,6 +32,11 @@ const pad = (n: number): string => (n < 10 ? "0" : "") + n;
 
 export default function App() {
   const status = useAuth((s) => s.status);
+  // The startup refresh decides between the console and the sign-in form;
+  // render neither until it settles so a live session never flashes the form.
+  if (status === "restoring") {
+    return null;
+  }
   if (status !== "authed") {
     return <Login />;
   }
@@ -337,6 +342,7 @@ function Console() {
       isFullscreen: w.fullscreen,
       onToggleFullscreen: () => toggleFullscreen(w.id),
       onOpenPage: (m: string, s: string, l: string, invId?: string | null) => openNamedPage(m, s, l, invId ?? null),
+      onOpenIntake: requestIntake,
     };
     if (!entry) {
       return (

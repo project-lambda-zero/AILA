@@ -64,10 +64,9 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from redis import asyncio as aioredis
 from sqlalchemy import delete as _delete
@@ -77,6 +76,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.enums import InvestigationStatus
+from aila.platform.workflows.run_lifecycle import record_run_outcome
 from aila.platform.workflows.types import (
     RESERVED_CANCELLED,
     RESERVED_FAILED,
@@ -94,6 +94,11 @@ from .constants import (
 )
 from .models import TaskRecord, TaskStatus
 from .queue import requeue_same_job_id
+
+if TYPE_CHECKING:
+    # Annotation-only: investigation_lifecycle loads this package at import
+    # time, so a runtime import here would cycle back through aila.platform.tasks.
+    from aila.platform.services.investigation_lifecycle import PrepareSubmit
 
 # ``get_default_resilience_layer`` is imported lazily inside ``reconcile``
 # because ``aila.platform.services.__init__`` pulls in the audit / journal
@@ -348,8 +353,9 @@ class InvestigationRecoveryBinding:
 
     - ``investigations_table`` is a trusted module constant interpolated
       into SQL (Postgres disallows bind parameters for identifiers).
-    - ``submit_one(inv_id, branch_id | None)`` enqueues exactly one
-      worker task (same contract as
+    - ``prepare_submit(inv_id, branch_id | None)`` builds exactly one
+      worker dispatch before the reset transaction and returns a zero-arg
+      send closure that runs after the commit (same contract as
       :func:`aila.platform.services.investigation_lifecycle.reenqueue_investigation`).
     - ``branch_model`` + ``branch_status_active`` select the reenqueue
       fan-out: ``None`` submits once (VR style); a model submits one task
@@ -377,7 +383,7 @@ class InvestigationRecoveryBinding:
     track: str
     fn_path_pattern: str
     inv_model: type[Any]
-    submit_one: Callable[[str, str | None], Awaitable[None]]
+    prepare_submit: PrepareSubmit
     branch_model: type[Any] | None = None
     branch_status_active: str | None = None
     timestamp_column: str = "updated_at"
@@ -1093,7 +1099,7 @@ class StateReconciler:
                         investigation_id,
                         inv_model=binding.inv_model,
                         fn_path_pattern=binding.fn_path_pattern,
-                        submit_one=binding.submit_one,
+                        prepare_submit=binding.prepare_submit,
                         branch_model=binding.branch_model,
                         branch_status_active=binding.branch_status_active,
                     )
@@ -1158,7 +1164,9 @@ class StateReconciler:
         Selects the investigation's cursor rows whose ``current_state``
         is a live mid-pipeline position (not in :data:`_UNTOUCHABLE_CURSOR_STATES`,
         so engine terminals and the operator ``__paused__`` sentinel are
-        left alone) and UPDATEs them in a single idempotent statement.
+        left alone) and UPDATEs them in a single idempotent statement,
+        closing each affected ``WorkflowRunRecord`` with the mapped status in
+        the same transaction.
         Emits one aggregated recovery event so operators see the pass in
         the ledger. A concurrent DELETE / independent terminal write
         races to a rowcount-0 no-op; the caller path stays idempotent.
@@ -1180,8 +1188,14 @@ class StateReconciler:
                         current_state=target_state,
                         updated_at=utc_now(),
                     )
+                    .returning(WorkflowStateCursor.run_id)
                     .execution_options(synchronize_session=False)
                 )
+                terminalized_run_ids = list(update_result.scalars().all())
+                # Close each run row in the same transaction as its cursor;
+                # an operator-terminal investigation has no handoff to follow.
+                for run_id in terminalized_run_ids:
+                    await record_run_outcome(session, run_id, target_state)
                 await session.commit()
         except SQLAlchemyError as exc:
             _log.warning(
@@ -1194,7 +1208,7 @@ class StateReconciler:
                 healed=False,
                 refusal_reason="read_failed",
             )
-        terminalized = int(update_result.rowcount or 0)
+        terminalized = len(terminalized_run_ids)
         if terminalized == 0:
             # No stranded cursor for this operator-terminal investigation
             # -- nothing to heal. Return the historical refusal so the

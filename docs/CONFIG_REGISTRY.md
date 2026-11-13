@@ -142,7 +142,9 @@ Content-Type: application/json
 {"value": "60"}
 ```
 
-Requires `admin` role. The value is validated against the registered schema field type.
+Requires a god-tier admin (`admin` role with no team scope): config entries carry no team, so every
+write applies to all teams and a team-scoped admin receives 403. The value is validated against the
+registered schema field type.
 Invalid values return 422. Unknown namespace or key returns 422 (ValueError from
 `ConfigRegistry.set()`).
 
@@ -229,6 +231,7 @@ The `platform` namespace is registered with `PlatformConfigSchema`. All fields:
 | `llm_base_url` | str | `https://openrouter.ai/api/v1` | LLM provider API base URL |
 | `llm_default_max_tokens` | int | `4096` | Default max completion tokens |
 | `llm_default_temperature` | float | `0.0` | Default sampling temperature (deterministic) |
+| `prompt_cache_ttl_seconds` | int | `0` | Prompt-cache lifetime in seconds for the stable system prefix of Claude-family requests. `0` sends a bare marker (provider default, 5 minutes); `1`-`300` sends `5m`; `301` and above send `1h`. Other model families are not annotated. See LLM_INTEGRATION.md, "Prompt caching". |
 | `llm_tool_timeout_s` | float | `300.0` | Wall-clock ceiling for a single tool-calling step |
 | `llm_kill_switch` | bool | `False` | Operator circuit breaker; short-circuits every LLM call when true |
 | `llm_pipeline_classify_default` | bool | `True` | LLM pipeline classify stage default-on |
@@ -299,6 +302,10 @@ Modules register their own config schemas under their own namespace. For example
 the vulnerability module might register a `VulnerabilityConfigSchema` under
 namespace `"vulnerability"`.
 
+Module namespaces carry no LLM model key. Every agent picks its model through the
+platform per task type keys (`llm_model_{task_type}` in the `platform` namespace,
+falling back to `llm_default_model`).
+
 ### How modules register
 
 In the module's `register_tools()` method:
@@ -330,7 +337,6 @@ Registered by the VR module via `VRConfigSchema`. All keys are settable via
 
 | Key | Type | Purpose |
 |-----|------|---------|
-| `llm_model` | str | LLM model id used by every VR agent (empty falls back to the platform default) |
 | `ssh_command_timeout_seconds` | float | Timeout for individual SSH commands on the analysis host |
 | `audit_mcp_url` | str | Base URL for the audit-mcp indexer bridge |
 | `android_mcp_url` | str | Base URL for the android-mcp bridge |
@@ -350,12 +356,12 @@ read through ConfigRegistry.
 
 | Key | Type | Purpose |
 |-----|------|---------|
-| `llm_model` | str | LLM model id for every forensics agent (empty falls back to the platform default) |
 | `ssh_command_timeout_seconds` | float | Timeout for individual SSH commands on the analyzer machine |
 | `script_execution_timeout_seconds` | float | Timeout for agent-generated script execution |
 | `collection_timeout_seconds` | float | Timeout for the full artifact collection pipeline |
 | `freeflow_max_attempts` | int | Max script-execution attempts per free-flow investigation |
 | `freeflow_max_cost_usd` | float | Hard per-investigation LLM spend ceiling in USD; `0.0` disables the ceiling |
+| `max_turns_per_task` | int | Per-task turn cap for the forensics panel loop (default 3, range 1-50) |
 
 ---
 

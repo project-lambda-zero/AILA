@@ -21,6 +21,7 @@ have. Required keys block boot when missing.
 | `AILA_PLATFORM_LLM_DEFAULT_MODEL` | `openai/gpt-4o-mini` (fallback) | string | ConfigRegistry override (`platform.llm_default_model`) |
 | `AILA_PLATFORM_LLM_BASE_URL` | `https://openrouter.ai/api/v1` (fallback) | URL | ConfigRegistry override (`platform.llm_base_url`) |
 | `AILA_PLATFORM_LLM_DEFAULT_MAX_TOKENS` | `4096` (fallback) | int | ConfigRegistry override (`platform.llm_default_max_tokens`) |
+| `AILA_PLATFORM_PROMPT_CACHE_TTL_SECONDS` | `0` | int | ConfigRegistry override (`platform.prompt_cache_ttl_seconds`) |
 | `AILA_LLM_TIMEOUT_SECONDS` | `180` | float | `platform/llm/client.py` |
 | `AILA_LLM_MODELS_REJECTING_TEMPERATURE` | *(unset)* | csv substrings | `platform/llm/client.py` |
 | `AILA_PLATFORM_LLM_PIPELINE_CLASSIFY_RESTRICTED_BEHAVIOR_SCORING` | *(unset)* | string mode | ConfigRegistry override |
@@ -37,7 +38,7 @@ have. Required keys block boot when missing.
 | `AILA_{NAMESPACE}_{KEY}` | *(per schema)* | varies | `storage/registry.py` |
 
 **Optional / commented in `.env.example`:**
-- Forensics per-pipeline overrides: `AILA_PLATFORM_LLM_MODEL_FORENSICS_{FREEFLOW,RESOLVER,WRITEUP}`, `AILA_PLATFORM_LLM_MAX_TOKENS_FORENSICS_{FREEFLOW,RESOLVER,WRITEUP}`, `AILA_FORENSICS_CAPA_RULES`, `AILA_FORENSICS_CAPA_SIGS`.
+- Forensics per-pipeline overrides: `AILA_PLATFORM_LLM_MODEL_FORENSICS_{FREEFLOW,RESOLVER,WRITEUP}`, `AILA_PLATFORM_LLM_MAX_TOKENS_FORENSICS_{FREEFLOW,RESOLVER,WRITEUP}`.
 - `AILA_LLM_MODELS_REJECTING_TEMPERATURE`.
 
 **Dev-stack knobs read by `start.sh` (not Python config):**
@@ -288,6 +289,20 @@ All fields from `PlatformConfigSchema` (registered under namespace `platform`):
 - **Used in:** `src/aila/modules/forensics/services/file_retriever.py:52`
 - **Production guidance:** Maximum file size for forensics evidence file retrieval. Raise when investigating large disk images or memory dumps; lower in shared-tenant deployments to bound per-call memory.
 
+### `AILA_FORENSICS_INTAKE_HASH_MAX_BYTES`
+
+- **Default:** `2147483648` (2 GiB)
+- **Type:** Integer (bytes, `>= 0`)
+- **Used in:** `src/aila/modules/forensics/workflow/states/intake.py` (`_intake_hash_cap_bytes`), resolved through `ConfigRegistry` (`src/aila/storage/registry.py`)
+- **Production guidance:** Evidence files at or below this size get a SHA-256 digest computed on the analyzer at intake. Larger files keep a null digest with `hash_status=deferred_over_cap` in the row metadata. `0` defers hashing for every file.
+
+### `AILA_FORENSICS_MAX_TURNS_PER_TASK`
+
+- **Default:** `3`
+- **Type:** Integer (1-50)
+- **Used in:** `src/aila/modules/forensics/workflow/panel/loop.py` (`_read_max_turns`), resolved through `ConfigRegistry` (`src/aila/storage/registry.py`)
+- **Production guidance:** Per-task turn cap for the forensics panel loop. Values outside 1-50 are rejected on write.
+
 ### `PLATFORM_WORKER_HEARTBEAT_GRACE_S`
 
 - **Default:** `600`
@@ -347,4 +362,4 @@ Before deploying to production, verify these are set:
 ---
 
 *Generated from source: `src/aila/config.py`, `src/aila/platform/config.py`, `src/aila/platform/llm/`, `src/aila/api/app.py`, `.env.example`, `start.sh`.*
-*Last updated: 2026-06-21 (head: `067_workflow_state_cursor_archived_state`).*
+*Last updated: 2026-06-21. Check the current Alembic head with `cd src/aila && alembic heads`.*

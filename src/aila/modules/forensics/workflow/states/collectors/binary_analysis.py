@@ -48,7 +48,7 @@ from typing import Any
 
 from aila.platform.exceptions import AILAError
 
-from ._helpers import safe_emit
+from ._helpers import safe_emit, sq
 
 __all__ = ["collect_binary_analysis_artifacts"]
 
@@ -179,21 +179,19 @@ async def collect_binary_analysis_artifacts(
     single remote Python process so SSH traffic stays to a single stdin /
     stdout cycle per image.
     """
-    del analyzer_os  # analyzer is windows; per-image detection handled in script
+    from aila.modules.forensics.tools._ssh_helper import path_sep, python_cmd, temp_dir
 
     artifacts: list[dict[str, Any]] = []
 
     # Figure out whether this image is Linux (walk unix roots + /lib/modules)
-    # or Windows (walk Users/... + Windows\\Temp + ProgramData). We rely on
-    # the already-collected host/target_info artifact produced by the disk
-    # collector, but fall back to a quick dissect.target OS sniff so we
-    # never block on an uncategorised image.
-    from aila.modules.forensics.tools._ssh_helper import python_cmd
-    py_exe = python_cmd("windows")
-
+    # or Windows (walk Users/... + Windows\\Temp + ProgramData) with a quick
+    # dissect.target OS sniff. The image path travels as argv, quoted for
+    # the analyzer shell, never inside the Python source.
+    py_exe = python_cmd(analyzer_os)
+    sniff_src = "import sys; from dissect.target import Target; print(Target.open(sys.argv[1]).os)"
     sniff = await ssh.run_command(
         integration,
-        f'{py_exe} -c "from dissect.target import Target; t = Target.open(r\'{path}\'); print(t.os)"',
+        f"{py_exe} -c {sq(sniff_src, analyzer_os)} {sq(path, analyzer_os)}",
         timeout_seconds=90.0,
     )
     image_os = (sniff or "").strip().lower()
@@ -221,11 +219,15 @@ async def collect_binary_analysis_artifacts(
     # cmd.exe 8191-char command-line limit with
     # ``SSH exit code 1: The command line is too long.``
     script_hash = hashlib.sha256(script.encode("utf-8")).hexdigest()[:16]
-    temp_dir_raw = await ssh.run_command(
-        integration, "echo %TEMP%", timeout_seconds=10.0,
-    )
-    temp_dir = temp_dir_raw.strip().splitlines()[-1].strip() if temp_dir_raw.strip() else "C:\\Windows\\Temp"
-    remote_script = f"{temp_dir}\\aila_binaryscan_{script_hash}.py"
+    if analyzer_os == "windows":
+        temp_dir_raw = await ssh.run_command(
+            integration, f"echo {temp_dir(analyzer_os)}", timeout_seconds=10.0,
+        )
+        remote_tmp = temp_dir_raw.strip().splitlines()[-1].strip() if temp_dir_raw.strip() else "C:\\Windows\\Temp"
+    else:
+        remote_tmp = temp_dir(analyzer_os)
+    remote_script = f"{remote_tmp}{path_sep(analyzer_os)}aila_binaryscan_{script_hash}.py"
+    quoted_script = sq(remote_script, analyzer_os)
 
     fd, local_tmp = tempfile.mkstemp(prefix="aila_binaryscan_", suffix=".py")
     try:
@@ -245,7 +247,10 @@ async def collect_binary_analysis_artifacts(
         except OSError:
             pass
 
-    cmd = f'{py_exe} "{remote_script}"'
+    cmd = f"{py_exe} {quoted_script}"
+    cleanup_cmd = (
+        f"del /f /q {quoted_script} 2>nul" if analyzer_os == "windows" else f"rm -f {quoted_script}"
+    )
 
     t0 = time.monotonic()
     try:
@@ -257,11 +262,7 @@ async def collect_binary_analysis_artifacts(
         return artifacts
     finally:
         try:
-            await ssh.run_command(
-                integration,
-                f'del /f /q "{remote_script}" 2>nul',
-                timeout_seconds=10.0,
-            )
+            await ssh.run_command(integration, cleanup_cmd, timeout_seconds=10.0)
         except (OSError, TimeoutError, RuntimeError, AILAError):
             _log.debug("remote script cleanup failed for %s", remote_script, exc_info=True)
 
@@ -292,6 +293,14 @@ async def collect_binary_analysis_artifacts(
 
     for r in results:
         if not isinstance(r, dict):
+            continue
+        if r.get("error"):
+            # A per-sample read or scratch failure is a failure event, not an
+            # artifact: it must not occupy the sample's collection key.
+            await safe_emit(emitter, "binary_analysis_sample_failed",
+                            f"binary_analysis: {r.get('path')} on {path} FAILED -- {r['error']}",
+                            {"path": path, "sample_path": r.get("path"),
+                             "sha256": r.get("sha256"), "error": str(r["error"])[:400]})
             continue
         basename = r.get("basename") or "sample"
         art = {
@@ -324,6 +333,7 @@ async def collect_binary_analysis_artifacts(
                 sample=r,
                 emitter=emitter,
                 on_artifact=on_artifact,
+                analyzer_os=analyzer_os,
                 already_collected=ghidra_seen_shas,
             )
             for ga in gh_arts:

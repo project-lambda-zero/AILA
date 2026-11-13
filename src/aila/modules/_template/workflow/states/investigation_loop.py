@@ -76,6 +76,10 @@ _LOOP_BINDINGS = InvestigationStateBindings(
     max_turns_reader=lambda: _config.get_int("max_turns_per_task"),
     researcher_error=TemplateResearcherError,
     module_id="template",
+    # The unknown-confidence pause gate calls the platform lifecycle
+    # service, which needs the queue track and the branch table name.
+    track="template",
+    branch_table="template_investigation_branches",
 )
 
 # The loop handler IS the platform factory bound to the template

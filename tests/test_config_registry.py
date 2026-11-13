@@ -275,10 +275,14 @@ class TestSet:
             await registry.set("sample", "timeout", "not_a_number")
 
     async def test_set_invalid_bool_raises(self, registry):
-        """set() raises ValueError for unparseable booleans."""
+        """set() preserves the parse contract with context and no raw echo."""
         await registry.register("sample", _SampleSchema)
-        with pytest.raises(ValueError, match="Cannot parse"):
+        with pytest.raises(ValueError) as exc_info:
             await registry.set("sample", "verbose", "maybe")
+        message = str(exc_info.value)
+        assert "Cannot parse" in message
+        assert "sample.verbose" in message
+        assert "maybe" not in message
 
     async def test_set_updates_timestamp(self, registry):
         """set() updates the updated_at field on the DB row."""

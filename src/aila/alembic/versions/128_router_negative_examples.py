@@ -42,7 +42,7 @@ Every named constraint / index is module-prefixed (``router_negative
 _example_...``) because Postgres constraint names are schema-global.
 
 Revision ID: 128_router_negative_examples
-Revises:     127_managed_system_passphrase_secret
+Revises:     127_managed_system_passphrase
 Create Date: 2026-08-16
 """
 from __future__ import annotations
@@ -52,7 +52,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "128_router_negative_examples"
-down_revision: str | None = "127_managed_system_passphrase_secret"
+down_revision: str | None = "127_managed_system_passphrase"
 branch_labels: tuple[str, ...] | None = None
 depends_on: tuple[str, ...] | None = None
 

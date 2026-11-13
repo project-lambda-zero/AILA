@@ -33,7 +33,7 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, NamedTuple
 
 from sqlmodel import select as _select
 
@@ -210,6 +210,12 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         # _consume_pending_operator_messages, merged into case_state by
         # _inject_promotion_directives before the kill-criteria scan.
         self._pending_fuzz_observables: dict[str, str] = {}
+        # Wave-2 submit decisions already settled by each gate, keyed by
+        # turn. In-memory only: the researcher lives for one branch run.
+        self._settled_wave2_gates: dict[str, int] = {}
+        # Rejection each gate returned on the turn it settled (turn, decision).
+        # Same-turn re-entry replays it instead of re-deciding.
+        self._wave2_rejections: dict[str, tuple[int, ReasoningTurnDecision]] = {}
 
     # ---- AgentTurnRunnerBase config + hooks (RFC-03 Phase 7) -----------
     _LOG_LABEL = "vuln_researcher"
@@ -385,6 +391,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         inv: Any,
         target_snapshot: dict[str, Any] | None,
         case_state: Any,
+        turn_number: int,
     ) -> None:
         """RFC-12 Phase 1: re-retrieve prior knowledge on the branch's live focus.
 
@@ -405,12 +412,15 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         method's behaviour is byte-identical to today. When the flag
         is ON, the helper injects a ``_directive.explorer_top_lead``
         observable that the prompt's active-directives section
-        surfaces on the next turn.
+        surfaces on the next turn, except on a submit-locked branch
+        (any submit-gate reject counter positive), where it makes no
+        explorer call and clears the stale lead.
         """
         await maybe_run_explorer_planner(
             investigation_id=self.investigation_id,
             branch_id=self.branch_id,
             case_state=case_state,
+            turn_number=turn_number,
         )
 
         claims = [
@@ -1225,16 +1235,42 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         the decision rejects this turn. ``decision`` is None on the
         proactive-injection path (no decision yet), where only the
         accumulated state is scanned.
+
+        Submit gates run before ``absorb`` (turn_runner), so this view
+        must refuse exactly what absorb refuses (#301): a previously
+        rejected or resolved id re-enters only through its single
+        evidence-backed revival. An id already revived once, or re-emitted
+        without ``confirmed_by``, never counts as confirmed here. Live seeds
+        whose id also sits in ``rejected``/``resolved`` are dropped too:
+        absorb gives terminal membership precedence over stale merged rows,
+        so only an admissible current-decision first revival may re-add them.
         """
+        terminal_ids = (
+            {r.id for r in case_state.rejected if r.id}
+            | {r.id for r in case_state.resolved if r.id}
+        )
+        revived_done = set(case_state.revived_hypothesis_ids)
         confirmed: dict[str, Hypothesis] = {}
         for h in case_state.hypotheses:
-            if h.id and getattr(h, "confirmed_by", ""):
+            if not h.id or h.id in terminal_ids:
+                # A merged case_state can carry the same id live and
+                # terminal; absorb drops the live entry, so it cannot
+                # seed a confirmation here either (#301).
+                continue
+            if getattr(h, "confirmed_by", ""):
                 confirmed[h.id] = h
         if decision is not None:
             for h in decision.hypotheses:
                 if not h.id:
                     continue
-                if getattr(h, "confirmed_by", ""):
+                supported = bool(h.confirmed_by.strip())
+                if h.id in terminal_ids:
+                    # Revival candidate: absorb admits only the first
+                    # supported re-emit of a terminal id, and only once.
+                    if h.id in revived_done or not supported:
+                        continue
+                    confirmed[h.id] = h
+                elif supported:
                     confirmed[h.id] = h
                 else:
                     # Current view no longer confirms this id -- retract.
@@ -2024,11 +2060,13 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
     #
     # Each gate mirrors the reject-under-cap / force-through-over-cap
     # shape of the existing hypothesis gates (see
-    # ``_maybe_reject_submit_with_unresolved_hypotheses``). New
-    # counters and directives use the reserved ``_gate.`` observable
-    # prefix (issue #248 L2) so they never collide with the agent
-    # scratchpad namespace and are exempt from the observable-cap
-    # eviction the runner applies to plain agent keys.
+    # ``_maybe_reject_submit_with_unresolved_hypotheses``). Each gate's
+    # reject counter lives at ``_gate.<gate>.reject_count``. ``_gate.`` is
+    # a reserved observable prefix: agent observable writes to it are
+    # dropped, and neither the agent-key cap nor the observable storage
+    # cap evicts it. The mandatory directive lives under the reserved ``_directive.``
+    # prefix (``_directive.gate.<gate>.rejected``), so it renders through
+    # the active directives section and agent writes cannot overwrite it.
     #
     # Orchestration: they run as a single override of
     # ``_maybe_reject_fanout_submit`` (the last-in-chain gate the
@@ -2056,24 +2094,33 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         Gate shape: reject under cap with a directive that names the
         missing side (refs / confirmation); force-through over cap
         stamps a ``positive_submit_evidence_advisory`` on the payload.
+        Empty ``evidence_refs`` first hydrate from explicit file:line
+        citations that match same-branch tool observations (issue #303);
+        hydration alone never satisfies the confirmed-hypothesis side.
         """
         if not getattr(
             self,
             "_require_confirmed_evidence_on_positive_submit",
             False,
         ):
+            self._reset_gate("positive_submit_refs", case_state)
             return decision
+        settled = self._settled_gate_result(
+            "positive_submit_refs", decision, turn_number,
+        )
+        if settled is not None:
+            return settled
         kind = self._terminal_outcome_kind(decision)
         if outcome_polarity(kind) != "positive":
-            self._clear_gate("positive_submit_refs", case_state)
+            self._clear_gate("positive_submit_refs", case_state, turn_number)
             return decision
         payload = decision.payload or {}
-        refs = payload.get("evidence_refs") or []
-        has_refs = isinstance(refs, list) and any(
-            (isinstance(r, str) and r.strip())
-            or (isinstance(r, dict) and r)
-            for r in refs
-        )
+        if not _has_checkable_refs(payload.get("evidence_refs")):
+            decision = _hydrate_positive_submit_evidence_refs(
+                decision=decision, case_state=case_state,
+            )
+            payload = decision.payload or {}
+        has_refs = _has_checkable_refs(payload.get("evidence_refs"))
         confirmed = self._confirmed_open_hypotheses(
             case_state=case_state, decision=decision,
         )
@@ -2082,7 +2129,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             for h in confirmed
         )
         if has_refs and has_confirmed_cite:
-            self._clear_gate("positive_submit_refs", case_state)
+            self._clear_gate("positive_submit_refs", case_state, turn_number)
             return decision
         missing_bits: list[str] = []
         if not has_refs:
@@ -2100,7 +2147,9 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             "  (a) add each supporting source citation to "
             "``payload.evidence_refs`` (message id, outcome id, or "
             "source_citation ref). Do not restate reasoning; cite the "
-            "artifact.\n"
+            "artifact. Explicit file:line citations in answer/source_ref/"
+            "sink_ref that match a branch tool observation are attached "
+            "automatically; cite any others here.\n"
             "  (b) re-emit the hypothesis in ``decision.hypotheses[]`` "
             "with a non-empty ``confirmed_by`` string that names the "
             "concrete file:line, tool observation id, or probe id that "
@@ -2140,11 +2189,17 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         F1 does not cover.
         """
         if not getattr(self, "_contradiction_gate_enabled", False):
+            self._reset_gate("contradiction_observable", case_state)
             return decision
+        settled = self._settled_gate_result(
+            "contradiction_observable", decision, turn_number,
+        )
+        if settled is not None:
+            return settled
         kind = self._terminal_outcome_kind(decision)
         pol = outcome_polarity(kind)
         if pol == "positive":
-            self._clear_gate("contradiction_observable", case_state)
+            self._clear_gate("contradiction_observable", case_state, turn_number)
             return decision
         payload = decision.payload or {}
         raw_refs = payload.get("evidence_refs") or []
@@ -2165,7 +2220,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                 if isinstance(corr, str) and corr:
                     cited_keys.append(corr)
         if not cited_keys:
-            self._clear_gate("contradiction_observable", case_state)
+            self._clear_gate("contradiction_observable", case_state, turn_number)
             return decision
         contradicting: list[tuple[str, str]] = []
         for key in cited_keys:
@@ -2178,7 +2233,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                     contradicting.append((key, marker))
                     break
         if not contradicting:
-            self._clear_gate("contradiction_observable", case_state)
+            self._clear_gate("contradiction_observable", case_state, turn_number)
             return decision
         listing = "\n".join(
             f"  - {key} -> observable body contains '{marker}'"
@@ -2237,11 +2292,15 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         under cap when a cited pair is absent from the ran set.
         """
         if not getattr(self, "_tool_telemetry_crosscheck_enabled", False):
+            self._reset_gate("tool_telemetry", case_state)
             return decision
+        settled = self._settled_gate_result("tool_telemetry", decision, turn_number)
+        if settled is not None:
+            return settled
         payload = decision.payload or {}
         cited_pairs = _extract_cited_tool_pairs(payload)
         if not cited_pairs:
-            self._clear_gate("tool_telemetry", case_state)
+            self._clear_gate("tool_telemetry", case_state, turn_number)
             return decision
         ran_pairs: set[tuple[str, str]] = set()
         async with UnitOfWork() as uow:
@@ -2259,7 +2318,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             {pair for pair in cited_pairs if pair not in ran_pairs},
         )
         if not missing:
-            self._clear_gate("tool_telemetry", case_state)
+            self._clear_gate("tool_telemetry", case_state, turn_number)
             return decision
         listing = "\n".join(
             f"  - {server}:{action}" for server, action in missing[:20]
@@ -2315,10 +2374,14 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         """
         floor = int(getattr(self, "_tool_work_floor_probes", 0) or 0)
         if floor <= 0:
+            self._reset_gate("tool_work_floor", case_state)
             return decision
+        settled = self._settled_gate_result("tool_work_floor", decision, turn_number)
+        if settled is not None:
+            return settled
         kind = self._terminal_outcome_kind(decision)
         if outcome_polarity(kind) != "positive":
-            self._clear_gate("tool_work_floor", case_state)
+            self._clear_gate("tool_work_floor", case_state, turn_number)
             return decision
         async with UnitOfWork() as uow:
             rows = (await uow.session.exec(
@@ -2333,7 +2396,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             if action in _REACHABILITY_PROBE_ACTIONS:
                 probe_count += 1
         if probe_count >= floor:
-            self._clear_gate("tool_work_floor", case_state)
+            self._clear_gate("tool_work_floor", case_state, turn_number)
             return decision
         directive_body = (
             "*** TOOL-WORK FLOOR -- POSITIVE SUBMIT UNDER-EVIDENCED ***\n"
@@ -2451,6 +2514,31 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             decision=decision, prior_outcomes=prior_outcomes,
         )
 
+    def _maybe_reject_unsupported_action(
+        self,
+        *,
+        decision: Any,
+        case_state: Any,
+        turn_number: int,
+    ) -> Any:
+        """Flag ``artifact_query`` (forensics-only) as unsupported for VR.
+
+        The shared ``ReasoningAction`` schema accepts it, so VR must reject
+        it explicitly rather than let it fall through to a plain TEXT turn.
+        """
+        del turn_number
+        if decision.action != "artifact_query":
+            return decision
+        case_state.observables["_directive.unsupported_action_rejected"] = (
+            "[UNSUPPORTED ACTION: artifact_query]\n"
+            "artifact_query is not supported for the vr module. Nothing was "
+            "queried or recorded as a success.\n\n"
+            "Valid vr actions: tool_run / reasoning / submit / "
+            "submit_outcome_review / edit_outcome. Pick one of these for "
+            "your next turn."
+        )
+        return decision
+
     def _maybe_reject_fanout_submit(
         self,
         *,
@@ -2506,18 +2594,55 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             decision=decision, case_state=case_state, turn_number=turn_number,
         )
 
-    def _clear_gate(
-        self, gate: str, case_state: ReasoningCaseState,
-    ) -> None:
-        """Drop this gate's ``_gate.<name>.*`` observables (issue #248 L2).
+    def _settled_gate_result(
+        self, gate: str, decision: ReasoningTurnDecision, turn_number: int,
+    ) -> ReasoningTurnDecision | None:
+        """Return what a wave-2 gate already decided this turn, or ``None``
+        when the gate must evaluate.
 
-        Called on the pass branch of every wave-2 gate so a later
-        regression on the same branch starts fresh. Keys live under
-        the reserved ``_gate.`` prefix so the observable-cap eviction
-        never touches them.
+        A gate that passed or force-through settled with ``decision``
+        unchanged. A gate that rejected replays the exact rejection it
+        issued this turn, so a same-turn re-entry neither re-derives the
+        terminal kind nor bumps the reject counter again (issue #298).
+        Settlement is keyed by turn, so the next turn evaluates normally.
+        """
+        if self._settled_wave2_gates.get(gate) != turn_number:
+            return None
+        rejected = self._wave2_rejections.get(gate)
+        if rejected is not None and rejected[0] == turn_number:
+            return rejected[1]
+        return decision
+
+    def _reset_gate(self, gate: str, case_state: ReasoningCaseState) -> None:
+        """Drop this gate's rejection state without settling the gate.
+
+        Removes the ``_gate.<gate>.reject_count`` counter, the mandatory
+        ``_directive.gate.<gate>.rejected`` directive, the rejection
+        stored for same-turn replay, and the gate's settled-turn entry.
+        A disabled gate calls this before returning (gate config reloads
+        every turn), so a rejection issued while the gate was enabled
+        stops rendering as a mandatory directive, and a re-enable on the
+        same turn or a later one evaluates normally.
         """
         case_state.observables.pop(f"_gate.{gate}.reject_count", None)
-        case_state.observables.pop(f"_gate.{gate}.directive", None)
+        case_state.observables.pop(f"_directive.gate.{gate}.rejected", None)
+        self._wave2_rejections.pop(gate, None)
+        self._settled_wave2_gates.pop(gate, None)
+
+    def _clear_gate(
+        self, gate: str, case_state: ReasoningCaseState, turn_number: int,
+    ) -> None:
+        """Reset this gate via :meth:`_reset_gate`, then record that it
+        settled this turn.
+
+        Called on the pass branch of every wave-2 gate and on a
+        force-through, so a later regression on the same branch starts
+        fresh. The settled record lets the same-turn fanout re-entry
+        skip a gate that already decided (issues #298 / #299); it is
+        keyed by turn, so the next turn evaluates normally.
+        """
+        self._reset_gate(gate, case_state)
+        self._settled_wave2_gates[gate] = turn_number
 
     def _reject_or_force(
         self,
@@ -2534,13 +2659,26 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         """Shared reject-under-cap / force-through-over-cap machinery.
 
         Uses ``self._unresolved_hyp_reject_cap`` as the shared ceiling
-        (matches every hypothesis gate's mental model). Counter +
-        directive live under ``_gate.<name>.*`` so agent scratchpad
-        eviction never touches them (issue #248 L2).
+        (matches every hypothesis gate's mental model). The counter lives
+        at the reserved ``_gate.<name>.reject_count`` key, which the agent
+        cannot write and no observable cap evicts. The rejection
+        directive lives under the reserved
+        ``_directive.gate.<name>.rejected`` key so
+        ``render_active_directives_section`` surfaces it as a mandatory
+        directive on the next turn.
+
+        The rejected submit is emitted as a ``reasoning`` decision whose
+        ``reasoning`` field carries the rejection text, so the agent reads
+        the rejection back as its own turn message rather than as a
+        synthesized empty ``tool_run``.
+
+        An under-cap reject settles the gate for this turn and stores the
+        rejection it returns, so same-turn re-entry replays it (issue
+        #298). A force-through clears the gate via :meth:`_clear_gate`.
         """
         cap = int(getattr(self, "_unresolved_hyp_reject_cap", 3) or 3)
         counter_key = f"_gate.{gate}.reject_count"
-        directive_key = f"_gate.{gate}.directive"
+        directive_key = f"_directive.gate.{gate}.rejected"
         prior = int(case_state.observables.get(counter_key, 0) or 0)
         new_count = prior + 1
         if new_count > cap:
@@ -2555,7 +2693,7 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
                 **advisory_payload,
                 "forced_through_after_rejects": prior,
             }
-            self._clear_gate(gate, case_state)
+            self._clear_gate(gate, case_state, turn_number)
             return decision.model_copy(update={"payload": new_payload})
         _log.info(
             "%s submit REJECTED inv=%s branch=%s turn=%d rejects=%d/%d",
@@ -2575,16 +2713,18 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
             f"[{log_label.upper()} GATE: submit rejected -- see "
             f"{directive_key}]\nOriginal submit attempt:\n{original_answer}"
         )
-        return decision.model_copy(update={
-            "action": "tool_run",
-            "command": "",
-            "answer": rejected_text,
+        rejection = decision.model_copy(update={
+            "action": "reasoning",
+            "reasoning": rejected_text,
             "payload": {
                 **payload,
                 f"_gate.{gate}.rejected": True,
                 f"_gate.{gate}.reject_count": new_count,
             },
         })
+        self._wave2_rejections[gate] = (turn_number, rejection)
+        self._settled_wave2_gates[gate] = turn_number
+        return rejection
 
     async def _evaluate_kill_criteria_this_turn(
         self,
@@ -2888,6 +3028,169 @@ _TOOL_CITE_RE = re.compile(
     r"[:.]([a-z_][a-z0-9_]*)\b",
     re.IGNORECASE,
 )
+
+# Issue #303: a positive submit whose ``payload.evidence_refs`` is empty
+# has its explicit ``path:line`` citations (answer, source_ref,
+# sink_ref) normalized into refs when a same-branch tool observation
+# carries a matching coordinate header. This is normalization of
+# model-provided citations only: it is not ambiguity detection, not
+# routing, and it never satisfies the live ``confirmed_by`` requirement.
+_HYDRATION_MAX_TEXT_CHARS = 4000
+_HYDRATION_MAX_CITATIONS = 16
+_HYDRATION_OBSERVABLE_PREFIXES: tuple[str, ...] = (
+    "audit_mcp.", "audit_mcp:",
+    "rea.", "rea:",
+    "reverser_belt.", "reverser_belt:",
+    "android_mcp.", "android_mcp:",
+)
+_HYDRATION_FILE_LINE_RE = re.compile(
+    r"(?<![\w./\\-])([\w.\-/\\]*\w\.\w+):([1-9]\d*)(?:-([1-9]\d*))?(?!\w)",
+)
+# Coordinate headers the tool adapters write at the top of an
+# observation body: ``=== <path>:<start>-<end> ...===``.
+_HYDRATION_COORD_HEADER_RE = re.compile(
+    r"^=== (?P<path>\S.*?):(?P<start>\d+)-(?P<end>\d+)(?=[ \]])",
+    re.MULTILINE,
+)
+_HYDRATION_NO_BODY_MARKER = "!! NO BODY AVAILABLE !!"
+
+
+class _FileLineCitation(NamedTuple):
+    text: str
+    path: str
+    start: int
+    end: int
+
+
+class _BranchCoordinate(NamedTuple):
+    observation_id: str
+    path: str
+    start: int
+    end: int
+
+
+def _has_checkable_refs(refs: Any) -> bool:
+    return isinstance(refs, list) and any(
+        (isinstance(r, str) and r.strip()) or (isinstance(r, dict) and r)
+        for r in refs
+    )
+
+
+def _extract_file_line_citations(texts: list[str]) -> list[_FileLineCitation]:
+    """Explicit ``path:line`` / ``path:start-end`` citations in first-
+    occurrence order, deduped by normalized text, capped at
+    ``_HYDRATION_MAX_CITATIONS``. Each text is read only up to
+    ``_HYDRATION_MAX_TEXT_CHARS``. Reversed ranges are skipped."""
+    seen: set[str] = set()
+    found: list[_FileLineCitation] = []
+    for text in texts:
+        for match in _HYDRATION_FILE_LINE_RE.finditer(
+            text[:_HYDRATION_MAX_TEXT_CHARS],
+        ):
+            path = match.group(1)
+            start = int(match.group(2))
+            end = int(match.group(3)) if match.group(3) else start
+            if end < start:
+                continue
+            label = f"{path}:{start}" if end == start else f"{path}:{start}-{end}"
+            if label in seen:
+                continue
+            seen.add(label)
+            found.append(_FileLineCitation(label, path, start, end))
+            if len(found) >= _HYDRATION_MAX_CITATIONS:
+                return found
+    return found
+
+
+def _branch_tool_coordinates(
+    case_state: ReasoningCaseState,
+) -> list[_BranchCoordinate]:
+    """Coordinate headers carried by this branch's tool observations.
+
+    Only keys under a recognized tool-server prefix count. Reserved
+    ``_directive.`` / ``_gate.`` / ``_recall.`` / ``_ledger.`` keys and
+    agent scratchpad keys are never match sources. Observations whose
+    body reports ``NO BODY AVAILABLE`` are excluded: their header names
+    a coordinate the tool did not return.
+    """
+    coords: list[_BranchCoordinate] = []
+    for key, value in case_state.observables.items():
+        if not key.startswith(_HYDRATION_OBSERVABLE_PREFIXES):
+            continue
+        if not isinstance(value, str) or _HYDRATION_NO_BODY_MARKER in value:
+            continue
+        for header in _HYDRATION_COORD_HEADER_RE.finditer(value):
+            coords.append(_BranchCoordinate(
+                observation_id=key,
+                path=header.group("path").replace("\\", "/"),
+                start=int(header.group("start")),
+                end=int(header.group("end")),
+            ))
+    return coords
+
+
+def _coordinate_covers(citation: _FileLineCitation, coord: _BranchCoordinate) -> bool:
+    """Exact path (or a whole trailing path when the citation carries
+    directories) AND the cited line range inside the header range."""
+    cited = citation.path.replace("\\", "/")
+    path_ok = coord.path == cited or (
+        "/" in cited and coord.path.endswith("/" + cited)
+    )
+    return path_ok and coord.start <= citation.start and citation.end <= coord.end
+
+
+def _hydrate_positive_submit_evidence_refs(
+    *,
+    decision: ReasoningTurnDecision,
+    case_state: ReasoningCaseState,
+) -> ReasoningTurnDecision:
+    """Issue #303: attach matching explicit citations as evidence refs.
+
+    Each citation that matches a same-branch observation becomes
+    ``{"kind": "source_citation", "ref": "<path>:<line> [<observation_id>]"}``
+    and is recorded under ``positive_submit_evidence_hydration_advisory``.
+    With no match the decision is returned unchanged.
+    """
+    payload = decision.payload or {}
+    texts = [
+        value for value in (
+            payload.get("answer") or decision.answer or "",
+            payload.get("source_ref") or "",
+            payload.get("sink_ref") or "",
+        )
+        if isinstance(value, str)
+    ]
+    coords = _branch_tool_coordinates(case_state)
+    hydrated_refs: list[dict[str, str]] = []
+    hydrated: list[dict[str, str]] = []
+    for citation in _extract_file_line_citations(texts):
+        coord = next(
+            (c for c in coords if _coordinate_covers(citation, c)), None,
+        )
+        if coord is None:
+            continue
+        hydrated_refs.append({
+            "kind": "source_citation",
+            "ref": f"{citation.text} [{coord.observation_id}]",
+        })
+        hydrated.append({
+            "citation": citation.text,
+            "observation_id": coord.observation_id,
+        })
+    if not hydrated_refs:
+        return decision
+    new_payload = dict(payload)
+    new_payload["evidence_refs"] = hydrated_refs
+    new_payload["positive_submit_evidence_hydration_advisory"] = {
+        "hydrated": hydrated,
+        "message": (
+            f"Hydrated {len(hydrated)} explicit file:line citation(s) from "
+            "answer/source_ref/sink_ref into payload.evidence_refs; each "
+            "matches a same-branch tool observation's coordinate header. "
+            "Hydration does not satisfy the live `confirmed_by` requirement."
+        ),
+    }
+    return decision.model_copy(update={"payload": new_payload})
 
 
 def _render_target_snapshot_section(snapshot: dict[str, Any]) -> str:
@@ -3737,6 +4040,13 @@ def _decision_to_message_payload(
             ),
             "suggested_edits": decision.payload or {},
             "reasoning": decision.reasoning,
+        }
+    if decision.action == "artifact_query":
+        return PayloadKind.TEXT, {
+            "text": "Unsupported action 'artifact_query' for the vr module. The query was not executed.",
+            "expected_observation": decision.expected_observation,
+            "error": "unsupported_action",
+            "action": "artifact_query",
         }
     return PayloadKind.TEXT, {
         "text": decision.reasoning,

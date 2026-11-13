@@ -57,6 +57,7 @@ from aila.platform.contracts.reasoning import (
     RejectedHypothesis,
     ResolvedHypothesis,
 )
+from aila.platform.services.audit import AuditActor, record_audit_event
 from aila.platform.services.ledger import LedgerService
 from aila.platform.uow import UnitOfWork
 
@@ -453,9 +454,14 @@ class BranchPool:
         self,
         branch_id: str,
         *,
+        actor: AuditActor,
         reason: str = "",
     ) -> BranchOpResult:
-        """Temporarily stop driving the branch."""
+        """Temporarily stop driving the branch.
+
+        The ``branch_paused`` audit row is added to the same session as
+        the status flip and committed with it.
+        """
         async with UnitOfWork() as uow:
             # fix §64 -- refuse to pause under a terminal investigation.
             # Without this guard an operator can pause a branch under
@@ -480,9 +486,26 @@ class BranchPool:
                 raise BranchManagerError(
                     f"cannot pause branch {branch_id} in status {branch.status!r} -- must be ACTIVE",
                 )
+            prior_status = branch.status
             # fix §21 -- status write routed through chokepoint.
             self._emit_branch_status_event(
                 uow, branch, BranchStatus.PAUSED, reason=reason,
+            )
+            record_audit_event(
+                uow.session,
+                run_id=self.investigation_id,
+                stage=actor.stage,
+                action="branch_paused",
+                target=f"branch:{branch_id}",
+                user_id=actor.user_id,
+                team_id=actor.team_id,
+                details={
+                    "investigation_id": self.investigation_id,
+                    "branch_id": branch_id,
+                    "prior_status": prior_status,
+                    "new_status": BranchStatus.PAUSED.value,
+                    "reason": reason,
+                },
             )
             await uow.commit()
 
@@ -497,9 +520,13 @@ class BranchPool:
         self,
         branch_id: str,
         *,
+        actor: AuditActor,
         reason: str = "",
     ) -> BranchOpResult:
         """Re-activate a PAUSED branch.
+
+        The ``branch_resumed`` audit row is added to the same session as
+        the status flip and committed with it.
 
         fix §39 -- DESIGN DECISION: resume() flips the branch back to
         ACTIVE but does NOT enqueue a fresh ARQ task. The Phase B
@@ -526,9 +553,26 @@ class BranchPool:
                 raise BranchManagerError(
                     f"cannot resume branch {branch_id} in status {branch.status!r} -- must be PAUSED",
                 )
+            prior_status = branch.status
             # fix §21 -- status write routed through chokepoint.
             self._emit_branch_status_event(
                 uow, branch, BranchStatus.ACTIVE, reason=reason,
+            )
+            record_audit_event(
+                uow.session,
+                run_id=self.investigation_id,
+                stage=actor.stage,
+                action="branch_resumed",
+                target=f"branch:{branch_id}",
+                user_id=actor.user_id,
+                team_id=actor.team_id,
+                details={
+                    "investigation_id": self.investigation_id,
+                    "branch_id": branch_id,
+                    "prior_status": prior_status,
+                    "new_status": BranchStatus.ACTIVE.value,
+                    "reason": reason,
+                },
             )
             await uow.commit()
 
@@ -907,7 +951,17 @@ def _merge_case_states(
         resolved=merge_resolved(a.resolved, b.resolved),
         observables={**a.observables, **b.observables},
         current_turn=max(a.current_turn, b.current_turn),
+        # #301 -- revival history must survive merge, or a merged branch
+        # could revive an id a second time.
+        revived_hypothesis_ids=_union_ids(
+            a.revived_hypothesis_ids, b.revived_hypothesis_ids,
+        ),
     )
+
+
+def _union_ids(a: list[str], b: list[str]) -> list[str]:
+    """Order-preserving dedupe union of two id lists."""
+    return list(dict.fromkeys([*a, *b]))
 
 
 def _has_contract(c: ReasoningContract) -> bool:

@@ -23,8 +23,11 @@ const LEAD_COLS: TableColumn<Lead>[] = [
   { field: "reason", label: "reason" },
 ];
 
+// The leads route accepts a limit of 1 to 100; every option stays inside it.
+const LIMIT_OPTIONS = ["25", "50", "100"] as const;
+
 export function LeadsTab({ projectId }: TabProps): JSX.Element {
-  const [limit, setLimit] = useState(200);
+  const [limit, setLimit] = useState(100);
   const q = useForensicsQuery(projectId, ["leads", String(limit)], `/forensics/projects/${projectId}/leads?limit=${limit}`, (raw) => parseRows(raw, parseLead));
   const rows = q.data ?? [];
   const [sel, setSel] = useState<Lead | null>(null);
@@ -39,12 +42,7 @@ export function LeadsTab({ projectId }: TabProps): JSX.Element {
             <Select
               value={String(limit)}
               onChange={(v) => setLimit(Number(v))}
-              options={[
-                { value: "50", label: "50" },
-                { value: "200", label: "200" },
-                { value: "500", label: "500" },
-                { value: "1000", label: "1000" },
-              ]}
+              options={LIMIT_OPTIONS.map((v) => ({ value: v, label: v }))}
             />
           </FilterField>
         </>

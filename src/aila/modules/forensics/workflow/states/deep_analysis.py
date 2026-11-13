@@ -15,6 +15,8 @@ from typing import Any
 
 from aila.platform.exceptions import AILAError
 
+from .collectors._helpers import sq
+
 __all__ = ["state_deep_analysis"]
 
 _log = logging.getLogger(__name__)
@@ -190,9 +192,11 @@ async def _analyze_single_file(
     err_sink: str,
 ) -> list[dict[str, Any]]:
     """Run all deep-analysis tools on a single file."""
+    from aila.modules.forensics.services.evidence_classifier import _compute_file_hash
+
     artifacts: list[dict[str, Any]] = []
 
-    sha256 = await _compute_hash(ssh, integration, path, analyzer_os)
+    sha256 = await _compute_file_hash(ssh, integration, path, analyzer_os)
     if sha256:
         artifacts.append({
             "family": "filesystem",
@@ -242,23 +246,6 @@ async def _analyze_single_file(
     return artifacts
 
 
-async def _compute_hash(ssh: Any, integration: dict, path: str, analyzer_os: str) -> str | None:
-    """Compute SHA-256 of the file on the analyzer machine."""
-    from aila.modules.forensics.tools._ssh_helper import hash_cmd as build_hash_cmd
-
-    try:
-        output = await ssh.run_command(
-            integration, build_hash_cmd(path, analyzer_os), timeout_seconds=60.0,
-        )
-        for line in output.strip().splitlines():
-            candidate = line.strip().split()[0] if line.strip() else ""
-            if re.fullmatch(r"[0-9a-fA-F]{64}", candidate):
-                return candidate.lower()
-    except (OSError, TimeoutError, RuntimeError, AILAError):
-        _log.debug("hash failed for %s", path, exc_info=True)
-    return None
-
-
 async def _extract_strings_iocs(
     ssh: Any, integration: dict, path: str, analyzer_os: str, err_sink: str,
 ) -> dict[str, Any] | None:
@@ -267,7 +254,7 @@ async def _extract_strings_iocs(
     try:
         output = await ssh.run_command(
             integration,
-            f'{strings_bin} "{path}" {err_sink}',
+            f"{strings_bin} {sq(path, analyzer_os)} {err_sink}",
             timeout_seconds=120.0,
         )
     except (OSError, TimeoutError, RuntimeError, AILAError):
@@ -314,13 +301,13 @@ async def _extract_strings_iocs(
 
 
 async def _run_floss(
-    ssh: Any, integration: dict, path: str, _analyzer_os: str, err_sink: str,
+    ssh: Any, integration: dict, path: str, analyzer_os: str, err_sink: str,
 ) -> str | None:
     """Run FLOSS for obfuscated string recovery."""
     try:
         output = await ssh.run_command(
             integration,
-            f'floss "{path}" {err_sink}',
+            f"floss {sq(path, analyzer_os)} {err_sink}",
             timeout_seconds=300.0,
         )
         return output.strip() if output.strip() else None
@@ -330,13 +317,13 @@ async def _run_floss(
 
 
 async def _run_capa(
-    ssh: Any, integration: dict, path: str, _analyzer_os: str, err_sink: str,
+    ssh: Any, integration: dict, path: str, analyzer_os: str, err_sink: str,
 ) -> str | None:
     """Run capa for ATT&CK capability mapping."""
     try:
         output = await ssh.run_command(
             integration,
-            f'capa "{path}" {err_sink}',
+            f"capa {sq(path, analyzer_os)} {err_sink}",
             timeout_seconds=300.0,
         )
         return output.strip() if output.strip() else None
@@ -367,7 +354,7 @@ async def _run_ghidra_list_functions(
     )
     analyze_cmd = (
         f"{headless} {project_dir} aila_deep_analysis "
-        f"-import \"{path}\" -overwrite "
+        f"-import {sq(path, analyzer_os)} -overwrite "
         f"-scriptPath {script_dir} -postScript ListFunctions.java "
         f"-noanalysis"
     )

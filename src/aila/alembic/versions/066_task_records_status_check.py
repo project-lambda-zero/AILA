@@ -30,7 +30,7 @@ from __future__ import annotations
 from alembic import op
 
 revision = "066_task_records_status_check"
-down_revision = "065_task_records_input_hash_unique"
+down_revision = "065_task_records_input_hash_uq"
 branch_labels = None
 depends_on = None
 

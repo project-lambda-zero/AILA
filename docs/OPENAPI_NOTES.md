@@ -79,7 +79,7 @@ Most successful responses are wrapped in `DataEnvelope` (`src/aila/api/schemas/e
 
 `meta` is optional and used for paginated lists. Endpoints that predate the
 envelope (a small remainder under `/auth/token`, `/auth/refresh`, and the
-scan/task submission surface) return their `response_model` directly.
+scan submission surface) return their `response_model` directly.
 
 ### Errors: two coexisting shapes
 
@@ -121,7 +121,7 @@ these tags:
 | `config` | `config.py` | ConfigRegistry read/write |
 | `systems` | `systems.py` | System CRUD + module delegation |
 | `tools` | `tools.py` | Tool discovery and invocation |
-| `tasks` | `tasks.py` | Task queue lifecycle; also exports a separate `task_submit_router` for `POST /task` |
+| `tasks` | `tasks.py` | Task queue lifecycle |
 | `sessions` | `sessions.py` | Conversation session persistence |
 | `scans` | `scans.py` | `POST /analyze`, `GET /scans/{run_id}` |
 | `dashboard`, `search`, `tags`, `findings-workflow`, `saved-filters`, `widgets`, `scheduled-reports`, `notifications` | Plan 138-03 surfaces | UI-facing platform routers |
@@ -151,9 +151,11 @@ Every endpoint sets a `summary` string (typically under 60 chars):
 Complex endpoints add a `description` for the OpenAPI docs:
 
 ```python
-@router.post(
-    "/task",
-    description="Submit a freeform query to AILAPlatform.handle() via task queue...",
+@router.get(
+    "/reports/{run_id}/count",
+    response_model=DataEnvelope[ReportCountResponse],
+    summary="Get count breakdown for report",
+    description="Return semantic count breakdown for a vulnerability report.",
 )
 ```
 

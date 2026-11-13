@@ -35,6 +35,14 @@ the prior `current_state` is preserved in the cursor's `archived_state` column
 `__paused__` is not a member of `RESERVED_TERMINAL_STATES`; the main engine
 loop skips it. Source: `src/aila/platform/workflows/types.py:36-42`.
 
+Investigation-level pauses are triggered by the investigation loop, not the
+engine. With `auto_pilot=False`, a researcher decision whose confidence is
+`unknown` pauses the investigation (`pause_reason = low_confidence`) instead of
+continuing; the investigation resumes only through the operator resume path.
+The flag is read at each decision, so toggling `auto_pilot` mid-run takes effect
+on the next ambiguous decision. Source:
+`src/aila/platform/workflows/investigation_loop_base.py` (the Issue #349 gate).
+
 The engine loop:
 1. Load or create cursor row for `run_id`
 2. Call `services_factory(run_id)` to build a fresh services bundle
@@ -188,6 +196,7 @@ intake -> collection -> deep_analysis -> promotion -> resolution -> writeup -> r
 | `resolution` | LLM resolve: connect findings to threat hypotheses | 2 retries on LLMTransientError |
 | `writeup` | Generate investigation report narrative | 2 retries on LLMTransientError |
 | `response_emit` | Build final PlatformResponse | No retries |
+| `analysis_failed` | `on_failure` target of every state above: mark the active project failed with a reason, end at `__failed__` | No retries |
 
 ### Hello World Module (3 states, simple)
 
@@ -633,6 +642,16 @@ Three gates from commit `2328b4e` plus the idempotent draft-review request from 
 **Empty-`tool_run` STOP threshold.** The second consecutive empty or malformed `tool_run` (`src/aila/modules/vr/agents/tool_executor.py:109-155`) injects a hard STOP directive listing valid options (`tool_run`, `submit`, `observe`). The first empty command receives a softer hint.
 
 **Idempotent draft-review request (commit `8f2d1f5`).** `post_draft_review_request` (`src/aila/modules/vr/services/outcome_review.py:365-459`) builds `auto_steering_key = f"draft_review_request:{outcome_id}"`. Before inserting a new operator-kind message it runs a substring `.contains(auto_steering_key)` lookup against `VRInvestigationMessageRecord.payload_json` (lines 432-434); if a match exists no new row is written and the existing message id is returned.
+
+### Malware Operator Review Quorum
+
+`POST /malware/outcomes/{outcome_id}/reviews` records the operator vote, commits it, then runs the shared `evaluate_quorum` kernel on the outcome (`create_outcome_review` in `src/aila/modules/malware/api_router.py`), the same kernel the agent turn loop uses after `submit_outcome_review`. A transition writes experience via `record_experience_on_verdict`, and an approving transition dispatches the outcome via `dispatch_approved_outcome`; both are gated on `transition_occurred`, so a repeated evaluation of a settled outcome has no side effects. Reviewer uniqueness is enforced by `uq_malware_outcome_reviews_outcome_reviewer` (409 on duplicate). Votes below threshold, abstentions, and rejects below the veto threshold leave the outcome in draft.
+
+### Malware Unpack Target Detection
+
+`UnpackDetectorService.check` (`src/aila/modules/malware/agents/unpack_detector.py`) reads the target's `PACKER_DETECTED` and `UNPACK_RESULT` observations. It is positive only when both exist. `maybe_spawn_unpack_target` (`src/aila/modules/malware/agents/unpack_spawn.py`) runs it at two points: `ToolExecutor._post_dispatch` after each tool dispatch's observations persist, and `PlaybookRunnerService.run` after a playbook run attributed to an investigation. Both run only after the observations they read have been written.
+
+A positive result writes one `UNPACK_TARGET_SPAWNED` outcome in state `approved` and hands it to `OutcomeDispatcher.dispatch`, which creates the child target with `parent_target_id` set and pauses the parent (`awaiting_unpack_target_analysis`). The outcome id is a uuid5 of the target and the `UNPACK_RESULT` observation, and the insert is `on_conflict_do_nothing`, so repeated checks create no second outcome and no second child. A missing signal produces no outcome. Detection never executes unpacked content; it reads observation rows only.
 
 ### Do / Do Not
 

@@ -185,3 +185,27 @@ async def test_schema_rejects_team_scoped_admin(platform_app) -> None:
         resp = await c.get(_SCHEMA_URL)
     assert resp.status_code == 403
     assert "god-tier" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_config_write_requires_god_tier_admin(platform_app) -> None:
+    """#433: config entries are deployment-wide, so a team-scoped admin may not write them."""
+    team_admin = AuthContext(user_id="team-admin", role="admin", auth_type="user", team_id=f"team-{uuid.uuid4().hex}")
+    god_admin = AuthContext(user_id=f"god-{uuid.uuid4().hex}", role="admin", auth_type="user", team_id=None)
+    async with AsyncClient(transport=ASGITransport(app=platform_app), base_url="http://testserver") as c:
+        platform_app.dependency_overrides[require_user_or_api_key] = lambda: god_admin
+        before = _entries((await c.get(_SCHEMA_URL)).json())["sandbox_backend"]["effective_value"]
+        target = "firecracker" if before != "firecracker" else "nsjail"
+
+        platform_app.dependency_overrides[require_user_or_api_key] = lambda: team_admin
+        denied = await c.put("/config/platform/sandbox_backend", json={"value": target})
+
+        platform_app.dependency_overrides[require_user_or_api_key] = lambda: god_admin
+        unchanged = _entries((await c.get(_SCHEMA_URL)).json())["sandbox_backend"]["effective_value"]
+        allowed = await c.put("/config/platform/sandbox_backend", json={"value": target})
+
+    assert denied.status_code == 403
+    assert "god-tier" in denied.json()["detail"]
+    assert unchanged == before
+    assert allowed.status_code == 200, allowed.text
+    assert allowed.json()["effective_value"] == target

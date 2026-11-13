@@ -20,10 +20,18 @@ from aila.platform.agents.turn_helpers import (
     decode_case_state,
     encode_case_state,
 )
-from aila.platform.contracts.enums import BranchStatus, InvestigationStatus
+from aila.platform.contracts.enums import (
+    BranchStatus,
+    InvestigationPauseReason,
+    InvestigationStatus,
+)
 from aila.platform.llm.cancellation import (
     LLMCancelledError,
     get_cancellation_token,
+)
+from aila.platform.services.investigation_lifecycle import (
+    PauseInvestigationError,
+    pause_investigation,
 )
 from aila.platform.services.reasoning import CyberReasoningEngine
 from aila.platform.uow import UnitOfWork
@@ -141,6 +149,21 @@ async def _is_loop_alive(
         )
 
     return True, "alive"
+
+
+async def _auto_pilot_off(inv_model: Any, investigation_id: str) -> bool:
+    """Read the investigation's CURRENT ``auto_pilot`` flag.
+
+    Read per decision rather than taken from the setup-time input so an
+    operator toggle made mid-run is honored by the next ambiguous decision.
+    """
+    async with UnitOfWork() as uow:
+        inv = (await uow.session.exec(
+            _select(inv_model).where(inv_model.id == investigation_id)
+        )).first()
+    if inv is None:
+        return False
+    return not inv.auto_pilot
 
 
 async def _update_hard_block_streak(
@@ -506,6 +529,56 @@ def state_investigation_loop(
                     "investigation_loop TERMINAL investigation_id=%s turn=%d outcome_id=%s",
                     investigation_id, last_turn_idx, last_outcome_id,
                 )
+                break
+
+            # Issue #349 -- with auto_pilot off, an ambiguous decision is an
+            # operator decision point: pause instead of continuing. Runs after
+            # the terminal check so a terminal submit is never paused, and
+            # after the tool dispatch above so a tool_run still executes.
+            if result.decision.confidence == "unknown" and await _auto_pilot_off(
+                bindings.inv_model, investigation_id,
+            ):
+                if bindings.track is None or bindings.branch_table is None:
+                    raise RuntimeError(
+                        "investigation_loop: unknown-confidence pause requires "
+                        "bindings.track and bindings.branch_table; the module's "
+                        "loop bindings are incomplete",
+                    )
+                try:
+                    await pause_investigation(
+                        investigation_id,
+                        inv_model=bindings.inv_model,
+                        branch_model=bindings.branch_model,
+                        branch_table=bindings.branch_table,
+                        track=bindings.track,
+                        pause_reason=InvestigationPauseReason.LOW_CONFIDENCE.value,
+                    )
+                except PauseInvestigationError as exc:
+                    _log.warning(
+                        "investigation_loop PAUSE REJECTED investigation_id=%s "
+                        "turn=%d: %s",
+                        investigation_id, last_turn_idx, exc,
+                    )
+                else:
+                    _log.info(
+                        "investigation_loop PAUSE low_confidence investigation_id=%s "
+                        "turn=%d (auto_pilot off)",
+                        investigation_id, last_turn_idx,
+                    )
+                # Re-poll so exit_reason reflects the authoritative status
+                # (inv_status_flipped:paused, or the terminal status a rejected
+                # pause found). Staying alive here would mean the pause did not
+                # take effect, which is a bug, not a state to continue from.
+                alive, alive_reason = await _is_loop_alive(
+                    bindings.inv_model, bindings.branch_model,
+                    investigation_id, branch_id,
+                )
+                if alive:
+                    raise RuntimeError(
+                        "investigation_loop: unknown-confidence pause left the "
+                        f"investigation alive investigation_id={investigation_id}",
+                    )
+                exit_reason = alive_reason
                 break
 
             if turn_attempt == max_turns:

@@ -59,6 +59,12 @@ __all__ = [
     "record_evidence",
 ]
 
+# State key the evidence board is filed under. A full-analysis run is
+# submitted with ``project_id`` and no ``investigation_id``
+# (``trigger_full_analysis`` in ``api_router.py``), so the board is the
+# project: setup posts discoveries under it and every lane condition reads it.
+_BOARD_KEY = "project_id"
+
 # Hub phase name -> collection lane key. The "binary" phase drives the
 # "binary_analysis" collection lane (capa/FLOSS/strings on samples the disk
 # lane surfaces).
@@ -106,12 +112,19 @@ async def record_evidence(
 
 
 def _setup_builder(next_state: str) -> HandlerFn:
-    """Run intake, then transition to the hub instead of a static edge."""
+    """Run intake, post its classifications to the ledger, enter the hub."""
     async def _handler(state_input: dict[str, Any], services: Any) -> StateResult:
         result = await state_intake(state_input, services)
-        return StateResult(
-            next_state=next_state, output={**state_input, **result.output},
-        )
+        output = {**state_input, **result.output}
+        board_id = str(output[_BOARD_KEY])
+        for f in output.get("evidence_files", []):
+            evidence_type = f.get("evidence_type", "unknown")
+            if evidence_type == "unknown":
+                continue
+            await record_evidence(
+                board_id, "intake", evidence_type, f["file_path"], "intake",
+            )
+        return StateResult(next_state=next_state, output=output)
     return _handler
 
 
@@ -134,27 +147,37 @@ def _loop_builder(phase: PhaseSpec, next_state: str) -> HandlerFn:
 FORENSICS_HUB_PHASES: tuple[PhaseSpec, ...] = (
     PhaseSpec(
         name="disk",
-        condition=make_evidence_condition(_LANE_EVIDENCE_TYPES["disk"]),
+        condition=make_evidence_condition(
+            _LANE_EVIDENCE_TYPES["disk"], input_key=_BOARD_KEY,
+        ),
         trust="advisory",
     ),
     PhaseSpec(
         name="memory",
-        condition=make_evidence_condition(_LANE_EVIDENCE_TYPES["memory"]),
+        condition=make_evidence_condition(
+            _LANE_EVIDENCE_TYPES["memory"], input_key=_BOARD_KEY,
+        ),
         trust="advisory",
     ),
     PhaseSpec(
         name="network",
-        condition=make_evidence_condition(_LANE_EVIDENCE_TYPES["network"]),
+        condition=make_evidence_condition(
+            _LANE_EVIDENCE_TYPES["network"], input_key=_BOARD_KEY,
+        ),
         trust="advisory",
     ),
     PhaseSpec(
         name="log",
-        condition=make_evidence_condition(_LANE_EVIDENCE_TYPES["log"]),
+        condition=make_evidence_condition(
+            _LANE_EVIDENCE_TYPES["log"], input_key=_BOARD_KEY,
+        ),
         trust="advisory",
     ),
     PhaseSpec(
         name="binary",
-        condition=make_evidence_condition(_LANE_EVIDENCE_TYPES["binary_analysis"]),
+        condition=make_evidence_condition(
+            _LANE_EVIDENCE_TYPES["binary_analysis"], input_key=_BOARD_KEY,
+        ),
         trust="advisory",
     ),
     PhaseSpec(name="deep_analysis"),

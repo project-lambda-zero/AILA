@@ -9,7 +9,6 @@ Exposes the task queue lifecycle surface:
 - GET  /tasks/queue-depth        -- admin: task counts by status (OPS-04)
 - POST /tasks/drain              -- admin: pause new submissions (OPS-05)
 - POST /tasks/requeue-failed     -- admin: requeue recent failures (OPS-05)
-- POST /task                     -- submit freeform task (TASK-01, D-09)
 
 All endpoints require authentication (Bearer JWT).
 List/get queries are scoped by group_id unless the caller is admin (D-22/MOD-13).
@@ -20,17 +19,11 @@ SSE endpoint:
    then streams new events via stream_events() (D-17/TASK-09 late-connect)
 3. If Redis is not configured: returns a single informational SSE event and closes
 
-POST /task:
-- Requires operator+ role (D-15)
-- Wraps TaskQueue.submit() in asyncio.to_thread() per HANG-03 (sync call from async def)
-- Returns 503 if platform is not initialized
-
 Ownership: Platform API layer -- not module-specific.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
@@ -39,18 +32,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlmodel import select
 
-from aila.api.auth import AuthContext, require_role, require_user_or_api_key
+from aila.api.auth import AuthContext, require_user_or_api_key
 from aila.api.constants import (
     AUDIT_ACTION_TASK_CANCEL,
     AUDIT_ACTION_TASK_RESUME,
-    AUDIT_ACTION_TASK_SUBMIT,
     AUDIT_STAGE_TASK,
     AUDIT_STATUS_COMPLETED,
     MEDIA_TYPE_SSE,
     MODULE_ID_PLATFORM,
     ROLE_ADMIN,
-    ROLE_OPERATOR,
-    TRACK_PLATFORM,
 )
 from aila.api.limiter import limiter
 from aila.api.metrics import ACTIVE_SSE
@@ -58,10 +48,8 @@ from aila.api.schemas.envelope import DataEnvelope
 from aila.api.schemas.tasks import (
     DrainQueueResponse,
     TaskActionResponse,
-    TaskCreateRequest,
     TaskListResponse,
     TaskResponse,
-    TaskSubmitResponse,
 )
 from aila.api.schemas.transitions import TransitionView
 from aila.platform.services.audit import record_audit_event
@@ -71,7 +59,7 @@ from aila.platform.tasks.storage import TaskRepository
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import WorkflowStateTransition
 
-__all__ = ["router", "task_submit_router"]
+__all__ = ["router"]
 
 _log = logging.getLogger(__name__)
 _TRANSITIONS_LIMIT = 500  # safety cap -- prevents unbounded reads on high-retry runs
@@ -154,6 +142,25 @@ async def list_tasks(
 # ---- Admin queue management helpers (OPS-04/OPS-05) ----
 
 
+async def _require_platform_admin(
+    ctx: AuthContext = Depends(require_user_or_api_key),
+) -> AuthContext:
+    """#433: queue depth, drain, and requeue act on the task queue every team
+    shares, so a team-scoped admin (team_id set) is refused; only a god-tier
+    admin (team_id=None) may run them, matching admin_dead_letter."""
+    if ctx.role != ROLE_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Requires '{ROLE_ADMIN}' role; current role: '{ctx.role}'",
+        )
+    if ctx.team_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Task queue administration is restricted to god-tier administrators.",
+        )
+    return ctx
+
+
 def _get_task_queue(request: Request):  # type: ignore[return]
     """Get the platform TaskQueue from app state.
 
@@ -184,9 +191,9 @@ def _get_task_queue(request: Request):  # type: ignore[return]
 )
 async def get_queue_depth(
     request: Request,
-    auth: AuthContext = Depends(require_role(ROLE_ADMIN)),
+    auth: AuthContext = Depends(_require_platform_admin),
 ) -> DataEnvelope[dict[str, int]]:
-    """Return task counts grouped by status. Admin only."""
+    """Return task counts grouped by status. God-tier admin only."""
     queue = _get_task_queue(request)
     depth = await queue.depth()
     return DataEnvelope(data=depth)
@@ -200,12 +207,29 @@ async def get_queue_depth(
 )
 async def drain_queue(
     request: Request,
-    auth: AuthContext = Depends(require_role(ROLE_ADMIN)),
+    auth: AuthContext = Depends(_require_platform_admin),
 ) -> DataEnvelope[DrainQueueResponse]:
-    """Pause new task submissions and return pending task count. Admin only."""
+    """Reject new task submissions from every caller until undrained; return
+    the queued task count. God-tier admin only."""
     queue = _get_task_queue(request)
     pending = await queue.drain()
     return DataEnvelope(data=DrainQueueResponse(pending=pending, draining=True))
+
+
+@limiter.limit("5/minute")
+@router.post(
+    "/undrain",
+    response_model=DataEnvelope[DrainQueueResponse],
+    summary="Lift a drain - accept new submissions again",
+)
+async def undrain_queue(
+    request: Request,
+    auth: AuthContext = Depends(_require_platform_admin),
+) -> DataEnvelope[DrainQueueResponse]:
+    """Accept new task submissions again and return the queued task count. God-tier admin only."""
+    queue = _get_task_queue(request)
+    pending = await queue.undrain()
+    return DataEnvelope(data=DrainQueueResponse(pending=pending, draining=False))
 
 
 @limiter.limit("5/minute")
@@ -216,10 +240,10 @@ async def drain_queue(
 )
 async def requeue_failed_tasks(
     request: Request,
-    auth: AuthContext = Depends(require_role(ROLE_ADMIN)),
+    auth: AuthContext = Depends(_require_platform_admin),
     max_age_hours: int = Query(default=24, ge=1, le=168),
 ) -> DataEnvelope[dict[str, int]]:
-    """Requeue tasks that failed within max_age_hours. Admin only."""
+    """Requeue tasks that failed within max_age_hours. God-tier admin only."""
     queue = _get_task_queue(request)
     count = await queue.requeue_failed(max_age_hours=max_age_hours)
     return DataEnvelope(data={"requeued": count})
@@ -449,25 +473,36 @@ async def list_task_transitions(
 async def stream_task_events(
     task_id: str,
     request: Request,
-    last_id: str = Query(default="0", description="Redis Stream ID to start from (default '0' = all events)"),
+    last_id: str | None = Query(
+        default=None,
+        description=(
+            "Redis Stream ID to resume after. Overrides the Last-Event-ID header when given; "
+            "omit both to replay all events ('0')."
+        ),
+    ),
     auth: AuthContext = Depends(require_user_or_api_key),
 ) -> StreamingResponse:
     """Stream task progress events using Server-Sent Events.
 
     Verifies the caller has access to the task, then:
-    1. Replays all events from last_id via catchup() (late-connect replay)
+    1. Replays all events after the resume cursor via catchup() (late-connect replay)
     2. Streams new events via stream_events() (blocking generator, 30s ping keepalive)
+
+    The resume cursor is the ``last_id`` query argument when supplied, else the
+    ``Last-Event-ID`` header, else ``'0'`` (see ``resolve_stream_cursor``).
 
     If Redis is not configured, returns a single informational SSE message.
 
     Returns text/event-stream response for use with EventSource API.
     """
+    from aila.api.sse_cursor import resolve_stream_cursor
     from aila.api.sse_gate import enforce_sse_cap
 
     # #60 global SSE ceiling: refuse new streams when ACTIVE_SSE is at
     # or above the configured cap. Runs before the DB fetch so a runaway
     # reconnect burst does not pay any DB cost either.
     enforce_sse_cap()
+    cursor = resolve_stream_cursor(last_id, request.headers.get("last-event-id"))
 
     # Verify task exists and is accessible before opening the stream
     async def _fetch_task() -> TaskRecord | None:
@@ -520,9 +555,9 @@ async def stream_task_events(
             # Each progress frame carries its Redis stream id on an ``id:``
             # line so a reconnecting client resumes with ``last_id`` and the
             # live read starts after the newest replayed id (no duplicates).
-            resume_from = last_id
+            resume_from = cursor
             try:
-                catchup_events = await stream.catchup(task_id, last_id)
+                catchup_events = await stream.catchup(task_id, cursor)
                 for event_id, event in catchup_events:
                     yield f"id: {event_id}\ndata: {json.dumps(event)}\n\n"
                     resume_from = event_id
@@ -562,67 +597,3 @@ async def stream_task_events(
         },
     )
 
-
-task_submit_router = APIRouter(
-    prefix="",
-    tags=["tasks"],
-    dependencies=[Depends(require_user_or_api_key)],
-)
-
-
-@limiter.limit("10/hour")
-@task_submit_router.post(
-    "/task",
-    status_code=status.HTTP_202_ACCEPTED,
-    response_model=TaskSubmitResponse,
-    summary="Submit freeform task",
-    description=(
-        "Submit a freeform query to AILAPlatform.handle() via task queue (TASK-01, D-09). "
-        "Returns 202 Accepted with run_id. Client polls GET /tasks/{run_id} for status. "
-        "Per HANG-03: TaskQueue.submit() is sync; wrapped in asyncio.to_thread(). "
-        "Returns 503 if platform is not initialized. Requires operator+ role."
-    ),
-)
-async def submit_task(
-    req: TaskCreateRequest,
-    request: Request,
-    auth: AuthContext = Depends(require_role(ROLE_OPERATOR)),
-) -> TaskSubmitResponse:
-    platform = getattr(request.app.state, "platform", None)
-    if platform is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Platform not initialized -- check server logs for startup errors and restart the API server",
-        )
-
-    def _submit() -> str:
-        handle = platform.task_queue.submit(
-            track=TRACK_PLATFORM,
-            fn=platform.handle,
-            kwargs={"query": req.query_text},
-            user_id=auth.user_id,
-            group_id=auth.role,
-            team_id=auth.team_id,
-        )
-        return str(handle.task_id)
-
-    task_id = await asyncio.to_thread(_submit)
-
-    async def _audit_submit() -> None:
-        async with async_session_scope() as session:
-            record_audit_event(
-                session,
-                run_id=task_id,
-                stage=AUDIT_STAGE_TASK,
-                action=AUDIT_ACTION_TASK_SUBMIT,
-                status=AUDIT_STATUS_COMPLETED,
-                target=task_id,
-                user_id=auth.user_id,
-                team_id=auth.team_id,
-                details={"query": req.query_text[:200]},
-            )
-            await session.commit()
-
-    await _audit_submit()
-
-    return TaskSubmitResponse(run_id=task_id, status="submitted")

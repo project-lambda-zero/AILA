@@ -15,7 +15,6 @@ export interface KindDef {
 }
 
 export interface GenericCfg {
-  flow: "target";
   title: string;
   newLabel: string;
   launch: string;
@@ -40,26 +39,16 @@ export interface OsKindDef {
   explain: string;
 }
 
+/** Only what ForensicsWizard renders: its steps, labels, and readiness
+ * results are its own or come from the backend. */
 export interface ForensicsCfg {
-  flow: "forensics";
   title: string;
-  newLabel: string;
-  launch: string;
-  stepLabels: [string, string, string];
-  header: string;
-  tagline: string;
-  machines: string[];
   projectKinds: ProjectKindDef[];
   osKinds: OsKindDef[];
-  /** [label, note] */
-  readiness: Array<[string, string]>;
 }
-
-export type ModuleCfg = GenericCfg | ForensicsCfg;
 
 export const INTAKE = {
   vr: {
-    flow: "target",
     title: "new investigation",
     newLabel: "new investigation",
     launch: "open investigation \u25b8",
@@ -102,7 +91,6 @@ export const INTAKE = {
     ],
   },
   malware: {
-    flow: "target",
     title: "upload sample",
     newLabel: "upload sample",
     launch: "upload + detonate \u25b8",
@@ -132,19 +120,7 @@ export const INTAKE = {
     ],
   },
   forensics: {
-    flow: "forensics",
     title: "spin up a forensic scene",
-    newLabel: "new case",
-    launch: "create & check readiness \u25b8",
-    stepLabels: ["configure", "readiness", "confirm"],
-    header: "forensics / new case init",
-    tagline: "pick an analyzer, point at evidence, watch tools come online.",
-    machines: [
-      "frost-01 \u00b7 ubuntu 22.04",
-      "frost-02 \u00b7 ubuntu 22.04",
-      "win-analyst-03 \u00b7 windows 11",
-      "air-gapped-vault \u00b7 debian 12",
-    ],
     projectKinds: [
       { k: "disk_evidence", l: "Disk Evidence", sub: "E01 / raw / memory / pcap -- full pipeline runs", explain: "the analyzer runs the standard intake -> collection -> deep_analysis pipeline over disk images / memory dumps / pcaps in the directory." },
       { k: "raw_directory", l: "Raw Directory", sub: "rootfs / loose logs -- intake only, ask directly", explain: "the analyzer runs intake only over a mounted rootfs or loose log set, then answers questions directly against the normalized artifacts." },
@@ -153,22 +129,9 @@ export const INTAKE = {
       { k: "linux", l: "Linux", explain: "tool checks and commands will use bash, apt, and unix paths." },
       { k: "windows", l: "Windows", explain: "tool checks and commands will use powershell and windows paths." },
     ],
-    readiness: [
-      ["analyzer reachable", "ssh to the analyzer machine responds"],
-      ["evidence dir mounted", "path exists + readable on the analyzer"],
-      ["toolchain online", "sleuthkit \u00b7 volatility \u00b7 plaso \u00b7 tshark present"],
-      ["workspace prepared", "case workspace + db provisioned"],
-    ],
   },
 } satisfies {
   vr: GenericCfg;
   malware: GenericCfg;
   forensics: ForensicsCfg;
 };
-
-/** Narrow a runtime string to a known module id without an inline cast. */
-export function getCfg(moduleId: string): ModuleCfg {
-  if (moduleId === "malware") return INTAKE.malware;
-  if (moduleId === "forensics") return INTAKE.forensics;
-  return INTAKE.vr;
-}

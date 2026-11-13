@@ -144,9 +144,11 @@ FAILED  -> QUEUED (reaper crash recovery with checkpoint)
 | `WAITING` | Blocked on dependencies | `TaskQueue.submit()` (when `depends_on` specified) |
 | `RUNNING` | Worker is executing | `execute_task_job()` |
 | `PAUSED` | Checkpointed, awaiting resume | Cooperative pause |
-| `DONE` | Completed successfully | `execute_task_job()` |
-| `FAILED` | Unhandled exception or zombie detection | `execute_task_job()` or reaper |
-| `CANCELLED` | Cooperative cancellation via `TaskCancelled` | Module code |
+| `DONE` | Completed successfully (for a workflow-engine task: the run ended `__succeeded__`) | `execute_task_job()` |
+| `FAILED` | Unhandled exception, zombie detection, or a workflow-engine run that ended `__failed__` / `__crashed__` (`error` starts `code=WORKFLOW_FAILED`) | `execute_task_job()`, the `on_job_end` hook, or reaper |
+| `CANCELLED` | Cooperative cancellation via `TaskCancelled`, or a workflow-engine run that ended `__cancelled__` | Module code or the `on_job_end` hook |
+
+A workflow-engine task reads its outcome from the `WorkflowRunRecord.status` the engine wrote when it closed the run, so the task record and the run record agree. A failed or cancelled workflow run does not release its `WAITING` dependents.
 
 ---
 
@@ -154,21 +156,27 @@ FAILED  -> QUEUED (reaper crash recovery with checkpoint)
 
 ### How it works
 
-While a task is RUNNING, a heartbeat loop writes the current timestamp to
-`TaskRecord.heartbeat_at` every N seconds:
+While a workflow task is RUNNING, `TaskRecord.heartbeat_at` is written at
+attempt start (`_on_job_start`), on every committed state transition, and
+every N seconds while a state handler runs:
 
 ```
 heartbeat_interval_s = 30 (default, configurable)
 ```
 
-The heartbeat runs as an `asyncio.Task` alongside the actual job execution.
-It is cancelled in the `finally` block when the job completes (success, failure, or cancellation).
+The in-handler refresher is an `asyncio.Task` the workflow engine starts
+alongside each state handler. It is cancelled when the handler returns,
+raises, or times out.
 
 ### What to check
 
 **Healthy task:** `heartbeat_at` is within `heartbeat_interval_s` of now.
 
-**Stale task:** `heartbeat_at` is older than `reaper_heartbeat_threshold_s` (default 86400s) -- or, when `heartbeat_at` is NULL, `started_at` is older than `reaper_zombie_threshold_s` (default 3300s).
+**Stale task:** the cron zombie sweep (`reap_zombie_tasks_and_cursors`)
+cancels a running task whose `heartbeat_at` is older than
+`reaper_zombie_heartbeat_min` (default 10 minutes). Sub-sweep 1 below uses
+`reaper_heartbeat_threshold_s` (default 86400s), or, when `heartbeat_at` is
+NULL, `started_at` older than `reaper_zombie_threshold_s` (default 3300s).
 This indicates the worker crashed without cleanup.
 
 ### Query for stale tasks
@@ -371,7 +379,7 @@ All task queue parameters are configurable via ConfigRegistry (namespace: `platf
 
 ### How to change
 
-Via API (requires admin):
+Via API (requires a god-tier admin, i.e. `admin` role with no team scope):
 
 ```
 PUT /config/platform/heartbeat_interval_s

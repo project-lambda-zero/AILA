@@ -230,7 +230,7 @@ class _RecordingQueue:
         user_id: str,
         team_id: str | None,
     ) -> TaskHandle:
-        target = kwargs.get("target_name", "")
+        target = kwargs["action_kwargs"].get("target_name", "")
         self.calls.append(
             {
                 "track": track,
@@ -357,7 +357,7 @@ async def test_tick_isolates_per_schedule_exception_and_processes_later_schedule
 
     # tick() called submit() for all three targets (the read snapshot is
     # not filtered by the failure), so RecordingQueue observed three calls.
-    call_targets = [c["kwargs"]["target_name"] for c in queue.calls]
+    call_targets = [c["kwargs"]["action_kwargs"]["target_name"] for c in queue.calls]
     assert set(call_targets) == {"boom", "ok-1", "ok-2"}, (
         f"expected every schedule to reach submit(), got {call_targets!r}"
     )

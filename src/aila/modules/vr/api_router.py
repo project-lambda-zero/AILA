@@ -15,12 +15,13 @@ import json
 import json as _json
 import logging
 from collections.abc import AsyncGenerator
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from sqlalchemy import Table
 from sqlalchemy import exists as sa_exists
 from sqlalchemy import func as sa_func
 from sqlalchemy import or_ as sa_or
@@ -35,6 +36,8 @@ from aila.modules.vr.services.outcome_polarity import derive_outcome_polarity
 from aila.platform.config_base import ModuleConfigReader, _shared_registry
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.auth import AuthContext, require_auth
+from aila.platform.llm.cost_record import LLMCostRecord
+from aila.platform.llm.idempotency_cache import purge_for_investigation
 from aila.platform.services.factory import ServiceFactory
 from aila.platform.services.http import build_async_http_client
 from aila.platform.services.investigation_cost import (
@@ -133,8 +136,11 @@ from .db_models import (
     VRInvestigationBranchRecord,
     VRInvestigationMessageRecord,
     VRInvestigationOutcomeRecord,
+    VRInvestigationOutcomeReviewRecord,
     VRInvestigationRecord,
 )
+from .services.outcome_review import compute_quorum
+from .sse_cursor import format_event_id, resolve_stream_cursor
 from .workflow.task import (
     run_vr_claim_verifier,
     run_vr_investigate,
@@ -857,14 +863,70 @@ def _message_summary(
     )
 
 
-def _outcome_summary(record: Any) -> VROutcomeSummary:
+def _outcome_summary(
+    record: Any,
+    *,
+    approve_count: int,
+    reject_count: int,
+    request_edit_count: int,
+    abstain_count: int,
+    quorum_k: int,
+) -> VROutcomeSummary:
     """Project a VRInvestigationOutcomeRecord row to summary.
 
-    VR does not surface sibling-review vote counts (contract fields
-    default to 0), so no ``review_counts`` is passed. The platform
-    builder maps legacy NULL ``state`` to ``'dispatched'``.
+    Vote counts and ``quorum_k`` are supplied by the caller from the
+    grouped stored review rows (see ``_outcome_vote_counts``); an outcome
+    with no reviews passes zeros explicitly. The platform builder maps
+    legacy NULL ``state`` to ``'dispatched'``.
     """
-    return build_outcome_summary(record, summary_cls=VROutcomeSummary)
+    return build_outcome_summary(
+        record,
+        summary_cls=VROutcomeSummary,
+        review_counts={
+            "approve": approve_count,
+            "reject": reject_count,
+            "request_edit": request_edit_count,
+            "abstain": abstain_count,
+            "quorum_k": quorum_k,
+        },
+    )
+
+
+async def _outcome_vote_counts(
+    session: Any, *, investigation_id: str, outcome_ids: list[str],
+) -> tuple[dict[str, dict[str, int]], int]:
+    """Return ``({outcome_id: {vote: count}}, quorum_k)`` in two queries.
+
+    One GROUP BY over ``vr_outcome_reviews`` covers every outcome, so the
+    list endpoint never issues a per-outcome count. ``quorum_k`` is uniform
+    across an investigation's outcomes (it depends on the branch count, not
+    on any single outcome's votes) and is only computed when outcomes exist,
+    matching the malware rule: non-proposing siblings = non-abandoned
+    branches - 1.
+    """
+    vote_counts: dict[str, dict[str, int]] = {}
+    if not outcome_ids:
+        return vote_counts, 0
+    rev_rows = (await session.exec(
+        select(
+            VRInvestigationOutcomeReviewRecord.outcome_id,
+            VRInvestigationOutcomeReviewRecord.vote,
+            sa_func.count().label("n"),
+        )
+        .where(VRInvestigationOutcomeReviewRecord.outcome_id.in_(outcome_ids))
+        .group_by(
+            VRInvestigationOutcomeReviewRecord.outcome_id,
+            VRInvestigationOutcomeReviewRecord.vote,
+        ),
+    )).all()
+    for row in rev_rows:
+        vote_counts.setdefault(row[0], {})[row[1]] = int(row[2] or 0)
+    branch_count = int((await session.exec(
+        select(sa_func.count(VRInvestigationBranchRecord.id))
+        .where(VRInvestigationBranchRecord.investigation_id == investigation_id)
+        .where(VRInvestigationBranchRecord.status != "abandoned"),
+    )).one() or 0)
+    return vote_counts, compute_quorum(max(0, branch_count - 1))
 
 
 # Default strategy_family per InvestigationKind. Used both at create-time
@@ -1282,9 +1344,6 @@ def create_vr_router() -> APIRouter:
         # #60 global SSE ceiling: refuse new streams when ACTIVE_SSE is
         # at or above the configured cap.
         enforce_sse_cap()
-        del request
-        from datetime import datetime as _dt
-
         from .db_models import (
             VRFuzzCampaignRecord,
             VRFuzzCrashRecord,
@@ -1310,16 +1369,7 @@ def create_vr_router() -> APIRouter:
                     detail=f"VR project {project_id!r} not found.",
                 )
 
-        if since_iso:
-            try:
-                cursor = _dt.fromisoformat(since_iso.replace("Z", "+00:00"))
-            except ValueError:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Invalid since_iso: {since_iso!r}",
-                ) from None
-        else:
-            cursor = utc_now()
+        cursor = resolve_stream_cursor(since_iso, request.headers.get("last-event-id"))
 
         async def _generator() -> AsyncGenerator[str, None]:
             import json as _json
@@ -1369,9 +1419,15 @@ def create_vr_router() -> APIRouter:
                             select(VRInvestigationMessageRecord)
                             .where(
                                 VRInvestigationMessageRecord.investigation_id.in_(inv_ids),
-                                VRInvestigationMessageRecord.created_at > local_cursor,
+                                local_cursor.sql_after(
+                                    VRInvestigationMessageRecord.created_at,
+                                    VRInvestigationMessageRecord.id,
+                                ),
                             )
-                            .order_by(VRInvestigationMessageRecord.created_at.asc())
+                            .order_by(
+                                VRInvestigationMessageRecord.created_at.asc(),
+                                VRInvestigationMessageRecord.id.collate("C").asc(),
+                            )
                             .limit(_SSE_BATCH_LIMIT)
                         )).all()
                         if inv_ids else []
@@ -1381,9 +1437,15 @@ def create_vr_router() -> APIRouter:
                             select(VRInvestigationBranchRecord)
                             .where(
                                 VRInvestigationBranchRecord.investigation_id.in_(inv_ids),
-                                VRInvestigationBranchRecord.updated_at > local_cursor,
+                                local_cursor.sql_after(
+                                    VRInvestigationBranchRecord.updated_at,
+                                    VRInvestigationBranchRecord.id,
+                                ),
                             )
-                            .order_by(VRInvestigationBranchRecord.updated_at.asc())
+                            .order_by(
+                                VRInvestigationBranchRecord.updated_at.asc(),
+                                VRInvestigationBranchRecord.id.collate("C").asc(),
+                            )
                             .limit(_SSE_BATCH_LIMIT)
                         )).all()
                         if inv_ids else []
@@ -1393,9 +1455,15 @@ def create_vr_router() -> APIRouter:
                             select(VRInvestigationOutcomeRecord)
                             .where(
                                 VRInvestigationOutcomeRecord.investigation_id.in_(inv_ids),
-                                VRInvestigationOutcomeRecord.created_at > local_cursor,
+                                local_cursor.sql_after(
+                                    VRInvestigationOutcomeRecord.created_at,
+                                    VRInvestigationOutcomeRecord.id,
+                                ),
                             )
-                            .order_by(VRInvestigationOutcomeRecord.created_at.asc())
+                            .order_by(
+                                VRInvestigationOutcomeRecord.created_at.asc(),
+                                VRInvestigationOutcomeRecord.id.collate("C").asc(),
+                            )
                             .limit(_SSE_BATCH_LIMIT)
                         )).all()
                         if inv_ids else []
@@ -1405,20 +1473,27 @@ def create_vr_router() -> APIRouter:
                             select(VRFuzzCrashRecord)
                             .where(
                                 VRFuzzCrashRecord.campaign_id.in_(camp_ids),
-                                VRFuzzCrashRecord.discovered_at > local_cursor,
+                                local_cursor.sql_after(
+                                    VRFuzzCrashRecord.discovered_at,
+                                    VRFuzzCrashRecord.id,
+                                ),
                             )
-                            .order_by(VRFuzzCrashRecord.discovered_at.asc())
+                            .order_by(
+                                VRFuzzCrashRecord.discovered_at.asc(),
+                                VRFuzzCrashRecord.id.collate("C").asc(),
+                            )
                             .limit(_SSE_BATCH_LIMIT)
                         )).all()
                         if camp_ids else []
                     )
 
                 # Emit each in chronological order across all sources.
-                events: list[tuple[Any, str, dict[str, Any]]] = []
+                events: list[tuple[Any, str, str, dict[str, Any]]] = []
                 for m in new_messages:
                     is_op = m.sender_kind == SenderKind.OPERATOR.value
                     events.append((
                         m.created_at,
+                        m.id,
                         (
                             VREventType.OPERATOR_STEERING.value
                             if is_op else VREventType.MESSAGE_CREATED.value
@@ -1432,6 +1507,7 @@ def create_vr_router() -> APIRouter:
                 for b in new_branches:
                     events.append((
                         b.updated_at,
+                        b.id,
                         VREventType.HYPOTHESIS_STATE_CHANGED.value,
                         {
                             "investigation_id": b.investigation_id,
@@ -1442,6 +1518,7 @@ def create_vr_router() -> APIRouter:
                 for o in new_outcomes:
                     events.append((
                         o.created_at,
+                        o.id,
                         VREventType.OUTCOME_CREATED.value,
                         {
                             "investigation_id": o.investigation_id,
@@ -1455,6 +1532,7 @@ def create_vr_router() -> APIRouter:
                 for c in new_crashes:
                     events.append((
                         c.discovered_at,
+                        c.id,
                         VREventType.CAMPAIGN_CRASH_FOUND.value,
                         {
                             "payload": {
@@ -1466,12 +1544,26 @@ def create_vr_router() -> APIRouter:
                             },
                         },
                     ))
-                events.sort(key=lambda e: e[0] or utc_now())
-                advanced = local_cursor
-                for ts_, type_, body in events:
+                # A source that filled its batch can hold rows after its last
+                # one. Emit only through the earliest such last row so the
+                # shared cursor never passes rows a later poll still owes.
+                full_tails: list[tuple[Any, str]] = []
+                if len(new_messages) >= _SSE_BATCH_LIMIT:
+                    full_tails.append((new_messages[-1].created_at, new_messages[-1].id))
+                if len(new_branches) >= _SSE_BATCH_LIMIT:
+                    full_tails.append((new_branches[-1].updated_at, new_branches[-1].id))
+                if len(new_outcomes) >= _SSE_BATCH_LIMIT:
+                    full_tails.append((new_outcomes[-1].created_at, new_outcomes[-1].id))
+                if len(new_crashes) >= _SSE_BATCH_LIMIT:
+                    full_tails.append((new_crashes[-1].discovered_at, new_crashes[-1].id))
+                if full_tails:
+                    bound = min(full_tails)
+                    events = [e for e in events if (e[0], e[1]) <= bound]
+                events.sort(key=lambda e: (e[0], e[1]))
+                for ts_, row_id, type_, body in events:
                     envelope = VREventEnvelope(
                         type=VREventType(type_),
-                        ts=ts_.isoformat() if ts_ else utc_now().isoformat(),
+                        ts=ts_.isoformat(),
                         project_id=project_id,
                         investigation_id=body.get("investigation_id"),
                         branch_id=body.get("branch_id"),
@@ -1479,12 +1571,11 @@ def create_vr_router() -> APIRouter:
                         payload=body.get("payload", {}),
                     )
                     yield (
+                        f"id: {format_event_id(ts_, row_id)}\n"
                         f"event: {type_}\n"
                         f"data: {_json.dumps(envelope.model_dump(mode='json'))}\n\n"
                     )
-                    if ts_ and ts_ > advanced:
-                        advanced = ts_
-                local_cursor = advanced
+                    local_cursor = local_cursor.advanced_to(ts_, row_id)
 
                 now = utc_now()
                 if (now - last_heartbeat).total_seconds() >= _SSE_HEARTBEAT_S:
@@ -1528,6 +1619,8 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> Response:
         del request
+        from aila.platform.services.audit import record_audit_event
+
         from .db_models import VRFindingRecord, VRProjectRecord
 
         async with UnitOfWork() as uow:
@@ -1546,6 +1639,19 @@ def create_vr_router() -> APIRouter:
             )).all()
             for f in findings:
                 await uow.session.delete(f)
+            record_audit_event(
+                uow.session,
+                run_id=project_id,
+                stage="vr",
+                action="project_deleted",
+                target=f"project:{project_id}",
+                user_id=auth.user_id,
+                team_id=auth.team_id,
+                details={
+                    "project_id": project_id,
+                    "findings_deleted": len(findings),
+                },
+            )
             await uow.session.delete(project)
             await uow.session.commit()
 
@@ -2585,7 +2691,27 @@ def create_vr_router() -> APIRouter:
                 # Keep attempts counter -- operator visibility into retry depth.
                 stages.set(stage_name, status_obj)
                 reset_count += 1
-        await save_target_stages(target_id, stages)
+
+        from aila.platform.services.audit import record_audit_event
+
+        def _record_resume_audit(session: Any) -> None:
+            record_audit_event(
+                session,
+                run_id=target_id,
+                stage="vr",
+                action="target_analysis_resumed",
+                target=f"target:{target_id}",
+                user_id=auth.user_id,
+                team_id=auth.team_id,
+                details={
+                    "target_id": target_id,
+                    "stages_reset": reset_count,
+                },
+            )
+
+        await save_target_stages(
+            target_id, stages, before_commit=_record_resume_audit,
+        )
 
         # Fan out enrichment. CAPABILITY_PROFILE + FUNCTION_RANKING both
         # depend on INGESTION (need handles/index_id) and are now sequenced
@@ -5111,6 +5237,7 @@ def create_vr_router() -> APIRouter:
                     VRInvestigationBranchRecord.investigation_id == investigation_id,
                 ),
             )).all()
+            branch_ids = [branch.id for branch in branch_rows]
             for b in branch_rows:
                 if b.parent_branch_id is not None:
                     b.parent_branch_id = None
@@ -5156,8 +5283,32 @@ def create_vr_router() -> APIRouter:
                 },
             )
 
+            await purge_for_investigation(
+                uow.session,
+                investigation_id,
+                branch_ids=branch_ids,
+            )
+
+            # Cache entries are disposable; cost rows retain team totals after
+            # their investigation, branch, and run joins are detached.
+            cost_predicates = [
+                LLMCostRecord.investigation_id == investigation_id,
+                LLMCostRecord.run_id == investigation_id,
+            ]
+            if branch_ids:
+                cost_table = cast(Table, getattr(LLMCostRecord, "__table__"))
+                cost_predicates.append(cost_table.c.branch_id.in_(branch_ids))
+            cost_rows = (await uow.session.exec(
+                select(LLMCostRecord).where(sa_or(*cost_predicates)),
+            )).all()
+            for cost_row in cost_rows:
+                cost_row.investigation_id = None
+                cost_row.branch_id = None
+                cost_row.run_id = "_no_run"
+                uow.session.add(cost_row)
+
             await uow.session.delete(inv)
-            await uow.session.commit()
+            await uow.commit()
 
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -5187,6 +5338,7 @@ def create_vr_router() -> APIRouter:
         §32/§33/§35/§47.
         """
         del request
+        from aila.platform.services.audit import AuditActor
         from aila.platform.services.investigation_lifecycle import (
             PauseInvestigationError,
             pause_investigation,
@@ -5223,6 +5375,9 @@ def create_vr_router() -> APIRouter:
                 branch_table="vr_investigation_branches",
                 track="vr",
                 pause_reason=InvestigationPauseReason.OPERATOR.value,
+                actor=AuditActor(
+                    stage="vr", user_id=auth.user_id, team_id=auth.team_id,
+                ),
                 user_id=auth.user_id,
             )
         except PauseInvestigationError as exc:
@@ -5273,6 +5428,7 @@ def create_vr_router() -> APIRouter:
         Closes §34.
         """
         from aila.api.deps import get_task_queue
+        from aila.platform.services.audit import AuditActor
         from aila.platform.services.investigation_lifecycle import (
             ResumeInvestigationError,
             resume_investigation,
@@ -5308,6 +5464,9 @@ def create_vr_router() -> APIRouter:
                 branch_model=VRInvestigationBranchRecord,
                 branch_table="vr_investigation_branches",
                 track="vr",
+                actor=AuditActor(
+                    stage="vr", user_id=auth.user_id, team_id=auth.team_id,
+                ),
                 task_fn=run_vr_investigate,
                 task_queue=task_queue,
                 user_id=auth.user_id,
@@ -5727,6 +5886,7 @@ def create_vr_router() -> APIRouter:
     ) -> DataEnvelope[VRInvestigationSummary]:
         from aila.api.deps import get_task_queue
         from aila.platform.services.investigation_lifecycle import (
+            PreparedSubmit,
             reenqueue_investigation,
         )
 
@@ -5763,22 +5923,29 @@ def create_vr_router() -> APIRouter:
 
         task_queue = get_task_queue("vr", request)
 
-        async def _submit_one(inv_id: str, branch_id: str | None) -> None:
+        async def _prepare_submit(
+            inv_id: str, branch_id: str | None,
+        ) -> PreparedSubmit:
+            # Built before the reset commits; the returned closure only sends.
             del branch_id  # VR submits once; setup owns branch spawn
-            await task_queue.submit(
-                track="vr",
-                fn=run_vr_investigate,
-                kwargs={"investigation_id": inv_id},
-                user_id=auth.user_id,
-                group_id=auth.role,
-                team_id=auth.team_id,
-            )
+
+            async def _send() -> None:
+                await task_queue.submit(
+                    track="vr",
+                    fn=run_vr_investigate,
+                    kwargs={"investigation_id": inv_id},
+                    user_id=auth.user_id,
+                    group_id=auth.role,
+                    team_id=auth.team_id,
+                )
+
+            return _send
 
         await reenqueue_investigation(
             investigation_id,
             inv_model=VRInvestigationRecord,
             fn_path_pattern="%run_vr_investigate%",
-            submit_one=_submit_one,
+            prepare_submit=_prepare_submit,
             new_kind=new_kind,
             new_strategy=new_strategy,
         )
@@ -6080,9 +6247,6 @@ def create_vr_router() -> APIRouter:
         # #60 global SSE ceiling: refuse new streams when ACTIVE_SSE is
         # at or above the configured cap.
         enforce_sse_cap()
-        del request
-        from datetime import datetime as _dt
-
         from .db_models import VRInvestigationMessageRecord, VRInvestigationRecord
 
         async with UnitOfWork() as uow:
@@ -6100,16 +6264,7 @@ def create_vr_router() -> APIRouter:
                     detail=f"Investigation {investigation_id} not found.",
                 )
 
-        if since_iso:
-            try:
-                cursor = _dt.fromisoformat(since_iso.replace("Z", "+00:00"))
-            except ValueError:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=f"Invalid since_iso: {since_iso!r}",
-                ) from None
-        else:
-            cursor = utc_now()
+        cursor = resolve_stream_cursor(since_iso, request.headers.get("last-event-id"))
 
         async def _generator() -> AsyncGenerator[str, None]:
             import json as _json
@@ -6134,14 +6289,18 @@ def create_vr_router() -> APIRouter:
                 async with UnitOfWork() as poll_uow:
                     stmt = select(VRInvestigationMessageRecord).where(
                         VRInvestigationMessageRecord.investigation_id == investigation_id,
-                        VRInvestigationMessageRecord.created_at > local_cursor,
+                        local_cursor.sql_after(
+                            VRInvestigationMessageRecord.created_at,
+                            VRInvestigationMessageRecord.id,
+                        ),
                     )
                     if branch_id:
                         stmt = stmt.where(
                             VRInvestigationMessageRecord.branch_id == branch_id,
                         )
                     stmt = stmt.order_by(
-                        VRInvestigationMessageRecord.created_at.asc()
+                        VRInvestigationMessageRecord.created_at.asc(),
+                        VRInvestigationMessageRecord.id.collate("C").asc(),
                     ).limit(_SSE_BATCH_LIMIT)
                     rows = (await poll_uow.session.exec(stmt)).all()
 
@@ -6207,6 +6366,7 @@ def create_vr_router() -> APIRouter:
                             payload=summary.model_dump(mode="json"),
                         )
                         event_data = (
+                            f"id: {format_event_id(row.created_at, row.id)}\n"
                             f"event: {event_type.value}\n"
                             f"data: {_json.dumps(envelope.model_dump(mode='json'))}\n\n"
                         )
@@ -6221,8 +6381,7 @@ def create_vr_router() -> APIRouter:
                     # Advance the cursor past this row whether or not it
                     # serialized, so a bad row is skipped for good instead of
                     # re-crashing / re-logging on every poll.
-                    if row.created_at and row.created_at > local_cursor:
-                        local_cursor = row.created_at
+                    local_cursor = local_cursor.advanced_to(row.created_at, row.id)
 
                 now = utc_now()
                 if (now - last_heartbeat).total_seconds() >= _SSE_HEARTBEAT_S:
@@ -6675,8 +6834,23 @@ def create_vr_router() -> APIRouter:
                 .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
                 .order_by(VRInvestigationOutcomeRecord.created_at.asc())
             )).all()
+            vote_counts, quorum_k = await _outcome_vote_counts(
+                uow.session,
+                investigation_id=investigation_id,
+                outcome_ids=[r.id for r in rows],
+            )
 
-        return DataEnvelope(data=[_outcome_summary(r) for r in rows])
+        return DataEnvelope(data=[
+            _outcome_summary(
+                r,
+                approve_count=vote_counts.get(r.id, {}).get("approve", 0),
+                reject_count=vote_counts.get(r.id, {}).get("reject", 0),
+                request_edit_count=vote_counts.get(r.id, {}).get("request_edit", 0),
+                abstain_count=vote_counts.get(r.id, {}).get("abstain", 0),
+                quorum_k=quorum_k,
+            )
+            for r in rows
+        ])
 
     @router.post(
         "/investigations/{investigation_id}/outcomes/{outcome_id}/reviews",
@@ -7278,11 +7452,18 @@ def create_vr_router() -> APIRouter:
     ) -> DataEnvelope[dict]:
         del request
         from aila.modules.vr.agents.branch_manager import BranchManager
+        from aila.platform.services.audit import AuditActor
 
         await _load_branch_or_404(investigation_id, branch_id, auth)
         mgr = BranchManager(investigation_id=investigation_id)
         return await _wrap_branch_op_call(
-            mgr.pause(branch_id=branch_id, reason=body.reason),
+            mgr.pause(
+                branch_id=branch_id,
+                actor=AuditActor(
+                    stage="vr", user_id=auth.user_id, team_id=auth.team_id,
+                ),
+                reason=body.reason,
+            ),
             "pause",
         )
 
@@ -7301,11 +7482,18 @@ def create_vr_router() -> APIRouter:
     ) -> DataEnvelope[dict]:
         del request
         from aila.modules.vr.agents.branch_manager import BranchManager
+        from aila.platform.services.audit import AuditActor
 
         await _load_branch_or_404(investigation_id, branch_id, auth)
         mgr = BranchManager(investigation_id=investigation_id)
         return await _wrap_branch_op_call(
-            mgr.resume(branch_id=branch_id, reason=body.reason),
+            mgr.resume(
+                branch_id=branch_id,
+                actor=AuditActor(
+                    stage="vr", user_id=auth.user_id, team_id=auth.team_id,
+                ),
+                reason=body.reason,
+            ),
             "resume",
         )
 

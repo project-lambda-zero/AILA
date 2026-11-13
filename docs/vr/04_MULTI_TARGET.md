@@ -18,7 +18,7 @@
 > | Outcome routing | `src/aila/modules/vr/agents/outcome_dispatcher.py` |
 > | DB schema (19 tables) | `src/aila/modules/vr/db_models/__init__.py` |
 > | Contract enums (TargetKind, InvestigationKind, InvestigationStatus, HypothesisState, OutcomeKind, PersonaVoice) | `src/aila/modules/vr/contracts/` |
-> | Alembic head | `src/aila/alembic/versions/067_workflow_state_cursor_archived_state.py` |
+> | Alembic head | Check with `cd src/aila && alembic heads` |
 
 How the VR module handles a real product. Not a single binary, not a single library -- a tree of binaries, libraries, parsers, protocols, and kernel components that interact and accumulate vulnerabilities into chains.
 

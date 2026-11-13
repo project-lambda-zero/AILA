@@ -13,6 +13,7 @@ from aila.platform.events import (
     ModuleWorkflowCompletedPayload,
     publish,
 )
+from aila.platform.llm.errors import LLMDisabledError
 
 __all__ = ["state_writeup"]
 
@@ -20,6 +21,24 @@ _log = logging.getLogger(__name__)
 
 state_writeup_parallel_safe = True
 state_writeup_writes_fields = ["writeup"]
+
+
+async def _load_answer_artifact_ids(investigation_id: str | None) -> list[str]:
+    """``primary_artifact_id`` of every answer row the investigation produced."""
+    if not investigation_id:
+        return []
+    from sqlmodel import select as _select
+
+    from aila.modules.forensics.db_models import AnswerCandidateRecord
+    from aila.platform.uow import UnitOfWork
+
+    async with UnitOfWork() as uow:
+        rows = (await uow.session.exec(
+            _select(AnswerCandidateRecord.primary_artifact_id).where(
+                AnswerCandidateRecord.investigation_id == investigation_id
+            ).order_by(AnswerCandidateRecord.created_at)
+        )).all()
+    return [str(ref) for ref in rows if ref]
 
 
 async def state_writeup(
@@ -48,13 +67,26 @@ async def state_writeup(
 
     from aila.modules.forensics.reporting.writeup_builder import build_writeup
 
+    answer_artifact_ids = await _load_answer_artifact_ids(investigation_id)
+
     build_start = _time.monotonic()
-    writeup_data = await build_writeup(
-        project_id=project_id,
-        investigation_id=investigation_id,
-        steps=steps,
-        input_context=input,
-    )
+    try:
+        writeup_data = await build_writeup(
+            project_id=project_id,
+            investigation_id=investigation_id,
+            steps=steps,
+            input_context=input,
+            answer_artifact_ids=answer_artifact_ids,
+        )
+    except LLMDisabledError as exc:
+        # No write-up row is persisted on this path; the typed error
+        # propagates so the engine routes the run to its failure state.
+        await services.emitter.emit(
+            "writeup",
+            f"Write-up not generated: {exc.message}",
+            {"stage": "writeup_llm_disabled", "reason": exc.message},
+        )
+        raise
     build_elapsed = _time.monotonic() - build_start
     content_chars = len(writeup_data.get("content", "") or "")
     await services.emitter.emit(

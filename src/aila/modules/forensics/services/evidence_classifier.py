@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import logging
 import re
+import shlex
 from typing import Any
 
 from aila.config import Settings
@@ -36,7 +37,7 @@ _EVIDENCE_PATTERNS: dict[str, str] = {
     r"\.raw\.gz$": "memory_dump",
     # Name-shape matches -- anything whose basename looks like a memory
     # image wins over the generic ``.raw`` disk fallback.
-    r"memory[^/\\]*\\.raw$": "memory_dump",
+    r"memory[^/\\]*\.raw$": "memory_dump",
     r"memory[^/\\]*\.raw\.gz$": "memory_dump",
     r"memdump[^/\\]*\.raw$": "memory_dump",
     r"physmem[^/\\]*\.raw$": "memory_dump",
@@ -50,6 +51,7 @@ _EVIDENCE_PATTERNS: dict[str, str] = {
     r"\.raw$": "disk_image",
     r"\.raw\.\d+$": "disk_image",
     r"\.dd$": "disk_image",
+    r"\.img$": "disk_image",
     r"\.vmdk$": "disk_image",
     r"\.qcow2?$": "disk_image",
     r"\.vhd$": "disk_image",
@@ -67,6 +69,8 @@ _EVIDENCE_PATTERNS: dict[str, str] = {
     r"\.log$": "log_file",
     r"\.journal$": "log_file",
     r"\.tracev3$": "log_file",
+    # Extensionless syslog and its numbered rotations (syslog.1, ...).
+    r"(^|[/\\])syslog(\.\d+)?$": "log_file",
     # mobile
     r"\.apk$": "apk",
     r"\.ipa$": "mobile_app",
@@ -144,7 +148,7 @@ async def classify_evidence_directory(
     Returns:
         Dict with 'files' list, each containing path, type, and size.
     """
-    from aila.modules.forensics.tools._ssh_helper import get_ssh_service
+    from aila.modules.forensics.tools._ssh_helper import get_ssh_service, ps_literal
 
     async def _xray(stage_tag: str, msg: str, meta: dict[str, Any] | None = None) -> None:
         if emitter is not None:
@@ -160,15 +164,16 @@ async def classify_evidence_directory(
     if analyzer_os == "windows":
         cmd = (
             f'powershell -NoProfile -Command "'
-            f"Get-ChildItem -Recurse -File -Path '{evidence_directory}' "
+            f"Get-ChildItem -Recurse -File -LiteralPath {ps_literal(evidence_directory)} "
             f"| ForEach-Object {{ $_.Length.ToString() + ' ' + $_.FullName }}"
             f'"'
         )
         await _xray("ls_issued", f"xray: issuing Get-ChildItem -Recurse on {evidence_directory} (60s timeout)")
     else:
+        quoted_dir = shlex.quote(evidence_directory)
         cmd = (
-            f"find {evidence_directory} -type f -printf '%s %p\\n' 2>/dev/null || "
-            f"ls -lR {evidence_directory}"
+            f"find {quoted_dir} -type f -printf '%s %p\\n' 2>/dev/null || "
+            f"ls -lR {quoted_dir}"
         )
         await _xray("ls_issued", f"xray: issuing find on {evidence_directory} (60s timeout)")
 
@@ -266,12 +271,10 @@ async def classify_evidence_directory(
             {"removed": [f["file_name_original"] for f in removed_parts], "head_count": len(heads)},
         )
 
-    # Hashing is deferred: huge E01/mem images take 5-15 min each via certutil/sha256sum,
-    # which blocks intake for hours on realistic evidence sets. Downstream tools (collection,
-    # freeflow agent) hash files on-demand when they actually open them. If callers need the
-    # hash earlier, they can call _compute_file_hash() directly on a specific file_path.
-    _log.info("intake: deferring SHA-256 hashing for %d file(s); hash on-demand downstream", len(files))
-
+    # Hashing is not done here. Intake hashes each file at or below the
+    # intake_hash_max_bytes cap via _compute_file_hash() and records the
+    # digest or its deferred/failed status. This function only lists and
+    # classifies.
     return {"files": files, "total": len(files)}
 
 

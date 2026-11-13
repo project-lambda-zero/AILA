@@ -121,7 +121,7 @@ data = json.loads(response.content)  # Guaranteed valid against SeverityResult
 **Behavior details:**
 
 1. Generates JSON schema from `model_class.model_json_schema()`
-2. Injects `additionalProperties: false` and full `required` arrays for OpenAI strict mode
+2. Normalizes the schema for OpenAI strict mode: declared-property objects get `additionalProperties: false` and every declared property in `required`; free-form objects (no `properties`, not explicitly closed, e.g. `dict[str, Any]`) are left open with `additionalProperties: true`; explicitly closed objects stay closed. Strict providers may still reject open schemas and fall back to `json_object` mode (see `chat_json`)
 3. Sends via `chat_json()` with the generated schema
 4. Parses the response with `model_class.model_validate()`
 5. On parse failure: retries once with a correction prompt appended to messages
@@ -258,7 +258,7 @@ data = json.loads(response.content)
 **What happens internally:**
 
 1. `model_class.model_json_schema()` generates the JSON schema
-2. `additionalProperties: false` and full `required` lists are injected recursively (OpenAI strict mode requirement)
+2. Declared-property objects are closed recursively (`additionalProperties: false`, all declared properties in `required`). Free-form objects (`dict[str, Any]`: no `properties`, not explicitly closed) are preserved open with `additionalProperties: true`, since forcing an empty closed object would reject every key
 3. The schema is sent via `response_format` with `"strict": True`
 4. The response is parsed with `model_class.model_validate()`
 5. On parse failure, a correction prompt is appended and the call is retried once
@@ -723,6 +723,18 @@ All LLM configuration lives in the `platform` namespace of ConfigRegistry. Chang
 | `llm_max_tool_steps_{task_type}` | `0` | Max tool-calling loop iterations per task type. `0` = tool calling disabled. |
 | `llm_tool_timeout_s` | `300.0` | Default wall-clock ceiling (seconds) for a single tool-calling step. |
 | `llm_tool_timeout_s_{task_type}` | *(unset)* | Per-task-type per-tool timeout override (seconds). |
+
+### Prompt caching
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `prompt_cache_ttl_seconds` (env: `AILA_PLATFORM_PROMPT_CACHE_TTL_SECONDS`) | `0` | Prompt-cache lifetime for the stable system prefix of Claude-family requests. `0` sends a bare `cache_control` marker, which takes the provider default lifetime of 5 minutes. `1`-`300` sends a `5m` lifetime. `301` and above send `1h`, the longest lifetime the provider offers. |
+
+- Only model ids whose final path segment contains `claude` (case-insensitive) receive the marker. Other model families are sent unchanged.
+- The marker is attached to the last text block of the leading `system` messages on every outgoing request, including each step of a tool loop. Caller-owned message lists are not modified.
+- Every value above `300` is sent as `1h`. Values from `301` to `3599` therefore cache for longer than configured, and values above `3600` are capped at one hour.
+- The marker reaches Anthropic only if the configured `llm_base_url` forwards `cache_control` unchanged. OpenRouter documents that pass-through for Claude models. Anthropic's OpenAI-compatibility endpoint documents that prompt caching is not supported. This repository does not verify how that endpoint treats the field.
+- Cache writes cost more than uncached input and cache reads cost less. The default (`0`) therefore annotates every Claude-family request. No cache-read savings are measured in this repository.
 
 ### Pipeline Step Toggling
 

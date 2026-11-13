@@ -801,11 +801,6 @@ def create_app() -> FastAPI:
     from aila.api.routers.tasks import router as tasks_router
     application.include_router(tasks_router)
 
-    # Standalone POST /task -- freeform task submission (TASK-01, D-09)
-    # Separate from /tasks/ prefix router to keep the route at /task (not /tasks/).
-    from aila.api.routers.tasks import task_submit_router
-    application.include_router(task_submit_router)
-
     # Sessions router: /sessions (Phase 55 plan 04 -- conversation session persistence)
     from aila.api.routers.sessions import router as sessions_router
     application.include_router(sessions_router)

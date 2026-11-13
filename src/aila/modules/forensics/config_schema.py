@@ -16,16 +16,21 @@ from pydantic import Field
 
 from aila.platform.config_base import ModuleConfigBase
 
-__all__ = ["ForensicsConfigSchema", "FORENSICS_DEFAULTS"]
+__all__ = ["FORENSICS_HARD_TURN_CAP", "ForensicsConfigSchema", "FORENSICS_DEFAULTS"]
+
+# Hard ceiling on turns for any forensics agent loop (investigator
+# freeform loop and panel branch loop). Single owned definition: the
+# ``max_turns_per_task`` schema bound and the investigator's per-investigation
+# cap both read this value.
+FORENSICS_HARD_TURN_CAP = 50
 
 
 class ForensicsConfigSchema(ModuleConfigBase):
     """Operator-tunable settings for the forensics module.
 
-    ``llm_model`` is inherited from :class:`ModuleConfigBase` -- the
-    forensics module's historical default matched the platform default
-    (``PlatformConfigSchema.llm_default_model``), so no per-module
-    override is needed.
+    LLM model selection is not a module key: agents route through the
+    platform per task type keys (``platform.llm_model_<task_type>``,
+    falling back to ``platform.llm_default_model``).
     """
 
     freeflow_max_attempts: int = Field(
@@ -65,6 +70,18 @@ class ForensicsConfigSchema(ModuleConfigBase):
             "malicious archive cannot OOM the worker."
         ),
     )
+    intake_hash_max_bytes: int = Field(
+        default=2 * 1024 * 1024 * 1024,  # 2 GiB
+        ge=0,
+        description=(
+            "Largest evidence file, in bytes, that intake SHA-256 hashes on "
+            "the analyzer machine. Files above the cap keep a null digest and record "
+            "``hash_status=deferred_over_cap`` in the evidence row's "
+            "metadata, so an unhashed file is distinguishable from a missing "
+            "value. A value of 0 defers hashing for every file. "
+            "Env: AILA_FORENSICS_INTAKE_HASH_MAX_BYTES."
+        ),
+    )
     freeflow_max_cost_usd: float = Field(
         default=25.0,
         ge=0.0,
@@ -74,12 +91,21 @@ class ForensicsConfigSchema(ModuleConfigBase):
             "investigation_id`` reaches this value the freeflow loop "
             "terminates cleanly with status ``exhausted`` and a "
             "``<budget_exhausted>`` final_answer marker. A value of 0.0 "
-            "disables the ceiling (only the ``_HARD_TURN_CAP`` safety net "
+            "disables the ceiling (only the ``FORENSICS_HARD_TURN_CAP`` safety net "
             "remains). Freeflow_max_attempts and this ceiling are ANDed: "
             "whichever fires first halts the run."
         ),
     )
-
+    max_turns_per_task: int = Field(
+        default=3,
+        ge=1,
+        le=FORENSICS_HARD_TURN_CAP,
+        description=(
+            "Per-task turn cap for the forensics panel loop. The loop "
+            "returns with ``max_turns`` when this budget is exhausted. "
+            "Bounded above by ``FORENSICS_HARD_TURN_CAP``."
+        ),
+    )
 
     # --- Reasoning closure pressure (issue #175 parity) -----------------
     unresolved_hyp_reject_cap: int = Field(

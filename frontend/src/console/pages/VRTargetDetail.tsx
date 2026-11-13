@@ -140,6 +140,11 @@ function KV({ label, children }: { label: string; children: ReactNode }): JSX.El
   );
 }
 
+/** Runs `run` only after the operator accepts the native confirm prompt. */
+function confirmThen(message: string, run: () => void): void {
+  if (window.confirm(message)) run();
+}
+
 export interface VRTargetDetailProps {
   /** The selected target row (VRTargetSummary shape) from the list query. */
   row: Record<string, unknown>;
@@ -245,7 +250,12 @@ export default function VRTargetDetail({ row, onOpenXray }: VRTargetDetailProps)
           type="button"
           disabled={busy}
           title="stage-level retry of the analysis pipeline"
-          onClick={() => act.mutate({ path: `${base}/resume-analysis`, okText: "analysis re-enqueued" })}
+          onClick={() =>
+            confirmThen(
+              "Retry analysis? This resets failed stages to pending and re-enqueues the pipeline; completed stages are kept.",
+              () => act.mutate({ path: `${base}/resume-analysis`, okText: "analysis re-enqueued" }),
+            )
+          }
           style={btnStyle(failed ? "primary" : "ghost", busy)}
         >
           retry analysis
@@ -253,7 +263,12 @@ export default function VRTargetDetail({ row, onOpenXray }: VRTargetDetailProps)
         <button
           type="button"
           disabled={busy}
-          onClick={() => act.mutate({ path: `${base}/analyze`, okText: "re-analysis enqueued" })}
+          onClick={() =>
+            confirmThen(
+              "Re-analyze this target? This re-runs the backend ingestion pipeline.",
+              () => act.mutate({ path: `${base}/analyze`, okText: "re-analysis enqueued" }),
+            )
+          }
           style={btnStyle("ghost", busy)}
         >
           re-analyze
@@ -261,7 +276,12 @@ export default function VRTargetDetail({ row, onOpenXray }: VRTargetDetailProps)
         <button
           type="button"
           disabled={busy}
-          onClick={() => act.mutate({ path: `${base}/rank`, okText: "ranking enqueued" })}
+          onClick={() =>
+            confirmThen(
+              "Re-rank this target? This enqueues a new function-ranking run.",
+              () => act.mutate({ path: `${base}/rank`, okText: "ranking enqueued" }),
+            )
+          }
           style={btnStyle("ghost", busy)}
         >
           re-rank
@@ -269,7 +289,12 @@ export default function VRTargetDetail({ row, onOpenXray }: VRTargetDetailProps)
         <button
           type="button"
           disabled={busy}
-          onClick={() => act.mutate({ path: `${base}/refresh-source`, okText: "source refresh requested" })}
+          onClick={() =>
+            confirmThen(
+              "Refresh the source? This re-runs ingestion for this target; for APK targets it resets the APK analysis stages to pending and rebuilds them.",
+              () => act.mutate({ path: `${base}/refresh-source`, okText: "source refresh requested" }),
+            )
+          }
           style={btnStyle("ghost", busy)}
         >
           refresh source
@@ -279,7 +304,12 @@ export default function VRTargetDetail({ row, onOpenXray }: VRTargetDetailProps)
             <button
               type="button"
               disabled={busy}
-              onClick={() => act.mutate({ path: `${base}/apk-static-audit`, okText: "apk static audit dispatched" })}
+              onClick={() =>
+                confirmThen(
+                  "Run an APK static audit? This creates an audit investigation with one child investigation per static check and queues them for analysis.",
+                  () => act.mutate({ path: `${base}/apk-static-audit`, okText: "apk static audit dispatched" }),
+                )
+              }
               style={btnStyle("ghost", busy)}
             >
               apk static audit
@@ -287,7 +317,12 @@ export default function VRTargetDetail({ row, onOpenXray }: VRTargetDetailProps)
             <button
               type="button"
               disabled={busy}
-              onClick={() => act.mutate({ path: `${base}/masvs-audit`, okText: "masvs audit dispatched" })}
+              onClick={() =>
+                confirmThen(
+                  "Run a MASVS audit? This creates an audit investigation with one child investigation per MASVS control and queues them for analysis.",
+                  () => act.mutate({ path: `${base}/masvs-audit`, okText: "masvs audit dispatched" }),
+                )
+              }
               style={btnStyle("ghost", busy)}
             >
               masvs audit

@@ -175,6 +175,9 @@ _DUMP_PLUGINS: dict[str, tuple[str, str]] = {
 # Per-run limits so a pathological dump can't flood the artifact store.
 _MAX_DUMPED_REGIONS = 40
 _MAX_REGION_BYTES = 8 * 1024 * 1024  # 8 MB per region
+# Region bytes pulled per run, across all regions. Once reached, no further
+# region is pulled (the last pull may overshoot by at most one region).
+_MAX_DUMPED_TOTAL_BYTES = 64 * 1024 * 1024
 _MAX_IOC_HITS = 500
 
 
@@ -474,11 +477,13 @@ async def _dump_malfind_regions(
     ssh: Any, integration: dict, path: str, analyzer_os: str,
     dump_os: str, esink: str, emitter: Any,
 ) -> list[dict[str, Any]]:
-    """Run ``<os>.malfind --dump`` and pull the resulting files back as artifacts.
+    """Run ``<os>.malfind --dump`` and record each dumped region as an artifact.
 
-    Each dumped region becomes one artifact with base64-encoded bytes
-    plus PID / VAD coordinates, ready for the existing PE/YARA pipeline
-    to consume.
+    Each region is pulled back (at most ``_MAX_REGION_BYTES``) to compute
+    its size, SHA-256, and MZ-header flag; the artifact carries those plus
+    the PID / VAD coordinates, not the bytes. Pulls stop at
+    ``_MAX_DUMPED_REGIONS`` regions or ``_MAX_DUMPED_TOTAL_BYTES`` pulled
+    bytes, and the done event reports how many regions were skipped.
     """
     plugin_entry = _DUMP_PLUGINS.get(dump_os)
     if plugin_entry is None:
@@ -536,8 +541,11 @@ async def _dump_malfind_regions(
     fn_re = re.compile(r"pid\.(?P<pid>\d+)\.vad\.(?P<start>[0-9a-fx]+)-(?P<end>[0-9a-fx]+)\.dmp", re.I)
 
     pulled = 0
-    for remote in files:
-        if pulled >= _MAX_DUMPED_REGIONS:
+    pulled_bytes = 0
+    skipped = 0
+    for index, remote in enumerate(files):
+        if pulled >= _MAX_DUMPED_REGIONS or pulled_bytes >= _MAX_DUMPED_TOTAL_BYTES:
+            skipped = len(files) - index
             break
         try:
             b64 = await _read_file_base64(ssh, integration, remote, analyzer_os, _MAX_REGION_BYTES)
@@ -549,6 +557,7 @@ async def _dump_malfind_regions(
         raw = base64.b64decode(b64)
         if len(raw) > _MAX_REGION_BYTES:
             raw = raw[:_MAX_REGION_BYTES]
+        pulled_bytes += len(raw)
         sha = hashlib.sha256(raw).hexdigest()
         basename = Path(remote.replace("\\", "/")).name
         meta = fn_re.search(basename) or {}
@@ -567,7 +576,6 @@ async def _dump_malfind_regions(
                 "vad_start":     meta.group("start") if isinstance(meta, re.Match) else "",
                 "vad_end":       meta.group("end")   if isinstance(meta, re.Match) else "",
                 "has_mz_header": mz,
-                "content_b64":   b64,
             },
         })
         pulled += 1
@@ -575,8 +583,14 @@ async def _dump_malfind_regions(
     await _run_quiet(ssh, integration, cleanup_cmd)
     await safe_emit(
         emitter, "memory_region_dump_done",
-        f"memory: pulled {len(artifacts)} region(s) from {plugin}",
-        {"plugin": plugin, "region_count": len(artifacts)},
+        f"memory: pulled {len(artifacts)} region(s) from {plugin}"
+        + (f", skipped {skipped} past the pull caps" if skipped else ""),
+        {
+            "plugin": plugin,
+            "region_count": len(artifacts),
+            "skipped_count": skipped,
+            "pulled_bytes": pulled_bytes,
+        },
     )
     return artifacts
 

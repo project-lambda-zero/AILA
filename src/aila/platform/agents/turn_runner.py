@@ -30,6 +30,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, ClassVar
@@ -77,6 +78,20 @@ _log = logging.getLogger(__name__)
 # window and matches the RFC-12 Phase 1 refresh-query ceiling VR
 # uses on the private retrieved path.
 _RFC24_QUERY_MAX_CHARS = 2000
+
+
+def _answer_cites_hypothesis(answer: Any, hyp_id: str) -> bool:
+    """True when ``hyp_id`` occurs in ``answer`` as an exact token.
+
+    Exact token: a case-sensitive occurrence of the id that is not
+    immediately preceded or followed by ``[A-Za-z0-9_-]``. ``h1`` is
+    cited by ``h1``, ``(h1)``, ``h1.`` or ``h1,`` but not by ``h10``,
+    ``h1_b``, ``xh1`` or ``h1-b``. A non-string answer cites nothing.
+    """
+    if not isinstance(answer, str) or not hyp_id:
+        return False
+    pattern = rf"(?<![A-Za-z0-9_-]){re.escape(hyp_id)}(?![A-Za-z0-9_-])"
+    return re.search(pattern, answer) is not None
 
 
 def _rfc24_query_from_case_state(case_state: Any) -> str:
@@ -266,6 +281,7 @@ class AgentTurnRunnerBase:
         inv: Any,
         target_snapshot: dict[str, Any] | None,
         case_state: Any,
+        turn_number: int,
     ) -> None:
         """RFC-12 Phase 1: per-pivot refresh of the RETRIEVED prompt tier.
 
@@ -276,7 +292,7 @@ class AgentTurnRunnerBase:
         the prompt is built. Best-effort by contract: an override must swallow
         its own failures and never raise into the turn.
         """
-        del inv, target_snapshot, case_state
+        del inv, target_snapshot, case_state, turn_number
         return None
 
     async def _rfc24_populate_retrieved_tier(
@@ -669,6 +685,10 @@ class AgentTurnRunnerBase:
         for index, write in enumerate(writes):
             # An empty-payload ledger write carries no information and only creates a noise row, so it is dropped at the source.
             if not write.payload:
+                _log.warning(
+                    "ledger write dropped: empty payload inv=%s branch=%s turn=%d index=%d kind=%s",
+                    self.investigation_id, self.branch_id, turn_number, index, write.kind,
+                )
                 continue
             kind = write.kind
             if in_recon and kind == "note":
@@ -744,6 +764,21 @@ class AgentTurnRunnerBase:
                 # request id does not exist; skip without failing the turn.
                 continue
 
+    def _maybe_reject_unsupported_action(
+        self, *, decision: Any, case_state: Any, turn_number: int,
+    ) -> Any:
+        """Reject a schema-valid action this module has no handler for.
+
+        Runs first after the decision is validated, before any gate. A
+        module that does not implement an action in the shared
+        ``ReasoningAction`` set overrides this to write a corrective
+        ``_directive.*`` observable into ``case_state`` and return the
+        decision (its payload mapper then records the explicit error).
+        Default: every action is supported.
+        """
+        del case_state, turn_number
+        return decision
+
     def _maybe_reject_fanout_submit(
         self, *, decision: Any, inv: Any, case_state: Any, turn_number: int,
     ) -> Any:
@@ -798,9 +833,13 @@ class AgentTurnRunnerBase:
         """Intercept any terminal submit emitted while live hypotheses
         remain unresolved.
 
-        A hypothesis is resolved by this turn when it appears in
-        ``decision.rejected[]`` with the same id. Anything in
-        ``case_state.hypotheses`` whose id is not in that set is an
+        A hypothesis is resolved by this turn when either:
+          - it appears in ``decision.rejected[]`` with the same id, or
+          - its id is cited in ``decision.answer`` as an exact token
+            (see :func:`_answer_cites_hypothesis`), which is the
+            "fold the hypothesis into your answer" option the directive
+            offers.
+        Anything in ``case_state.hypotheses`` that is neither is an
         unresolved live hypothesis.
 
         Three-way outcome:
@@ -822,7 +861,12 @@ class AgentTurnRunnerBase:
 
         live_ids = [h.id for h in case_state.hypotheses if h.id]
         newly_rejected_ids = {r.id for r in decision.rejected if r.id}
-        unresolved = [hid for hid in live_ids if hid not in newly_rejected_ids]
+        unresolved = [
+            hid
+            for hid in live_ids
+            if hid not in newly_rejected_ids
+            and not _answer_cites_hypothesis(decision.answer, hid)
+        ]
 
         if not unresolved:
             # Passes the gate. Clear any prior rejection counter so a
@@ -1143,6 +1187,7 @@ class AgentTurnRunnerBase:
         # live pivot instead of the boot question. No-op by default.
         await self._refresh_retrieved_knowledge(
             inv=inv, target_snapshot=target_snapshot, case_state=case_state,
+            turn_number=turn_number,
         )
         # RFC-24 step 3+4: populate the assembler's RETRIEVED tier from
         # the per-investigation observation namespaces + shared
@@ -1296,6 +1341,12 @@ class AgentTurnRunnerBase:
                 f"turn={turn_number}) -- logic bug",
             )
 
+        decision = self._maybe_reject_unsupported_action(
+            decision=decision,
+            case_state=case_state,
+            turn_number=turn_number,
+        )
+
         # ── variant_hunt submit gate ────────────────────────────────────
         # When the agent terminal-submits on a kind=variant_hunt
         # investigation, the dispatcher spawns ONE CHILD investigation
@@ -1330,8 +1381,9 @@ class AgentTurnRunnerBase:
         # on the payload so the operator can audit and the agent
         # doesn't loop forever.
         # Pre-submit: every live hypothesis must be either explicitly
-        # rejected (in decision.rejected[]) or folded into the answer
-        # as supported evidence. Runs BEFORE the variant_hunt gate so
+        # rejected (in decision.rejected[]) or cited in the answer as an
+        # exact id token (folded in as supported evidence; see
+        # _answer_cites_hypothesis). Runs BEFORE the variant_hunt gate so
         # the agent fixes the hypothesis-resolution issue first; once
         # resolved cleanly, the variant_hunt gate (if applicable)
         # evaluates against the cleaned decision.

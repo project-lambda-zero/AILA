@@ -46,6 +46,7 @@ from aila.platform.llm.cancellation import (
     cancel_for_investigation,
     clear_for_investigation,
 )
+from aila.platform.services.audit import AuditActor, record_audit_event
 from aila.platform.tasks.arq_purge import purge_arq_jobs_for_investigation
 from aila.platform.tasks.models import TaskStatus
 from aila.platform.tasks.queue import qualified_task_name
@@ -56,6 +57,8 @@ _log = logging.getLogger(__name__)
 
 __all__ = [
     "PauseInvestigationError",
+    "PrepareSubmit",
+    "PreparedSubmit",
     "ReenqueueInvestigationError",
     "ResumeInvestigationError",
     "cancel_investigation_tasks",
@@ -66,6 +69,18 @@ __all__ = [
     "resume_investigation",
     "supersede_unratified_replan_requests",
 ]
+
+# A dispatch split into build and send, so a re-enqueue can validate every
+# dispatch before it resets anything. ``PrepareSubmit`` takes
+# ``(investigation_id, branch_id | None)``, performs every lookup and
+# validation for one worker task, and returns a ``PreparedSubmit``: the
+# zero-argument async closure that enqueues that task. It raises
+# :class:`ReenqueueInvestigationError` when the dispatch cannot be built.
+# :func:`reenqueue_investigation` awaits every ``PrepareSubmit`` before its
+# reset transaction and every returned ``PreparedSubmit`` once after that
+# transaction commits.
+PreparedSubmit = Callable[[], Awaitable[None]]
+PrepareSubmit = Callable[[str, str | None], Awaitable[PreparedSubmit]]
 
 
 async def purge_investigation_cursors(
@@ -225,6 +240,7 @@ async def pause_investigation(
     branch_table: str,
     track: str,
     pause_reason: str,
+    actor: AuditActor | None = None,
     user_id: str | None = None,
 ) -> dict[str, Any]:
     """Atomically pause every active task for ``investigation_id``.
@@ -239,6 +255,11 @@ async def pause_investigation(
     flagged by ``noop=True`` in the returned summary. ``pause_reason``
     is the already-coerced enum value; the module wrapper owns the
     coercion so the reason vocabulary stays module-side.
+
+    ``actor`` is passed only by operator-initiated pauses. When given,
+    the ``investigation_paused`` audit row is written in the same
+    transaction as the status flip. System flows (worker auto-pause)
+    pass ``None`` and write no audit row.
     """
     summary: dict[str, Any] = {
         "paused_cursors": 0,
@@ -377,10 +398,31 @@ async def pause_investigation(
             summary["paused_branches"] = 0
 
         # 4. Flip the investigation status derived projection.
+        prior_status = inv.status
         inv.status = InvestigationStatus.PAUSED.value
         inv.pause_reason = pause_reason
         inv.updated_at = now
         uow.session.add(inv)
+
+        if actor is not None:
+            record_audit_event(
+                uow.session,
+                run_id=investigation_id,
+                stage=actor.stage,
+                action="investigation_paused",
+                target=f"investigation:{investigation_id}",
+                user_id=actor.user_id,
+                team_id=actor.team_id,
+                details={
+                    "investigation_id": investigation_id,
+                    "prior_status": prior_status,
+                    "new_status": InvestigationStatus.PAUSED.value,
+                    "pause_reason": pause_reason,
+                    "paused_cursors": summary["paused_cursors"],
+                    "cancelled_tasks": summary["cancelled_tasks"],
+                    "paused_branches": summary["paused_branches"],
+                },
+            )
 
         await uow.session.commit()
         await uow.session.refresh(inv)
@@ -423,6 +465,7 @@ async def resume_investigation(
     branch_model: type[Any],
     branch_table: str,
     track: str,
+    actor: AuditActor,
     task_fn: Callable[..., Awaitable[Any]],
     task_queue: Any = None,
     user_id: str | None = None,
@@ -450,6 +493,12 @@ async def resume_investigation(
     Raises :class:`ResumeInvestigationError` if the investigation is not
     PAUSED. The fan-out submits one ``task_fn`` task per resumed cursor
     so every branch (not just the primary) ticks again.
+
+    ``actor`` identifies the operator. The ``investigation_resumed`` audit
+    row is added to the transaction that commits the status change: the
+    RUNNING flip (``action="resumed"``) or the fallback reset to CREATED
+    (``action="reenqueued"``). A ``noop_failed`` result writes no row
+    because the investigation status stays PAUSED.
     """
     if task_queue is None:
         raise ResumeInvestigationError(
@@ -729,10 +778,30 @@ async def resume_investigation(
                 .with_for_update()
             )).first()
             if inv_row is not None:
+                prior_status = inv_row.status
                 inv_row.status = InvestigationStatus.RUNNING.value
                 inv_row.pause_reason = None
                 inv_row.updated_at = utc_now()
                 uow.session.add(inv_row)
+                record_audit_event(
+                    uow.session,
+                    run_id=investigation_id,
+                    stage=actor.stage,
+                    action="investigation_resumed",
+                    target=f"investigation:{investigation_id}",
+                    user_id=actor.user_id,
+                    team_id=actor.team_id,
+                    details={
+                        "investigation_id": investigation_id,
+                        "action": "resumed",
+                        "prior_status": prior_status,
+                        "new_status": InvestigationStatus.RUNNING.value,
+                        "resumed_cursors": summary["resumed_cursors"],
+                        "resumed_branches": summary["resumed_branches"],
+                        "precancelled_tasks": summary["precancelled_tasks"],
+                        "submitted_tasks": summary["submitted_tasks"],
+                    },
+                )
                 await uow.session.commit()
                 await uow.session.refresh(inv_row)
                 summary["inv_status"] = inv_row.status
@@ -745,7 +814,7 @@ async def resume_investigation(
     # it run again", so fall back to the full reset
     # (:func:`reenqueue_investigation`: reset to CREATED, cancel stale
     # tasks, wipe every prior-run cursor, submit fresh) in the same call
-    # and surface the actual action taken. The fallback's fn_path
+    # and surface the actual action taken.
     # The stale-task cancel pattern derives from ``task_fn`` via the same
     # helper TaskQueue.submit uses, so the LIKE match hits the exact rows
     # the module's own /re-enqueue endpoint would cancel; the branch
@@ -754,17 +823,45 @@ async def resume_investigation(
     # setup submit, matching VR's submit-once convention).
     fn_path = qualified_task_name(task_fn)
 
-    async def _submit_one(inv_id: str, branch_id: str | None) -> None:
+    async def _prepare_submit(
+        inv_id: str, branch_id: str | None,
+    ) -> PreparedSubmit:
         fb_kwargs: dict[str, Any] = {"investigation_id": inv_id}
         if branch_id:
             fb_kwargs["branch_id"] = branch_id
-        await task_queue.submit(
-            track=track,
-            fn=task_fn,
-            kwargs=fb_kwargs,
-            user_id=auth_user_id or user_id,
-            group_id=auth_role,
-            team_id=auth_team_id,
+
+        async def _send() -> None:
+            await task_queue.submit(
+                track=track,
+                fn=task_fn,
+                kwargs=fb_kwargs,
+                user_id=auth_user_id or user_id,
+                group_id=auth_role,
+                team_id=auth_team_id,
+            )
+
+        return _send
+
+    def _record_fallback_audit(
+        session: Any, prior_status: str, reset: dict[str, Any],
+    ) -> None:
+        record_audit_event(
+            session,
+            run_id=investigation_id,
+            stage=actor.stage,
+            action="investigation_resumed",
+            target=f"investigation:{investigation_id}",
+            user_id=actor.user_id,
+            team_id=actor.team_id,
+            details={
+                "investigation_id": investigation_id,
+                "action": "reenqueued",
+                "prior_status": prior_status,
+                "new_status": InvestigationStatus.CREATED.value,
+                "cancelled_stale_tasks": reset["cancelled_stale_tasks"],
+                "wiped_crashed_cursors": reset["wiped_crashed_cursors"],
+                "superseded_replans": reset["superseded_replans"],
+            },
         )
 
     try:
@@ -772,12 +869,13 @@ async def resume_investigation(
             investigation_id,
             inv_model=inv_model,
             fn_path_pattern=f"%{fn_path}%",
-            submit_one=_submit_one,
+            prepare_submit=_prepare_submit,
             branch_model=branch_model,
             branch_status_active="active",
+            before_commit=_record_fallback_audit,
         )
     except (ReenqueueInvestigationError, SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
-        # The reset itself failed (row vanished, transport error) -- the
+        # The dispatch could not be built or the reset itself failed (row vanished, transport error) -- the
         # investigation stays PAUSED with no cursors restored and no
         # tasks enqueued; report the no-op truthfully so the operator
         # knows resume did not silently "succeed".
@@ -796,25 +894,26 @@ async def resume_investigation(
     return summary
 
 
-async def _fan_out_reenqueue_submit(
+async def _prepare_reenqueue_sends(
     investigation_id: str,
     *,
-    submit_one: Callable[[str, str | None], Awaitable[None]],
+    prepare_submit: PrepareSubmit,
     branch_model: type[Any] | None,
     branch_status_active: str | None,
-) -> int:
-    """Fan the fresh submit out across active branches (platform-owned).
+) -> list[PreparedSubmit]:
+    """Prepare the fresh-submit sends across active branches (platform-owned).
 
-    ``branch_model is None`` selects submit-once mode (VR): one task with
+    ``branch_model is None`` selects submit-once mode (VR): one send with
     no branch id, and the setup state respawns/reuses the persona
-    branches on dispatch. Otherwise (malware) one task is submitted per
-    active branch, or one setup task when no branch is active. Returns
-    the number of submit calls made. This orchestration lives in the
-    platform so a module cannot get the branch fan-out wrong.
+    branches on dispatch. Otherwise (malware) one send is prepared per
+    active branch, or one setup send when no branch is active. Every
+    ``prepare_submit`` call happens here, before the caller's reset
+    transaction, so a dispatch that cannot be built refuses the whole
+    re-enqueue while the row is still unchanged. This orchestration lives
+    in the platform so a module cannot get the branch fan-out wrong.
     """
     if branch_model is None:
-        await submit_one(investigation_id, None)
-        return 1
+        return [await prepare_submit(investigation_id, None)]
     async with UnitOfWork() as uow:
         branch_stmt = (
             select(branch_model.id)
@@ -825,11 +924,11 @@ async def _fan_out_reenqueue_submit(
             str(bid) for bid in (await uow.session.exec(branch_stmt)).all()
         ]
     if branch_ids:
-        for branch_id in branch_ids:
-            await submit_one(investigation_id, branch_id)
-        return len(branch_ids)
-    await submit_one(investigation_id, None)
-    return 1
+        return [
+            await prepare_submit(investigation_id, branch_id)
+            for branch_id in branch_ids
+        ]
+    return [await prepare_submit(investigation_id, None)]
 
 
 async def reenqueue_investigation(
@@ -837,11 +936,12 @@ async def reenqueue_investigation(
     *,
     inv_model: type[Any],
     fn_path_pattern: str,
-    submit_one: Callable[[str, str | None], Awaitable[None]],
+    prepare_submit: PrepareSubmit,
     branch_model: type[Any] | None = None,
     branch_status_active: str | None = None,
     new_kind: str | None = None,
     new_strategy: str | None = None,
+    before_commit: Callable[[Any, str, dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """Reset an investigation to CREATED and submit fresh worker tasks.
 
@@ -862,14 +962,22 @@ async def reenqueue_investigation(
     update ``inv.kind`` / ``inv.strategy_family`` when supplied; the
     caller resolves the module's kind-to-strategy default map.
 
-    The only module-specific input is the atomic submit primitive:
-    ``submit_one(investigation_id, branch_id | None) -> None`` submits
-    exactly one worker task. ``branch_model`` (with ``branch_status_active``)
-    selects the fan-out: ``None`` submits once (VR, setup respawns the
-    branches); a branch model submits one task per active branch, or one
-    setup task when no branch is active (malware). The branch fan-out
-    itself is platform-owned; the module supplies only the one-submit
-    primitive and the branch-query parameters as data.
+    The only module-specific input is the dispatch builder:
+    ``prepare_submit(investigation_id, branch_id | None)`` resolves every
+    lookup and validation for exactly one worker task and returns the
+    zero-argument send closure. ``branch_model`` (with
+    ``branch_status_active``) selects the fan-out: ``None`` sends once (VR,
+    setup respawns the branches); a branch model sends one task per active
+    branch, or one setup task when no branch is active (malware). The
+    branch fan-out itself is platform-owned; the module supplies only the
+    dispatch builder and the branch-query parameters as data. Every builder
+    runs before the reset, so a builder that raises leaves the row
+    unchanged; the sends run after the commit.
+
+    ``before_commit`` (optional) runs inside the reset transaction right
+    before its commit, as ``before_commit(session, prior_status, summary)``
+    where ``prior_status`` is the status the row held before the reset. A
+    caller uses it to add a row that commits atomically with the reset.
     """
     summary: dict[str, Any] = {
         "submitted": 0,
@@ -879,6 +987,15 @@ async def reenqueue_investigation(
         "investigation_id": investigation_id,
     }
     now = utc_now()
+
+    # Build every dispatch before anything is reset: a dispatch that cannot
+    # be resolved raises here and the row stays exactly as it was.
+    sends = await _prepare_reenqueue_sends(
+        investigation_id,
+        prepare_submit=prepare_submit,
+        branch_model=branch_model,
+        branch_status_active=branch_status_active,
+    )
 
     async with UnitOfWork() as uow:
         inv_stmt = (
@@ -898,6 +1015,7 @@ async def reenqueue_investigation(
             inv.kind = new_kind
             if new_strategy is not None:
                 inv.strategy_family = new_strategy
+        prior_status = inv.status
         inv.status = InvestigationStatus.CREATED.value
         inv.pause_reason = None
         # Null the wall-clock origin: a re-enqueued investigation had a
@@ -951,16 +1069,15 @@ async def reenqueue_investigation(
             uow.session, investigation_id,
         )
 
+        if before_commit is not None:
+            before_commit(uow.session, prior_status, summary)
         await uow.session.commit()
 
-    # Commit precedes submit: the same UoW would race with the dedup
-    # session opened inside the submit primitive's TaskQueue.submit.
-    summary["submitted"] = await _fan_out_reenqueue_submit(
-        investigation_id,
-        submit_one=submit_one,
-        branch_model=branch_model,
-        branch_status_active=branch_status_active,
-    )
+    # Commit precedes the sends: the same UoW would race with the dedup
+    # session opened inside each send's TaskQueue.submit.
+    for send in sends:
+        await send()
+    summary["submitted"] = len(sends)
 
     # RFC-07 #31 -- the full re-enqueue is a durable, replayable
     # recovery event: an operator (or an automated healer) reset an

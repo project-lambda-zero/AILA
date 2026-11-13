@@ -7,6 +7,7 @@ import pytest
 from pydantic import ValidationError as PydanticValidationError
 
 from aila.modules.vr.module import VRModule
+from aila.platform.agents.branch_pool import _merge_case_states
 from aila.platform.contracts.reasoning import (
     EvidenceProvenance,
     Hypothesis,
@@ -16,7 +17,8 @@ from aila.platform.contracts.reasoning import (
     ReasoningPromptContext,
     ReasoningTurnDecision,
     RejectedHypothesis,
- )
+    ResolvedHypothesis,
+)
 from aila.platform.exceptions import ValidationError
 from aila.platform.services.reasoning import (
     CyberReasoningEngine,
@@ -219,6 +221,238 @@ def test_absorb_refuses_to_resurrect_rejected_hypothesis(
         "refusing to resurrect" in rec.getMessage() and "H_gone" in rec.getMessage()
         for rec in caplog.records
     ), caplog.text
+
+
+def test_absorb_revives_rejected_hypothesis_on_confirmed_reemit() -> None:
+    """#301: a rejected id re-emitted with ``confirmed_by`` becomes live once.
+
+    The revived hypothesis keeps the evidence citation, is stamped with
+    the turn it re-entered, leaves the rejected set, and is recorded in
+    ``revived_hypothesis_ids`` so the revival cannot repeat.
+    """
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    initial = ReasoningCaseState(
+        rejected=[RejectedHypothesis(id="H1", claim="c", reason="r")],
+    )
+
+    merged = engine.absorb(
+        initial,
+        ReasoningTurnDecision(
+            reasoning="new evidence overturns the rejection",
+            action="reasoning",
+            hypotheses=[
+                Hypothesis(id="H1", claim="c2", confirmed_by="src/example.py:10"),
+            ],
+        ),
+        turn_number=3,
+    )
+
+    live = [h for h in merged.hypotheses if h.id == "H1"]
+    assert len(live) == 1, [h.id for h in merged.hypotheses]
+    assert live[0].confirmed_by == "src/example.py:10"
+    assert live[0].opened_at_turn == 3
+    assert merged.rejected == []
+    assert merged.revived_hypothesis_ids == ["H1"]
+
+
+def test_absorb_revives_resolved_hypothesis_on_confirmed_reemit() -> None:
+    """#301: a resolved id re-emitted with ``confirmed_by`` is revived.
+
+    It leaves ``resolved`` so the same id is never both live and closed.
+    """
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    initial = ReasoningCaseState(
+        resolved=[ResolvedHypothesis(id="H2", claim="c")],
+    )
+
+    merged = engine.absorb(
+        initial,
+        ReasoningTurnDecision(
+            reasoning="re-open with a citation",
+            action="reasoning",
+            hypotheses=[
+                Hypothesis(id="H2", claim="c", confirmed_by="src/other.py:5"),
+            ],
+        ),
+        turn_number=4,
+    )
+
+    assert [h.id for h in merged.hypotheses] == ["H2"]
+    assert merged.hypotheses[0].confirmed_by == "src/other.py:5"
+    assert merged.resolved == []
+    assert merged.revived_hypothesis_ids == ["H2"]
+
+
+def test_absorb_refuses_second_revival_of_same_id(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#301: an id already revived once is refused on a later confirmed re-emit."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    initial = ReasoningCaseState(
+        rejected=[RejectedHypothesis(id="H1", claim="c", reason="closed again")],
+        revived_hypothesis_ids=["H1"],
+    )
+
+    with caplog.at_level(logging.WARNING, logger="aila.platform.services.reasoning"):
+        merged = engine.absorb(
+            initial,
+            ReasoningTurnDecision(
+                reasoning="second attempt with a citation",
+                action="reasoning",
+                hypotheses=[
+                    Hypothesis(id="H1", claim="c3", confirmed_by="src/x.py:1"),
+                ],
+            ),
+        )
+
+    assert [h.id for h in merged.hypotheses] == []
+    assert [r.id for r in merged.rejected] == ["H1"]
+    assert merged.revived_hypothesis_ids == ["H1"]
+    assert any(
+        "refusing to resurrect" in rec.getMessage() and "H1" in rec.getMessage()
+        for rec in caplog.records
+    ), caplog.text
+
+
+def test_absorb_refuses_confirmed_reemit_of_id_rejected_in_same_decision() -> None:
+    """#301: a same-decision rejection wins over a confirmed re-emit."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    initial = ReasoningCaseState(
+        rejected=[RejectedHypothesis(id="H1", claim="c", reason="old")],
+    )
+
+    merged = engine.absorb(
+        initial,
+        ReasoningTurnDecision(
+            reasoning="rejected again while citing it",
+            action="reasoning",
+            rejected=[RejectedHypothesis(id="H1", claim="c", reason="disproved now")],
+            hypotheses=[
+                Hypothesis(id="H1", claim="c", confirmed_by="src/x.py:2"),
+            ],
+        ),
+    )
+
+    assert merged.hypotheses == []
+    assert [r.id for r in merged.rejected] == ["H1"]
+    assert merged.revived_hypothesis_ids == []
+
+
+def test_absorb_mixed_duplicates_with_same_decision_rejection_stay_rejected() -> None:
+    """#301: supported and unsupported duplicates of a terminal id, plus a
+    same-decision rejection of that id, revive nothing and leave it rejected.
+    """
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    initial = ReasoningCaseState(
+        rejected=[RejectedHypothesis(id="H1", claim="c", reason="old")],
+    )
+
+    merged = engine.absorb(
+        initial,
+        ReasoningTurnDecision(
+            reasoning="mixed re-emits then rejected",
+            action="reasoning",
+            rejected=[RejectedHypothesis(id="H1", claim="c", reason="disproved now")],
+            hypotheses=[
+                Hypothesis(id="H1", claim="c", confirmed_by="src/x.py:2"),
+                Hypothesis(id="H1", claim="c", confirmed_by=""),
+            ],
+        ),
+    )
+
+    assert merged.hypotheses == []
+    assert [r.id for r in merged.rejected] == ["H1"]
+    assert merged.revived_hypothesis_ids == []
+
+
+def test_absorb_refuses_second_revival_after_branch_merge(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#301: a revival recorded on one branch survives merge, so the
+    merged branch refuses a second confirmed re-emit of the same id.
+    """
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    revived_branch = ReasoningCaseState(
+        rejected=[RejectedHypothesis(id="H1", claim="c", reason="closed")],
+        revived_hypothesis_ids=["H1"],
+    )
+    other_branch = ReasoningCaseState(
+        rejected=[RejectedHypothesis(id="H1", claim="c", reason="closed")],
+    )
+    merged = _merge_case_states(revived_branch, other_branch)
+
+    with caplog.at_level(logging.WARNING, logger="aila.platform.services.reasoning"):
+        after = engine.absorb(
+            merged,
+            ReasoningTurnDecision(
+                reasoning="second revival attempt after merge",
+                action="reasoning",
+                hypotheses=[
+                    Hypothesis(id="H1", claim="c3", confirmed_by="src/x.py:1"),
+                ],
+            ),
+        )
+
+    assert after.hypotheses == []
+    assert [r.id for r in after.rejected] == ["H1"]
+    assert after.revived_hypothesis_ids == ["H1"]
+    assert any("refusing to resurrect" in rec.getMessage() for rec in caplog.records), (
+        caplog.text
+    )
+
+
+def test_absorb_revival_admits_single_live_entry_per_decision() -> None:
+    """#301: duplicate confirmed entries for one revived id yield one live hypothesis."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    initial = ReasoningCaseState(
+        rejected=[RejectedHypothesis(id="H1", claim="c", reason="r")],
+    )
+
+    merged = engine.absorb(
+        initial,
+        ReasoningTurnDecision(
+            reasoning="duplicated emit",
+            action="reasoning",
+            hypotheses=[
+                Hypothesis(id="H1", claim="a", confirmed_by="src/x.py:1"),
+                Hypothesis(id="H1", claim="b", confirmed_by="src/x.py:2"),
+            ],
+        ),
+    )
+
+    assert [h.id for h in merged.hypotheses] == ["H1"]
+    assert merged.hypotheses[0].claim == "b"
+    assert merged.revived_hypothesis_ids == ["H1"]
+
+
+def test_absorb_revival_unsupported_duplicate_cannot_overwrite_supported_entry() -> None:
+    """#301: revival authorization applies to every duplicate upsert.
+
+    A trailing re-emit without evidence is not authorized to replace the
+    supported entry that revived the terminal id earlier in the decision.
+    """
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    initial = ReasoningCaseState(
+        rejected=[RejectedHypothesis(id="H1", claim="c", reason="r")],
+    )
+
+    merged = engine.absorb(
+        initial,
+        ReasoningTurnDecision(
+            reasoning="supported revival followed by unsupported duplicate",
+            action="reasoning",
+            hypotheses=[
+                Hypothesis(id="H1", claim="supported", confirmed_by="src/x.py:1"),
+                Hypothesis(id="H1", claim="unsupported", confirmed_by=""),
+            ],
+        ),
+    )
+
+    assert [h.id for h in merged.hypotheses] == ["H1"]
+    assert merged.hypotheses[0].claim == "supported"
+    assert merged.hypotheses[0].confirmed_by == "src/x.py:1"
+    assert merged.rejected == []
+    assert merged.revived_hypothesis_ids == ["H1"]
 
 
 def test_render_case_model_includes_contract_hypotheses_and_rejections() -> None:
@@ -655,6 +889,25 @@ def test_absorb_agent_key_cap_defaults_to_150() -> None:
     )
     agent_keys = [k for k in merged.observables if not k.startswith(("audit_mcp", "ida_headless", "_directive.", "_recall."))]
     assert len(agent_keys) == 150
+
+
+def test_absorb_agent_key_cap_never_evicts_gate_counters() -> None:
+    """A submit-gate reject counter is the oldest key in a case state
+    flooded past the agent-key cap; the cap trims scratchpad keys and
+    leaves the counter intact, so the gate's rejection history survives."""
+    engine = CyberReasoningEngine(_FakeLLMClient(_FakeResponse("{}")))  # type: ignore[arg-type]
+    seed: dict[str, object] = {"_gate.some_gate.reject_count": 2}
+    seed.update({f"scratch_{i}": i for i in range(200)})
+    merged = engine.absorb(
+        ReasoningCaseState(observables=seed),
+        ReasoningTurnDecision(
+            reasoning="noop",
+            action="reasoning",
+            provenance=EvidenceProvenance(),
+        ),
+    )
+    assert merged.observables["_gate.some_gate.reject_count"] == 2
+    assert "scratch_0" not in merged.observables
 
 
 def test_absorb_agent_key_cap_resolves_from_platform_registry() -> None:

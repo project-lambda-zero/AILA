@@ -51,6 +51,7 @@ async def global_search(
 
     results: list[SearchResult] = []
     pattern = f"%{q}%"
+    platform = getattr(request.app.state, "platform", None)
 
     # #36: bind the caller's TeamContext to the session so the do_orm_execute
     # listener filters plain selects on ManagedSystemRecord and LatestFindingRecord
@@ -111,49 +112,83 @@ async def global_search(
                 )
 
         # Search findings through every module that exposes a `latest_findings`
-        # capability -- resolved via the module registry, never by name. #36:
-        # `search_entities` opens a bare UnitOfWork that carries no TeamContext,
-        # so calling it from the router leaks other teams' findings. Invoking
-        # `latest_findings` directly against the team-scoped session opened above
-        # lets the do_orm_execute listener filter the plain LatestFindingRecord
-        # select; a god-tier admin session sees every team's rows (TEAM-06).
-        if requested_types is None or "finding" in requested_types or "module" in requested_types:
-            platform = getattr(request.app.state, "platform", None)
-            if platform is not None:
-                providers = platform.runtime.module_registry.all_with("latest_findings")
-                for module in providers:
-                    try:
-                        findings = await module.latest_findings(
-                            session, search_term=q, limit=_MAX_PER_TYPE
+        # capability -- resolved via the module registry, never by name. #36: the
+        # call runs on the team-scoped session opened above, so the do_orm_execute
+        # listener filters the plain LatestFindingRecord select; a god-tier admin
+        # session sees every team's rows (TEAM-06). Findings are returned only
+        # here, so each finding appears once.
+        if platform is not None and (
+            requested_types is None or "finding" in requested_types or "module" in requested_types
+        ):
+            providers = platform.runtime.module_registry.all_with("latest_findings")
+            for module in providers:
+                try:
+                    findings = await module.latest_findings(
+                        session, search_term=q, limit=_MAX_PER_TYPE
+                    )
+                except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError):
+                    _log.debug(
+                        "latest_findings search via module %r failed",
+                        module.module_id,
+                        exc_info=True,
+                    )
+                    continue
+                for finding in findings[:_MAX_PER_TYPE]:
+                    title = str(
+                        finding.get("cve_id")
+                        or finding.get("package_name")
+                        or ""
+                    )
+                    snippet = (
+                        f"{finding.get('package_name', '')} on "
+                        f"{finding.get('system_name', '')} -- "
+                        f"{str(finding.get('criticality') or '').lower()}"
+                    )
+                    results.append(
+                        SearchResult(
+                            entity_type="finding",
+                            entity_id=str(finding.get("id") or ""),
+                            title=title,
+                            snippet=snippet,
+                            module_id=module.module_id,
                         )
-                    except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError):
-                        _log.debug(
-                            "latest_findings search via module %r failed",
-                            module.module_id,
-                            exc_info=True,
-                        )
-                        continue
-                    for finding in findings[:_MAX_PER_TYPE]:
-                        title = str(
-                            finding.get("cve_id")
-                            or finding.get("package_name")
-                            or ""
-                        )
-                        snippet = (
-                            f"{finding.get('package_name', '')} on "
-                            f"{finding.get('system_name', '')} -- "
-                            f"{str(finding.get('criticality') or '').lower()}"
-                        )
-                        results.append(
-                            SearchResult(
-                                entity_type="finding",
-                                entity_id=str(finding.get("id") or ""),
-                                title=title,
-                                snippet=snippet,
-                                module_id=module.module_id,
-                            )
-                        )
+                    )
 
+        # Module-owned entities (malware targets, VR investigations, ...) resolve
+        # through every module that exposes `search_entities`, on the same
+        # team-scoped session. The module decides what matches; the router keeps
+        # only the requested entity types and stamps `module_id`. `module` selects
+        # every module-provided hit, as it does for findings above.
+        needle = q.strip()
+        if platform is not None and needle:
+            for module in platform.runtime.module_registry.all_with("search_entities"):
+                try:
+                    hits = await module.search_entities(
+                        session, needle, team_id=auth.team_id, limit=_MAX_PER_TYPE
+                    )
+                except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError):
+                    _log.debug(
+                        "search_entities via module %r failed",
+                        module.module_id,
+                        exc_info=True,
+                    )
+                    continue
+                for hit in hits:
+                    if (
+                        requested_types is not None
+                        and "module" not in requested_types
+                        and hit.entity_type not in requested_types
+                    ):
+                        continue
+                    results.append(
+                        SearchResult(
+                            entity_type=hit.entity_type,
+                            entity_id=hit.entity_id,
+                            title=hit.title,
+                            snippet=hit.snippet,
+                            module_id=module.module_id,
+                        )
+                    )
 
     total = len(results)
     page_results = results[offset : offset + limit]

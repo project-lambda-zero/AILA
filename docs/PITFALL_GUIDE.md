@@ -525,7 +525,7 @@ SQLModel.metadata.create_all(engine)
 **Fix:** All DDL lives in `src/aila/alembic/versions/`. Write a migration:
 
 ```bash
-alembic revision -m "063_my_module_tables"
+alembic revision -m "NNN_my_module_tables"
 alembic upgrade head
 ```
 

@@ -5,7 +5,7 @@ import time
 from collections.abc import AsyncGenerator
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import pytest_asyncio
@@ -62,11 +62,12 @@ def test_explain_prompt_lists_each_finding_and_discloses_omitted_count() -> None
 async def queue_client(
     test_db, monkeypatch: pytest.MonkeyPatch
 ) -> AsyncGenerator[tuple[AsyncClient, list[dict[str, Any]]], None]:
-    """Real app with a real TaskQueue; only the Redis/ARQ enqueue is stubbed.
+    """Real app with a real TaskQueue; only the Redis boundary is stubbed.
 
     ``submit`` still persists TaskRecord rows and runs its hash-based dedupe
-    against Postgres. The ARQ enqueue is the broker boundary, and Redis is not
-    available to the test run, so the stub records each enqueue instead.
+    against Postgres. The drain-flag read and the ARQ enqueue are the broker
+    boundary, and Redis is not available to the test run, so the drain read
+    reports no drain and the stub records each enqueue instead.
     """
     enqueued: list[dict[str, Any]] = []
 
@@ -81,6 +82,7 @@ async def queue_client(
         return True
 
     monkeypatch.setattr("aila.platform.tasks.queue._enqueue_arq_job", _record_enqueue)
+    monkeypatch.setattr("aila.platform.tasks.queue.TaskQueue._drain_requested", AsyncMock(return_value=False))
 
     stub_runtime = MagicMock()
     stub_runtime.config_registry = ConfigRegistry()

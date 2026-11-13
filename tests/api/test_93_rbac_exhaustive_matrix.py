@@ -1,7 +1,7 @@
 """RBAC exhaustive matrix -- Phase 93 (XCUT-01).
 
-Tests every API endpoint (42 total) against every role dimension
-(admin, operator, reader, no-auth) for a total of 168 parametrized cases.
+Tests every API endpoint (41 total) against every role dimension
+(admin, operator, reader, no-auth) for a total of 164 parametrized cases.
 
 Assertions per cell:
 - Public endpoints: any caller (including no-auth) should NOT get 403.
@@ -60,7 +60,6 @@ RBAC_MATRIX: list[tuple[str, str, dict | None, str, str]] = [
 
     # ── Operator+ endpoints ───────────────────────────────────────────────
     ("POST", "/analyze", {"query_text": "scan", "targets": ["x"]}, "operator", "submit scan"),
-    ("POST", "/task", {"query_text": "test"}, "operator", "submit freeform task"),
     ("POST", "/systems", {"name": "rbac-sys", "host": "1.2.3.4", "username": "u", "port": 22, "distro": "ubuntu"}, "operator", "register system"),
     ("PUT", "/systems/999", {"name": "updated"}, "operator", "update system"),
     ("DELETE", "/systems/999", None, "operator", "delete system"),

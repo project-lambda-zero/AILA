@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 from sqlmodel import select
 
+from aila.platform.config import PlatformConfigSchema
 from aila.platform.events.event import PlatformEvent
 from aila.platform.llm.client import LLMResponse
 from aila.platform.llm.config import LLMRouting
@@ -25,6 +26,7 @@ from aila.platform.llm.pipeline import PipelineRunner
 from aila.platform.llm.seal import compute_seal, make_seal_step
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import AuditSealRecord
+from aila.storage.registry import ConfigRegistry
 
 # ---------------------------------------------------------------------------
 # Fakes (same patterns as test_gate.py / test_validate.py)
@@ -472,6 +474,34 @@ class TestContentStorage:
             assert rec.response_content is None
             assert rec.prompt_content_encrypted is not None
             assert rec.response_content_encrypted is not None
+
+    @pytest.mark.usefixtures("test_db")
+    async def test_store_content_key_set_through_the_validated_config_path(
+        self,
+        routing: LLMRouting,
+        sample_messages: list[dict[str, Any]],
+        sample_response: LLMResponse,
+    ) -> None:
+        """The key the LLM log names is settable through ConfigRegistry and enables storage."""
+        registry = ConfigRegistry()
+        await registry.register("platform", PlatformConfigSchema)
+        key = "llm_seal_store_content_scoring"
+        with pytest.raises(ValueError):
+            await registry.set("platform", key, "sometimes")
+        await registry.set("platform", key, "true")
+        assert await registry.get("platform", key) is True
+
+        config = FakeConfigProvider({"llm_seal_hmac_key": "f" * 64})
+        config._registry = registry  # type: ignore[assignment]
+        step = make_seal_step(config_provider=config, emitter=None)
+
+        await step({"task_type": "scoring", "response": sample_response}, sample_messages, routing)
+
+        async with async_session_scope() as session:
+            rec = (await session.exec(select(AuditSealRecord))).first()
+            assert rec is not None
+            assert rec.content_stored is True
+            assert rec.prompt_content_encrypted is not None
 
 
 # ---------------------------------------------------------------------------

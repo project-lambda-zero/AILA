@@ -463,7 +463,25 @@ The `auth` stage covers both credential paths:
 
 Other stages (`config`, `scan`, `session`, `system`, `task`, `tool`,
 `finding`) carry the matching actions for their domain -- see
-`AUDIT_ACTION_*` constants in `src/aila/api/constants.py`. Seals for LLM
+`AUDIT_ACTION_*` constants in `src/aila/api/constants.py`.
+
+Investigation modules write operator control actions under their module
+id as the stage (`vr`, `malware`, `forensics`). Each row names the actor
+(`user_id`, `team_id`) and a `<kind>:<id>` target, and commits in the same
+transaction as the state change; a refused request or a no-op writes none.
+
+| Action | Stages | Trigger |
+|--------|--------|---------|
+| `investigation_paused` | `vr`, `malware` | Operator pauses an investigation |
+| `investigation_resumed` | `vr`, `malware` | Operator resumes a paused investigation |
+| `investigation_cancelled` | `forensics` | Operator cancels a running investigation |
+| `investigation_deleted` | `vr`, `malware` | Operator deletes (vr) or archives (malware) an investigation |
+| `branch_paused` / `branch_resumed` | `vr` | Operator pauses or resumes a branch |
+| `target_analysis_resumed` | `vr`, `malware` | Operator resumes a target's analysis |
+| `project_deleted` | `vr`, `malware`, `forensics` | Operator deletes (vr, forensics) or archives (malware) a project |
+| `workspace_deleted` | `malware` | Operator archives a workspace |
+
+Seals for LLM
 calls live in `AuditSealRecord`, queryable via `GET /audit/seals` (admin).
 
 

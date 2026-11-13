@@ -1,7 +1,7 @@
         import sys, os, json, hashlib, subprocess, time, shutil, pathlib, tempfile
         sys.stdout.reconfigure(encoding="utf-8")
         from dissect.target import Target
-        target = Target.open(r"{image_path}")
+        target = Target.open({image_path!r})
 
         WALK_ROOTS = {walk_roots!r}
         IS_WINDOWS = {is_windows!r}
@@ -288,7 +288,7 @@
 
             return result
 
-        out = {{"image": r"{image_path}", "candidates": [], "results": []}}
+        out = {{"image": {image_path!r}, "candidates": [], "results": []}}
         t_disco = time.monotonic()
         cands = _walk_for_candidates()
         out["candidates"] = [{{"path": p, "size": sz}} for p, sz in cands]

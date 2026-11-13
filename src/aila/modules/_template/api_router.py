@@ -42,11 +42,13 @@ from aila.api.limiter import limiter
 from aila.api.schemas.envelope import DataEnvelope
 from aila.platform.contracts.auth import AuthContext, require_auth
 from aila.platform.contracts.enums import BranchStatus
+from aila.platform.services.audit import AuditActor
 from aila.platform.services.investigation_cost import (
     compute_live_investigation_cost,
 )
 from aila.platform.services.investigation_lifecycle import (
     PauseInvestigationError,
+    PreparedSubmit,
     ReenqueueInvestigationError,
     ResumeInvestigationError,
     pause_investigation,
@@ -120,6 +122,11 @@ def create_template_router() -> APIRouter:
                 branch_table=_TEMPLATE_BRANCH_TABLE,
                 track=_TEMPLATE_TRACK,
                 pause_reason=_DEFAULT_PAUSE_REASON,
+                actor=AuditActor(
+                    stage=_TEMPLATE_TRACK,
+                    user_id=auth.user_id,
+                    team_id=auth.team_id,
+                ),
                 user_id=auth.user_id,
             )
         except PauseInvestigationError as exc:
@@ -159,6 +166,11 @@ def create_template_router() -> APIRouter:
                 branch_model=TemplateInvestigationBranchRecord,
                 branch_table=_TEMPLATE_BRANCH_TABLE,
                 track=_TEMPLATE_TRACK,
+                actor=AuditActor(
+                    stage=_TEMPLATE_TRACK,
+                    user_id=auth.user_id,
+                    team_id=auth.team_id,
+                ),
                 task_fn=run_template_investigate,
                 task_queue=get_task_queue(_TEMPLATE_TRACK, request),
                 user_id=auth.user_id,
@@ -188,15 +200,20 @@ def create_template_router() -> APIRouter:
 
         The reset (status flip, stale-task cancel, ``__crashed__``
         cursor wipe) lives on the platform. The module supplies a
-        ``submit_one`` primitive that submits exactly one task; the
-        platform fan-out iterates active branches or submits once when
-        no branch is active.
+        ``prepare_submit`` coroutine that runs before the reset, does
+        every lookup and validation, and returns a zero-argument send
+        closure (raising ``ReenqueueInvestigationError`` leaves the row
+        unreset). The platform calls it once per active branch, or once
+        with no branch when none is active, and awaits each send after
+        the reset commits.
         """
         del request
         del auth
         from .workflow.task import run_template_investigate
 
-        async def _submit_one(inv_id: str, branch_id: str | None) -> None:
+        async def _prepare_submit(
+            inv_id: str, branch_id: str | None,
+        ) -> PreparedSubmit:
             # A real module dispatches via its own ``default_task_queue``
             # so the submit picks up the module's config-driven Redis
             # binding + team-id inheritance. This scaffold constructs
@@ -210,21 +227,25 @@ def create_template_router() -> APIRouter:
                 config_registry=ConfigRegistry(),
                 module_id="template",
             )
-            await queue.submit(
-                track=_TEMPLATE_TRACK,
-                fn=run_template_investigate,
-                kwargs={
-                    "investigation_id": inv_id,
-                    "branch_id": branch_id,
-                },
-            )
+
+            async def _send() -> None:
+                await queue.submit(
+                    track=_TEMPLATE_TRACK,
+                    fn=run_template_investigate,
+                    kwargs={
+                        "investigation_id": inv_id,
+                        "branch_id": branch_id,
+                    },
+                )
+
+            return _send
 
         try:
             summary = await reenqueue_investigation(
                 investigation_id,
                 inv_model=TemplateInvestigationRecord,
                 fn_path_pattern="%run_template_investigate%",
-                submit_one=_submit_one,
+                prepare_submit=_prepare_submit,
                 branch_model=TemplateInvestigationBranchRecord,
                 branch_status_active=BranchStatus.ACTIVE.value,
             )

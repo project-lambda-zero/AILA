@@ -16,6 +16,7 @@ __all__ = [
     "ARQ_DEAD_LETTER_KEY_TEMPLATE",
     "TASK_PROGRESS_KEY_TEMPLATE",
     "SCAN_PROGRESS_KEY_TEMPLATE",
+    "QUEUE_DRAINING_KEY",
     # Numeric tuning
     "HEARTBEAT_INTERVAL_S",
     "REAPER_ZOMBIE_THRESHOLD_S",
@@ -45,6 +46,9 @@ ARQ_RETRY_PREFIX: str = "arq:retry:"
 ARQ_DEAD_LETTER_KEY_TEMPLATE: str = "arq:dead-letter:{track}"
 TASK_PROGRESS_KEY_TEMPLATE: str = "task:{task_id}:progress"
 SCAN_PROGRESS_KEY_TEMPLATE: str = "scan:{run_id}:progress"
+# Present while an admin drain is in effect. Every TaskQueue instance in the
+# deployment reads it on submit, so a drain stops all callers (#434).
+QUEUE_DRAINING_KEY: str = "aila:queue:draining"
 
 # --- Numeric tuning (DEFAULTS -- runtime values come from ConfigRegistry) ---
 # These are fallbacks when ConfigRegistry is unavailable (e.g. during tests).

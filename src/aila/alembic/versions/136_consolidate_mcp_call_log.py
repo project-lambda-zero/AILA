@@ -22,7 +22,7 @@ the SQLModel base so a future change to
 retroactively edits this frozen schema step.
 
 Revision ID: 136_consolidate_mcp_call_log
-Revises:     135_vr_investigation_outcome_axes
+Revises:     135_vr_outcome_axes
 Create Date: 2026-08-25
 """
 from __future__ import annotations
@@ -32,7 +32,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "136_consolidate_mcp_call_log"
-down_revision: str | None = "135_vr_investigation_outcome_axes"
+down_revision: str | None = "135_vr_outcome_axes"
 branch_labels: tuple[str, ...] | None = None
 depends_on: tuple[str, ...] | None = None
 

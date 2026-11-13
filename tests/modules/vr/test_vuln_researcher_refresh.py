@@ -35,7 +35,9 @@ async def test_refresh_retrieves_on_live_focus(monkeypatch) -> None:
     monkeypatch.setattr(vr, "_resolve_retrieved_knowledge", _fake_resolve)
     agent = _agent()
     cs = ReasoningCaseState(hypotheses=[Hypothesis(id="h1", claim="heap overflow in parse_hdr")])
-    await agent._refresh_retrieved_knowledge(inv=_Inv(), target_snapshot=_snap(), case_state=cs)
+    await agent._refresh_retrieved_knowledge(
+        inv=_Inv(), target_snapshot=_snap(), case_state=cs, turn_number=1,
+    )
     assert calls == ["heap overflow in parse_hdr"]  # keyed on the live focus
     assert len(agent._retrieved_knowledge) == 1
 
@@ -50,8 +52,12 @@ async def test_refresh_skips_when_focus_unchanged(monkeypatch) -> None:
     monkeypatch.setattr(vr, "_resolve_retrieved_knowledge", _fake_resolve)
     agent = _agent()
     cs = ReasoningCaseState(hypotheses=[Hypothesis(id="h1", claim="same claim")])
-    await agent._refresh_retrieved_knowledge(inv=_Inv(), target_snapshot=_snap(), case_state=cs)
-    await agent._refresh_retrieved_knowledge(inv=_Inv(), target_snapshot=_snap(), case_state=cs)
+    await agent._refresh_retrieved_knowledge(
+        inv=_Inv(), target_snapshot=_snap(), case_state=cs, turn_number=1,
+    )
+    await agent._refresh_retrieved_knowledge(
+        inv=_Inv(), target_snapshot=_snap(), case_state=cs, turn_number=1,
+    )
     assert calls == ["same claim"]  # second identical-focus turn does not re-query
 
 
@@ -67,10 +73,12 @@ async def test_refresh_skips_without_focus_or_workspace(monkeypatch) -> None:
     agent = _agent()
     await agent._refresh_retrieved_knowledge(
         inv=_Inv(), target_snapshot=_snap(), case_state=ReasoningCaseState(),
+        turn_number=1,
     )
     # focus present but no workspace id -> cannot scope -> skip
     cs = ReasoningCaseState(hypotheses=[Hypothesis(id="h1", claim="c")])
     await agent._refresh_retrieved_knowledge(
         inv=_Inv(), target_snapshot={"kind": "source_repo"}, case_state=cs,
+        turn_number=2,
     )
     assert calls == []

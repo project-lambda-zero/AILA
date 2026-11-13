@@ -5,12 +5,11 @@ Two pieces the module config layer used to copy per module:
 * :class:`ModuleConfigBase` -- the base every module ``config_schema.py``
   model subclasses. It bakes in ``extra="forbid"`` so a config model
   constructed with an undeclared key fails closed instead of silently
-  dropping it, and it declares the shared ``llm_model`` field so every
-  module inherits the platform-default LLM id without re-declaring it.
-  The per-module fields (caps, timeouts, API URLs) stay on the
-  subclass; the base only fixes the strictness policy plus the one
-  cross-module field so a module cannot regress to permissive
-  validation or silently drift off the platform default.
+  dropping it. The per-module fields (caps, timeouts, API URLs) stay on
+  the subclass; the base only fixes the strictness policy so a module
+  cannot regress to permissive validation. It declares no fields: LLM
+  model routing is platform-owned (``platform.llm_model_<task_type>``
+  with ``platform.llm_default_model`` as the fallback), not a module key.
 * :class:`ModuleConfigReader` -- namespaced typed config reads via the
   shared :class:`ConfigRegistry`. It replaces the byte-identical
   per-module ``services/config_helpers.py`` singletons. ConfigRegistry
@@ -30,32 +29,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from aila.storage.registry import ConfigRegistry
 
 __all__ = [
     "ModuleConfigBase",
     "ModuleConfigReader",
-    "platform_default_llm_model",
 ]
-
-
-def platform_default_llm_model() -> str:
-    """Return the platform-wide default LLM model id.
-
-    Sourced from ``PlatformConfigSchema.llm_default_model`` so the base
-    tracks whatever default the platform schema declares -- a single
-    source of truth for "what model do we route to when nothing else
-    overrides it". A module that must pin a different default overrides
-    the ``llm_model`` field on its own schema; leaving it inherited
-    means the module follows the platform default.
-
-    The import is lazy to keep :mod:`aila.platform.config_base` free of
-    a hard dependency on the platform-settings module at import time.
-    """
-    from aila.platform.config import PlatformConfigSchema
-    return str(PlatformConfigSchema.model_fields["llm_default_model"].default)
 
 
 class ModuleConfigBase(BaseModel):
@@ -67,22 +48,9 @@ class ModuleConfigBase(BaseModel):
     fail-closed policy that module schemas previously re-declared each
     on their own (and that one module -- vulnerability -- silently
     omitted).
-
-    The shared ``llm_model`` field lives here so every module inherits
-    the platform default without re-declaring it. A module that wants a
-    different default overrides ``llm_model`` on its own subclass.
     """
 
     model_config = ConfigDict(extra="forbid")
-
-    llm_model: str = Field(
-        default_factory=platform_default_llm_model,
-        description=(
-            "LLM model id the module's agents route to. Defaults to the "
-            "platform-wide default (``PlatformConfigSchema.llm_default_model``); "
-            "override on the module subclass to pin a different default."
-        ),
-    )
 
 
 _registry: ConfigRegistry | None = None

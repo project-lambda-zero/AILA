@@ -18,7 +18,7 @@
 > | Outcome routing | `src/aila/modules/vr/agents/outcome_dispatcher.py` |
 > | DB schema (19 tables) | `src/aila/modules/vr/db_models/__init__.py` |
 > | Contract enums (TargetKind, InvestigationKind, InvestigationStatus, HypothesisState, OutcomeKind, PersonaVoice) | `src/aila/modules/vr/contracts/` |
-> | Alembic head | `src/aila/alembic/versions/067_workflow_state_cursor_archived_state.py` |
+> | Alembic head | Check with `cd src/aila && alembic heads` |
 
 Reference on the turn-by-turn reasoning loop. This is the engine of the module: how the LLM thinks about finding bugs, what it sees each turn, what it produces, and how the platform keeps it honest. Brainstorm-grade exploration -- every gray area I can find, surfaced and named.
 
@@ -205,8 +205,13 @@ Hard rules:
   candidate leak". Do not say "exploitable assuming no mitigations".
 - "might be possible", "could potentially", "in theory" → use action="reasoning"
   to gather evidence first, never use them in a submit.
-- Never re-propose a rejected hypothesis. If new evidence overturns a rejection,
-  state the new evidence explicitly in `reasoning` and create a NEW hypothesis id.
+- Never re-propose a rejected hypothesis without evidence. If new evidence
+  overturns a rejection, re-emit the same id under `hypotheses` with a non-empty
+  `confirmed_by` citation (#301). `absorb()` admits it live exactly once per
+  branch; `revived_hypothesis_ids` in `case_state_json` records the revival.
+  Resolved ids follow the same rule. Re-emits without `confirmed_by`, a second
+  revival of the same id, and an id rejected in the same decision are refused
+  with a WARNING. Creating a NEW hypothesis id remains valid.
 - A rejected_hypothesis cannot be upgraded to submitted in the same turn it
   was first rejected. New evidence required.
 - The ONLY way to finalise is action="submit" with a non-null answer, a
@@ -969,6 +974,17 @@ view, `h3` silently disappeared. The only way to remove a hypothesis
 is now an explicit reject from the agent or a sibling-consensus
 rejection.
 
+Rejected and resolved ids are sticky with one exception (#301): a re-emit
+carrying non-empty `confirmed_by` revives the id live once per branch and
+removes it from `rejected`/`resolved`. The revived ids are persisted in
+`ReasoningCaseState.revived_hypothesis_ids` (JSON-only, defaulted empty for
+legacy rows, no DDL). Submit gates run before `absorb()`, so
+`_confirmed_open_hypotheses` applies the same admissibility rule `absorb()`
+uses: a terminal id already in `revived_hypothesis_ids`, an unsupported
+re-emit, or an id rejected in the same decision never counts as a confirmed
+citation for the positive-submit gate. Sibling-consensus rejection can still reject
+it again, and that rejection then blocks any further revival.
+
 ### 8.bis.7 decide_next_turn uses chat_structured
 
 `decide_next_turn` uses `chat_structured` so the gateway enforces the
@@ -1002,9 +1018,12 @@ is no longer a hard stop.
 ### 8.bis.11 Hard submit-gate for unresolved hypotheses
 
 `_maybe_reject_submit_with_unresolved_hypotheses` runs before the
-variant-hunt gate on every submit. Computes
-`unresolved = live_ids - newly_rejected`; if non-empty, converts the
-submit into a non-terminal placeholder and injects
+variant-hunt gate on every submit. A live hypothesis is resolved when its
+id is in `decision.rejected[]` or cited in `decision.answer` as an exact
+token (not immediately preceded or followed by `[A-Za-z0-9_-]`, so `h1`
+does not resolve against `h10`, `h1_b`, `xh1`, or `h1-b`). Computes
+`unresolved = live_ids - newly_rejected - ids_cited_in_answer`; if
+non-empty, converts the submit into a non-terminal placeholder and injects
 `_directive.unresolved_hyp_submit_rejected` at PROMPT POSITION 2 of
 the next turn. After `VR_UNRESOLVED_HYP_REJECT_CAP` (default 3) the
 submit is forced through with
@@ -1039,16 +1058,90 @@ Eliminates a class of "tool never matches anything" loops.
 
 ### 8.bis.16 absorb() caps on agent-set observables
 
-`absorb()` (`src/aila/platform/services/reasoning.py:455`) accepts at most
+`absorb()` (`src/aila/platform/services/reasoning.py:457`) accepts at most
 10 new agent-set observables per turn and evicts the oldest agent-set keys
-past `reasoning_max_agent_keys_total` (default 150, `reasoning.py:77`).
+past `reasoning_max_agent_keys_total` (default 150, `reasoning.py:79`).
 Keys with a `_TOOL_PREFIXES` prefix (`audit_mcp:`/`.`, `rea:`/`.`,
 `reverser_belt:`/`.`, `android_mcp:`/`.`, `_directive.`, `_recall.`,
-`_ledger.`; `reasoning.py:55-65`) cannot be written by the agent and are
-never evicted. `render_case_model` (`reasoning.py:716`) applies no display
-caps: it indexes every tool reading and renders tool readings and agent
+`_ledger.`, `_gate.`; `reasoning.py:56-65`) cannot be written by the agent
+and are never evicted by this cap. The tool executor's observable storage
+cap (`_merge_and_report_eviction`) also keeps `_gate.` keys.
+`render_case_model` (`reasoning.py:716`) applies no display caps: it
+indexes every tool reading and renders tool readings and agent
 scratchpad keys in full, with the context assembler sizing the live
 section against `platform.reasoning_context_budget_tokens`.
+
+### 8.bis.17 Wave-two submit gates run once per turn
+
+The async submit chain (`_maybe_reject_submit_when_draft_pending` ->
+`_apply_wave2_submit_gates`) and the platform fanout hook
+(`_maybe_reject_fanout_submit`) both evaluate the positive-submit and
+negative-submit gates on the same submit. `HonestVulnResearcher` keeps an
+in-memory record `_settled_wave2_gates` (gate name -> turn number). Every
+wave-2 gate settles for the turn it decides:
+
+- a pass or a force-through records its turn in `_clear_gate`;
+- an under-cap reject records its turn in `_reject_or_force` and stores the
+  rejection it returned in `_wave2_rejections` (gate name -> (turn, decision)).
+
+A later hook on the same turn returns early for a settled gate, through
+`_settled_gate_result`:
+
+- a pass or force-through returns the submit decision unchanged, so the
+  fanout re-entry does not re-arm a force-through (the counter stays cleared
+  and the submit is not converted back to `reasoning`);
+- a rejected gate replays its stored rejection unchanged, without re-running
+  `_terminal_outcome_kind` and without touching `_gate.<name>.reject_count`,
+  so one submit produces exactly one reject;
+- gates that have not settled on the turn still run, so an independent
+  negative-submit contradiction is still caught after a forced positive;
+- the records are keyed by turn, so the next turn evaluates every gate
+  again and replaces the stale rejection.
+
+The records are not persisted and add no `_gate.` key or reserved prefix.
+
+#### Positive-submit evidence hydration (issue #303)
+
+Before the positive-submit gate rejects an empty `payload.evidence_refs`, it
+normalizes explicit citations the model already wrote:
+
+- Extraction reads at most the first 4000 characters each of `answer`,
+  `source_ref`, and `sink_ref` (the decision's `answer` when the payload has
+  none), recognizes `path:line` and `path:start-end`, dedupes in
+  first-occurrence order, and keeps at most 16 citations. Reversed ranges are
+  skipped.
+- Match sources are only this branch's observables under the tool prefixes
+  `audit_mcp.`/`audit_mcp:`, `rea.`/`rea:`, `reverser_belt.`/`reverser_belt:`,
+  and `android_mcp.`/`android_mcp:`, whose body begins with a coordinate
+  header `=== <path>:<start>-<end> ...`. Reserved `_directive.`/`_gate.`/
+  `_recall.`/`_ledger.` keys, scratchpad keys, other branches, and bodies
+  containing `!! NO BODY AVAILABLE !!` never match. `read_lines` output has
+  no coordinate header and is therefore not a match source.
+- A citation matches when its path equals the header path (after `\` to `/`
+  normalization), or, only when the citation carries directories, the header
+  path ends with `/<cited path>`. A basename-only citation never matches by
+  suffix. The cited line range must lie inside the header range.
+- Each match becomes `{"kind": "source_citation", "ref": "<path>:<line>
+  [<observation_id>]"}` in `payload.evidence_refs`, and the payload gains
+  `positive_submit_evidence_hydration_advisory = {"hydrated": [{"citation",
+  "observation_id"}], "message": ...}`. Non-empty `evidence_refs` are never
+  rewritten, and no advisory is added when nothing matches.
+- Hydration is a pre-step, not a pass. The live `confirmed_by` requirement is
+  unchanged, so hydrated refs without a live confirmed hypothesis still reject
+  with the mandatory directive. Unmatched citations still reject through the
+  existing reasoning and directive path.
+- This is normalization of model-provided explicit citations. It is not
+  ambiguity detection and not hidden routing.
+
+A rejected submit is emitted as a `reasoning` decision whose `reasoning`
+field carries the rejection text. The per-gate reject counter stays at
+`_gate.<gate>.reject_count`. `_gate.` is a reserved observable prefix:
+`absorb()` drops agent observable writes to it, and neither the agent-key
+cap nor the tool executor's observable storage cap evicts it, so a branch
+cannot forge or reset a gate's rejection history. The directive text lives at the reserved
+`_directive.gate.<gate>.rejected` key so `render_active_directives_section`
+surfaces it on the next turn. The counter and directive are removed when
+the gate passes or forces through, and when the gate is disabled.
 
 ---
 

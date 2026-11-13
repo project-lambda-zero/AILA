@@ -37,10 +37,10 @@ src/aila/
       061_llm_idempotency_cache.py
       062_vr_outcome_review.py
       063_vr_auto_steering_dedup_key.py
-      064_vr_branch_persona_voice_not_null.py
-      065_task_records_input_hash_unique.py
+      064_vr_branch_persona_voice_nn.py
+      065_task_records_input_hash_uq.py
       066_task_records_status_check.py
-      067_workflow_state_cursor_archived_state.py
+      067_cursor_archived_state.py
       068_malware_module_tables.py
       069_malware_audit_fixes.py
       070_malware_project_slim_and_ack.py
@@ -54,7 +54,8 @@ src/aila/
       078_notification_created_index.py
       079_refresh_token_client_meta.py
       080_platform_schema_reconcile.py
-      081_vr_schema_reconcile.py                     # current head
+      081_vr_schema_reconcile.py
+      ...
 ```
 
 `alembic.ini` and the `alembic/` directory live under `src/aila/`, not at the repo root. All Alembic commands must run from `src/aila/`:
@@ -99,8 +100,8 @@ Create a new file in `src/aila/alembic/versions/`:
 Where `{NNN}` is the next sequential number (zero-padded to 3 digits). Check the latest file:
 
 ```bash
-ls src/aila/alembic/versions/*.py | tail -1
-# 081_vr_schema_reconcile.py -> next is 082
+cd src/aila && alembic heads
+# prints the current head revision; the next file number is that number plus one
 ```
 
 ### Step 3: Write the migration
@@ -108,12 +109,12 @@ ls src/aila/alembic/versions/*.py | tail -1
 Use this template:
 
 ```python
-"""082 -- add priority column to task records.
+"""NNN -- add priority column to task records.
 
 Adds a nullable priority field so operators can influence queue ordering.
 
-Revision ID: 082_taskrecord_priority
-Revises: 081_vr_schema_reconcile
+Revision ID: NNN_taskrecord_priority
+Revises: <current head>
 Create Date: 2026-07-22
 """
 from __future__ import annotations
@@ -121,8 +122,8 @@ from __future__ import annotations
 import sqlalchemy as sa
 from alembic import op
 
-revision = "082_taskrecord_priority"
-down_revision = "081_vr_schema_reconcile"
+revision = "NNN_taskrecord_priority"  # replace NNN with the next number
+down_revision = "<current head>"  # the revision printed by `alembic heads`
 branch_labels = None
 depends_on = None
 
@@ -178,10 +179,10 @@ Examples from the codebase:
 | `061_llm_idempotency_cache.py` | Platform subsystem |
 | `062_vr_outcome_review.py` | Module column + new table |
 | `063_vr_auto_steering_dedup_key.py` | Module column + partial UNIQUE |
-| `064_vr_branch_persona_voice_not_null.py` | Module backfill + NOT NULL |
-| `065_task_records_input_hash_unique.py` | Platform column + partial UNIQUE |
+| `064_vr_branch_persona_voice_nn.py` | Module backfill + NOT NULL |
+| `065_task_records_input_hash_uq.py` | Platform column + partial UNIQUE |
 | `066_task_records_status_check.py` | Platform CHECK constraint |
-| `067_workflow_state_cursor_archived_state.py` | Platform column addition |
+| `067_cursor_archived_state.py` | Platform column addition |
 | `068_malware_module_tables.py` | Malware module initial tables (17 tables) |
 | `069_malware_audit_fixes.py` | Module column additions + findings table rebuild |
 | `070_malware_project_slim_and_ack.py` | Module column drops + acked_at column |

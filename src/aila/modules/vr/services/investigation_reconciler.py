@@ -21,6 +21,7 @@ from __future__ import annotations
 from functools import partial
 
 from aila.modules.vr.db_models.investigation import VRInvestigationRecord
+from aila.platform.services.investigation_lifecycle import PreparedSubmit
 from aila.platform.tasks.state_reconciler import (
     InvestigationRecoveryBinding,
 )
@@ -38,8 +39,13 @@ __all__ = ["sweep_investigations_reconcile"]
 _VR_INVESTIGATE_FN_PATTERN = "%run_vr_investigate%"
 
 
-async def _submit_one(inv_id: str, branch_id: str | None) -> None:
-    """Enqueue one ``run_vr_investigate`` task, matching the VR ``/re-enqueue``.
+async def _prepare_submit(
+    inv_id: str, branch_id: str | None,
+) -> PreparedSubmit:
+    """Build the ``run_vr_investigate`` dispatch (VR ``/re-enqueue`` parity).
+
+    Runs before the platform reset transaction: the task queue handle and
+    task function are resolved here, and the returned closure only sends.
 
     VR submits once per investigation and lets the setup state respawn /
     reuse the persona branches on dispatch -- ``branch_id`` is dropped
@@ -58,15 +64,19 @@ async def _submit_one(inv_id: str, branch_id: str | None) -> None:
     from aila.modules.vr.workflow.task import run_vr_investigate
 
     task_queue = default_task_queue()
-    await task_queue.submit(
-        track="vr",
-        fn=run_vr_investigate,
-        kwargs={"investigation_id": inv_id},
-        user_id="system",
-        group_id="vr_investigation_reconciler",
-        team_id=None,
-        bypass_dedup=True,
-    )
+
+    async def _send() -> None:
+        await task_queue.submit(
+            track="vr",
+            fn=run_vr_investigate,
+            kwargs={"investigation_id": inv_id},
+            user_id="system",
+            group_id="vr_investigation_reconciler",
+            team_id=None,
+            bypass_dedup=True,
+        )
+
+    return _send
 
 
 _VR_RECONCILE_BINDING = InvestigationRecoveryBinding(
@@ -75,7 +85,7 @@ _VR_RECONCILE_BINDING = InvestigationRecoveryBinding(
     track="vr",
     fn_path_pattern=_VR_INVESTIGATE_FN_PATTERN,
     inv_model=VRInvestigationRecord,
-    submit_one=_submit_one,
+    prepare_submit=_prepare_submit,
     # VR uses submit-once mode (setup respawns branches), matching the
     # operator ``/re-enqueue`` endpoint at
     # ``vr/api_router.py::reenqueue_investigation``.

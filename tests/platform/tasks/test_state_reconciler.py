@@ -515,12 +515,20 @@ async def _seed_inv_cursor(task_id: str, inv_id: str, current_state: str) -> Non
 
 def _vr_binding():
     from aila.modules.vr.db_models import VRInvestigationRecord
+    from aila.platform.services.investigation_lifecycle import PreparedSubmit
     from aila.platform.tasks.state_reconciler import (
         InvestigationRecoveryBinding,
     )
 
-    async def _submit_one(inv_id: str) -> None:
-        del inv_id
+    async def _prepare_submit(
+        inv_id: str, branch_id: str | None,
+    ) -> PreparedSubmit:
+        del inv_id, branch_id
+
+        async def _send() -> None:
+            return None
+
+        return _send
 
     return InvestigationRecoveryBinding(
         module_id="vr",
@@ -528,7 +536,7 @@ def _vr_binding():
         track="vr",
         fn_path_pattern="%run_vr_investigate%",
         inv_model=VRInvestigationRecord,
-        submit_one=_submit_one,
+        prepare_submit=_prepare_submit,
         branch_model=None,
         branch_status_active=None,
     )
@@ -596,6 +604,13 @@ async def _read_cursor_state(task_id: str) -> str | None:
         return None if row is None else row.current_state
 
 
+async def _read_run(task_id: str) -> tuple[str, object]:
+    async with async_session_scope() as session:
+        row = await session.get(WorkflowRunRecord, task_id)
+        assert row is not None
+        return row.status, row.completed_at
+
+
 class TestTerminalCursorReconciliation:
     """Operator-terminal investigation (COMPLETED / FAILED / ABANDONED)
     with a workflow_state_cursor parked at a live mid-pipeline state:
@@ -648,6 +663,32 @@ class TestTerminalCursorReconciliation:
         assert report.healed is True
         assert report.investigation_action == "terminalized_cursor"
         assert await _read_cursor_state(task_id) == "__cancelled__"
+
+    @pytest.mark.parametrize(
+        ("inv_status", "task_status", "run_status"),
+        [
+            ("completed", TaskStatus.DONE.value, "completed"),
+            ("failed", TaskStatus.FAILED.value, "failed"),
+            ("abandoned", TaskStatus.CANCELLED.value, "cancelled"),
+        ],
+    )
+    async def test_terminalized_cursor_closes_its_run_record_once(
+        self, test_db, inv_status: str, task_status: str, run_status: str,
+    ) -> None:
+        del test_db
+        inv_id = await _seed_vr_investigation(inv_status)
+        task_id = await _seed_inv_task(inv_id, status=task_status)
+        await _seed_inv_cursor(task_id, inv_id, "recon")
+        r = _NoLockReconciler(lock_present=False)
+
+        await r.reconcile_investigation(inv_id, binding=_vr_binding())
+        status, completed_at = await _read_run(task_id)
+        assert status == run_status
+        assert completed_at is not None
+
+        second = await r.reconcile_investigation(inv_id, binding=_vr_binding())
+        assert second.healed is False
+        assert await _read_run(task_id) == (run_status, completed_at)
 
     async def test_terminal_investigation_no_stranded_cursor_refuses(
         self, test_db,

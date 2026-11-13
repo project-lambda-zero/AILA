@@ -30,7 +30,6 @@ Delegation policy:
 """
 from __future__ import annotations
 
-import ast
 import hashlib
 import json
 import logging
@@ -38,7 +37,9 @@ import time
 from typing import Any
 
 from aila.config import Settings
-from aila.modules.forensics.config_schema import ForensicsConfigSchema
+from aila.modules.forensics.config_schema import FORENSICS_HARD_TURN_CAP, ForensicsConfigSchema
+from aila.modules.forensics.contracts.status import InvestigationStatus
+from aila.modules.forensics.tools.script_guard import script_rejection
 from aila.platform.agents.turn_helpers import auto_resolve_live_on_terminal
 from aila.platform.config_base import ModuleConfigReader
 from aila.platform.contracts.reasoning import (
@@ -74,6 +75,17 @@ __all__ = ["HonestInvestigator"]
 
 _log = logging.getLogger(__name__)
 _cfg = ModuleConfigReader("forensics")
+
+# Persisted statuses at which the investigate loop stops before the next
+# provider call. ``running`` and ``pending`` are deliberately absent: the
+# loop only runs while the row is in one of those.
+_INVESTIGATOR_STOP_STATUSES = frozenset({
+    InvestigationStatus.PAUSED.value,
+    InvestigationStatus.CANCELLED.value,
+    InvestigationStatus.COMPLETED.value,
+    InvestigationStatus.EXHAUSTED.value,
+    InvestigationStatus.FAILED.value,
+})
 
 
 async def _read_float_config(key: str) -> float:
@@ -247,144 +259,6 @@ async def seed_prompt_versions() -> int:
     return seeded
 
 
-# ---------------------------------------------------------------------------
-# Safety: AST-level guard for LLM-generated scripts.
-#
-# Substring matching (the earlier approach) is trivially bypassable via
-# aliasing (``im = __import__``), string concatenation
-# (``__import__('so'+'cket')``), ``importlib.import_module('socket')``, or
-# unicode-escaped identifiers. We parse the script and walk it structurally
-# so every one of those bypasses fails. The set of banned capabilities is
-# unchanged: network egress modules, dynamic code execution, FFI escape,
-# and specific destructive filesystem calls.
-# ---------------------------------------------------------------------------
-
-# Top-level module names (matched on the first dotted segment) whose import
-# is denied. ``importlib`` is included so ``importlib.import_module('socket')``
-# fails at the import line rather than requiring per-call string analysis.
-_BANNED_MODULE_ROOTS: frozenset[str] = frozenset({
-    "socket", "http", "urllib", "requests",
-    "ftplib", "smtplib", "paramiko", "fabric",
-    "ctypes", "importlib",
-})
-
-# Bare-name callables that give dynamic code execution or import.
-# Also flagged as Name references (Load context) so ``im = __import__`` +
-# later ``im('os')`` still trips the guard.
-_BANNED_CALL_NAMES: frozenset[str] = frozenset({
-    "exec", "eval", "compile", "__import__",
-})
-
-# Attribute names whose access is a classic sandbox-escape primitive
-# (walking ``()__class__.__mro__[1].__subclasses__()`` and friends).
-_BANNED_DUNDER_ATTRS: frozenset[str] = frozenset({
-    "__class__", "__subclasses__", "__mro__", "__bases__", "__base__",
-    "__globals__", "__builtins__", "__dict__", "__code__",
-    "__init_subclass__", "__import__", "__loader__", "__spec__",
-})
-
-# Attribute-call names that destroy analyzer filesystem state. ``os`` and
-# ``shutil`` themselves are allowed (needed for benign path/listdir work);
-# the specific destructive verbs are blocked.
-_BANNED_ATTR_CALLS: frozenset[str] = frozenset({
-    "rmtree", "rmdir",
-})
-
-
-def _module_is_banned(dotted: str) -> bool:
-    """Return True if the dotted module path's root segment is banned."""
-    if not dotted:
-        return False
-    return dotted.split(".", 1)[0] in _BANNED_MODULE_ROOTS
-
-
-class _ScriptGuard(ast.NodeVisitor):
-    """AST walker that records the first banned construct it observes.
-
-    Once ``reason`` is set the walker short-circuits: no further nodes are
-    inspected, so the caller gets a stable "first offending construct"
-    message rather than an accumulated list.
-    """
-
-    def __init__(self) -> None:
-        self.reason: str | None = None
-
-    def _reject(self, msg: str) -> None:
-        if self.reason is None:
-            self.reason = msg
-
-    def generic_visit(self, node: ast.AST) -> None:
-        if self.reason is not None:
-            return
-        super().generic_visit(node)
-
-    def visit_Import(self, node: ast.Import) -> None:
-        for alias in node.names:
-            if _module_is_banned(alias.name):
-                self._reject(f"banned import: {alias.name}")
-                return
-        self.generic_visit(node)
-
-    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        # Relative imports (``from . import x``) have node.module == None and
-        # can never resolve to a banned top-level. Absolute forms are checked.
-        if node.module and _module_is_banned(node.module):
-            self._reject(f"banned import: from {node.module}")
-            return
-        self.generic_visit(node)
-
-    def visit_Name(self, node: ast.Name) -> None:
-        # Catches aliasing bypasses: ``im = __import__`` on its own is a Load
-        # reference to ``__import__`` and gets rejected here.
-        if isinstance(node.ctx, ast.Load) and node.id in _BANNED_CALL_NAMES:
-            self._reject(f"banned reference: {node.id}")
-            return
-        self.generic_visit(node)
-
-    def visit_Attribute(self, node: ast.Attribute) -> None:
-        if node.attr in _BANNED_DUNDER_ATTRS:
-            self._reject(f"banned attribute access: .{node.attr}")
-            return
-        self.generic_visit(node)
-
-    def visit_Call(self, node: ast.Call) -> None:
-        func = node.func
-        if isinstance(func, ast.Attribute) and func.attr in _BANNED_ATTR_CALLS:
-            self._reject(f"banned call: .{func.attr}(...)")
-            return
-        # getattr(obj, "__dunder__"[, default]) -- classic escape primitive.
-        if (
-            isinstance(func, ast.Name)
-            and func.id == "getattr"
-            and len(node.args) >= 2
-            and isinstance(node.args[1], ast.Constant)
-            and isinstance(node.args[1].value, str)
-            and node.args[1].value.startswith("_")
-        ):
-            self._reject(f"banned call: getattr(..., {node.args[1].value!r})")
-            return
-        self.generic_visit(node)
-
-
-def _script_rejection(script: str) -> str | None:
-    """Reject scripts that use banned imports, calls, or escape attributes.
-
-    Uses AST-level analysis so trivial obfuscations that defeat a substring
-    check -- ``__import__('o'+'s')``, ``importlib.import_module('socket')``,
-    ``im = __import__; im('socket')``, ``getattr(x, '__class__')`` -- all
-    still fail. Fails closed: unparseable scripts are rejected here so the
-    operator sees a security reason rather than a downstream SyntaxError.
-    """
-    try:
-        tree = ast.parse(script)
-    except SyntaxError as exc:
-        return f"blocked: script does not parse (line {exc.lineno}): {exc.msg}"
-    guard = _ScriptGuard()
-    guard.visit(tree)
-    if guard.reason is not None:
-        return f"blocked: {guard.reason}"
-    return None
-
 # Shell-command blocklist for the ``tool_run`` path. Dynamic analysis is
 # strictly prohibited: we never detonate the sample, never fetch remote
 # resources named in the evidence, and never contact an IOC we derived
@@ -425,9 +299,6 @@ def _command_rejection(command: str) -> str | None:
             )
     return None
 
-# Per-investigation turn cap (hard limit on top of config-supplied max_attempts).
-_HARD_TURN_CAP = 50
-
 # Max bytes of stdout to keep per turn in the persisted record. Sized
 # to fit complete forensic windows (multi-entry security logs, full
 # commits.diff blobs, Action-log zip listings) without truncation.
@@ -466,6 +337,57 @@ def _sanitize_for_postgres_text(s: str | None) -> str | None:
     if "\x00" not in s:
         return s
     return s.replace("\x00", "\ufffd")
+
+
+# Persisted step reasoning stays valid JSON at any turn size: free text is
+# bounded per field before serialization instead of slicing the serialized
+# string, which would cut the JSON mid-token.
+_STEP_REASONING_MAX_CHARS = 6000
+_STEP_FIELD_MAX_CHARS = 2000
+
+
+def _bound_text(value: str, limit: int) -> str:
+    if len(value) <= limit:
+        return value
+    return f"{value[:limit]}... [{len(value) - limit} chars truncated]"
+
+
+def _bound_strings(value: Any, limit: int) -> Any:
+    """Return ``value`` with every string leaf bounded to ``limit`` characters."""
+    if isinstance(value, str):
+        return _bound_text(value, limit)
+    if isinstance(value, dict):
+        return {key: _bound_strings(item, limit) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_bound_strings(item, limit) for item in value]
+    return value
+
+
+def _compose_step_reasoning(turn: dict[str, Any]) -> str:
+    """Build the persisted reasoning blob used by the UI and write-up."""
+    blob = {
+        "reasoning": _bound_text(str(turn.get("reasoning") or ""), _STEP_REASONING_MAX_CHARS),
+        "expected_observation": turn.get("expected_observation", ""),
+        "strategy_family": turn.get("strategy_family", "generic"),
+        "contract": turn.get("contract", {}),
+        "hypotheses": turn.get("hypotheses", []),
+        "rejected": turn.get("rejected", []),
+        # Auto-bucketed hypotheses at terminal submit (issue #175).
+        # Empty on non-terminal turns; consumers must not treat
+        # ``resolved`` as an alternative to ``rejected``.
+        "resolved": turn.get("resolved", []),
+        "observables": turn.get("observables", {}),
+        "evidence_graph": turn.get("evidence_graph", {}),
+        "provenance": turn.get("provenance", {}),
+        "submitted": bool(turn.get("submitted")),
+    }
+    bounded = {
+        key: value if key == "reasoning" else _bound_strings(value, _STEP_FIELD_MAX_CHARS)
+        for key, value in blob.items()
+    }
+    # ``default=str`` renders any non-JSON value (enum, datetime) as text, so
+    # serialization cannot fail and there is no non-JSON fallback.
+    return json.dumps(bounded, ensure_ascii=False, default=str)
 
 
 class HonestInvestigator:
@@ -515,6 +437,9 @@ class HonestInvestigator:
         # this list with a neutral badge so operators know to consult
         # the canonical outcome for the true classification.
         self.resolved: list[dict[str, Any]] = []
+        # Ids that already used their one evidence-backed revival (#301).
+        # Carried through every absorb so a terminal id cannot revive again.
+        self.revived_hypothesis_ids: list[str] = []
         self.observables: dict[str, Any] = {}
         # Consecutive rejections by the unresolved-hypothesis submit
         # gate on THIS investigation (issue #175). Counted per run,
@@ -562,7 +487,7 @@ class HonestInvestigator:
         )
         from aila.platform.uow import UnitOfWork
 
-        max_turns = min(max(max_attempts, 1), _HARD_TURN_CAP)
+        max_turns = min(max(max_attempts, 1), FORENSICS_HARD_TURN_CAP)
         _log.info(
             "HonestInvestigator.investigate START inv_id=%s project_id=%s os=%s max_turns=%d q=%r",
             self.investigation_id, self.project_id, self.analyzer_os,
@@ -573,6 +498,13 @@ class HonestInvestigator:
         # Cache the parent project's team_id on the agent so downstream
         # per-turn persistence stamps it onto every child row (#59).
         self.team_id = project_team_id
+
+        # A redispatched run (task retry, stuck healer) can find the row
+        # already cancelled, paused, or terminal. Honor that before the flip
+        # to running, which would otherwise overwrite it and start a turn.
+        stop_status = await self._stop_status()
+        if stop_status is not None:
+            return await self._stopped_result(stop_status, 0, [], emitter)
 
         # Flip investigation to "running" so the reconciler can tell the
         # difference between "never started" and "in flight". Uses its own
@@ -607,28 +539,14 @@ class HonestInvestigator:
         confidence = "caveated"
 
         for turn in range(1, max_turns + 1):
-            # Analyst-initiated stop: cheap indexed PK lookup at the top
-            # of each iteration. We don't poll inside _run_turn -- that
-            # would race with ssh commands already in flight. Between
-            # turns is the safe boundary.
-            if await self._is_cancelled():
-                _log.info(
-                    "HonestInvestigator inv_id=%s cancelled by analyst at turn %d",
-                    self.investigation_id, turn,
-                )
-                if emitter:
-                    await emitter.emit(
-                        "freeflow",
-                        "Investigation cancelled by analyst.",
-                        {"stage": "cancelled", "attempt": turn},
-                    )
-                return {
-                    "answer": "Cancelled by analyst.",
-                    "confidence": "unknown",
-                    "attempts_used": turn - 1,
-                    "steps": steps,
-                    "cancelled": True,
-                }
+            # Stop check: cheap indexed PK lookup at the top of each
+            # iteration. We don't poll inside _run_turn -- that would race
+            # with ssh commands already in flight. Between turns is the
+            # safe boundary: no provider or tool call starts once the row
+            # has left running.
+            stop_status = await self._stop_status()
+            if stop_status is not None:
+                return await self._stopped_result(stop_status, turn - 1, steps, emitter)
 
             if emitter:
                 await emitter.emit(
@@ -707,7 +625,7 @@ class HonestInvestigator:
                         stdout=_sanitize_for_postgres_text(turn_result.get("stdout")),
                         stderr=_sanitize_for_postgres_text(turn_result.get("stderr")),
                         exit_code=turn_result.get("exit_code"),
-                        reasoning=_sanitize_for_postgres_text(self._compose_reasoning(turn_result)),
+                        reasoning=_sanitize_for_postgres_text(_compose_step_reasoning(turn_result)),
                     ))
                     # Bump attempts_used incrementally so the frontend
                     # sees progress without waiting for the final commit.
@@ -883,20 +801,75 @@ class HonestInvestigator:
                         InvestigationRunRecord.id == self.investigation_id
                     )
                 )).first()
-                if row is not None and row.status != status_value:
-                    row.status = status_value
-                    uow.session.add(row)
-                    await uow.commit()
+                if row is None or row.status == status_value:
+                    return
+                if row.status == InvestigationStatus.CANCELLED.value:
+                    # Cancellation is final; no later write may undo it.
+                    _log.info(
+                        "investigation %s is cancelled; not overwriting with %s",
+                        self.investigation_id, status_value,
+                    )
+                    return
+                row.status = status_value
+                uow.session.add(row)
+                await uow.commit()
         except (OSError, RuntimeError, AILAError):
             _log.exception("Failed to set investigation status=%s", status_value)
 
-    async def _is_cancelled(self) -> bool:
-        """One indexed PK lookup against the investigation row.
+    async def _stopped_result(
+        self,
+        stop_status: str,
+        attempts_used: int,
+        steps: list[dict[str, Any]],
+        emitter: Any,
+    ) -> dict[str, Any]:
+        """Result for a run that stops because the row left pending/running.
 
-        Returns True when the analyst has hit the Stop button on the UI
-        (``POST .../cancel`` flipped ``status`` to ``cancelled``). The
+        A cancelled row reports the analyst cancellation; a paused or
+        terminal row reports the stop only, because the workflow owns that
+        persisted status.
+        """
+        if stop_status == InvestigationStatus.CANCELLED.value:
+            _log.info(
+                "HonestInvestigator inv_id=%s cancelled by analyst at turn %d",
+                self.investigation_id, attempts_used + 1,
+            )
+            if emitter:
+                await emitter.emit(
+                    "freeflow",
+                    "Investigation cancelled by analyst.",
+                    {"stage": "cancelled", "attempt": attempts_used + 1},
+                )
+            return {
+                "answer": "Cancelled by analyst.",
+                "confidence": "unknown",
+                "attempts_used": attempts_used,
+                "steps": steps,
+                "cancelled": True,
+            }
+        _log.info(
+            "HonestInvestigator inv_id=%s stopped at turn %d: status=%s",
+            self.investigation_id, attempts_used + 1, stop_status,
+        )
+        return {
+            "answer": None,
+            "confidence": "unknown",
+            "attempts_used": attempts_used,
+            "steps": steps,
+            "cancelled": False,
+            "stopped_status": stop_status,
+        }
+
+    async def _stop_status(self) -> str | None:
+        """One indexed PK lookup returning the status that stops the loop.
+
+        Returns the persisted status when it is one the investigator must
+        not run past: ``paused`` (lifecycle pause), ``cancelled`` (analyst
+        Stop button or cost-ceiling flip), or any terminal status
+        (``completed`` / ``exhausted`` / ``failed``). Returns ``None`` for
+        ``pending`` / ``running`` or when the row cannot be read. The
         investigate loop calls this at the top of each iteration so it
-        can exit cleanly between turns instead of mid-shell-command.
+        exits between turns instead of mid-shell-command.
         """
         from sqlmodel import select as _select
 
@@ -910,10 +883,12 @@ class HonestInvestigator:
                         InvestigationRunRecord.id == self.investigation_id
                     )
                 )).first()
-            return bool(row is not None and row.status == "cancelled")
         except (OSError, RuntimeError, AILAError):
-            _log.exception("Failed to poll investigation cancel flag")
-            return False
+            _log.exception("Failed to poll investigation status for stop check")
+            return None
+        if row is None or row.status not in _INVESTIGATOR_STOP_STATUSES:
+            return None
+        return row.status
 
     # ---------------------------------------------------------------- turn
 
@@ -1266,6 +1241,7 @@ class HonestInvestigator:
             rejected=rejected,
             resolved=resolved,
             observables=dict(self.observables),
+            revived_hypothesis_ids=list(self.revived_hypothesis_ids),
         )
 
     def _apply_case_state(self, case_state: ReasoningCaseState) -> None:
@@ -1279,6 +1255,7 @@ class HonestInvestigator:
         self.hypotheses = [item.model_dump(mode="json") for item in case_state.hypotheses]
         self.rejected = [item.model_dump(mode="json") for item in case_state.rejected]
         self.resolved = [item.model_dump(mode="json") for item in case_state.resolved]
+        self.revived_hypothesis_ids = list(case_state.revived_hypothesis_ids)
         self.observables = dict(case_state.observables)
 
     async def _maybe_reject_submit_with_unresolved_hypotheses(
@@ -1466,29 +1443,6 @@ class HonestInvestigator:
                 out.append(line)
         return "\n".join(out)
 
-    def _compose_reasoning(self, turn: dict[str, Any]) -> str:
-        """Build the persisted reasoning blob used by the UI and write-up."""
-        blob = {
-            "reasoning": turn.get("reasoning", ""),
-            "expected_observation": turn.get("expected_observation", ""),
-            "strategy_family": turn.get("strategy_family", "generic"),
-            "contract": turn.get("contract", {}),
-            "hypotheses": turn.get("hypotheses", []),
-            "rejected": turn.get("rejected", []),
-            # Auto-bucketed hypotheses at terminal submit (issue #175).
-            # Empty on non-terminal turns; consumers must not treat
-            # ``resolved`` as an alternative to ``rejected``.
-            "resolved": turn.get("resolved", []),
-            "observables": turn.get("observables", {}),
-            "evidence_graph": turn.get("evidence_graph", {}),
-            "provenance": turn.get("provenance", {}),
-            "submitted": bool(turn.get("submitted")),
-        }
-        try:
-            return json.dumps(blob, ensure_ascii=False)[:6000]
-        except (TypeError, ValueError):
-            return (turn.get("reasoning") or "")[:6000]
-
     # --------------------------------------------------- execution helpers
 
     async def _execute_script(self, script_content: str) -> dict[str, Any]:
@@ -1497,7 +1451,7 @@ class HonestInvestigator:
         Safety blocklist is applied here; all SSH, temp-file handling, and
         OS dispatch are owned by the tool.
         """
-        rejection = _script_rejection(script_content)
+        rejection = script_rejection(script_content)
         if rejection is not None:
             _log.warning("script blocked for investigation %s: %s", self.investigation_id, rejection)
             return {"stdout": "", "stderr": rejection, "exit_code": 1}
@@ -1522,10 +1476,13 @@ class HonestInvestigator:
             ('RegistryHive(', 't.registry.key(', 'Do not open raw regf hives. Use t.registry.key(path)'),
         ]
         for bad, good, explanation in _dissect_mistakes:
-            if bad in script_content and 'Target.open(' not in script_content.split(bad, maxsplit=1)[0][-20:] if bad == 'Target(' else True:
-                msg = f'API mistake: found `{bad}` -- {explanation}. Use `{good}` instead.'
-                _log.warning('script API lint for investigation %s: %s', self.investigation_id, msg)
-                return {'stdout': '', 'stderr': msg, 'exit_code': 1}
+            if bad not in script_content:
+                continue
+            if bad == 'Target(' and 'Target.open(' in script_content.split(bad, maxsplit=1)[0][-20:]:
+                continue
+            msg = f'API mistake: found `{bad}` -- {explanation}. Use `{good}` instead.'
+            _log.warning('script API lint for investigation %s: %s', self.investigation_id, msg)
+            return {'stdout': '', 'stderr': msg, 'exit_code': 1}
 
         from aila.modules.forensics.tools.script_tool import ScriptExecutorTool
 

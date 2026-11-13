@@ -1,7 +1,7 @@
 /**
  * IntakeWizard -- fullscreen overlay ported from the AILA Console mock
  * (docs/design sys/AILA Console.dc.html). One overlay handles three modules
- * with two distinct flows, dispatched by the module's configured flow:
+ * with two distinct flows, dispatched by module id:
  *
  *  - vr / malware -> generic 3-step intake (./intake/TargetWizard): kind
  *    grid, pick a registered target, review (initial question +
