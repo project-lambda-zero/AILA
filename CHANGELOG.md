@@ -5,6 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.113] - 2026-11-13 -- Forensics evidence hub failures mark the project failed
+
+### Fixed
+
+- A forensics full analysis whose setup, collector lane, tail stage, or emit step fails now marks an active project failed with a reason naming the failed state and ends the run as failed, instead of leaving the project analyzing with a crashed run (#519).
+
+### Added
+
+- `build_dispatch_workflow` accepts an optional `failure_handler`; when set, every builder-made state routes failures to a shared failure state that ends the run (#519).
+
+### Removed
+
+- The unused fixed forensics full-analysis pipeline (`FORENSICS_FULL_ANALYSIS_V1`). Full analysis runs the evidence hub (#519).
+
 ## [0.6.112] - 2026-11-13 -- Direct tool invocation limited to declared operator tools
 
 ### Security

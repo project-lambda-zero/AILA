@@ -13,8 +13,9 @@ Reasoning ─── strategy-neutral LLM investigator with closed-loop protocol
               (no hardcoded playbooks; the LLM is the strategist end-to-end)
 Pipeline ──── four workflow definitions (one dispatcher + three modes):
               • FORENSICS_DISPATCHER_V1   -- routing → mode_selection (selects below)
-              • FORENSICS_FULL_ANALYSIS_V1 -- intake → collection → deep_analysis
-                  → promotion → resolution → writeup → response_emit
+              • FORENSICS_INVESTIGATE_HUB -- full analysis: evidence-gated hub
+                  (setup → dispatch ⇄ lanes → deep_analysis → promotion →
+                  resolution → writeup → emit)
               • FORENSICS_FREEFLOW_V1     -- freeflow → writeup → response_emit
               • FORENSICS_RAW_DIRECTORY_V1 -- intake → __succeeded__ (raw directory intake-only)
 ```
@@ -55,8 +56,9 @@ src/aila/modules/forensics/
 ├── tools/                  13 registered SSH-based tools (see below)
 │
 ├── workflow/
-│   ├── definitions.py      FORENSICS_DISPATCHER_V1, FORENSICS_FULL_ANALYSIS_V1,
-│   │                       FORENSICS_FREEFLOW_V1, FORENSICS_RAW_DIRECTORY_V1
+│   ├── definitions.py      FORENSICS_DISPATCHER_V1, FORENSICS_FREEFLOW_V1,
+│   │                       FORENSICS_RAW_DIRECTORY_V1
+│   ├── definitions_hub.py  FORENSICS_INVESTIGATE_HUB (full analysis)
 │   ├── task.py             ARQ async task entrypoints
 │   ├── services.py         Shared services dataclass for state handlers
 │   ├── emitter.py          Real-time progress events
@@ -373,10 +375,12 @@ The `strings_runner` tool exposes a `capa` action (`src/aila/modules/forensics/t
 
 The module ships THREE ARQ-driven workflow definitions (`workflow/definitions.py`). The dispatcher (`FORENSICS_DISPATCHER_V1`) selects between them at intake.
 
-### `FORENSICS_FULL_ANALYSIS_V1`
+### Full analysis: `FORENSICS_INVESTIGATE_HUB`
+
+Full analysis runs the evidence hub (`workflow/definitions_hub.py`), selected by the dispatcher for `mode=full_analysis`. The hub enumerates evidence at setup, then activates each collector lane only when a matching evidence type was discovered (a disk image opens the disk and binary lanes, a PCAP opens the network lane). The deterministic tail (deep analysis, promotion, resolution, write-up) runs after the lanes.
 
 ```
-intake → collection → deep_analysis → promotion → resolution → writeup → response_emit
+investigation_setup (intake) → dispatch ⇄ lanes (disk, memory, network, log, binary) → deep_analysis → promotion → resolution → writeup → investigation_emit → __succeeded__
 ```
 
 | Stage             | What Happens                                                                                                                                                                                                                                                                                                                 |
@@ -389,7 +393,7 @@ intake → collection → deep_analysis → promotion → resolution → writeup
 | **Write-Up**      | LLM generates a 15-section DFIR / malware-analysis report with inline `artifact_id` citations                                                                                                                                                                                                                                |
 | **Response Emit** | Assembles the terminal `PlatformResponse` payload                                                                                                                                                                                                                                                                            |
 
-Every stage declares `on_failure="analysis_failed"`. When a stage raises after its retries, times out, or fails output validation, the run moves to `analysis_failed`, which sets a still-active project (created, ready, analyzing) to `failed` with a `failure_reason` naming the failed stage and error class, then ends at `__failed__`. A failure status intake already wrote, with its own reason, is kept. `FORENSICS_RAW_DIRECTORY_V1` uses the same failure state for its intake.
+Any hub step that raises after its retries, times out, or fails output validation routes to `investigation_failed` (`_state_analysis_failed`), which sets a still-active project (created, ready, analyzing) to `failed` with a `failure_reason` naming the failed stage and error class, then ends at `__failed__`. A failure status intake already wrote, with its own reason, is kept. `FORENSICS_RAW_DIRECTORY_V1` uses the same handler under its own `analysis_failed` state.
 
 ### `FORENSICS_FREEFLOW_V1`
 

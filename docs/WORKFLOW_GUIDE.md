@@ -181,22 +181,29 @@ inventory -> advisory -> intel -> scoring -> report -> persist -> response_emit 
 | `persist` | Write findings + report to DB | 2 retries on psycopg.OperationalError |
 | `response_emit` | Build final PlatformResponse | No retries |
 
-### Forensics Module (8 states, full analysis)
+### Forensics Module (full analysis: evidence hub)
+
+Full analysis runs `FORENSICS_INVESTIGATE_HUB` (`workflow/definitions_hub.py`), a discovery-driven dispatch graph. Setup classifies the evidence and posts it to the ledger. The `dispatch` hub then activates each collector lane only when a matching evidence type was discovered, and runs the unconditional tail stages once.
 
 ```
-intake -> collection -> deep_analysis -> promotion -> resolution -> writeup -> response_emit -> __succeeded__
+investigation_setup -> dispatch <-> { disk | memory | network | log | binary | deep_analysis | promotion | resolution | writeup }
+                                 -> investigation_emit -> __succeeded__
+any state failure   -> investigation_failed -> __failed__
 ```
 
 | State | What it does | Retry policy |
 |---|---|---|
-| `intake` | Validate evidence directory, classify files | 2 retries on SSH transient |
-| `collection` | Run collectors (tshark, strings, capa, binwalk) | 3 retries on SSH transient |
-| `deep_analysis` | LLM-driven analysis of collected artifacts | 2 retries on LLMTransientError |
-| `promotion` | Promote findings from analysis to evidence graph | No retries |
-| `resolution` | LLM resolve: connect findings to threat hypotheses | 2 retries on LLMTransientError |
-| `writeup` | Generate investigation report narrative | 2 retries on LLMTransientError |
-| `response_emit` | Build final PlatformResponse | No retries |
-| `analysis_failed` | `on_failure` target of every state above: mark the active project failed with a reason, end at `__failed__` | No retries |
+| `investigation_setup` | Intake: validate evidence directory, classify files, post evidence to the ledger | 1 retry; 60 s timeout; then `investigation_failed` |
+| `dispatch` | Hub router: picks the next activated, unvisited phase, or emits when none remain | 30 s timeout; then `investigation_failed` |
+| `disk`, `memory`, `network`, `log`, `binary` | Collector lanes, gated on discovered evidence type (`binary` opens on binary analysis evidence) | Timeouts resume (up to 2); other errors go to `investigation_failed` |
+| `deep_analysis` | LLM-driven analysis of collected artifacts | Timeouts resume (up to 2); other errors go to `investigation_failed` |
+| `promotion` | Promote findings from analysis to evidence graph | Timeouts resume (up to 2); other errors go to `investigation_failed` |
+| `resolution` | LLM resolve: connect findings to threat hypotheses | Timeouts resume (up to 2); other errors go to `investigation_failed` |
+| `writeup` | Generate investigation report narrative | Timeouts resume (up to 2); other errors go to `investigation_failed` |
+| `investigation_emit` | Build final PlatformResponse | No retries |
+| `investigation_failed` | Failure target of every state above: mark the active project failed with a reason, end at `__failed__` | No retries |
+
+The raw-directory mode (`FORENSICS_RAW_DIRECTORY_V1`) is intake-only and keeps its own `analysis_failed` terminal.
 
 ### Hello World Module (3 states, simple)
 
