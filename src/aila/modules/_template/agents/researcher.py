@@ -98,6 +98,32 @@ class TemplateResearcher(AgentTurnRunnerBase):
     # module's observation namespace when the flag is on.
     _MODULE_ID = "_template"
 
+    def _maybe_reject_unsupported_action(
+        self,
+        *,
+        decision: Any,
+        case_state: Any,
+        turn_number: int,
+    ) -> Any:
+        """Flag ``artifact_query`` (forensics-only) as unsupported for the template.
+
+        The shared ``ReasoningAction`` schema accepts it, so the template
+        must reject it explicitly rather than let it fall through to a
+        plain TEXT turn.
+        """
+        del turn_number
+        if decision.action != "artifact_query":
+            return decision
+        case_state.observables["_directive.unsupported_action_rejected"] = (
+            "[UNSUPPORTED ACTION: artifact_query]\n"
+            "artifact_query is not supported for this module. Nothing was "
+            "queried or recorded as a success.\n\n"
+            "Valid actions: tool_run / reasoning / submit / "
+            "submit_outcome_review / edit_outcome. Pick one of these for "
+            "your next turn."
+        )
+        return decision
+
     def __init__(
         self,
         reasoning_engine: CyberReasoningEngine,
@@ -456,6 +482,13 @@ def _decision_to_message_payload(
             ),
             "suggested_edits": decision.payload or {},
             "reasoning": decision.reasoning,
+        }
+    if decision.action == "artifact_query":
+        return PayloadKind.TEXT, {
+            "text": "Unsupported action 'artifact_query' for this module. The query was not executed.",
+            "expected_observation": decision.expected_observation,
+            "error": "unsupported_action",
+            "action": "artifact_query",
         }
     return PayloadKind.TEXT, {
         "text": decision.reasoning,

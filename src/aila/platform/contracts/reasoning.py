@@ -39,8 +39,15 @@ __all__ = [
     "ResolvedHypothesis",
 ]
 
+# ``script_execute`` and ``artifact_query`` are forensics-only actions: a
+# module that has no handler for one rejects it explicitly through
+# ``AgentTurnRunnerBase._maybe_reject_unsupported_action``. For
+# ``artifact_query`` the search text rides in ``command`` and the optional
+# family/type filters in the ``_artifact_family`` / ``_artifact_type``
+# observables (both read by the forensics investigator).
 ReasoningAction = Literal[
     "script_execute",
+    "artifact_query",
     "tool_run",
     "reasoning",
     "recall",
@@ -626,8 +633,9 @@ class ReasoningTurnDecision(BaseModel):
             ``args`` key missing/wrong-type → fail naming the
             specific missing field.
           * Any other action (``reasoning``, ``submit``,
-            ``script_execute``) → no check on ``command`` (those
-            actions don't use it).
+            ``script_execute``, ``artifact_query``) → no check on
+            ``command`` (those actions don't use it as a tool dispatch;
+            ``artifact_query`` carries free search text there).
         """
         import json as _json
 
