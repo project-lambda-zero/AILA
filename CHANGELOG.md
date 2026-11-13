@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.111] - 2026-11-13 -- Pause reason contract test and outcome review query count test
+
+### Fixed
+
+- The pause reason contract test lists every declared `InvestigationPauseReason` value, including `awaiting_unpack_target_analysis` (#513).
+- The outcome review query count test captures statements on any engine instance, so it no longer fails when another test file runs earlier in the same process (#513).
+
 ## [0.6.110] - 2026-11-12 -- Investigation control actions write audit events in every investigation module
 
 ### Added
