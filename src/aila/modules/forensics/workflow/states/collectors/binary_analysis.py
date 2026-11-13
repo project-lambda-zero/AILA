@@ -294,6 +294,14 @@ async def collect_binary_analysis_artifacts(
     for r in results:
         if not isinstance(r, dict):
             continue
+        if r.get("error"):
+            # A per-sample read or scratch failure is a failure event, not an
+            # artifact: it must not occupy the sample's collection key.
+            await safe_emit(emitter, "binary_analysis_sample_failed",
+                            f"binary_analysis: {r.get('path')} on {path} FAILED -- {r['error']}",
+                            {"path": path, "sample_path": r.get("path"),
+                             "sha256": r.get("sha256"), "error": str(r["error"])[:400]})
+            continue
         basename = r.get("basename") or "sample"
         art = {
             "family": "malware",
