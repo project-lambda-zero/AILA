@@ -73,6 +73,28 @@ describe("OverviewTab", () => {
     client.clear();
   });
 
+  it("shows the recorded failure reason for a failed project", async () => {
+    const reason = "intake failed: UpstreamError: analyzer ssh transport down";
+    const { client } = renderOverview({ ...PROJECT, status: "failed", failure_reason: reason });
+
+    expect(screen.getByText("failure reason")).toBeTruthy();
+    expect(screen.getByText(reason)).toBeTruthy();
+    await screen.findByText("no leads yet.");
+    client.clear();
+  });
+
+  it("hides a stale failure reason once the project is not failed", async () => {
+    const { client } = renderOverview({
+      ...PROJECT,
+      status: "completed",
+      failure_reason: "intake failed: UpstreamError: old",
+    });
+
+    expect(screen.queryByText("intake failed: UpstreamError: old")).toBeNull();
+    await screen.findByText("no leads yet.");
+    client.clear();
+  });
+
   it("reports empty sections once the queries settle", async () => {
     const { client } = renderOverview(PROJECT);
 

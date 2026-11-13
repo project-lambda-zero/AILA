@@ -337,6 +337,7 @@ function Console() {
       isFullscreen: w.fullscreen,
       onToggleFullscreen: () => toggleFullscreen(w.id),
       onOpenPage: (m: string, s: string, l: string, invId?: string | null) => openNamedPage(m, s, l, invId ?? null),
+      onOpenIntake: requestIntake,
     };
     if (!entry) {
       return (

@@ -30,6 +30,8 @@ class ForensicsProjectRecord(SQLModel, table=True):
     analyzer_os: str = Field(default="linux", max_length=16)
     project_kind: str = Field(default="disk_evidence", max_length=32, index=True)
     status: str = Field(default="created", index=True)
+    # Cause recorded when intake fails; cleared by any non-failed status write.
+    failure_reason: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     team_id: str | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
     updated_at: datetime = Field(

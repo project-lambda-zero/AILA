@@ -65,6 +65,8 @@ export interface PageOpenerProps {
    * optionally bound to a selected entity id. Used by DataPage to hand a
    * targets row off to the upload wizard or a project row to its detail. */
   onOpenPage?: (moduleKey: string, section: string, label: string, investigationId?: string | null) => void;
+  /** Open the module's intake wizard (readiness-checked creation), e.g. for a page's "+ new". */
+  onOpenIntake?: (opts?: { moduleId?: string; targetId?: string }) => void;
 }
 
 /** Everything the shell supplies to a registered page window (Vulnerability,

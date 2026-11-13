@@ -55,6 +55,10 @@ export function OverviewTab({
   const leads = leadsQ.data ?? [];
   const invs = invQ.data ?? [];
   const arts = artQ.data?.items ?? [];
+  const failureEntries: [string, unknown][] =
+    project?.status === "failed" && project.failure_reason?.trim()
+      ? [["failure reason", project.failure_reason]]
+      : [];
 
   return (
     <div style={css("display:flex;flex-direction:column;gap:10px;padding:10px;min-height:0;overflow:auto;")}>
@@ -66,6 +70,7 @@ export function OverviewTab({
               entries={[
                 ["name", project.name],
                 ["status", <StatusBadge value={project.status} key="s" />],
+                ...failureEntries,
                 ["kind", project.project_kind],
                 ["analyzer os", project.analyzer_os],
                 ["system", project.system_name ?? `#${project.system_id}`],

@@ -170,15 +170,6 @@ const OBSERVATION_SOURCE: { value: string; label: string }[] = [
   opt("playbook"),
 ];
 
-const FORENSICS_ANALYZER_OS: { value: string; label: string }[] = [
-  opt("linux"),
-  opt("windows"),
-];
-const FORENSICS_PROJECT_KIND: { value: string; label: string }[] = [
-  opt("disk_evidence", "disk evidence"),
-  opt("raw_directory", "raw directory"),
-];
-
 const USER_ROLES: { value: string; label: string }[] = [
   opt("admin"),
   opt("operator"),
@@ -445,41 +436,6 @@ export const CREATE_FORMS = {
       { name: "payload", label: "payload (kind-specific)", type: "keyval" },
       { name: "evidence_refs", label: "evidence refs", type: "tags" },
       { name: "supersedes_id", label: "supersedes (id)", type: "text" },
-    ],
-  },
-
-  // -- Forensics --------------------------------------------------------
-  "forensics:projects": {
-    title: "forensics \u00b7 new project",
-    endpoint: "/forensics/projects",
-    method: "POST",
-    fields: [
-      { name: "name", label: "project name", type: "text", required: true },
-      { name: "description", label: "description", type: "textarea" },
-      {
-        name: "system_id",
-        label: "analyzer machine",
-        type: "select",
-        required: true,
-        optionsFrom: "/systems",
-        optionsValueField: "id",
-        optionsLabelField: "name",
-      },
-      {
-        name: "evidence_directory",
-        label: "evidence directory (absolute path on analyzer)",
-        type: "text",
-        required: true,
-        placeholder: "/var/evidence/case-2026-a",
-      },
-      { name: "analyzer_os", label: "analyzer os", type: "select", options: FORENSICS_ANALYZER_OS },
-      {
-        name: "project_kind",
-        label: "evidence kind",
-        type: "select",
-        options: FORENSICS_PROJECT_KIND,
-        help: "raw_directory skips disk-image parsing + pre/full-analysis",
-      },
     ],
   },
 

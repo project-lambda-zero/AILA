@@ -371,6 +371,7 @@ const BESPOKE = {
         config={PAGE_CONFIGS["forensics:projects"]}
         configKey="forensics:projects"
         {...p}
+        onNewClick={() => p.onOpenIntake?.({ moduleId: "forensics" })}
         onRowActivate={(row) => p.onOpenPage?.("forensics", "project", String(row.name ?? row.id ?? ""), String(row.id ?? ""))}
       />
     ),

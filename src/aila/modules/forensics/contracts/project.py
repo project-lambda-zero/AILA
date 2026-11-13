@@ -108,6 +108,7 @@ class ProjectSummary(BaseModel):
     analyzer_os: str = "linux"
     project_kind: str = "disk_evidence"
     status: str
+    failure_reason: str | None = None
     evidence_count: int = 0
     artifact_count: int = 0
     lead_count: int = 0

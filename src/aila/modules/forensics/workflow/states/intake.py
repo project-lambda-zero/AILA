@@ -89,9 +89,15 @@ async def _hash_evidence_file(
     return digest, "computed"
 
 
-async def _set_project_status(project_id: str, status: ProjectStatus) -> None:
-    """Single UoW open to update project.status -- avoids the earlier pattern
-    of opening 3–4 separate sessions per handler invocation."""
+async def _set_project_status(
+    project_id: str,
+    status: ProjectStatus,
+    failure_reason: str | None = None,
+) -> None:
+    """Single UoW open to update project.status and failure_reason together.
+
+    ``failure_reason`` is written on every call, so any non-failed status
+    clears a reason left by an earlier failed intake."""
     if not project_id:
         return
     async with UnitOfWork() as uow:
@@ -100,8 +106,14 @@ async def _set_project_status(project_id: str, status: ProjectStatus) -> None:
         )).first()
         if proj is not None:
             proj.status = status.value
+            proj.failure_reason = failure_reason
             uow.session.add(proj)
             await uow.commit()
+
+
+def _intake_failure_reason(exc: BaseException) -> str:
+    """Bounded, non-empty failure reason recorded on the project row."""
+    return f"intake failed: {type(exc).__name__}: {str(exc)[:500]}"
 
 
 async def uow_prefetch_evidence(project_id: str) -> list[ProjectEvidenceRecord]:
@@ -144,7 +156,7 @@ async def state_intake(
             f"Intake aborted: {msg}",
             {"stage": "config_error", "project_id": pid, "errors": exc.errors()},
         )
-        await _set_project_status(pid, ProjectStatus.FAILED)
+        await _set_project_status(pid, ProjectStatus.FAILED, _intake_failure_reason(exc))
         raise
 
     project_id = data.project_id
@@ -210,7 +222,7 @@ async def state_intake(
             f"Evidence scan FAILED: {str(exc)[:200]}",
             {"stage": "scan_failed", "error": str(exc)},
         )
-        await _set_project_status(project_id, ProjectStatus.FAILED)
+        await _set_project_status(project_id, ProjectStatus.FAILED, _intake_failure_reason(exc))
         raise
 
     files = result.get("files", [])
