@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.92] - 2026-11-12 -- readiness requires a readable evidence directory
+
+### Fixed
+
+- The forensics readiness check now verifies that the project's evidence directory exists and is readable on the analyzer, for disk-evidence and raw-directory projects on POSIX and Windows analyzers. When it is missing or unreadable the check reports not ready with the reason in its message, the project stays `created`, and no analysis task is enqueued. Previously such a project reached `ready` and failed later during intake (#447).
+
 ## [0.6.91] - 2026-11-12 -- one binary-analysis artifact per sample
 
 ### Fixed
