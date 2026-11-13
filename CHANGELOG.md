@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.84] - 2026-11-12 -- Long investigator steps keep their structured fields
+
+### Fixed
+
+- A forensics investigator step whose case model is large now keeps its contract, hypotheses, rejected list, observables, provenance, and submitted flag in the step view. The stored blob was cut at 6000 characters after serialization, which left invalid JSON, so long steps showed only the raw truncated text. Free text is now bounded per field before serialization (the reasoning at 6000 characters, every other string at 2000, each with a truncation marker), so the stored blob is always valid JSON.
+
 ## [0.6.83] - 2026-11-12 -- Full analysis opens evidence lanes from intake
 
 ### Fixed

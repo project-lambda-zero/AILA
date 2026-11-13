@@ -339,6 +339,57 @@ def _sanitize_for_postgres_text(s: str | None) -> str | None:
     return s.replace("\x00", "\ufffd")
 
 
+# Persisted step reasoning stays valid JSON at any turn size: free text is
+# bounded per field before serialization instead of slicing the serialized
+# string, which would cut the JSON mid-token.
+_STEP_REASONING_MAX_CHARS = 6000
+_STEP_FIELD_MAX_CHARS = 2000
+
+
+def _bound_text(value: str, limit: int) -> str:
+    if len(value) <= limit:
+        return value
+    return f"{value[:limit]}... [{len(value) - limit} chars truncated]"
+
+
+def _bound_strings(value: Any, limit: int) -> Any:
+    """Return ``value`` with every string leaf bounded to ``limit`` characters."""
+    if isinstance(value, str):
+        return _bound_text(value, limit)
+    if isinstance(value, dict):
+        return {key: _bound_strings(item, limit) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_bound_strings(item, limit) for item in value]
+    return value
+
+
+def _compose_step_reasoning(turn: dict[str, Any]) -> str:
+    """Build the persisted reasoning blob used by the UI and write-up."""
+    blob = {
+        "reasoning": _bound_text(str(turn.get("reasoning") or ""), _STEP_REASONING_MAX_CHARS),
+        "expected_observation": turn.get("expected_observation", ""),
+        "strategy_family": turn.get("strategy_family", "generic"),
+        "contract": turn.get("contract", {}),
+        "hypotheses": turn.get("hypotheses", []),
+        "rejected": turn.get("rejected", []),
+        # Auto-bucketed hypotheses at terminal submit (issue #175).
+        # Empty on non-terminal turns; consumers must not treat
+        # ``resolved`` as an alternative to ``rejected``.
+        "resolved": turn.get("resolved", []),
+        "observables": turn.get("observables", {}),
+        "evidence_graph": turn.get("evidence_graph", {}),
+        "provenance": turn.get("provenance", {}),
+        "submitted": bool(turn.get("submitted")),
+    }
+    bounded = {
+        key: value if key == "reasoning" else _bound_strings(value, _STEP_FIELD_MAX_CHARS)
+        for key, value in blob.items()
+    }
+    # ``default=str`` renders any non-JSON value (enum, datetime) as text, so
+    # serialization cannot fail and there is no non-JSON fallback.
+    return json.dumps(bounded, ensure_ascii=False, default=str)
+
+
 class HonestInvestigator:
     """Bounded, closed-loop forensic investigator.
 
@@ -598,7 +649,7 @@ class HonestInvestigator:
                         stdout=_sanitize_for_postgres_text(turn_result.get("stdout")),
                         stderr=_sanitize_for_postgres_text(turn_result.get("stderr")),
                         exit_code=turn_result.get("exit_code"),
-                        reasoning=_sanitize_for_postgres_text(self._compose_reasoning(turn_result)),
+                        reasoning=_sanitize_for_postgres_text(_compose_step_reasoning(turn_result)),
                     ))
                     # Bump attempts_used incrementally so the frontend
                     # sees progress without waiting for the final commit.
@@ -1363,29 +1414,6 @@ class HonestInvestigator:
             if line:
                 out.append(line)
         return "\n".join(out)
-
-    def _compose_reasoning(self, turn: dict[str, Any]) -> str:
-        """Build the persisted reasoning blob used by the UI and write-up."""
-        blob = {
-            "reasoning": turn.get("reasoning", ""),
-            "expected_observation": turn.get("expected_observation", ""),
-            "strategy_family": turn.get("strategy_family", "generic"),
-            "contract": turn.get("contract", {}),
-            "hypotheses": turn.get("hypotheses", []),
-            "rejected": turn.get("rejected", []),
-            # Auto-bucketed hypotheses at terminal submit (issue #175).
-            # Empty on non-terminal turns; consumers must not treat
-            # ``resolved`` as an alternative to ``rejected``.
-            "resolved": turn.get("resolved", []),
-            "observables": turn.get("observables", {}),
-            "evidence_graph": turn.get("evidence_graph", {}),
-            "provenance": turn.get("provenance", {}),
-            "submitted": bool(turn.get("submitted")),
-        }
-        try:
-            return json.dumps(blob, ensure_ascii=False)[:6000]
-        except (TypeError, ValueError):
-            return (turn.get("reasoning") or "")[:6000]
 
     # --------------------------------------------------- execution helpers
 
