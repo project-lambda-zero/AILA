@@ -44,11 +44,13 @@ from sqlmodel import select
 
 from aila.platform.tasks.context import TaskContext
 from aila.platform.workflows import (
+    RESERVED_FAILED,
     DurableStateMachine,
     WorkflowConflictError,
     WorkflowDefinition,
     default_backoff,
 )
+from aila.platform.workflows.run_lifecycle import finalize_run
 
 __all__ = [
     "PlatformTask",
@@ -224,6 +226,33 @@ async def _update_plan_json(run_id: str, plan: dict[str, Any]) -> None:
         await session.commit()
 
 
+async def _fail_run_before_handoff(run_id: str, definition: WorkflowDefinition) -> None:
+    """Close a dispatcher run ``failed`` when the dispatch layer will not hand it off.
+
+    Called when the dispatcher produced no usable ``selected_definition_id``, or
+    selected a key that is not in ``dispatches_to``. A cursor already owned by
+    another definition means the handoff happened and that inner definition owns
+    the terminal, so nothing is written. The cursor row is locked so the check
+    serializes against the engine's handoff.
+    """
+    from aila.storage.database import async_session_scope
+    from aila.storage.db_models import WorkflowStateCursor
+
+    cursor_table = WorkflowStateCursor.__table__  # type: ignore[attr-defined]
+    async with async_session_scope() as session:
+        owner = (
+            await session.execute(
+                sa.select(cursor_table.c.definition_id)
+                .where(cursor_table.c.run_id == run_id)
+                .with_for_update()
+            )
+        ).first()
+        if owner is not None and owner[0] != definition.definition_id:
+            return
+        await finalize_run(session, run_id, definition, RESERVED_FAILED)
+        await session.commit()
+
+
 def _hash_initial_input(kwargs: dict[str, Any]) -> str:
     """Stable 16-hex-char hash of the initial task kwargs (moved from modules)."""
     blob = json.dumps(kwargs, sort_keys=True, separators=(",", ":"), default=str)
@@ -300,6 +329,7 @@ async def _run_two_phase_dispatch(
             dispatcher_error_class=dispatcher_output.get("error_class"),
             dispatcher_failed_state=dispatcher_output.get("failed_state"),
         )
+        await _fail_run_before_handoff(run_id, definition)
         return {
             "response": None,
             "error": "dispatcher_failed",
@@ -322,6 +352,7 @@ async def _run_two_phase_dispatch(
         }
 
     if selected_id not in definition.dispatches_to:
+        await _fail_run_before_handoff(run_id, definition)
         raise WorkflowConflictError(
             f"selected_definition_id {selected_id!r} not in dispatches_to "
             f"(run_id={run_id!r}, available={sorted(definition.dispatches_to.keys())})"

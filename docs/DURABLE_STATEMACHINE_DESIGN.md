@@ -512,8 +512,12 @@ In ONE transaction:
      zombies. A missing TaskRecord (e.g. in tests) UPDATEs zero rows
      -- harmless. Per-task heartbeats are EXCLUSIVELY emitted here;
      no parallel heartbeat thread, no liveness key in Redis.
-  6. Commit.
-  7. After commit, fan out an SSE event with the
+  6. Run record lifecycle: `finalize_run`
+     (`src/aila/platform/workflows/run_lifecycle.py`) closes the
+     matching `WorkflowRunRecord` when `new_state.current` is a
+     terminal. See "Run record lifecycle" below.
+  7. Commit.
+  8. After commit, fan out an SSE event with the
      `from_state`/`to_state`/`event`/`duration_ms`/error metadata so
      the live UI sees the transition without polling. Best-effort --
      if the SSE bus is down, the engine does not roll back the
@@ -522,6 +526,36 @@ In ONE transaction:
 The contract -- audit row + cursor advance commit together -- is the
 property that makes the system crash-safe. A SIGKILL between the
 two writes is impossible; either both land or neither does.
+
+### Run record lifecycle
+
+`WorkflowRunRecord.status` and `completed_at` follow one rule for
+every engine-driven run: the row stays `running` with `completed_at`
+NULL until the outermost terminal boundary, then closes once.
+
+  - The terminal transition closes the run in the same transaction
+    as the cursor advance: `__succeeded__` maps to `completed`,
+    `__failed__` and `__crashed__` map to `failed`, `__cancelled__`
+    maps to `cancelled`. Only a row that is not already terminal is
+    updated, so a handler that closed the run itself keeps its
+    status and `completed_at`.
+  - A dispatcher definition's `__succeeded__` is the handoff to its
+    inner definition and leaves the run open; the inner terminal
+    closes it. When `_run_two_phase_dispatch` cannot hand off (no
+    `selected_definition_id`, or one that is not a `dispatches_to`
+    key) it closes the run `failed` itself.
+  - A same-definition retry on a terminal cursor returns the stored
+    output without running handlers, so the recorded outcome and
+    `completed_at` do not change.
+  - A new attempt that creates or resets the cursor (first insert,
+    phase handoff, or a cursor recreated after the reaper deleted a
+    terminal one) reopens a closed run to `running` with
+    `completed_at` NULL before it commits.
+  - Exceptions that escape `execute` (timeouts, cancellation,
+    `WorkflowConflictError`, ARQ retry) leave the cursor non-terminal
+    and the run `running`; ARQ owns the retry.
+  - The chat orchestrator keeps its own finalizing writer for the
+    runs it drives.
 
 ---
 

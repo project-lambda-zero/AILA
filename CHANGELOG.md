@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.62] - 2026-11-12 -- Workflow run records close at the terminal state
+
+### Fixed
+
+- Workflow runs driven by the durable state machine now record their outcome on the run record. A succeeded terminal records `completed`, a failed or crashed terminal records `failed`, a cancelled terminal records `cancelled`, and `completed_at` is set in the same transaction as the terminal cursor transition. Previously these runs stayed `running` with no completion time.
+- Two phase dispatch keeps the run open across the dispatcher handoff and closes it at the inner definition's terminal state. A dispatcher that selects no definition, or one outside its dispatch map, now closes the run as `failed`.
+- A new attempt that starts a fresh cursor on a closed run (for example after the reaper cleared a terminal cursor) reopens the run record so the new attempt's outcome is recorded. Retrying a run whose cursor is already terminal still returns the stored output without rerunning handlers or changing `completed_at`.
+
 ## [0.6.61] - 2026-11-12 -- Global search finds malware targets and VR investigations
 
 ### Fixed
