@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.74] - 2026-11-12 -- Dashboard warns when a module is excluded from finding totals
+
+### Fixed
+
+- When a module fails to report its finding counts, the dashboard now logs the exclusion at WARNING with the traceback instead of DEBUG, so totals that are lower than the true count no longer go unnoticed under default logging.
+
 ## [0.6.73] - 2026-11-12 -- Writeup records the artifacts its steps and answers cite
 
 ### Fixed
