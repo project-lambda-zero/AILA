@@ -93,7 +93,7 @@ class TagResponse(BaseModel):
 class FindingTransitionRequest(BaseModel):
     target_state: str
     notes: str = Field(default="", max_length=2048)
-    module_id: str = Field(default="platform")
+    module_id: str = Field(description="Module that owns the finding; resolves the finding and its state machine.")
 
 
 class FindingWorkflowHistoryResponse(BaseModel):

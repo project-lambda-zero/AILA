@@ -5,6 +5,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.109] - 2026-11-12 -- Finding transitions require a finding the caller's team can see
+
+### Fixed
+
+- Transitioning a finding now returns 404 unless the module named in the request owns a finding with that id that the caller's team can see. Previously an unknown id, or another team's finding with no workflow history yet, was accepted and started a new workflow chain under the caller's team; the cross-team history check also missed rows because the request's team scope hid them. Unknown ids and other teams' findings return the same 404, and no workflow row is written.
+
+### Changed
+
+- Modules answer finding existence through a new `finding_exists` capability on the module protocol (default False). VR and malware check their findings tables; forensics checks the workflow row its findings list records for each derived finding.
+- The transition request now requires `module_id`. The former default named no module that owns findings.
+- The transition route returns 503 when the platform is not initialized, since no module can confirm the finding.
+
 ## [0.6.108] - 2026-11-12 -- Scheduled platform automation runs on the default worker; the broken freeform task route is removed
 
 ### Fixed

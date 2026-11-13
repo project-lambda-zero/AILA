@@ -208,6 +208,12 @@ async def transition_finding(
 ) -> DataEnvelope[FindingWorkflowHistoryResponse]:
     """Transition a finding to target_state.
 
+    The owning module (``body.module_id``) must report the finding as
+    visible to the caller (``finding_exists`` on a session bound to the
+    caller's TeamContext) before any workflow state is read or written.
+    An unknown id and another team's finding both return the same 404,
+    so the route reveals nothing about other teams' findings.
+
     Server-side state machine enforcement (T-138-22):
     - Validates the transition is legal for the current state.
     - Invalid transitions return 422 Unprocessable Entity.
@@ -216,42 +222,35 @@ async def transition_finding(
     - Records previous_state and transitioned_by for audit trail.
     """
     platform = getattr(request.app.state, "platform", None)
+    if platform is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Platform not initialized -- finding owners unavailable.",
+        )
+    owner = next(
+        (m for m in platform.runtime.module_registry.modules if getattr(m, "module_id", None) == body.module_id),
+        None,
+    )
     valid_states, transitions = _resolve_finding_state_machine(
         platform, module_id=body.module_id
     )
 
-    async with async_session_scope() as session:
-        # Get the most recent workflow record for this finding, scoped
-        # to the caller's team (#99). A team-scoped caller cannot chain
-        # onto history owned by another team; admin sees every row.
-        stmt = (
+    # Team-scoped (#99): the session carries the caller's TeamContext, so
+    # the owner's existence check and the history read below only see the
+    # caller's team's rows; a god-tier admin (team_id=None) sees all.
+    async with async_session_scope(team_context=TeamContext.from_auth(auth)) as session:
+        if owner is None or not await owner.finding_exists(finding_id, session):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Finding '{finding_id}' not found",
+            )
+
+        latest = (await session.exec(
             select(FindingWorkflowRecord)
             .where(FindingWorkflowRecord.finding_id == finding_id)
             .order_by(FindingWorkflowRecord.created_at.desc())  # type: ignore[attr-defined]
             .limit(1)
-        )
-        if auth.team_id is not None:
-            stmt = stmt.where(FindingWorkflowRecord.team_id == auth.team_id)
-        latest = (await session.exec(stmt)).first()
-
-        if latest is None and auth.team_id is not None:
-            # No visible predecessor for a team-scoped caller means
-            # either the finding has never transitioned OR it belongs
-            # to another team. Probe the raw table (bypassing the team
-            # filter) to disambiguate: if a row exists but is not ours,
-            # return 404 rather than let the caller open a new chain on
-            # top of another team's history.
-            oracle = (await session.exec(
-                select(FindingWorkflowRecord)
-                .where(FindingWorkflowRecord.finding_id == finding_id)
-                .limit(1)
-            )).first()
-            if oracle is not None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Finding workflow for '{finding_id}' not found",
-                )
-
+        )).first()
         current_state = latest.current_state if latest else "new"
 
         # Validate the target AFTER the current-state load so an

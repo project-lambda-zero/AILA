@@ -556,6 +556,19 @@ class ModuleProtocol(Protocol):
         """
         return {}
 
+    async def finding_exists(self, finding_id: str, session: Any) -> bool:
+        """Return True when ``finding_id`` is a finding this module owns that ``session`` can see.
+
+        Called by ``POST /findings/{finding_id}/transition`` for the module
+        named in the request body, before any workflow state is read or
+        written. ``session`` is bound to the caller's TeamContext, so a
+        query on a team-scoped table returns only the caller's team's rows
+        (every row for a god-tier admin); an implementation answers from
+        such a query and adds no team logic of its own. Default False: a
+        module that owns no findings has none to transition.
+        """
+        return False
+
     def persona_router(self) -> type[PersonaRouter] | None:
         """Return the module's platform-owned :class:`PersonaRouter` subclass.
 

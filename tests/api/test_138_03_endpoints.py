@@ -8,8 +8,14 @@ Uses fixtures from conftest.py: async_client, admin_token, operator_token, reade
 """
 from __future__ import annotations
 
+import time
+import types
+import uuid
+from collections.abc import AsyncGenerator
+
 import pytest
 import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
 
 from aila.platform.contracts._common import utc_now
 from aila.storage.database import async_session_scope
@@ -349,14 +355,45 @@ async def test_finding_workflow_states_endpoint(async_client, admin_token, test_
     assert "closed" in data["states"]
 
 
-@pytest.mark.asyncio
-async def test_finding_workflow_valid_transition(async_client, operator_token, test_db):
-    """POST /findings/{id}/transition: new -> investigating succeeds."""
-    finding_id = "finding-001"
+@pytest_asyncio.fixture
+async def vr_client(test_db) -> AsyncGenerator[AsyncClient, None]:
+    """Async client whose platform registers the real VR module.
 
-    resp = await async_client.post(
+    The transition route asks the module named in the body whether the
+    finding exists, so the app needs a module that owns findings.
+    """
+    from aila.api.app import create_app
+    from aila.modules.vr.module import VRModule
+
+    app = create_app()
+    app.state.platform = types.SimpleNamespace(
+        runtime=types.SimpleNamespace(
+            module_registry=types.SimpleNamespace(modules=[VRModule()]),
+        ),
+    )
+    app.state.start_time = time.monotonic()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        yield client
+
+
+async def _seed_vr_finding() -> str:
+    from aila.modules.vr.db_models.finding import VRFindingRecord
+
+    finding_id = f"finding-{uuid.uuid4().hex}"
+    async with async_session_scope() as session:
+        session.add(VRFindingRecord(id=finding_id))
+        await session.commit()
+    return finding_id
+
+
+@pytest.mark.asyncio
+async def test_finding_workflow_valid_transition(vr_client, operator_token):
+    """POST /findings/{id}/transition: new -> investigating succeeds."""
+    finding_id = await _seed_vr_finding()
+
+    resp = await vr_client.post(
         f"/findings/{finding_id}/transition",
-        json={"target_state": "investigating", "notes": "Starting investigation"},
+        json={"module_id": "vr", "target_state": "investigating", "notes": "Starting investigation"},
         headers={"Authorization": f"Bearer {operator_token}"},
     )
     assert resp.status_code == 201, resp.text
@@ -367,31 +404,32 @@ async def test_finding_workflow_valid_transition(async_client, operator_token, t
 
 
 @pytest.mark.asyncio
-async def test_finding_workflow_invalid_transition(async_client, operator_token, test_db):
+async def test_finding_workflow_invalid_transition(vr_client, operator_token):
     """POST /findings/{id}/transition: new -> closed returns 422."""
-    finding_id = "finding-002"
+    finding_id = await _seed_vr_finding()
 
-    resp = await async_client.post(
+    resp = await vr_client.post(
         f"/findings/{finding_id}/transition",
-        json={"target_state": "closed", "notes": "Skip the process"},
+        json={"module_id": "vr", "target_state": "closed", "notes": "Skip the process"},
         headers={"Authorization": f"Bearer {operator_token}"},
     )
     assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
-async def test_finding_workflow_history(async_client, operator_token, test_db):
+async def test_finding_workflow_history(vr_client, operator_token):
     """GET /findings/{id}/workflow returns current state and history."""
-    finding_id = "finding-003"
+    finding_id = await _seed_vr_finding()
 
     # Create a transition first
-    await async_client.post(
+    created = await vr_client.post(
         f"/findings/{finding_id}/transition",
-        json={"target_state": "investigating"},
+        json={"module_id": "vr", "target_state": "investigating"},
         headers={"Authorization": f"Bearer {operator_token}"},
     )
+    assert created.status_code == 201, created.text
 
-    resp = await async_client.get(
+    resp = await vr_client.get(
         f"/findings/{finding_id}/workflow",
         headers={"Authorization": f"Bearer {operator_token}"},
     )
@@ -407,7 +445,7 @@ async def test_finding_workflow_requires_operator(async_client, reader_token, te
     """POST /findings/{id}/transition returns 403 for reader role."""
     resp = await async_client.post(
         "/findings/any-finding/transition",
-        json={"target_state": "investigating"},
+        json={"module_id": "vr", "target_state": "investigating"},
         headers={"Authorization": f"Bearer {reader_token}"},
     )
     assert resp.status_code == 403
