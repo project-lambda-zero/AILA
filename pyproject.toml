@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aila"
-version = "0.6.95"
+version = "0.6.96"
 description = "Modular AI security platform with pluggable analysis modules."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -508,6 +508,11 @@ ignore = [
 "src/aila/modules/vr/services/investigation_reconciler.py" = ["PLC0415"]
 "src/aila/modules/malware/services/investigation_reconciler.py" = ["PLC0415"]
 "src/aila/modules/forensics/services/investigation_reconciler.py" = ["PLC0415"]
+# recovery_submit.py: PLC0415 for the deferred ``_task_queue`` /
+# ``workflow.task`` imports inside ``prepare_recovery_submit``. Same worker
+# boot-path -> task-registration import cycle the stuck_healer and
+# investigation_reconciler bindings break.
+"src/aila/modules/forensics/services/recovery_submit.py" = ["PLC0415"]
 "src/aila/modules/vr/services/target_analysis.py" = ["PLC0415"]
 "src/aila/modules/vr/workflow/definitions_hub.py" = ["PLC0415"]
 "src/aila/modules/vr/workflow/finalize.py" = ["PLC0415"]
@@ -626,11 +631,11 @@ ignore = [
 "src/aila/platform/tasks/progress.py" = ["PLC0415"]
 "src/aila/platform/tasks/queue.py" = ["PLC0415", "BLE001"]
 "src/aila/platform/tasks/report_tasks.py" = ["PLC0415", "BLE001"]
-# state_reconciler.py: PLC0415 for the deferred get_default_resilience_layer
-# import inside ``reconcile``. state_reconciler is imported by
+# state_reconciler.py: PLC0415 for the deferred ``aila.platform.services``
+# imports inside its functions. state_reconciler is imported by
 # aila.platform.tasks.__init__, which db_models depends on; a top-level
-# services.resilience import re-enters aila.platform.services -> audit ->
-# journal -> db_models mid initialisation and fails.
+# aila.platform.services import enters services -> audit -> journal ->
+# db_models mid initialisation and fails.
 "src/aila/platform/tasks/state_reconciler.py" = ["PLC0415"]
 "src/aila/platform/tasks/sweeps.py" = ["BLE001"]
 "src/aila/platform/tasks/template.py" = ["PLC0415", "BLE001"]

@@ -51,6 +51,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from aila.platform.services.investigation_lifecycle import PrepareSubmit
 from aila.platform.services.recovery_service import (
     CONFIG_KEY_IDLE_GRACE_S,
     CONFIG_KEY_MAX_HEALS_PER_TICK,
@@ -58,7 +59,6 @@ from aila.platform.services.recovery_service import (
     RecoveryBinding,
     RecoveryStrategy,
     StuckBinding,
-    SubmitOneFn,
 )
 from aila.platform.services.recovery_service import (
     DEFAULT_STUCK_IDLE_GRACE_S as DEFAULT_IDLE_GRACE_S,
@@ -72,7 +72,6 @@ __all__ = [
     "CONFIG_KEY_MAX_HEALS_PER_TICK",
     "DEFAULT_IDLE_GRACE_S",
     "DEFAULT_MAX_HEALS_PER_TICK",
-    "SubmitOneFn",
     "sweep_stuck_investigations",
 ]
 
@@ -85,7 +84,7 @@ async def sweep_stuck_investigations(
     running_status_values: tuple[str, ...],
     fn_path_pattern: str,
     module_id: str,
-    submit_one: SubmitOneFn,
+    prepare_submit: PrepareSubmit,
     branch_model: type[Any] | None = None,
     branch_status_active: str | None = None,
     idle_grace_s: int | None = None,
@@ -129,7 +128,7 @@ async def sweep_stuck_investigations(
             running_status_values=running_status_values,
             fn_path_pattern=fn_path_pattern,
             module_id=module_id,
-            submit_one=submit_one,
+            prepare_submit=prepare_submit,
             branch_model=branch_model,
             branch_status_active=branch_status_active,
             inv_timestamp_column=inv_timestamp_column,

@@ -30,7 +30,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
@@ -43,6 +42,7 @@ from aila.modules.vr.db_models import (
     VRWorkspaceRecord,
 )
 from aila.platform.services import recovery_service as _rec_mod
+from aila.platform.services.investigation_lifecycle import PreparedSubmit, PrepareSubmit
 from aila.platform.services.recovery_claim import try_claim_recovery
 from aila.platform.services.stall_recovery import (
     sweep_stalled_investigations,
@@ -183,13 +183,13 @@ async def test_stall_recovery_and_stuck_healer_double_submit_blocked(
         *,
         inv_model: type[Any],
         fn_path_pattern: str,
-        submit_one: Callable[[str, str | None], Awaitable[None]],
+        prepare_submit: PrepareSubmit,
         branch_model: type[Any] | None = None,
         branch_status_active: str | None = None,
         new_kind: str | None = None,
         new_strategy: str | None = None,
     ) -> dict[str, Any]:
-        del inv_model, fn_path_pattern, submit_one
+        del inv_model, fn_path_pattern, prepare_submit
         del branch_model, branch_status_active, new_kind, new_strategy
         stuck_calls.append(investigation_id)
         return {
@@ -206,8 +206,11 @@ async def test_stall_recovery_and_stuck_healer_double_submit_blocked(
     # the monkeypatch target has moved with the callsite.
     monkeypatch.setattr(_rec_mod, "reenqueue_investigation", _capture_reenqueue)
 
-    async def _noop_submit_one(_inv_id: str, _branch_id: str | None) -> None:
-        return None
+    async def _noop_prepare_submit(_inv_id: str, _branch_id: str | None) -> PreparedSubmit:
+        async def _send() -> None:
+            return None
+
+        return _send
 
     stall_task = sweep_stalled_investigations(
         submit_fn=_capture_submit,
@@ -223,7 +226,7 @@ async def test_stall_recovery_and_stuck_healer_double_submit_blocked(
         running_status_values=("running",),
         fn_path_pattern="%run_vr_investigate%",
         module_id="vr",
-        submit_one=_noop_submit_one,
+        prepare_submit=_noop_prepare_submit,
         branch_model=None,
         branch_status_active=None,
         idle_grace_s=600,

@@ -69,6 +69,13 @@ class InvestigationRunRecord(SQLModel, table=True):
     updated_at: datetime | None = Field(
         default_factory=utc_now, sa_type=DateTime(timezone=True),
     )
+    # Written by the platform investigation lifecycle: re-enqueueing a stuck
+    # run clears ``pause_reason`` and nulls ``started_at`` while resetting the
+    # row to ``created``. SQLModel rejects assignment to an undeclared field,
+    # so both columns must exist for that reset to commit. Nullable so
+    # existing rows need no backfill; migration 149 adds the columns.
+    pause_reason: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    started_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
 
 
 # Every committed status transition is announced as an

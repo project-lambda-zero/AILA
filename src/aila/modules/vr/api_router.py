@@ -5843,6 +5843,7 @@ def create_vr_router() -> APIRouter:
     ) -> DataEnvelope[VRInvestigationSummary]:
         from aila.api.deps import get_task_queue
         from aila.platform.services.investigation_lifecycle import (
+            PreparedSubmit,
             reenqueue_investigation,
         )
 
@@ -5879,22 +5880,29 @@ def create_vr_router() -> APIRouter:
 
         task_queue = get_task_queue("vr", request)
 
-        async def _submit_one(inv_id: str, branch_id: str | None) -> None:
+        async def _prepare_submit(
+            inv_id: str, branch_id: str | None,
+        ) -> PreparedSubmit:
+            # Built before the reset commits; the returned closure only sends.
             del branch_id  # VR submits once; setup owns branch spawn
-            await task_queue.submit(
-                track="vr",
-                fn=run_vr_investigate,
-                kwargs={"investigation_id": inv_id},
-                user_id=auth.user_id,
-                group_id=auth.role,
-                team_id=auth.team_id,
-            )
+
+            async def _send() -> None:
+                await task_queue.submit(
+                    track="vr",
+                    fn=run_vr_investigate,
+                    kwargs={"investigation_id": inv_id},
+                    user_id=auth.user_id,
+                    group_id=auth.role,
+                    team_id=auth.team_id,
+                )
+
+            return _send
 
         await reenqueue_investigation(
             investigation_id,
             inv_model=VRInvestigationRecord,
             fn_path_pattern="%run_vr_investigate%",
-            submit_one=_submit_one,
+            prepare_submit=_prepare_submit,
             new_kind=new_kind,
             new_strategy=new_strategy,
         )

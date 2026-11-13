@@ -1754,6 +1754,7 @@ def create_forensics_router() -> APIRouter:
 
         from aila.api.deps import get_task_queue
         from aila.modules.forensics.db_models import ForensicsProjectRecord, InvestigationRunRecord
+        from aila.modules.forensics.services.integration import build_integration_payload
         from aila.modules.forensics.workflow.task import run_forensics_investigation
         from aila.storage.db_models import ManagedSystemRecord
 
@@ -1800,16 +1801,7 @@ def create_forensics_router() -> APIRouter:
             await uow.session.commit()
             await uow.session.refresh(record)
 
-            integration = {
-                "name": system.name,
-                "host": system.host,
-                "username": system.username,
-                "port": system.port,
-                "private_key_path": system.private_key_path,
-                "password_secret_id": system.password_secret_id,
-                "known_hosts_path": system.known_hosts_path,
-                "host_key_fingerprint": system.host_key_fingerprint,
-            }
+            integration = build_integration_payload(system)
 
         try:
             handle = await task_queue.submit(
@@ -1891,6 +1883,7 @@ def create_forensics_router() -> APIRouter:
             ForensicsProjectRecord,
             InvestigationRunRecord,
         )
+        from aila.modules.forensics.services.integration import build_integration_payload
         from aila.modules.forensics.workflow.task import run_forensics_investigation
         from aila.storage.db_models import ManagedSystemRecord
 
@@ -1957,16 +1950,7 @@ def create_forensics_router() -> APIRouter:
             await uow.session.commit()
             await uow.session.refresh(record)
 
-            integration = {
-                "name": system.name,
-                "host": system.host,
-                "username": system.username,
-                "port": system.port,
-                "private_key_path": system.private_key_path,
-                "password_secret_id": system.password_secret_id,
-                "known_hosts_path": system.known_hosts_path,
-                "host_key_fingerprint": system.host_key_fingerprint,
-            }
+            integration = build_integration_payload(system)
 
         try:
             handle = await task_queue.submit(

@@ -20,6 +20,7 @@ from aila.modules.vr.db_models import (
 from aila.modules.vr.workflow.task import run_vr_investigate
 from aila.platform.services.investigation_lifecycle import (
     PauseInvestigationError,
+    PreparedSubmit,
     ReenqueueInvestigationError,
     ResumeInvestigationError,
 )
@@ -114,22 +115,28 @@ async def reenqueue_investigation_atomic(
             "task_queue argument required (auth-bound for safety)",
         )
 
-    async def _submit_one(inv_id: str, branch_id: str | None) -> None:
+    async def _prepare_submit(
+        inv_id: str, branch_id: str | None,
+    ) -> PreparedSubmit:
         del branch_id  # VR submits once; setup owns branch spawn
-        await task_queue.submit(
-            track="vr",
-            fn=run_vr_investigate,
-            kwargs={"investigation_id": inv_id},
-            user_id=user_id,
-            group_id=group_id,
-            team_id=team_id,
-        )
+
+        async def _send() -> None:
+            await task_queue.submit(
+                track="vr",
+                fn=run_vr_investigate,
+                kwargs={"investigation_id": inv_id},
+                user_id=user_id,
+                group_id=group_id,
+                team_id=team_id,
+            )
+
+        return _send
 
     return await _platform_reenqueue(
         investigation_id,
         inv_model=VRInvestigationRecord,
         fn_path_pattern="%run_vr_investigate%",
-        submit_one=_submit_one,
+        prepare_submit=_prepare_submit,
         new_kind=new_kind,
         new_strategy=new_strategy,
     )

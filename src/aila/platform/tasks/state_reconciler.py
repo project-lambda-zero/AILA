@@ -64,10 +64,9 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from redis import asyncio as aioredis
 from sqlalchemy import delete as _delete
@@ -95,6 +94,11 @@ from .constants import (
 )
 from .models import TaskRecord, TaskStatus
 from .queue import requeue_same_job_id
+
+if TYPE_CHECKING:
+    # Annotation-only: investigation_lifecycle loads this package at import
+    # time, so a runtime import here would cycle back through aila.platform.tasks.
+    from aila.platform.services.investigation_lifecycle import PrepareSubmit
 
 # ``get_default_resilience_layer`` is imported lazily inside ``reconcile``
 # because ``aila.platform.services.__init__`` pulls in the audit / journal
@@ -349,8 +353,9 @@ class InvestigationRecoveryBinding:
 
     - ``investigations_table`` is a trusted module constant interpolated
       into SQL (Postgres disallows bind parameters for identifiers).
-    - ``submit_one(inv_id, branch_id | None)`` enqueues exactly one
-      worker task (same contract as
+    - ``prepare_submit(inv_id, branch_id | None)`` builds exactly one
+      worker dispatch before the reset transaction and returns a zero-arg
+      send closure that runs after the commit (same contract as
       :func:`aila.platform.services.investigation_lifecycle.reenqueue_investigation`).
     - ``branch_model`` + ``branch_status_active`` select the reenqueue
       fan-out: ``None`` submits once (VR style); a model submits one task
@@ -378,7 +383,7 @@ class InvestigationRecoveryBinding:
     track: str
     fn_path_pattern: str
     inv_model: type[Any]
-    submit_one: Callable[[str, str | None], Awaitable[None]]
+    prepare_submit: PrepareSubmit
     branch_model: type[Any] | None = None
     branch_status_active: str | None = None
     timestamp_column: str = "updated_at"
@@ -1094,7 +1099,7 @@ class StateReconciler:
                         investigation_id,
                         inv_model=binding.inv_model,
                         fn_path_pattern=binding.fn_path_pattern,
-                        submit_one=binding.submit_one,
+                        prepare_submit=binding.prepare_submit,
                         branch_model=binding.branch_model,
                         branch_status_active=binding.branch_status_active,
                     )

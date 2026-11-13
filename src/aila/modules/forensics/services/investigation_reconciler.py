@@ -5,10 +5,11 @@ Binds :func:`aila.platform.tasks.state_reconciler.sweep_investigations_reconcile
 to forensics's :class:`InvestigationRunRecord`, track, fn-path pattern,
 and the submit primitive -- the same data the stuck healer binds. The
 reconciler's per-task healing applies to every forensics investigate
-task shape; its re-enqueue fallback reuses the healer's panel submitter,
-so a stuck freeflow (no active panel branch) degrades exactly like the
-healer does: the submit raises and the reconciler logs + skips the row,
-leaving operator remediation on the ``/rerun`` endpoint.
+task shape; its re-enqueue fallback uses the shared dispatch builder
+:func:`~aila.modules.forensics.services.recovery_submit.prepare_recovery_submit`.
+A stuck freeflow is re-driven from its project row; a branched
+investigation with no active panel branch is refused and the reconciler
+logs + skips the row.
 
 ``InvestigationRunRecord`` predates the platform ``InvestigationRecordBase``
 and carries no ``updated_at`` column, so this binding claims rows on
@@ -30,6 +31,7 @@ from aila.modules.forensics.db_models import (
     ForensicsInvestigationBranchRecord,
     InvestigationRunRecord,
 )
+from aila.modules.forensics.services.recovery_submit import prepare_recovery_submit
 from aila.platform.tasks.state_reconciler import (
     InvestigationRecoveryBinding,
 )
@@ -52,56 +54,16 @@ _FORENSICS_INVESTIGATE_FN_PATTERN = "%run_forensics%investigat%"
 _FORENSICS_BRANCH_ACTIVE = "active"
 
 
-async def _submit_one(inv_id: str, branch_id: str | None) -> None:
-    """Enqueue one ``run_forensics_panel_investigate`` task for a branch.
-
-    Identical contract to ``forensics/services/stuck_healer._submit_one``:
-    a ``branch_id=None`` call means the row had no active panel branch
-    (the freeflow shape), which this pass does not reconstitute -- raise
-    so the platform sweep's per-row catch logs and moves on. The row
-    stays ``running`` until the operator picks it up via the ``/rerun``
-    endpoint.
-
-    ``bypass_dedup=True`` mirrors the healer submitter so the fresh
-    submit never dedups against the stale rows the reconciler's
-    re-enqueue fallback just cancelled.
-
-    Deferred imports because this module sits on the worker boot path.
-    """
-    if branch_id is None:
-        raise RuntimeError(
-            f"forensics investigation_reconciler: investigation {inv_id!r} "
-            "has no active panel branch; freeflow re-enqueue is not "
-            "automated here -- operator can call the /rerun endpoint "
-            "instead."
-        )
-    from aila.modules.forensics._task_queue import default_task_queue
-    from aila.modules.forensics.workflow.panel.task import (
-        run_forensics_panel_investigate,
-    )
-
-    task_queue = default_task_queue()
-    await task_queue.submit(
-        track="forensics",
-        fn=run_forensics_panel_investigate,
-        kwargs={"investigation_id": inv_id, "branch_id": branch_id},
-        user_id="system",
-        group_id="forensics_investigation_reconciler",
-        team_id=None,
-        bypass_dedup=True,
-    )
-
-
 _FORENSICS_RECONCILE_BINDING = InvestigationRecoveryBinding(
     module_id="forensics",
     investigations_table="forensics_investigations",
     track="forensics",
     fn_path_pattern=_FORENSICS_INVESTIGATE_FN_PATTERN,
     inv_model=InvestigationRunRecord,
-    submit_one=_submit_one,
-    # Fan out per active panel branch; falls back to the inv-level submit
-    # when none is active (which the submitter above refuses for
-    # freeflow).
+    prepare_submit=prepare_recovery_submit,
+    # Fan out per active panel branch. With none active, the platform sends one
+    # inv-level dispatch: prepare_recovery_submit re-drives a branchless row as
+    # freeflow and refuses a row that has branch rows.
     branch_model=ForensicsInvestigationBranchRecord,
     branch_status_active=_FORENSICS_BRANCH_ACTIVE,
     # ``InvestigationRunRecord`` has no ``updated_at`` column; claim on

@@ -79,6 +79,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from aila.platform.config_base import ModuleConfigReader
 from aila.platform.services.investigation_lifecycle import (
+    PrepareSubmit,
     ReenqueueInvestigationError,
     reenqueue_investigation,
 )
@@ -105,7 +106,6 @@ __all__ = [
     "StuckBinding",
     "StuckHealSummary",
     "SubmitFn",
-    "SubmitOneFn",
     "UnifiedRecoveryResult",
 ]
 
@@ -171,11 +171,6 @@ SubmitFn = Callable[
     Awaitable[None],
 ]
 
-# STUCK_HEAL atomic single-submit primitive matching
-# ``reenqueue_investigation``'s ``submit_one`` contract. Args:
-# (inv_id, branch_id_or_None). Returns None.
-SubmitOneFn = Callable[[str, str | None], Awaitable[None]]
-
 
 # ---------------------------------------------------------------------------
 # Strategy classifier
@@ -240,7 +235,7 @@ class StuckBinding:
     running_status_values: tuple[str, ...]
     fn_path_pattern: str
     module_id: str
-    submit_one: SubmitOneFn
+    prepare_submit: PrepareSubmit
     branch_model: type[Any] | None = None
     branch_status_active: str | None = None
     inv_timestamp_column: str = "updated_at"
@@ -651,7 +646,7 @@ async def _execute_stuck(
             inv_id,
             inv_model=binding.inv_model,
             fn_path_pattern=binding.fn_path_pattern,
-            submit_one=binding.submit_one,
+            prepare_submit=binding.prepare_submit,
             branch_model=binding.branch_model,
             branch_status_active=binding.branch_status_active,
         )
