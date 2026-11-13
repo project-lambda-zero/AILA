@@ -77,6 +77,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.enums import InvestigationStatus
+from aila.platform.workflows.run_lifecycle import record_run_outcome
 from aila.platform.workflows.types import (
     RESERVED_CANCELLED,
     RESERVED_FAILED,
@@ -1158,7 +1159,9 @@ class StateReconciler:
         Selects the investigation's cursor rows whose ``current_state``
         is a live mid-pipeline position (not in :data:`_UNTOUCHABLE_CURSOR_STATES`,
         so engine terminals and the operator ``__paused__`` sentinel are
-        left alone) and UPDATEs them in a single idempotent statement.
+        left alone) and UPDATEs them in a single idempotent statement,
+        closing each affected ``WorkflowRunRecord`` with the mapped status in
+        the same transaction.
         Emits one aggregated recovery event so operators see the pass in
         the ledger. A concurrent DELETE / independent terminal write
         races to a rowcount-0 no-op; the caller path stays idempotent.
@@ -1180,8 +1183,14 @@ class StateReconciler:
                         current_state=target_state,
                         updated_at=utc_now(),
                     )
+                    .returning(WorkflowStateCursor.run_id)
                     .execution_options(synchronize_session=False)
                 )
+                terminalized_run_ids = list(update_result.scalars().all())
+                # Close each run row in the same transaction as its cursor;
+                # an operator-terminal investigation has no handoff to follow.
+                for run_id in terminalized_run_ids:
+                    await record_run_outcome(session, run_id, target_state)
                 await session.commit()
         except SQLAlchemyError as exc:
             _log.warning(
@@ -1194,7 +1203,7 @@ class StateReconciler:
                 healed=False,
                 refusal_reason="read_failed",
             )
-        terminalized = int(update_result.rowcount or 0)
+        terminalized = len(terminalized_run_ids)
         if terminalized == 0:
             # No stranded cursor for this operator-terminal investigation
             # -- nothing to heal. Return the historical refusal so the

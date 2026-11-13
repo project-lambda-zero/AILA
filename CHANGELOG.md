@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.77] - 2026-11-12 -- Reconciler closes run records with the cursors it terminalizes
+
+### Fixed
+
+- When the state reconciler drives the stranded workflow cursors of a completed, failed, or abandoned investigation to a terminal state, it now also closes each matching workflow run record with the mapped status and a completion time in the same transaction. Those runs previously stayed listed as running with no completion time. A repeated reconcile pass leaves them unchanged.
+
 ## [0.6.76] - 2026-11-12 -- artifact_query is a valid agent action; every forensics tool has a key
 
 ### Fixed

@@ -54,7 +54,7 @@ from .types import (
     WorkflowDefinition,
 )
 
-__all__ = ["finalize_run", "reopen_run"]
+__all__ = ["finalize_run", "record_run_outcome", "reopen_run"]
 
 _RUN_STATUS_BY_TERMINAL: Final[dict[str, str]] = {
     RESERVED_SUCCEEDED: "completed",
@@ -81,14 +81,30 @@ async def finalize_run(
 ) -> None:
     """Record the outcome ``terminal_cursor`` maps to on the run row, once.
 
-    No-op for a cursor with no status mapping (a custom terminal state) and for
-    ``__succeeded__`` of a dispatcher definition, which hands off to an inner
-    definition instead of ending the run. Otherwise the row moves to the mapped
-    status with ``completed_at`` set, unless it already holds a terminal status.
-    Does not commit.
+    No-op for ``__succeeded__`` of a dispatcher definition, which hands off to
+    an inner definition instead of ending the run; otherwise
+    :func:`record_run_outcome`. Does not commit.
+    """
+    if definition.is_dispatcher and terminal_cursor == RESERVED_SUCCEEDED:
+        return
+    await record_run_outcome(session, run_id, terminal_cursor)
+
+
+async def record_run_outcome(
+    session: AsyncSession,
+    run_id: str,
+    terminal_cursor: str,
+) -> None:
+    """Move the run row to the status ``terminal_cursor`` maps to, once.
+
+    For callers that end a run outright, with no handoff to follow (the engine
+    goes through :func:`finalize_run`; the state reconciler calls this when it
+    terminalizes the cursors of an operator-terminal investigation). No-op for
+    a cursor with no status mapping (a custom terminal state) and for a row
+    that already holds a terminal status. Does not commit.
     """
     status = _RUN_STATUS_BY_TERMINAL.get(terminal_cursor)
-    if status is None or (definition.is_dispatcher and terminal_cursor == RESERVED_SUCCEEDED):
+    if status is None:
         return
     await session.execute(
         sa.update(_RUNS)
