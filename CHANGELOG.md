@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.68] - 2026-11-12 -- Leads tab requests stay within the route limit
+
+### Fixed
+
+- The forensics leads tab loads leads again. It defaulted to a limit of 200 and offered 500 and 1000, while the leads route accepts at most 100, so the default load failed validation and the tab showed a load error. The tab now defaults to 100 and offers 25, 50, and 100.
+
 ## [0.6.67] - 2026-11-12 -- apiFetch resolves 204 and empty responses
 
 ### Fixed
