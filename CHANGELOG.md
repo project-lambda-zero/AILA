@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.115] - 2026-11-14 -- Journal-only role of module.workflow.completed documented
+
+### Changed
+
+- Docstrings, publish-site comments, and the platform internals doc now describe `module.workflow.completed` as a journal-only record published by the forensics write-up and vulnerability reporting states, with no subscriber acting on it (#524).
+
 ## [0.6.114] - 2026-11-14 -- Cancelled SSH commands close their channel
 
 ### Fixed

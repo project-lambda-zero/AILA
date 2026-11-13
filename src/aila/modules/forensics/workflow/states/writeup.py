@@ -138,11 +138,12 @@ async def state_writeup(
         {"stage": "writeup_persisted", "writeup_id": writeup_id},
     )
 
-    # Domain-event emission for the investigation workflow terminal
-    # state (RFC-05 Phase 3). Fired after the write-up row is
-    # persisted; the following ``response_emit`` state is a terminal
-    # gate only. Guarded so a payload-construction fault cannot break
-    # the write-up handoff.
+    # Journal record of the finished write-up (RFC-05 Phase 3):
+    # ``module.workflow.completed`` is persisted to the platform journal
+    # and relayed across processes, and no subscriber acts on it.
+    # Project and investigation status changes are what drive the UI.
+    # Guarded so a payload-construction fault cannot break the write-up
+    # handoff.
     try:
         run_id = str(getattr(services, "run_id", "") or "")
         publish(
