@@ -389,6 +389,8 @@ intake → collection → deep_analysis → promotion → resolution → writeup
 | **Write-Up**      | LLM generates a 15-section DFIR / malware-analysis report with inline `artifact_id` citations                                                                                                                                                                                                                                |
 | **Response Emit** | Assembles the terminal `PlatformResponse` payload                                                                                                                                                                                                                                                                            |
 
+Every stage declares `on_failure="analysis_failed"`. When a stage raises after its retries, times out, or fails output validation, the run moves to `analysis_failed`, which sets a still-active project (created, ready, analyzing) to `failed` with a `failure_reason` naming the failed stage and error class, then ends at `__failed__`. A failure status intake already wrote, with its own reason, is kept. `FORENSICS_RAW_DIRECTORY_V1` uses the same failure state for its intake.
+
 ### `FORENSICS_FREEFLOW_V1`
 
 ```

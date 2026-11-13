@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.95] - 2026-11-12 -- Forensics projects end failed, with a reason, when analysis fails after intake
+
+### Fixed
+
+- A forensics full-analysis run that fails after intake (a stage raising after its retries, timing out, or failing output validation) now sets the project to failed with a failure reason naming the stage and error class. Previously the project stayed in analyzing. Successful runs still end completed, and an intake failure keeps the reason intake recorded.
+
+### Changed
+
+- Every forensics full-analysis and raw-directory state routes failures to a new `analysis_failed` state that ends the run at `__failed__` instead of `__crashed__`.
+
 ## [0.6.94] - 2026-11-12 -- Forensics registry analysis buckets are filled from the artifact types the disk collector emits
 
 ### Fixed
