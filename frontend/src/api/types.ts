@@ -13,6 +13,17 @@ export interface LoginResponse {
   user?: User;
 }
 
+/** Public OIDC provider entry offered on the login page (no secrets). */
+export interface OidcProvider {
+  id: string;
+  name: string;
+  provider_type: string;
+}
+
+export interface OidcAuthorizeResponse {
+  authorization_url: string;
+}
+
 export interface Investigation {
   id: string;
   title: string;

@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.116] - 2026-11-14 -- OIDC sign-in from the console, refused for team-less accounts
+
+### Security
+
+- OIDC sign-in is refused with 403 when the account would have no team: a provider without a default team no longer provisions accounts, and an existing team-less OIDC account must be assigned a team first. OIDC-issued tokens are always team-scoped (#523).
+
+### Added
+
+- The sign-in page offers one button per enabled identity provider, and the console's return page completes OIDC sign-in and shows refusals and identity provider errors on the sign-in page (#523).
+
 ## [0.6.115] - 2026-11-14 -- Journal-only role of module.workflow.completed documented
 
 ### Changed
