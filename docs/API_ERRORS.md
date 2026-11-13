@@ -139,7 +139,7 @@ route that raises `HTTPException` directly.
 | Endpoint Category | Required Role |
 |-------------------|---------------|
 | `POST /auth/keys`, `DELETE /auth/keys/{id}` | admin |
-| `PUT /config/{ns}/{key}` | admin |
+| `PUT /config/{ns}/{key}`, task queue depth, drain, and requeue | admin with no team scope (god-tier) |
 | `POST /analyze`, `POST /task` | operator |
 | All GET endpoints, `POST /sessions` | reader |
 

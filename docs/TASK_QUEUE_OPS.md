@@ -379,7 +379,7 @@ All task queue parameters are configurable via ConfigRegistry (namespace: `platf
 
 ### How to change
 
-Via API (requires admin):
+Via API (requires a god-tier admin, i.e. `admin` role with no team scope):
 
 ```
 PUT /config/platform/heartbeat_interval_s

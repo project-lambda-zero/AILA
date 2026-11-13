@@ -154,6 +154,25 @@ async def list_tasks(
 # ---- Admin queue management helpers (OPS-04/OPS-05) ----
 
 
+async def _require_platform_admin(
+    ctx: AuthContext = Depends(require_user_or_api_key),
+) -> AuthContext:
+    """#433: queue depth, drain, and requeue act on the task queue every team
+    shares, so a team-scoped admin (team_id set) is refused; only a god-tier
+    admin (team_id=None) may run them, matching admin_dead_letter."""
+    if ctx.role != ROLE_ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Requires '{ROLE_ADMIN}' role; current role: '{ctx.role}'",
+        )
+    if ctx.team_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Task queue administration is restricted to god-tier administrators.",
+        )
+    return ctx
+
+
 def _get_task_queue(request: Request):  # type: ignore[return]
     """Get the platform TaskQueue from app state.
 
@@ -184,9 +203,9 @@ def _get_task_queue(request: Request):  # type: ignore[return]
 )
 async def get_queue_depth(
     request: Request,
-    auth: AuthContext = Depends(require_role(ROLE_ADMIN)),
+    auth: AuthContext = Depends(_require_platform_admin),
 ) -> DataEnvelope[dict[str, int]]:
-    """Return task counts grouped by status. Admin only."""
+    """Return task counts grouped by status. God-tier admin only."""
     queue = _get_task_queue(request)
     depth = await queue.depth()
     return DataEnvelope(data=depth)
@@ -200,9 +219,9 @@ async def get_queue_depth(
 )
 async def drain_queue(
     request: Request,
-    auth: AuthContext = Depends(require_role(ROLE_ADMIN)),
+    auth: AuthContext = Depends(_require_platform_admin),
 ) -> DataEnvelope[DrainQueueResponse]:
-    """Pause new task submissions and return pending task count. Admin only."""
+    """Pause new task submissions and return pending task count. God-tier admin only."""
     queue = _get_task_queue(request)
     pending = await queue.drain()
     return DataEnvelope(data=DrainQueueResponse(pending=pending, draining=True))
@@ -216,10 +235,10 @@ async def drain_queue(
 )
 async def requeue_failed_tasks(
     request: Request,
-    auth: AuthContext = Depends(require_role(ROLE_ADMIN)),
+    auth: AuthContext = Depends(_require_platform_admin),
     max_age_hours: int = Query(default=24, ge=1, le=168),
 ) -> DataEnvelope[dict[str, int]]:
-    """Requeue tasks that failed within max_age_hours. Admin only."""
+    """Requeue tasks that failed within max_age_hours. God-tier admin only."""
     queue = _get_task_queue(request)
     count = await queue.requeue_failed(max_age_hours=max_age_hours)
     return DataEnvelope(data={"requeued": count})

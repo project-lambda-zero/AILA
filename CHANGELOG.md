@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.104] - 2026-11-12 -- Team-scoped admins can no longer change deployment config or operate the shared task queue
+
+### Fixed
+
+- Config value writes now require a god-tier admin (admin role with no team scope). Config entries carry no team, so a write changes behavior for every team; a team-scoped admin now receives 403 instead of writing platform or module settings.
+- Task queue depth, drain, and requeue of failed tasks now require a god-tier admin. These act on the queue every team shares, so a team-scoped admin now receives 403.
+
 ## [0.6.103] - 2026-11-12 -- The console renews an expired access token instead of signing the user out
 
 ### Fixed

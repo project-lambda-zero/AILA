@@ -1,7 +1,9 @@
 """Config router for AILA REST API.
 
 Provides read/write access to module configuration via ConfigRegistry.
-PUT /config/{namespace}/{key} requires admin role (D-11).
+PUT /config/{namespace}/{key} requires a god-tier admin (admin role, no team
+scope): config entries carry no team column, so every write applies to every
+team (#433).
 
 Note: ConfigRegistry does not expose a list() method; we query ConfigEntryRecord
 directly via session_scope for list endpoints, and use registry.set() only for
@@ -14,7 +16,7 @@ import math
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlmodel import select
 
-from aila.api.auth import AuthContext, require_role, require_user_or_api_key
+from aila.api.auth import AuthContext, require_user_or_api_key
 from aila.api.constants import (
     AUDIT_ACTION_CONFIG_UPDATE,
     AUDIT_STAGE_CONFIG,
@@ -146,7 +148,8 @@ async def list_namespace_config(
 async def _require_platform_admin(
     ctx: AuthContext = Depends(require_user_or_api_key),
 ) -> AuthContext:
-    """Platform onboarding spans every team; god-tier administrators only."""
+    """Config entries and the onboarding schema are deployment-wide (no team
+    column), so a team-scoped admin is refused; god-tier administrators only."""
     if ctx.role != ROLE_ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -155,7 +158,7 @@ async def _require_platform_admin(
     if ctx.team_id is not None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Platform onboarding is restricted to god-tier administrators.",
+            detail="Platform configuration is restricted to god-tier administrators.",
         )
     return ctx
 
@@ -215,7 +218,7 @@ async def update_config_value(
     key: str,
     body: ConfigUpdateRequest,
     request: Request,
-    admin: AuthContext = Depends(require_role(ROLE_ADMIN)),
+    admin: AuthContext = Depends(_require_platform_admin),
 ) -> ConfigEntryResponse:
     """Write through ConfigRegistry to ensure type validation on the new value."""
     registry = get_config_registry(request)

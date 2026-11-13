@@ -142,7 +142,9 @@ Content-Type: application/json
 {"value": "60"}
 ```
 
-Requires `admin` role. The value is validated against the registered schema field type.
+Requires a god-tier admin (`admin` role with no team scope): config entries carry no team, so every
+write applies to all teams and a team-scoped admin receives 403. The value is validated against the
+registered schema field type.
 Invalid values return 422. Unknown namespace or key returns 422 (ValueError from
 `ConfigRegistry.set()`).
 
