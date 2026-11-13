@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.110] - 2026-11-12 -- Investigation control actions write audit events in every investigation module
+
+### Added
+
+- Pausing, resuming, or cancelling an investigation, pausing or resuming a branch, resuming a target analysis, and deleting or archiving an investigation, project, or workspace in the vr, malware, and forensics modules now each write one audit event. The event uses the module id as its stage, names the operator and team, and targets `<kind>:<id>`. It commits in the same transaction as the state change. A refused request or a no-op (for example pausing an already paused investigation) writes none.
+- The audit trail section of the security model lists the new control actions.
+
+### Changed
+
+- The platform investigation lifecycle and branch pool take the operator as an `AuditActor` and record the action inside their own transaction. Resume and branch pause or resume require it; pause accepts none for automated pauses, which write no operator audit event.
+
 ## [0.6.109] - 2026-11-12 -- Finding transitions require a finding the caller's team can see
 
 ### Fixed

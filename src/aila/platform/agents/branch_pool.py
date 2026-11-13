@@ -57,6 +57,7 @@ from aila.platform.contracts.reasoning import (
     RejectedHypothesis,
     ResolvedHypothesis,
 )
+from aila.platform.services.audit import AuditActor, record_audit_event
 from aila.platform.services.ledger import LedgerService
 from aila.platform.uow import UnitOfWork
 
@@ -453,9 +454,14 @@ class BranchPool:
         self,
         branch_id: str,
         *,
+        actor: AuditActor,
         reason: str = "",
     ) -> BranchOpResult:
-        """Temporarily stop driving the branch."""
+        """Temporarily stop driving the branch.
+
+        The ``branch_paused`` audit row is added to the same session as
+        the status flip and committed with it.
+        """
         async with UnitOfWork() as uow:
             # fix §64 -- refuse to pause under a terminal investigation.
             # Without this guard an operator can pause a branch under
@@ -480,9 +486,26 @@ class BranchPool:
                 raise BranchManagerError(
                     f"cannot pause branch {branch_id} in status {branch.status!r} -- must be ACTIVE",
                 )
+            prior_status = branch.status
             # fix §21 -- status write routed through chokepoint.
             self._emit_branch_status_event(
                 uow, branch, BranchStatus.PAUSED, reason=reason,
+            )
+            record_audit_event(
+                uow.session,
+                run_id=self.investigation_id,
+                stage=actor.stage,
+                action="branch_paused",
+                target=f"branch:{branch_id}",
+                user_id=actor.user_id,
+                team_id=actor.team_id,
+                details={
+                    "investigation_id": self.investigation_id,
+                    "branch_id": branch_id,
+                    "prior_status": prior_status,
+                    "new_status": BranchStatus.PAUSED.value,
+                    "reason": reason,
+                },
             )
             await uow.commit()
 
@@ -497,9 +520,13 @@ class BranchPool:
         self,
         branch_id: str,
         *,
+        actor: AuditActor,
         reason: str = "",
     ) -> BranchOpResult:
         """Re-activate a PAUSED branch.
+
+        The ``branch_resumed`` audit row is added to the same session as
+        the status flip and committed with it.
 
         fix §39 -- DESIGN DECISION: resume() flips the branch back to
         ACTIVE but does NOT enqueue a fresh ARQ task. The Phase B
@@ -526,9 +553,26 @@ class BranchPool:
                 raise BranchManagerError(
                     f"cannot resume branch {branch_id} in status {branch.status!r} -- must be PAUSED",
                 )
+            prior_status = branch.status
             # fix §21 -- status write routed through chokepoint.
             self._emit_branch_status_event(
                 uow, branch, BranchStatus.ACTIVE, reason=reason,
+            )
+            record_audit_event(
+                uow.session,
+                run_id=self.investigation_id,
+                stage=actor.stage,
+                action="branch_resumed",
+                target=f"branch:{branch_id}",
+                user_id=actor.user_id,
+                team_id=actor.team_id,
+                details={
+                    "investigation_id": self.investigation_id,
+                    "branch_id": branch_id,
+                    "prior_status": prior_status,
+                    "new_status": BranchStatus.ACTIVE.value,
+                    "reason": reason,
+                },
             )
             await uow.commit()
 
