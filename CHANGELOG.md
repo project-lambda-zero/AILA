@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.88] - 2026-11-12 -- one active forensics full-analysis task per project
+
+### Fixed
+
+- `POST /forensics/projects/{project_id}/full-analysis` no longer enqueues a second analysis pipeline when one is already active for the project (for example one auto-enqueued by a readiness check). It returns the active task id with status `already_queued`, matching the readiness check behavior (#432).
+- The full-analysis trigger submits the same task arguments as the readiness auto-enqueue, so concurrent submits for one project share a queue dedupe key (#432).
+
 ## [0.6.87] - 2026-11-12 -- redispatched stopped forensics investigations stay stopped
 
 ### Fixed
