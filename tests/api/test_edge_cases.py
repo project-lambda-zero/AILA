@@ -345,19 +345,6 @@ async def test_create_system_very_long_name(
 
 
 @pytest.mark.asyncio
-async def test_task_submit_empty_query(
-    async_client: AsyncClient, admin_token: str
-) -> None:
-    """POST /task with empty query_text returns 422 (min_length=1 on TaskCreateRequest)."""
-    resp = await async_client.post(
-        "/task",
-        json={"query_text": ""},
-        headers={"Authorization": f"Bearer {admin_token}"},
-    )
-    assert resp.status_code == 422
-
-
-@pytest.mark.asyncio
 async def test_analyze_empty_query(
     async_client: AsyncClient, admin_token: str
 ) -> None:

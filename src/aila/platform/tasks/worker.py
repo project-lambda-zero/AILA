@@ -662,6 +662,8 @@ def _bootstrap_platform_tasks() -> None:
         "aila.platform.tasks.discovery",
         # Issue #158: nightly + on-demand trajectory -> SFT/DPO corpus export.
         "aila.platform.tasks.corpus_export",
+        # Scheduled automation actions run through this one dispatcher.
+        "aila.platform.automation.dispatch",
     ):
         try:
             __import__(platform_module)

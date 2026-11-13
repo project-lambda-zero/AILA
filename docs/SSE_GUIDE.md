@@ -126,11 +126,11 @@ Identical event format and behavior to scan progress. Uses the same `ProgressStr
 ### curl Example
 
 ```bash
-# Submit a freeform task
-TASK_ID=$(curl -s -X POST http://localhost:8000/task \
+# Submit a scan
+TASK_ID=$(curl -s -X POST http://localhost:8000/analyze \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"query_text": "explain top CVEs"}' | jq -r .run_id)
+  -d '{"query_text": "scan web01 for vulnerabilities", "targets": ["web01"]}' | jq -r .run_id)
 
 # Stream task progress
 curl -N -H "Authorization: Bearer $TOKEN" \

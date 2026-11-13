@@ -33,7 +33,6 @@ from aila.api.constants import (
     AUDIT_ACTION_SYSTEM_UPDATE,
     AUDIT_ACTION_TASK_CANCEL,
     AUDIT_ACTION_TASK_RESUME,
-    AUDIT_ACTION_TASK_SUBMIT,
     AUDIT_ACTION_TOKEN_ISSUE,
     AUDIT_ACTION_TOKEN_REFRESH,
     AUDIT_ACTION_TOOL_INVOKE,
@@ -101,12 +100,6 @@ async def audit_client(test_db, admin_key_record) -> AsyncClient:
     stub_platform = MagicMock()
     stub_platform.runtime = stub_runtime
     stub_platform.handle = AsyncMock(return_value=MagicMock(summary="test response", run_id=None))
-
-    # Mock task_queue.submit for POST /task
-    mock_handle = MagicMock()
-    mock_handle.task_id = "task-audit-test-001"
-    stub_platform.task_queue = MagicMock()
-    stub_platform.task_queue.submit = MagicMock(return_value=mock_handle)
 
     test_app = create_app()
     test_app.state.platform = stub_platform
@@ -323,23 +316,6 @@ async def test_system_delete_produces_audit(audit_client, operator_token, operat
 
 
 # ─── Task endpoints ─────────────────────────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_task_submit_produces_audit(audit_client, operator_token, operator_key_record):
-    """POST /task records a task_submit audit event."""
-    resp = await audit_client.post(
-        "/task",
-        json={"query_text": "test audit query"},
-        headers=_auth_header(operator_token),
-    )
-    assert resp.status_code == 202
-
-    events = _get_audit_events(AUDIT_ACTION_TASK_SUBMIT)
-    assert len(events) >= 1
-    event = events[-1]
-    assert event["user_id"] == operator_key_record.id
-    assert event["stage"] == "task"
 
 
 @pytest.mark.asyncio
@@ -622,7 +598,6 @@ async def test_all_audit_actions_have_constants():
         AUDIT_ACTION_SYSTEM_DELETE,
         AUDIT_ACTION_TASK_CANCEL,
         AUDIT_ACTION_TASK_RESUME,
-        AUDIT_ACTION_TASK_SUBMIT,
         AUDIT_ACTION_TOOL_INVOKE,
         AUDIT_ACTION_FINDING_BULK_UPDATE,
     ]

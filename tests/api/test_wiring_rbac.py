@@ -31,7 +31,6 @@ RBAC_MATRIX: list[tuple[str, str, dict | None, str, str]] = [
 
     # ── Operator+ endpoints ─────────────────────────────────────────────────
     ("POST", "/analyze", {"query_text": "scan", "targets": ["x"]}, "operator", "submit scan"),
-    ("POST", "/task", {"query_text": "test"}, "operator", "submit freeform task"),
     ("POST", "/systems", {"name": "rbac-test", "host": "1.2.3.4", "username": "u", "port": 22, "distro": "ubuntu"}, "operator", "register system"),
     ("PUT", "/systems/999", {"name": "updated"}, "operator", "update system"),
     ("DELETE", "/systems/999", None, "operator", "delete system"),
