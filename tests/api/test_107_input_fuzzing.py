@@ -160,18 +160,6 @@ async def test_empty_body_analyze_422(
     assert resp.status_code == 422, f"Expected 422, got {resp.status_code}: {resp.text}"
 
 
-async def test_empty_body_task_create_422(
-    async_client: AsyncClient, admin_token: str,
-) -> None:
-    """POST /task with {} must return 422 -- query_text is required."""
-    resp = await async_client.post(
-        "/task",
-        json={},
-        headers={"Authorization": f"Bearer {admin_token}"},
-    )
-    assert resp.status_code == 422, f"Expected 422, got {resp.status_code}: {resp.text}"
-
-
 async def test_empty_body_findings_bulk_422(
     async_client: AsyncClient, operator_token: str,
 ) -> None:
@@ -273,23 +261,6 @@ async def test_unicode_system_fields(
     assert resp.status_code == 201, f"Expected 201 for unicode system, got {resp.status_code}"
     data = resp.json()
     assert data["description"] == payload, f"Description round-trip failed for {label}"
-
-
-@pytest.mark.parametrize("label,payload", UNICODE_PAYLOADS, ids=[p[0] for p in UNICODE_PAYLOADS])
-async def test_unicode_task_query(
-    async_client: AsyncClient, admin_token: str,
-    label: str, payload: str,
-) -> None:
-    """POST /task with unicode query_text -- must not 500.
-
-    Expected: 503 (platform not initialized in test) or 422 -- never 500.
-    """
-    resp = await async_client.post(
-        "/task",
-        json={"query_text": payload},
-        headers={"Authorization": f"Bearer {admin_token}"},
-    )
-    assert resp.status_code != 500, f"Got 500 with {label} unicode in task query: {resp.text}"
 
 
 @pytest.mark.parametrize("label,payload", UNICODE_PAYLOADS, ids=[p[0] for p in UNICODE_PAYLOADS])

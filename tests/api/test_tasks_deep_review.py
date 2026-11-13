@@ -389,50 +389,6 @@ async def test_sse_inaccessible_task_returns_404(
 
 
 # ===========================================================================
-# Group 6: Submit endpoint (POST /task)
-# ===========================================================================
-
-
-@pytest.mark.asyncio
-async def test_submit_task_without_platform_returns_503(
-    async_client: AsyncClient,
-    operator_token: str,
-    operator_key_record,
-    test_db,
-) -> None:
-    """FILE-08: submit task without platform returns 503.
-
-    async_client sets platform=None, which is the trigger for the 503 path.
-    """
-    response = await async_client.post(
-        "/task",
-        json={"query_text": "scan web01"},
-        headers={"Authorization": f"Bearer {operator_token}"},
-    )
-    assert response.status_code == 503, (
-        "Submit must return 503 when platform is not initialized"
-    )
-
-
-@pytest.mark.asyncio
-async def test_submit_task_reader_gets_403(
-    async_client: AsyncClient,
-    reader_token: str,
-    reader_key_record,
-    test_db,
-) -> None:
-    """FILE-08: submit task requires operator+ role -- reader gets 403."""
-    response = await async_client.post(
-        "/task",
-        json={"query_text": "scan web01"},
-        headers={"Authorization": f"Bearer {reader_token}"},
-    )
-    assert response.status_code == 403, (
-        "Reader must get 403 on POST /task (requires operator+ role)"
-    )
-
-
-# ===========================================================================
 # Group 7: Response shape
 # ===========================================================================
 

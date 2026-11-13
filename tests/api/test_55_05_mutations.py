@@ -1,8 +1,7 @@
-"""Tests for Phase 55 Plan 05: Bulk findings update, POST /task, explain endpoint.
+"""Tests for Phase 55 Plan 05: Bulk findings update and explain endpoint.
 
 Covers:
   API-16: PATCH /vulnerability/findings/bulk atomic status update
-  TASK-01: POST /task freeform query -> 202 with task_id
   API-10: GET /vulnerability/reports/{run_id}/explain cache-first logic
 """
 from __future__ import annotations
@@ -69,32 +68,6 @@ async def test_bulk_update_invalid_status(
         headers={"Authorization": f"Bearer {operator_token}"},
     )
     assert response.status_code == 422
-
-
-@pytest.mark.asyncio
-async def test_post_task_no_platform(
-    async_client: AsyncClient, operator_token: str
-) -> None:
-    """POST /task with platform=None -> 503."""
-    response = await async_client.post(
-        "/task",
-        json={"query_text": "list all critical CVEs"},
-        headers={"Authorization": f"Bearer {operator_token}"},
-    )
-    assert response.status_code == 503
-
-
-@pytest.mark.asyncio
-async def test_post_task_reader_forbidden(
-    async_client: AsyncClient, reader_token: str
-) -> None:
-    """POST /task with reader token -> 403."""
-    response = await async_client.post(
-        "/task",
-        json={"query_text": "list all critical CVEs"},
-        headers={"Authorization": f"Bearer {reader_token}"},
-    )
-    assert response.status_code == 403
 
 
 @pytest.mark.asyncio

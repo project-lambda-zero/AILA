@@ -370,7 +370,7 @@ async def test_tick_disables_schedule_with_unparseable_cron() -> None:
 
     # The good schedule fired; the bad one never reached submit.
     assert submitted == 1
-    call_targets = [c["kwargs"]["target_name"] for c in queue.calls]
+    call_targets = [c["kwargs"]["action_kwargs"]["target_name"] for c in queue.calls]
     assert call_targets == ["tests.target"], (
         f"only the good schedule should reach submit(), got {call_targets!r}"
     )
@@ -576,7 +576,7 @@ async def test_tick_respects_cron_timezone_end_to_end(
 
     # Exactly one schedule (the UTC one) fired.
     assert submitted == 1
-    call_targets = [c["kwargs"]["target_name"] for c in queue.calls]
+    call_targets = [c["kwargs"]["action_kwargs"]["target_name"] for c in queue.calls]
     assert call_targets == ["utc-target"], (
         f"only utc-target should have fired, got {call_targets!r} -- "
         "46-2 tz interpretation is broken if ny-target also fires here"

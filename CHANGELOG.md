@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.108] - 2026-11-12 -- Scheduled platform automation runs on the default worker; the broken freeform task route is removed
+
+### Fixed
+
+- Scheduled platform automation actions (health check, tool storage prune, calibration sweeps, memory consolidation sweeps, retrieval eval, shadow report, routing retune) now run. A due schedule is submitted as one registered worker task on the default queue, which the default worker set consumes; the worker resolves the action id and runs its handler. Previously they were queued on a platform queue no worker consumed, as functions the worker did not register.
+
+### Removed
+
+- The freeform task submit route at /task. It failed on every call before anything was queued; scan submission at /analyze covers the same query path through a registered worker task.
+
 ## [0.6.107] - 2026-11-12 -- Module config namespaces no longer offer an LLM model key that nothing read
 
 ### Removed

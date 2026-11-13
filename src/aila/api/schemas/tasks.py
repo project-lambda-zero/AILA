@@ -22,7 +22,6 @@ __all__ = [
     "ScanSubmissionRequest",
     "ScanStatusResponse",
     "TaskActionResponse",
-    "TaskCreateRequest",
     "TaskListResponse",
     "TaskResponse",
     "TaskSubmitResponse",
@@ -74,14 +73,8 @@ class TaskListResponse(APIModel):
     total: int = Field(description="Total number of matching tasks")
 
 
-class TaskCreateRequest(APIModel):
-    """Request body for POST /task freeform query (D-09, TASK-01)."""
-
-    query_text: str = Field(..., min_length=1, description="Freeform query text for AILAPlatform.handle()")
-
-
 class TaskSubmitResponse(APIModel):
-    """Response for POST /task and POST /analyze (ASYNC-01, TASK-01)."""
+    """Response for POST /analyze (ASYNC-01, TASK-01)."""
 
     run_id: str
     status: Literal["submitted"] = "submitted"

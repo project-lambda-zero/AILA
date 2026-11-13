@@ -140,7 +140,7 @@ route that raises `HTTPException` directly.
 |-------------------|---------------|
 | `POST /auth/keys`, `DELETE /auth/keys/{id}` | admin |
 | `PUT /config/{ns}/{key}`, task queue depth, drain, and requeue | admin with no team scope (god-tier) |
-| `POST /analyze`, `POST /task` | operator |
+| `POST /analyze` | operator |
 | All GET endpoints, `POST /sessions` | reader |
 
 ---
@@ -245,7 +245,7 @@ route's OpenAPI documentation for the exact shape it returns.
 
 ### Platform not initialized
 
-- **When:** `POST /analyze`, `POST /task`, or session message endpoints called before platform startup completes
+- **When:** `POST /analyze` or session message endpoints called before platform startup completes
 - **Response:** `{"detail": "Platform not initialized -- check server logs for startup errors and restart the API server"}`
 - **Fix:** Wait for startup to complete; check server logs for initialization errors
 
@@ -289,7 +289,7 @@ data: {"message": "Redis not configured \u2014 no progress stream available"}
 |--------|---------|---------------|
 | 200 | Success | GET, PUT, POST (sync responses) |
 | 201 | Created | POST /sessions, POST /auth/keys |
-| 202 | Accepted | POST /analyze, POST /task (async) |
+| 202 | Accepted | POST /analyze (async) |
 | 401 | Unauthorized | Missing/invalid/expired/revoked token |
 | 403 | Forbidden | Insufficient role for endpoint |
 | 404 | Not Found | Resource missing or not accessible |

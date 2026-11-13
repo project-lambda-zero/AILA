@@ -9,7 +9,6 @@ Exposes the task queue lifecycle surface:
 - GET  /tasks/queue-depth        -- admin: task counts by status (OPS-04)
 - POST /tasks/drain              -- admin: pause new submissions (OPS-05)
 - POST /tasks/requeue-failed     -- admin: requeue recent failures (OPS-05)
-- POST /task                     -- submit freeform task (TASK-01, D-09)
 
 All endpoints require authentication (Bearer JWT).
 List/get queries are scoped by group_id unless the caller is admin (D-22/MOD-13).
@@ -20,17 +19,11 @@ SSE endpoint:
    then streams new events via stream_events() (D-17/TASK-09 late-connect)
 3. If Redis is not configured: returns a single informational SSE event and closes
 
-POST /task:
-- Requires operator+ role (D-15)
-- Wraps TaskQueue.submit() in asyncio.to_thread() per HANG-03 (sync call from async def)
-- Returns 503 if platform is not initialized
-
 Ownership: Platform API layer -- not module-specific.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from collections.abc import AsyncGenerator
@@ -39,18 +32,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import StreamingResponse
 from sqlmodel import select
 
-from aila.api.auth import AuthContext, require_role, require_user_or_api_key
+from aila.api.auth import AuthContext, require_user_or_api_key
 from aila.api.constants import (
     AUDIT_ACTION_TASK_CANCEL,
     AUDIT_ACTION_TASK_RESUME,
-    AUDIT_ACTION_TASK_SUBMIT,
     AUDIT_STAGE_TASK,
     AUDIT_STATUS_COMPLETED,
     MEDIA_TYPE_SSE,
     MODULE_ID_PLATFORM,
     ROLE_ADMIN,
-    ROLE_OPERATOR,
-    TRACK_PLATFORM,
 )
 from aila.api.limiter import limiter
 from aila.api.metrics import ACTIVE_SSE
@@ -58,10 +48,8 @@ from aila.api.schemas.envelope import DataEnvelope
 from aila.api.schemas.tasks import (
     DrainQueueResponse,
     TaskActionResponse,
-    TaskCreateRequest,
     TaskListResponse,
     TaskResponse,
-    TaskSubmitResponse,
 )
 from aila.api.schemas.transitions import TransitionView
 from aila.platform.services.audit import record_audit_event
@@ -71,7 +59,7 @@ from aila.platform.tasks.storage import TaskRepository
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import WorkflowStateTransition
 
-__all__ = ["router", "task_submit_router"]
+__all__ = ["router"]
 
 _log = logging.getLogger(__name__)
 _TRANSITIONS_LIMIT = 500  # safety cap -- prevents unbounded reads on high-retry runs
@@ -609,67 +597,3 @@ async def stream_task_events(
         },
     )
 
-
-task_submit_router = APIRouter(
-    prefix="",
-    tags=["tasks"],
-    dependencies=[Depends(require_user_or_api_key)],
-)
-
-
-@limiter.limit("10/hour")
-@task_submit_router.post(
-    "/task",
-    status_code=status.HTTP_202_ACCEPTED,
-    response_model=TaskSubmitResponse,
-    summary="Submit freeform task",
-    description=(
-        "Submit a freeform query to AILAPlatform.handle() via task queue (TASK-01, D-09). "
-        "Returns 202 Accepted with run_id. Client polls GET /tasks/{run_id} for status. "
-        "Per HANG-03: TaskQueue.submit() is sync; wrapped in asyncio.to_thread(). "
-        "Returns 503 if platform is not initialized. Requires operator+ role."
-    ),
-)
-async def submit_task(
-    req: TaskCreateRequest,
-    request: Request,
-    auth: AuthContext = Depends(require_role(ROLE_OPERATOR)),
-) -> TaskSubmitResponse:
-    platform = getattr(request.app.state, "platform", None)
-    if platform is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Platform not initialized -- check server logs for startup errors and restart the API server",
-        )
-
-    def _submit() -> str:
-        handle = platform.task_queue.submit(
-            track=TRACK_PLATFORM,
-            fn=platform.handle,
-            kwargs={"query": req.query_text},
-            user_id=auth.user_id,
-            group_id=auth.role,
-            team_id=auth.team_id,
-        )
-        return str(handle.task_id)
-
-    task_id = await asyncio.to_thread(_submit)
-
-    async def _audit_submit() -> None:
-        async with async_session_scope() as session:
-            record_audit_event(
-                session,
-                run_id=task_id,
-                stage=AUDIT_STAGE_TASK,
-                action=AUDIT_ACTION_TASK_SUBMIT,
-                status=AUDIT_STATUS_COMPLETED,
-                target=task_id,
-                user_id=auth.user_id,
-                team_id=auth.team_id,
-                details={"query": req.query_text[:200]},
-            )
-            await session.commit()
-
-    await _audit_submit()
-
-    return TaskSubmitResponse(run_id=task_id, status="submitted")

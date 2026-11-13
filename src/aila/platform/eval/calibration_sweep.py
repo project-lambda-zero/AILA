@@ -22,10 +22,8 @@ surface (``POST /automation/schedules`` with
 the registration alone does not run the sweep -- mirroring the
 ``platform.tool_storage_prune`` model.
 
-Not decorated with :func:`@platform_task` per the runner-owned bare-
-callable path (DESIGN section 3.6 in
-``platform/automation/maintenance.py``) and to avoid the ``__name__``
-collision documented in CLAUDE.md common mistake 19.
+The handlers are plain callables: the worker runs them through
+:func:`aila.platform.automation.dispatch.run_automation_action`.
 """
 from __future__ import annotations
 

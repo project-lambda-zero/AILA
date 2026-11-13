@@ -1,8 +1,10 @@
 """Platform maintenance actions registered with AutomationRegistry.
 
 These are platform-owned background jobs that run without team context
-(team_id=None). They are submitted through the standard TaskQueue path
-when their automation schedule fires.
+(team_id=None). When a schedule fires, the runner submits
+:func:`aila.platform.automation.dispatch.run_automation_action`, which
+resolves the action id against this registration inside the worker and
+awaits the handler.
 
 AUTO-06: Platform maintenance jobs use module_id='platform'.
 
@@ -12,10 +14,8 @@ platform's cheap in-process dependencies (async DB engine round-trip
 and Redis PING when a pool is configured) and returns a structured
 HealthReport. The call is best-effort: any probe failure records that
 dependency as unhealthy and continues; nothing bubbles out of the
-health check itself. Callsite audit: no reader consumes the return
-value today (runner.py submits this action via TaskQueue and only
-records last_run_result), so widening the return type from None to
-HealthReport is additive and safe.
+health check itself. No reader consumes the return value today (the
+runner records only the submitted task id in last_run_result).
 """
 from __future__ import annotations
 
@@ -65,11 +65,10 @@ from aila.storage.database import async_session_scope
 from aila.storage.registry import ConfigRegistry
 
 # Retrieval-eval sweep (#140) and shadow-report sweep (#141) live in
-# ``maintenance.py`` so all bare-callable action handlers stay in one
-# module (DESIGN section 3.6). Both are deferred-import from the
-# specific action bodies below to keep API startup light: neither
-# machinery is exercised unless the corresponding automation schedule
-# is active.
+# ``maintenance.py`` so all action handlers stay in one module. Both
+# are deferred-import from the specific action bodies below to keep API
+# startup light: neither machinery is exercised unless the corresponding
+# automation schedule is active.
 
 _log = logging.getLogger(__name__)
 
@@ -199,19 +198,14 @@ async def platform_health_check(**kwargs: object) -> HealthReport:
     Best-effort and non-crashing: a failed probe records that dependency
     as unhealthy but does not raise out of the call. Current probes:
     async DB engine (SELECT 1) and Redis (PING). No reader consumes the
-    return value today; the runner submits this action via
-    TaskQueue.submit and only records last_run_result. The structured
-    shape is defined so later consumers (dashboards, AppendJournal
-    readers, scheduling gates) can rely on it without a second migration.
+    return value today; the runner records only the submitted task id in
+    last_run_result. The structured shape is defined so later consumers
+    (dashboards, AppendJournal readers, scheduling gates) can rely on it
+    without a second migration.
 
-    ``kwargs`` is retained so the runner's ``target_name`` /
-    ``execution_context`` injection continues to work; only
-    ``target_name`` is read here, and only for logging.
-
-    Not decorated with ``@platform_task`` per DESIGN section 3.6: the
-    runner-owned submit path already invokes bare callables, and the
-    decorator would create the __name__ collision documented in
-    CLAUDE.md common mistake 19.
+    ``kwargs`` carries the schedule's action kwargs plus the runner's
+    ``target_name``; only ``target_name`` is read here, and only for
+    logging. A plain callable: the automation dispatcher runs it.
     """
     target = kwargs.get("target_name", "platform")
 
@@ -270,15 +264,9 @@ async def tool_storage_prune(**kwargs: object) -> ToolStoragePruneReport:
     that constructs a fresh :class:`ConfigRegistry` per tick so operator
     overrides on the ``platform.tool_storage_*`` knobs are picked up
     without a worker restart. See the pruner module for the full
-    per-half semantics; this callable exists only so the automation
-    runner's ``bare-callable`` submit path can find it under a stable
-    ``action_id`` (``platform.tool_storage_prune``).
-
-    Not decorated with ``@platform_task`` for the same reason
-    :func:`platform_health_check` isn't -- DESIGN section 3.6 documents
-    the runner-owned bare-callable path, and the decorator would
-    trigger the ``__name__`` collision documented in CLAUDE.md common
-    mistake 19.
+    per-half semantics; this callable exists so the automation
+    dispatcher can run it under a stable ``action_id``
+    (``platform.tool_storage_prune``).
     """
     _ = kwargs
     return await prune_tool_storage(config_registry=ConfigRegistry())
