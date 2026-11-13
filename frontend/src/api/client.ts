@@ -58,11 +58,17 @@ async function requestJson(path: string, opts: RequestInit): Promise<unknown> {
     throw new ApiError(res.status, detail || res.statusText);
   }
 
+  // A 204 (or any empty success body) has nothing to parse; the backend
+  // still labels some empty 204s as application/json.
+  const body = await res.text();
+  if (res.status === 204 || body === "") {
+    return undefined;
+  }
   const contentType = res.headers.get("content-type") ?? "";
   if (!contentType.includes("application/json")) {
-    return await res.text();
+    return body;
   }
-  return await res.json();
+  return JSON.parse(body);
 }
 
 export async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {
