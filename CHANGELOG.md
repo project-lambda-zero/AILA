@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.67] - 2026-11-12 -- apiFetch resolves 204 and empty responses
+
+### Fixed
+
+- Deleting a forensics directive or finding suppression no longer shows a failure toast after the row was deleted. The console API client now resolves a 204 response, or any successful response with an empty body, without trying to parse JSON; the backend labels these empty responses as JSON.
+
 ## [0.6.66] - 2026-11-12 -- Directory retrievals report the archive digest
 
 ### Fixed
