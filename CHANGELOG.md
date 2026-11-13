@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.85] - 2026-11-12 -- Dumped memory regions stored as metadata under a byte cap
+
+### Fixed
+
+- Memory collection no longer stores each dumped malfind region's bytes as base64 text inside its artifact. Nothing read that copy, and one run could add hundreds of megabytes to the artifact table. Region artifacts keep the size, SHA-256, MZ header flag, and PID and VAD coordinates. Region pulls now also stop once 64 MiB has been pulled in a run (in addition to the 40 region limit), and the completion event reports how many regions were skipped.
+
 ## [0.6.84] - 2026-11-12 -- Long investigator steps keep their structured fields
 
 ### Fixed
