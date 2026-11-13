@@ -1116,6 +1116,11 @@ def create_forensics_router() -> APIRouter:
             )).first()
             if system is None:
                 raise HTTPException(status_code=404, detail="System not found.")
+            # One analysis pipeline per project: readiness may already have
+            # enqueued one, and two would race on ArtifactRecord inserts.
+            existing_task_id = await _active_analysis_task_id(uow.session, project_id)
+        if existing_task_id is not None:
+            return DataEnvelope(data={"task_id": existing_task_id, "status": "already_queued"})
 
         integration = {
             "name": system.name, "host": system.host, "username": system.username,
@@ -1129,12 +1134,15 @@ def create_forensics_router() -> APIRouter:
         handle = await task_queue.submit(
             track="forensics",
             fn=run_forensics_analysis,
+            # Same kwargs as the readiness auto-enqueue, so concurrent
+            # submits of one project share an input hash and dedupe.
             kwargs={
                 "project_id": project_id,
                 "mode": "full_analysis",
                 "integration": integration,
                 "analyzer_os": project.analyzer_os,
                 "evidence_directory": project.evidence_directory,
+                "project_kind": project.project_kind,
             },
             user_id=auth.user_id,
             group_id=auth.role,
