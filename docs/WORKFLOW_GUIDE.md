@@ -196,6 +196,7 @@ intake -> collection -> deep_analysis -> promotion -> resolution -> writeup -> r
 | `resolution` | LLM resolve: connect findings to threat hypotheses | 2 retries on LLMTransientError |
 | `writeup` | Generate investigation report narrative | 2 retries on LLMTransientError |
 | `response_emit` | Build final PlatformResponse | No retries |
+| `analysis_failed` | `on_failure` target of every state above: mark the active project failed with a reason, end at `__failed__` | No retries |
 
 ### Hello World Module (3 states, simple)
 
