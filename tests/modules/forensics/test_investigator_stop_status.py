@@ -298,6 +298,33 @@ async def test_cancel_before_first_turn_keeps_cancelled_result_and_event(
     assert "cancelled" in emitter.stages
 
 
+@pytest.mark.parametrize("status", _ALL_STOP_STATUSES)
+async def test_redispatched_stopped_row_keeps_its_status_and_runs_no_turn(
+    status: str, calls: dict[str, list[Any]],
+) -> None:
+    project_id, inv_id = await _seed(status)
+    engine = _engine(calls, _always(_tool()))
+
+    result = await _investigator(engine, project_id, inv_id).investigate(
+        question="what happened", max_attempts=3, emitter=_Emitter(),
+    )
+
+    assert calls["provider"] == []
+    assert calls["tools"] == []
+    assert result["attempts_used"] == 0
+    assert result["cancelled"] is (status == "cancelled")
+    assert (await _persisted(inv_id))[0] == status
+
+
+async def test_status_write_never_leaves_cancelled(calls: dict[str, list[Any]]) -> None:
+    project_id, inv_id = await _seed("cancelled")
+    investigator = _investigator(_engine(calls, _always(_reason())), project_id, inv_id)
+
+    await investigator._set_status("running")
+
+    assert (await _persisted(inv_id))[0] == "cancelled"
+
+
 @pytest.mark.parametrize("status", _STOP_STATUSES)
 async def test_stop_status_set_during_turn_blocks_the_next_provider_call(
     status: str, calls: dict[str, list[Any]],

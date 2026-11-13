@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.87] - 2026-11-12 -- redispatched stopped forensics investigations stay stopped
+
+### Fixed
+
+- A forensics investigation that is redispatched (task retry or stuck-run healer) while its row is already cancelled, paused, or terminal now keeps that status and starts no turn. Previously the run overwrote the row with `running` and spent one more turn before noticing the stop (#460).
+- No forensics investigator status write can move a row out of `cancelled` (#460).
+
 ## [0.6.86] - 2026-11-12 -- forensics status changes reach the live event stream
 
 ### Fixed
