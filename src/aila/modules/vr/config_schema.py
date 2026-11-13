@@ -21,10 +21,9 @@ __all__ = ["VRConfigSchema", "VR_DEFAULTS"]
 class VRConfigSchema(ModuleConfigBase):
     """Operator-tunable settings for the VR module.
 
-    ``llm_model`` is inherited from :class:`ModuleConfigBase` -- the
-    VR module's historical default matched the platform default
-    (``PlatformConfigSchema.llm_default_model``), so no per-module
-    override is needed.
+    LLM model selection is not a module key: agents route through the
+    platform per task type keys (``platform.llm_model_<task_type>``,
+    falling back to ``platform.llm_default_model``).
     """
 
     poc_workspace_max_age_minutes: int = Field(

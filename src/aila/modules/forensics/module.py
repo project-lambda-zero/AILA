@@ -265,23 +265,13 @@ class ForensicsModule(ModuleProtocol):
             from aila.modules.forensics.config_schema import ForensicsConfigSchema
             await registry.register(self.module_id, ForensicsConfigSchema)
 
-            # fix #131 -- forensics.llm_model is a module-scoped operator
-            # override, resolved live via ``ConfigRegistry.get("forensics",
-            # "llm_model")`` at each LLM call site. The earlier bootstrap
-            # copied this value into per-task-type ``os.environ`` entries
-            # so it could ride the platform LLM router's env-first
-            # resolution chain, but that write poisoned the chain for the
-            # matching ``platform.llm_model_forensics_*`` keys: a later
-            # ``PUT /config/platform/llm_model_forensics_freeflow`` could
-            # not win against the env variable this bootstrap seeded. The
-            # write is removed. Operators pin a forensics-specific model
-            # via ``PUT /config/platform/llm_model_forensics_freeflow``
-            # (or resolver / writeup) directly, which participates in
-            # the standard env > DB > default chain with cross-process
-            # Redis invalidation. The ``forensics.llm_model`` field
-            # remains registered so it can be listed / set through the
-            # config API for downstream consumers that want a single
-            # module-scoped knob.
+            # Forensics agents pick their model through the platform per
+            # task type keys (``platform.llm_model_forensics_freeflow``,
+            # ``_resolver``, ``_writeup``, falling back to
+            # ``platform.llm_default_model``), resolved env > DB > default
+            # with cross-process invalidation. The module namespace has no
+            # model key, and registration never writes model ids into
+            # ``os.environ`` (#131: that shadowed later config writes).
 
         for spec in iter_tool_specs():
             tool_registry.register(spec.key(), spec.factory(settings))

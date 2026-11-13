@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aila"
-version = "0.6.106"
+version = "0.6.107"
 description = "Modular AI security platform with pluggable analysis modules."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -562,11 +562,6 @@ ignore = [
 "src/aila/modules/vulnerability/workflow/utils/row_helpers.py" = ["PLC0415"]
 "src/aila/platform/automation/runner.py" = ["E712"]
 "src/aila/platform/automation/supervisor.py" = ["PLC0415"]
-# config_base.py: PLC0415 for the lazy import of PlatformConfigSchema inside
-# platform_default_llm_model(). config_base is imported by every module
-# config_schema; a module-scope import of platform.config would pull the
-# storage.registry family definitions during a half-built platform import.
-"src/aila/platform/config_base.py" = ["PLC0415"]
 "src/aila/platform/contracts/persist.py" = ["PLC0415"]
 "src/aila/platform/contracts/reasoning.py" = ["PLC0415"]
 "src/aila/platform/events/emitter.py" = ["PLC0415"]

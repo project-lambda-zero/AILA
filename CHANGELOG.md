@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.107] - 2026-11-12 -- Module config namespaces no longer offer an LLM model key that nothing read
+
+### Removed
+
+- The module scoped llm_model config key is gone from every module namespace (vr, malware, forensics, vulnerability, and the module template). Setting it never changed which model an agent used; model selection is the platform per task type keys (llm_model_<task_type>, falling back to llm_default_model). Writes to the module key are now rejected as an unknown key.
+- Migration `150_drop_module_llm_model_config` deletes the llm_model rows that module registration had stored, so the config list no longer shows them.
+
 ## [0.6.106] - 2026-11-12 -- Calibration sweep reports failed table reads instead of an idle install
 
 ### Fixed
