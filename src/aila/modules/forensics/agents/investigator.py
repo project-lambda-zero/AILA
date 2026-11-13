@@ -1420,10 +1420,13 @@ class HonestInvestigator:
             ('RegistryHive(', 't.registry.key(', 'Do not open raw regf hives. Use t.registry.key(path)'),
         ]
         for bad, good, explanation in _dissect_mistakes:
-            if bad in script_content and 'Target.open(' not in script_content.split(bad, maxsplit=1)[0][-20:] if bad == 'Target(' else True:
-                msg = f'API mistake: found `{bad}` -- {explanation}. Use `{good}` instead.'
-                _log.warning('script API lint for investigation %s: %s', self.investigation_id, msg)
-                return {'stdout': '', 'stderr': msg, 'exit_code': 1}
+            if bad not in script_content:
+                continue
+            if bad == 'Target(' and 'Target.open(' in script_content.split(bad, maxsplit=1)[0][-20:]:
+                continue
+            msg = f'API mistake: found `{bad}` -- {explanation}. Use `{good}` instead.'
+            _log.warning('script API lint for investigation %s: %s', self.investigation_id, msg)
+            return {'stdout': '', 'stderr': msg, 'exit_code': 1}
 
         from aila.modules.forensics.tools.script_tool import ScriptExecutorTool
 
