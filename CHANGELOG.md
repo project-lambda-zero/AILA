@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.83] - 2026-11-12 -- Full analysis opens evidence lanes from intake
+
+### Fixed
+
+- Full analysis now runs the collector lanes that match the classified evidence. Intake classifications were never posted to the evidence board the dispatch hub reads, and the hub's lane conditions looked the board up by an investigation id that full-analysis runs do not carry, so every lane was skipped and the run went straight to the post-collection stages. Intake now posts one discovery per classified file under the project, the lane conditions read the same project board, and re-running intake does not duplicate entries.
+
 ## [0.6.82] - 2026-11-12 -- Lead reasons no longer cite the question as evidence
 
 ### Fixed
