@@ -1834,8 +1834,8 @@ def create_forensics_router() -> APIRouter:
                     "evidence_directory": project.evidence_directory,
                     # The dispatcher's mode_selection uses this to pick
                     # FORENSICS_FREEFLOW_V1 (agentic plan-and-execute Q&A)
-                    # instead of FORENSICS_FULL_ANALYSIS_V1 (scheduled-scan
-                    # pipeline). An investigation has a question, so the
+                    # instead of the scheduled-scan full-analysis evidence
+                    # hub. An investigation has a question, so the
                     # freeflow agent is what should run.
                     "mode": "freeflow",
                 },
