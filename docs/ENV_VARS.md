@@ -289,6 +289,13 @@ All fields from `PlatformConfigSchema` (registered under namespace `platform`):
 - **Used in:** `src/aila/modules/forensics/services/file_retriever.py:52`
 - **Production guidance:** Maximum file size for forensics evidence file retrieval. Raise when investigating large disk images or memory dumps; lower in shared-tenant deployments to bound per-call memory.
 
+### `AILA_FORENSICS_INTAKE_HASH_MAX_BYTES`
+
+- **Default:** `2147483648` (2 GiB)
+- **Type:** Integer (bytes, `>= 0`)
+- **Used in:** `src/aila/modules/forensics/workflow/states/intake.py` (`_intake_hash_cap_bytes`), resolved through `ConfigRegistry` (`src/aila/storage/registry.py`)
+- **Production guidance:** Evidence files at or below this size get a SHA-256 digest computed on the analyzer at intake. Larger files keep a null digest with `hash_status=deferred_over_cap` in the row metadata. `0` defers hashing for every file.
+
 ### `AILA_FORENSICS_MAX_TURNS_PER_TASK`
 
 - **Default:** `3`
