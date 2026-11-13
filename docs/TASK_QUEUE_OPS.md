@@ -144,9 +144,11 @@ FAILED  -> QUEUED (reaper crash recovery with checkpoint)
 | `WAITING` | Blocked on dependencies | `TaskQueue.submit()` (when `depends_on` specified) |
 | `RUNNING` | Worker is executing | `execute_task_job()` |
 | `PAUSED` | Checkpointed, awaiting resume | Cooperative pause |
-| `DONE` | Completed successfully | `execute_task_job()` |
-| `FAILED` | Unhandled exception or zombie detection | `execute_task_job()` or reaper |
-| `CANCELLED` | Cooperative cancellation via `TaskCancelled` | Module code |
+| `DONE` | Completed successfully (for a workflow-engine task: the run ended `__succeeded__`) | `execute_task_job()` |
+| `FAILED` | Unhandled exception, zombie detection, or a workflow-engine run that ended `__failed__` / `__crashed__` (`error` starts `code=WORKFLOW_FAILED`) | `execute_task_job()`, the `on_job_end` hook, or reaper |
+| `CANCELLED` | Cooperative cancellation via `TaskCancelled`, or a workflow-engine run that ended `__cancelled__` | Module code or the `on_job_end` hook |
+
+A workflow-engine task reads its outcome from the `WorkflowRunRecord.status` the engine wrote when it closed the run, so the task record and the run record agree. A failed or cancelled workflow run does not release its `WAITING` dependents.
 
 ---
 
