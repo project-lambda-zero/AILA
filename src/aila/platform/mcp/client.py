@@ -566,11 +566,13 @@ class McpClient:
         outputs -- the projection already speaks MCP's ``tools/list``
         entry shape.
 
-        Fetch failures (connect / timeout / non-JSON) cache an empty list
-        so the caller sees a name-only listing rather than repeated
-        stalls; the bridge subclass MAY override this method to add
-        per-server schema-fetch hops (android-mcp fans schema URLs
-        per tool because ``/tools`` returns only names).
+        A fetch failure (connect / timeout / non-JSON / non-list payload)
+        returns an empty list for this call without caching it, so the
+        next call fetches again once the server recovers; only a
+        successful fetch is cached, including a successful empty
+        catalog. The bridge subclass MAY override this method to add
+        per-server schema-fetch hops (android-mcp fans schema URLs per
+        tool because ``/tools`` returns only names).
         """
         if self._spec_cache is not None:
             return self._spec_cache
@@ -580,10 +582,9 @@ class McpClient:
                 raw_tools = await session.list_tools(timeout=self._timeout)
             except (McpHttpError, McpStdioError, httpx.HTTPError) as exc:
                 _log.warning(
-                    "mcp_client %s: MCP catalog fetch failed (%s) -- caching empty",
+                    "mcp_client %s: MCP catalog fetch failed (%s) -- retrying on next call",
                     self.server_id, exc,
                 )
-                self._spec_cache = []
                 return []
             self._spec_cache = [
                 compact_tool_spec(t) for t in raw_tools if isinstance(t, dict)
@@ -597,21 +598,23 @@ class McpClient:
             raw = resp.json()
         except (httpx.HTTPError, ValueError) as exc:
             _log.warning(
-                "mcp_client %s: catalog fetch failed (%s) -- caching empty",
+                "mcp_client %s: catalog fetch failed (%s) -- retrying on next call",
                 self.server_id, exc,
             )
-            self._spec_cache = []
             return []
         # Accept two on-wire shapes: bare list at top level (audit-mcp)
-        # or ``{"tools": [...]}`` envelope (android-mcp).
-        # A dict without a ``tools`` key is treated as an empty catalog
-        # so downstream validators do not compare against a None
-        # catalog (see the android-mcp §216 diagnosis).
+        # or ``{"tools": [...]}`` envelope (android-mcp). Any other
+        # payload (an error body, a dict without a ``tools`` list) is a
+        # failed fetch: return an empty catalog for this call so
+        # downstream validators never compare against ``None``, but do
+        # not cache it.
         if isinstance(raw, dict):
-            inner = raw.get("tools")
-            raw = inner if isinstance(inner, list) else []
+            raw = raw.get("tools")
         if not isinstance(raw, list):
-            self._spec_cache = []
+            _log.warning(
+                "mcp_client %s: catalog fetch returned no tool list -- retrying on next call",
+                self.server_id,
+            )
             return []
         self._spec_cache = [compact_tool_spec(t) for t in raw if isinstance(t, dict)]
         return self._spec_cache

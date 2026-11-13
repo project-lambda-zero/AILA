@@ -177,6 +177,43 @@ async def test_mcp_client_lists_tools_and_caches() -> None:
     assert len(mock_client.gets) == 1
 
 
+@pytest.mark.parametrize(
+    "failing_kwargs",
+    [
+        {"raise_on": httpx.ConnectError("connection refused")},
+        {"get_response": _MockResponse(json_body={"detail": "starting up"})},
+    ],
+    ids=["connect_error", "no_tool_list"],
+)
+@pytest.mark.asyncio
+async def test_mcp_client_refetches_catalog_after_failed_fetch(
+    failing_kwargs: dict[str, Any],
+) -> None:
+    """A failed catalog fetch is not cached; the next call fetches again."""
+    failing = _MockAsyncClient(**failing_kwargs)
+    recovered = _MockAsyncClient(
+        get_response=_MockResponse(json_body=[{"name": "search_functions"}]),
+    )
+    with patch("httpx.AsyncClient", side_effect=[failing, recovered]):
+        client = McpClient(server_id="test_mcp", base_url="http://mock:1234")
+        first = await client.list_tool_specs()
+        second = await client.list_tool_specs()
+    assert first == []
+    assert [s["name"] for s in second] == ["search_functions"]
+    assert len(recovered.gets) == 1
+
+
+@pytest.mark.asyncio
+async def test_mcp_client_caches_successful_empty_catalog() -> None:
+    """A server that answers with no tools is cached like any other catalog."""
+    mock_client = _MockAsyncClient(get_response=_MockResponse(json_body=[]))
+    with patch("httpx.AsyncClient", return_value=mock_client):
+        client = McpClient(server_id="test_mcp", base_url="http://mock:1234")
+        assert await client.list_tool_specs() == []
+        assert await client.list_tool_specs() == []
+    assert len(mock_client.gets) == 1
+
+
 @pytest.mark.asyncio
 async def test_mcp_client_wraps_bare_list_body() -> None:
     """Non-dict bodies wrap into ``{"status": "ready", "result": ...}``."""

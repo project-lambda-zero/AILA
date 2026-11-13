@@ -397,8 +397,10 @@ class AndroidMcpMiddleware:
         compaction.
 
         Cached on the class so concurrent bridge instances share one
-        HTTP round-trip. Fetch failure caches an empty list so the
-        validator never compares against a ``None`` catalog.
+        HTTP round-trip. A fetch failure or malformed payload returns an
+        empty list for this call (so the validator never compares
+        against a ``None`` catalog) without caching it; the next call
+        fetches again.
         """
         cls = self.__class__
         if cls._SPEC_CACHE is not None:
@@ -412,9 +414,8 @@ class AndroidMcpMiddleware:
         except (httpx.ConnectError, httpx.TimeoutException, ValueError) as exc:
             _log.warning(
                 "android_mcp_middleware: catalog fetch failed (%s) -- agent "
-                "will see name-only listing without schemas", exc,
+                "will see name-only listing without schemas; retrying on next call", exc,
             )
-            cls._SPEC_CACHE = []
             return []
 
         # Accept either shape android-mcp has shipped: bare list at
@@ -429,17 +430,15 @@ class AndroidMcpMiddleware:
             else:
                 _log.warning(
                     "android_mcp_middleware: /tools dict envelope missing "
-                    "'tools' key (got %s) -- treating as empty catalog",
+                    "'tools' key (got %s) -- retrying on next call",
                     sorted(raw.keys())[:8],
                 )
-                cls._SPEC_CACHE = []
                 return []
         if not isinstance(raw, list):
             _log.warning(
                 "android_mcp_middleware: /tools returned non-list payload "
-                "(%s) -- treating as empty catalog", type(raw).__name__,
+                "(%s) -- retrying on next call", type(raw).__name__,
             )
-            cls._SPEC_CACHE = []
             return []
 
         # Env-gated CLI probe: drop tools whose backing binary is not

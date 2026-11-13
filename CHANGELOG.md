@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.78] - 2026-11-12 -- Failed MCP catalog fetches are retried instead of cached
+
+### Fixed
+
+- A failed MCP tool catalog fetch (connection error, timeout, non-JSON body, or a payload without a tool list) no longer caches an empty catalog for the life of the process. The call still returns an empty catalog, and the next call fetches again, so tool schemas appear once the server recovers without a worker restart. A server that answers with an empty tool list is still cached. This applies to the shared MCP client and to the Android middleware's class-level catalog.
+
 ## [0.6.77] - 2026-11-12 -- Reconciler closes run records with the cursors it terminalizes
 
 ### Fixed

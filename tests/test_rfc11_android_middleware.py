@@ -19,8 +19,10 @@ test so fixtures compose without cross-test bleed.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
+import httpx
 import pytest
 
 from aila.platform.mcp.client import McpClient
@@ -292,3 +294,59 @@ async def test_non_2xx_wrapped_with_detail(
     assert "HTTP 500" in result["error"]
     assert "FileNotFoundError" in result["error"]
     assert "find_secrets" in result["error"]
+
+
+def _serve_catalog(
+    monkeypatch: pytest.MonkeyPatch,
+    handler: Callable[[httpx.Request], httpx.Response],
+) -> None:
+    """Route the middleware's HTTP calls through ``handler`` via a mock transport."""
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        "aila.platform.mcp.middleware.android.httpx.AsyncClient",
+        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+    )
+
+
+async def test_catalog_refetched_after_failed_fetch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed ``/tools`` fetch is not cached; the next call fetches again."""
+    catalog_gets: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/tools":
+            catalog_gets.append(request.url.path)
+            if len(catalog_gets) == 1:
+                raise httpx.ConnectError("connection refused", request=request)
+            return httpx.Response(200, json={"tools": [{"name": "find_secrets"}]})
+        return httpx.Response(200, json={"properties": {"decompiled_dir": {"type": "string"}}})
+
+    _serve_catalog(monkeypatch, handler)
+    mw = _make_middleware()
+    client = _make_client()
+
+    assert await mw.list_tool_specs(client) == []
+    second = await mw.list_tool_specs(client)
+
+    assert [s["name"] for s in second] == ["find_secrets"]
+    assert len(catalog_gets) == 2
+
+
+async def test_successful_empty_catalog_is_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A server that answers with no tools is cached like any other catalog."""
+    catalog_gets: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        catalog_gets.append(request.url.path)
+        return httpx.Response(200, json={"tools": []})
+
+    _serve_catalog(monkeypatch, handler)
+    mw = _make_middleware()
+    client = _make_client()
+
+    assert await mw.list_tool_specs(client) == []
+    assert await mw.list_tool_specs(client) == []
+    assert catalog_gets == ["/tools"]
