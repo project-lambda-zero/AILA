@@ -1,9 +1,9 @@
 import type { JSX } from "react";
 import { useState } from "react";
 
-import { parseEvidenceItem, parseRows, useForensicsQuery } from "../../../../api/forensics";
+import { parseEvidencePage, useForensicsQuery } from "../../../../api/forensics";
 import type { EvidenceItem } from "../../../../api/forensics";
-import { DataTable } from "../panels";
+import { CtlBtn, DataTable } from "../panels";
 import type { TableColumn } from "../panels";
 import { TableWithDetail, queryState } from "./shared";
 import type { TabProps } from "./shared";
@@ -27,15 +27,27 @@ const EVIDENCE_COLS: TableColumn<EvidenceItem>[] = [
   },
 ];
 
+/** Rows per request; the list route caps page_size at 500. */
+const PAGE_SIZE = 100;
+
 export function EvidenceTab({ projectId }: TabProps): JSX.Element {
-  const q = useForensicsQuery(projectId, ["evidence"], `/forensics/projects/${projectId}/evidence`, (raw) => parseRows(raw, parseEvidenceItem));
-  const rows = q.data ?? [];
+  const [page, setPage] = useState(1);
+  const qs = `page=${page}&page_size=${PAGE_SIZE}`;
+  const q = useForensicsQuery(projectId, ["evidence", qs], `/forensics/projects/${projectId}/evidence?${qs}`, parseEvidencePage);
+  const rows = q.data?.items ?? [];
+  const total = q.data?.total ?? null;
   const [sel, setSel] = useState<EvidenceItem | null>(null);
   const state = queryState(q, "no evidence files.", "/evidence", rows.length === 0);
   return (
     <TableWithDetail
       title="evidence"
-      tag={`${rows.length} rows`}
+      tag={`page ${page} \u00b7 ${rows.length} rows${total != null ? ` \u00b7 total ${total}` : ""}`}
+      right={
+        <>
+          <CtlBtn label={"\u25c0"} title="prev page" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} />
+          <CtlBtn label={"\u25b6"} title="next page" onClick={() => setPage((p) => p + 1)} disabled={total != null ? page * PAGE_SIZE >= total : rows.length < PAGE_SIZE} />
+        </>
+      }
       table={
         state ?? (
           <DataTable rows={rows} columns={EVIDENCE_COLS} selected={sel} onSelect={(r) => setSel((c) => (c === r ? null : r))} />

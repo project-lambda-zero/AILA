@@ -128,6 +128,16 @@ export function parseEvidenceItem(o: Obj): EvidenceItem {
   };
 }
 
+export interface EvidencePage {
+  items: EvidenceItem[];
+  total: number | null;
+}
+
+export function parseEvidencePage(raw: unknown): EvidencePage {
+  const o = asRecord(raw) ?? {};
+  return { items: parseRows(o.items, parseEvidenceItem), total: readNum(o, "total") };
+}
+
 /* --- artifacts -------------------------------------------------------- */
 
 /** A Zeek-carved file reference: `carved_file` artifacts carry the sha256

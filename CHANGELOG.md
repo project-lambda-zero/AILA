@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.100] - 2026-11-12 -- The forensics evidence tab pages through every evidence file and shows the total
+
+### Changed
+
+- The forensics evidence list route now returns a page object (`items`, `total`, `page`, `page_size`, `pages`) instead of a bare list, matching the artifacts route. The console evidence tab is its only caller and was migrated in the same change.
+
+### Fixed
+
+- The forensics evidence tab no longer silently stops at the first 100 evidence files. It shows the project's evidence total and has previous and next page controls, so every evidence file is reachable.
+
 ## [0.6.99] - 2026-11-12 -- Forensics intake config declares only the fields its wizard uses
 
 ### Removed

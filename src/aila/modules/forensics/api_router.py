@@ -1371,8 +1371,8 @@ def create_forensics_router() -> APIRouter:
 
     @router.get(
         "/projects/{project_id}/evidence",
-        response_model=DataEnvelope[list[EvidenceItem]],
-        summary="List evidence files for a project.",
+        response_model=DataEnvelope[PaginatedResponse[EvidenceItem]],
+        summary="List evidence files for a project, paginated.",
     )
     @limiter.limit("60/minute")
     async def list_evidence(
@@ -1381,16 +1381,11 @@ def create_forensics_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=100, ge=1, le=500),
-    ) -> DataEnvelope[list[EvidenceItem]]:
-        # SQL-level pagination (finding 59-3.4): the previous handler
-        # fetched every ProjectEvidenceRecord row for the project into
-        # memory. A project with thousands of evidence files blew both
-        # the response body size limit and the SQLModel row buffer at
-        # the same time. Applying LIMIT/OFFSET on a stable ORDER BY
-        # (created_at DESC, id ASC tiebreak) keeps the response bounded
-        # to page_size items while preserving the existing
-        # DataEnvelope[list[EvidenceItem]] envelope so callers do not
-        # need a schema migration.
+    ) -> DataEnvelope[PaginatedResponse[EvidenceItem]]:
+        # SQL-level pagination (finding 59-3.4): LIMIT/OFFSET on a stable
+        # ORDER BY (created_at DESC, id ASC tiebreak) bounds the response to
+        # page_size items. The page carries the project's evidence total so
+        # a caller can tell a partial page from the whole set.
         del request
 
         from aila.modules.forensics.db_models import ForensicsProjectRecord, ProjectEvidenceRecord
@@ -1403,6 +1398,11 @@ def create_forensics_router() -> APIRouter:
                 raise HTTPException(status_code=404, detail=f"Project {project_id} not found.")
             _require_project_ownership(project, auth)
 
+            total = (await uow.session.exec(
+                select(sa_func.count()).select_from(ProjectEvidenceRecord).where(
+                    ProjectEvidenceRecord.project_id == project_id
+                )
+            )).one()
             rows = (await uow.session.exec(
                 select(ProjectEvidenceRecord)
                 .where(ProjectEvidenceRecord.project_id == project_id)
@@ -1424,7 +1424,10 @@ def create_forensics_router() -> APIRouter:
             )
             for r in rows
         ]
-        return DataEnvelope(data=items)
+        return DataEnvelope(data=PaginatedResponse(
+            total=total, page=page, page_size=page_size,
+            pages=max(1, math.ceil(total / page_size)), items=items,
+        ))
 
     @router.get(
         "/projects/{project_id}/findings",
