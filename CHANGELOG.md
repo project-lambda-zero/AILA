@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.73] - 2026-11-12 -- Writeup records the artifacts its steps and answers cite
+
+### Fixed
+
+- A forensics writeup now stores the artifacts cited by the investigation: each step's provenance artifact and the primary artifact of every answer the investigation produced, deduplicated in first-seen order. The list was read from a step key investigator steps never carry, so it was always empty.
+- When the project's artifact inventory cannot be read, the writeup methodology now states that the evidence sections were built without it, instead of the failure appearing only in the worker log.
+
 ## [0.6.72] - 2026-11-12 -- Agent prompt shows the knowledge retrieve arguments
 
 ### Fixed

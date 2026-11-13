@@ -223,15 +223,6 @@ async def test_writeup_builder_call_runs_inside_correlation_scope(
     monkeypatch.setattr(
         writeup_builder, "ServiceFactory", lambda: _FakeFactory(),
     )
-    # Skip the DB round-trip for artefacts -- the writeup happy path here
-    # only cares that the LLM call gets the resolved prompt + hash.
-    async def _no_artefacts(_project_id: str) -> dict[str, list[dict[str, Any]]]:
-        return {}
-
-    monkeypatch.setattr(
-        writeup_builder, "_load_artefacts_by_family", _no_artefacts,
-    )
-
     out = await writeup_builder._generate_writeup_content(
         project_id="p-1",
         investigation_id="inv-1",
@@ -244,6 +235,7 @@ async def test_writeup_builder_call_runs_inside_correlation_scope(
         contract={"answer_type": "ip:port"},
         hypotheses=[],
         rejected=[],
+        artefacts_by_family={},
     )
     assert out == "ok"
     assert client.seen_hash == _sha256(writeup_builder._load_writeup_prompt())
@@ -355,13 +347,6 @@ async def test_writeup_call_preserves_outer_correlation_scope(
         writeup_builder, "ServiceFactory", lambda: _FakeFactory(),
     )
 
-    async def _no_artefacts(_project_id: str) -> dict[str, list[dict[str, Any]]]:
-        return {}
-
-    monkeypatch.setattr(
-        writeup_builder, "_load_artefacts_by_family", _no_artefacts,
-    )
-
     with correlation_scope(
         investigation_id="inv-abc",
         branch_id="br-1",
@@ -380,6 +365,7 @@ async def test_writeup_call_preserves_outer_correlation_scope(
             contract={},
             hypotheses=[],
             rejected=[],
+            artefacts_by_family={},
         )
 
     # The stamped content hash comes from the writeup prompt file, but the

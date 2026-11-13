@@ -13,6 +13,7 @@ import hashlib
 import json
 import logging
 from collections import defaultdict
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -26,9 +27,17 @@ from aila.platform.prompts import PromptRegistry
 from aila.platform.prompts.version_store import PromptVersionStore
 from aila.platform.services.factory import ServiceFactory
 
-__all__ = ["build_writeup"]
+__all__ = ["ArtefactLoadError", "build_writeup"]
 
 _log = logging.getLogger(__name__)
+
+
+class ArtefactLoadError(RuntimeError):
+    """The project's artefact inventory could not be read.
+
+    The message carries only the failing exception's class name, so the
+    persisted write-up never embeds raw database or path detail.
+    """
 
 _PROMPT_REGISTRY = PromptRegistry(
     module="prompts",
@@ -78,6 +87,7 @@ async def build_writeup(
     investigation_id: str | None,
     steps: list[dict[str, Any]],
     input_context: dict[str, Any],
+    answer_artifact_ids: Sequence[str],
 ) -> dict[str, Any]:
     """Generate a professional write-up from investigation data.
 
@@ -86,9 +96,14 @@ async def build_writeup(
         investigation_id: Optional investigation run ID (included in result context).
         steps: List of agent step dicts.
         input_context: Full workflow input context.
+        answer_artifact_ids: ``primary_artifact_id`` of every answer row the
+            write-up cites; merged with the steps' provenance artifacts.
 
     Returns:
         Dict with 'title', 'content', 'methodology', 'artifacts_json'.
+        ``methodology`` states explicitly when the artefact inventory could
+        not be loaded, so the stored write-up records that its evidence
+        sections were built without it.
     """
     _log.debug("Building writeup for project=%s investigation=%s", project_id, investigation_id)
     question = input_context.get("question", "Full evidence analysis")
@@ -105,6 +120,17 @@ async def build_writeup(
         f"Total investigation steps: {len(steps)}."
     )
 
+    try:
+        artefacts_by_family = await _load_artefacts_by_family(project_id)
+    except ArtefactLoadError as exc:
+        _log.warning("Write-up built without artefact inventory: %s", exc)
+        artefacts_by_family = {}
+        methodology += (
+            f" Artifact load failed ({exc}): the artefact inventory was "
+            "unavailable, so evidence sections of this write-up were built "
+            "without it."
+        )
+
     content = await _generate_writeup_content(
         project_id=project_id,
         investigation_id=investigation_id,
@@ -117,9 +143,10 @@ async def build_writeup(
         contract=contract,
         hypotheses=hypotheses,
         rejected=rejected,
+        artefacts_by_family=artefacts_by_family,
     )
 
-    artifacts_referenced = [s.get("primary_artifact_id") for s in steps if s.get("primary_artifact_id")]
+    artifacts_referenced = _collect_referenced_artifacts(steps, answer_artifact_ids)
 
     timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     title = f"Investigation: {question[:80]}" if question else f"Analysis Report -- {timestamp}"
@@ -130,6 +157,29 @@ async def build_writeup(
         "methodology": methodology,
         "artifacts_json": json.dumps(artifacts_referenced),
     }
+
+
+def _collect_referenced_artifacts(
+    steps: list[dict[str, Any]],
+    answer_artifact_ids: Sequence[str],
+) -> list[str]:
+    """Artifacts cited by the steps' provenance and by the answer rows.
+
+    Investigator steps carry the artifact they cite as
+    ``provenance.primary_artifact``. The result is deduplicated and keeps
+    first-seen order: step artifacts in step order, then answer ids.
+    """
+    cited: list[Any] = []
+    for step in steps:
+        provenance = step.get("provenance")
+        if isinstance(provenance, dict):
+            cited.append(provenance.get("primary_artifact"))
+    cited.extend(answer_artifact_ids)
+    ordered: dict[str, None] = {}
+    for ref in cited:
+        if isinstance(ref, str) and ref.strip():
+            ordered.setdefault(ref.strip(), None)
+    return list(ordered)
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +241,7 @@ async def _generate_writeup_content(
     contract: dict[str, Any],
     hypotheses: list[dict[str, Any]],
     rejected: list[dict[str, Any]],
+    artefacts_by_family: dict[str, list[dict[str, Any]]],
 ) -> str:
     """Generate write-up content via the LLM.
 
@@ -208,10 +259,9 @@ async def _generate_writeup_content(
     # Sections are collected as (name, text) so we can hand a per-section
     # byte breakdown to _check_bundle_size on refusal.
 
-    # Pull artefacts snapshot from the project database so the model
-    # sees the evidence universe, not just the last 10 steps.
-    artefacts_by_family = await _load_artefacts_by_family(project_id)
-
+    # ``artefacts_by_family`` is the project's artefact snapshot (loaded by
+    # ``build_writeup``) so the model sees the evidence universe, not just
+    # the last 10 steps.
     sections: list[tuple[str, str]] = [
         ("case_header", _section_case_header(
             project_id=project_id,
@@ -302,7 +352,11 @@ def _section_case_header(
 
 
 async def _load_artefacts_by_family(project_id: str) -> dict[str, list[dict[str, Any]]]:
-    """Pull every artefact record for the project, grouped by family."""
+    """Pull every artefact record for the project, grouped by family.
+
+    Raises:
+        ArtefactLoadError: The artefact rows could not be read.
+    """
     if not project_id:
         return {}
     try:
@@ -316,9 +370,9 @@ async def _load_artefacts_by_family(project_id: str) -> dict[str, list[dict[str,
                 select(ArtifactRecord).where(ArtifactRecord.project_id == project_id)
             )).all()
         return _group_artefacts(rows)
-    except (OSError, RuntimeError, ValueError):
+    except (OSError, RuntimeError, ValueError) as exc:
         _log.warning("Failed to load artefacts_by_family for %s", project_id, exc_info=True)
-        return {}
+        raise ArtefactLoadError(type(exc).__name__) from exc
 
 
 def _group_artefacts(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
