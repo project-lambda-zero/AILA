@@ -80,6 +80,45 @@ def _reject_unsafe_path(path: object, *, kind: str) -> None:
         )
 
 
+class _ChannelCloser:
+    """Close an exec channel on behalf of a cancelled awaiting coroutine.
+
+    Cancelling the coroutine that awaits ``asyncio.to_thread`` cannot stop
+    the worker thread: it stays parked in a blocking paramiko read until the
+    remote command ends. The coroutine side calls :meth:`close`, which closes
+    the channel so those reads return and the thread unwinds. The worker side
+    calls :meth:`register` as soon as the channel exists; a close requested
+    before registration is applied on registration, so the order of the two
+    calls does not matter.
+    """
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._channel: paramiko.Channel | None = None
+        self.closed = False
+
+    def register(self, channel: paramiko.Channel) -> None:
+        """Track ``channel``; close it at once if a close was already requested."""
+        with self._lock:
+            self._channel = channel
+            if self.closed:
+                self._close_channel(channel)
+
+    def close(self) -> None:
+        """Request closure and close the registered channel, if any."""
+        with self._lock:
+            self.closed = True
+            if self._channel is not None:
+                self._close_channel(self._channel)
+
+    @staticmethod
+    def _close_channel(channel: paramiko.Channel) -> None:
+        try:
+            channel.close()
+        except (paramiko.SSHException, OSError, EOFError):
+            pass
+
+
 class SSHConnectionPool:
     """Reusable SSH connections keyed by (host, port, username) for one scan's lifetime."""
 
@@ -138,6 +177,13 @@ class SSHService:
         Resolves credentials asynchronously, then runs blocking paramiko I/O
         in a thread via asyncio.to_thread to avoid blocking the event loop.
 
+        Cancellation: if the awaiting task is cancelled (including via
+        ``asyncio.wait_for``), the command's SSH channel is closed so the
+        worker thread exits promptly instead of staying parked on the remote
+        command. The remote side sees the channel close (stdin EOF, and
+        further writes get a broken pipe). A pooled connection stays in the
+        pool; a one-shot connection is closed by the existing ``finally``.
+
         Args:
             connect_timeout: TCP + auth timeout in seconds for paramiko.connect().
                              Set lower (e.g. 3.0) for health probes so they fail
@@ -162,9 +208,14 @@ class SSHService:
         # minutes but still produce a steady trickle of output, so a
         # wall-clock wait_for here would kill them. We trust paramiko's
         # per-recv timer + the exit-ready poll to catch true hangs.
-        return await asyncio.to_thread(
-            self._run_command_blocking, payload, command, timeout_seconds, pool, connect_kwargs
-        )
+        closer = _ChannelCloser()
+        try:
+            return await asyncio.to_thread(
+                self._run_command_blocking, payload, command, timeout_seconds, pool, connect_kwargs, closer,
+            )
+        except asyncio.CancelledError:
+            closer.close()
+            raise
 
     def _run_command_blocking(
         self,
@@ -173,12 +224,13 @@ class SSHService:
         timeout_seconds: float | None,
         pool: SSHConnectionPool | None,
         connect_kwargs: dict,
+        closer: _ChannelCloser,
     ) -> str:
         """Blocking SSH execution -- runs inside asyncio.to_thread."""
         if pool is not None:
             client = pool.get_or_connect(payload, connect_kwargs)
             SSHService._verify_fingerprint(client, payload)
-            return SSHService._exec_command(client, command, timeout_seconds, payload)
+            return SSHService._exec_command(client, command, timeout_seconds, payload, closer)
 
         client = paramiko.SSHClient()
         client.load_system_host_keys()
@@ -197,7 +249,7 @@ class SSHService:
             if transport is not None:
                 transport.set_keepalive(60)
             SSHService._verify_fingerprint(client, payload)
-            return SSHService._exec_command(client, command, timeout_seconds, payload)
+            return SSHService._exec_command(client, command, timeout_seconds, payload, closer)
         except paramiko.AuthenticationException as exc:
             raise AuthenticationError(
                 f"SSH authentication failed for {payload.name} ({payload.username}@{payload.host}:{payload.port}). "
@@ -243,6 +295,13 @@ class SSHService:
         because they are not "the script exited nonzero", they are "the
         script never ran".
 
+        Cancellation: if the awaiting task is cancelled (including via
+        ``asyncio.wait_for``), the command's SSH channel is closed so the
+        worker thread exits promptly instead of staying parked on the remote
+        command. The remote side sees the channel close (stdin EOF, and
+        further writes get a broken pipe). A pooled connection stays in the
+        pool; a one-shot connection is closed by the existing ``finally``.
+
         The returned ``stderr`` is passed through
         :func:`redact_command_line` before being handed back so inline
         credentials that a remote tool may print never surface in the
@@ -265,9 +324,14 @@ class SSHService:
         # `timeout_seconds` remains an IDLE timeout enforced inside
         # _run_command_full_blocking via channel.settimeout + exit-status
         # polling, mirroring run_command exactly. No wall-clock wrapper.
-        return await asyncio.to_thread(
-            self._run_command_full_blocking, payload, command, timeout_seconds, pool, connect_kwargs,
-        )
+        closer = _ChannelCloser()
+        try:
+            return await asyncio.to_thread(
+                self._run_command_full_blocking, payload, command, timeout_seconds, pool, connect_kwargs, closer,
+            )
+        except asyncio.CancelledError:
+            closer.close()
+            raise
 
     def _run_command_full_blocking(
         self,
@@ -276,6 +340,7 @@ class SSHService:
         timeout_seconds: float | None,
         pool: SSHConnectionPool | None,
         connect_kwargs: dict,
+        closer: _ChannelCloser,
     ) -> tuple[str, str, int]:
         """Blocking SSH execution returning the full triple.
 
@@ -286,7 +351,7 @@ class SSHService:
         if pool is not None:
             client = pool.get_or_connect(payload, connect_kwargs)
             SSHService._verify_fingerprint(client, payload)
-            return SSHService._exec_command_full(client, command, timeout_seconds, payload)
+            return SSHService._exec_command_full(client, command, timeout_seconds, payload, closer)
 
         client = paramiko.SSHClient()
         client.load_system_host_keys()
@@ -305,7 +370,7 @@ class SSHService:
             if transport is not None:
                 transport.set_keepalive(60)
             SSHService._verify_fingerprint(client, payload)
-            return SSHService._exec_command_full(client, command, timeout_seconds, payload)
+            return SSHService._exec_command_full(client, command, timeout_seconds, payload, closer)
         except paramiko.AuthenticationException as exc:
             raise AuthenticationError(
                 f"SSH authentication failed for {payload.name} ({payload.username}@{payload.host}:{payload.port}). "
@@ -333,6 +398,7 @@ class SSHService:
         command: str,
         timeout_seconds: float | None,
         payload: SSHIntegrationInput,
+        closer: _ChannelCloser,
     ) -> tuple[str, str, int]:
         """Variant of :meth:`_exec_command` that returns (stdout, stderr, exit_code).
 
@@ -344,6 +410,7 @@ class SSHService:
         """
         try:
             _, stdout, stderr = client.exec_command(command)
+            closer.register(stdout.channel)
             # IDLE timeout: paramiko resets the timer on every recv() so a
             # slow-but-steady stream (dissect on a huge disk) never trips it.
             # A genuine hang (zero bytes for N seconds) raises
@@ -364,6 +431,11 @@ class SSHService:
                 import time as _time
                 grace_deadline = _time.monotonic() + 30.0
                 while not stdout.channel.exit_status_ready():
+                    if closer.closed:
+                        raise UpstreamError(
+                            f"SSH command for {payload.name} ({payload.host}) was cancelled; "
+                            "its channel was closed before an exit status arrived."
+                        )
                     if _time.monotonic() > grace_deadline:
                         raise AILATimeoutError(
                             f"SSH command for {payload.name} ({payload.host}) closed "
@@ -403,9 +475,11 @@ class SSHService:
         command: str,
         timeout_seconds: float | None,
         payload: SSHIntegrationInput,
+        closer: _ChannelCloser,
     ) -> str:
         try:
             _, stdout, stderr = client.exec_command(command)
+            closer.register(stdout.channel)
             # `timeout_seconds` is an IDLE timeout applied to each recv() --
             # paramiko resets the timer every time data arrives, so a slow but
             # steady stream (dissect on a huge disk) never trips it. A genuine
@@ -425,6 +499,11 @@ class SSHService:
                 import time as _time
                 grace_deadline = _time.monotonic() + 30.0
                 while not stdout.channel.exit_status_ready():
+                    if closer.closed:
+                        raise UpstreamError(
+                            f"SSH command for {payload.name} ({payload.host}) was cancelled; "
+                            "its channel was closed before an exit status arrived."
+                        )
                     if _time.monotonic() > grace_deadline:
                         raise AILATimeoutError(
                             f"SSH command for {payload.name} ({payload.host}) closed "

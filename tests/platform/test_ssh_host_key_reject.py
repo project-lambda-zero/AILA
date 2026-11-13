@@ -99,7 +99,7 @@ def _run_command_blocking_records_reject() -> paramiko.MissingHostKeyPolicy:
             ssh_module.SSHService, "_exec_command", return_value="ok"
         ):
             service._run_command_blocking(
-                _payload(), "echo hi", None, None, {"hostname": "127.0.0.1"}
+                _payload(), "echo hi", None, None, {"hostname": "127.0.0.1"}, ssh_module._ChannelCloser(),
             )
     # ``set_missing_host_key_policy`` is called exactly once per surface via
     # ``_apply_host_key_policy``; grab the argument it was called with.
@@ -122,7 +122,7 @@ def test_run_command_full_blocking_installs_reject_policy() -> None:
             ssh_module.SSHService, "_exec_command_full", return_value=("ok", "", 0)
         ):
             service._run_command_full_blocking(
-                _payload(), "echo hi", None, None, {"hostname": "127.0.0.1"}
+                _payload(), "echo hi", None, None, {"hostname": "127.0.0.1"}, ssh_module._ChannelCloser(),
             )
     fake.set_missing_host_key_policy.assert_called_once()
     (policy,), _kw = fake.set_missing_host_key_policy.call_args
