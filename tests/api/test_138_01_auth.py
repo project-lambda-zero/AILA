@@ -549,7 +549,7 @@ async def test_oidc_callback_creates_user(auth_client, test_db):
 
     configure_logging()
 
-    # Seed OIDC provider
+    # Seed OIDC provider; sign-in is refused without a default team.
     with session_scope() as s:
         provider = OIDCProviderRecord(
             provider_name="microsoft",
@@ -557,6 +557,7 @@ async def test_oidc_callback_creates_user(auth_client, test_db):
             client_id="test-client-id",
             client_secret_encrypted="test-secret",
             is_enabled=True,
+            default_team_id="team-oidc-138",
         )
         s.add(provider)
         s.commit()
@@ -608,6 +609,7 @@ async def test_oidc_callback_creates_user(auth_client, test_db):
         user = result.first()
     assert user is not None
     assert user.email == "testuser@example.com"
+    assert user.team_id == "team-oidc-138"
 
 
 # ---------------------------------------------------------------------------
