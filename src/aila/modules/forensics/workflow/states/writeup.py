@@ -13,6 +13,7 @@ from aila.platform.events import (
     ModuleWorkflowCompletedPayload,
     publish,
 )
+from aila.platform.llm.errors import LLMDisabledError
 
 __all__ = ["state_writeup"]
 
@@ -49,12 +50,22 @@ async def state_writeup(
     from aila.modules.forensics.reporting.writeup_builder import build_writeup
 
     build_start = _time.monotonic()
-    writeup_data = await build_writeup(
-        project_id=project_id,
-        investigation_id=investigation_id,
-        steps=steps,
-        input_context=input,
-    )
+    try:
+        writeup_data = await build_writeup(
+            project_id=project_id,
+            investigation_id=investigation_id,
+            steps=steps,
+            input_context=input,
+        )
+    except LLMDisabledError as exc:
+        # No write-up row is persisted on this path; the typed error
+        # propagates so the engine routes the run to its failure state.
+        await services.emitter.emit(
+            "writeup",
+            f"Write-up not generated: {exc.message}",
+            {"stage": "writeup_llm_disabled", "reason": exc.message},
+        )
+        raise
     build_elapsed = _time.monotonic() - build_start
     content_chars = len(writeup_data.get("content", "") or "")
     await services.emitter.emit(

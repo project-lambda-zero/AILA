@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.71] - 2026-11-12 -- Writeup fails with a typed reason when the LLM is disabled
+
+### Fixed
+
+- When the LLM kill switch is active, the forensics writeup step now emits a `writeup_llm_disabled` event with the reason and fails with the typed LLM disabled error, instead of crashing with a generic runtime error.
+- Step log fields in the writeup bundle that are capped (command, reasoning, stdout, stderr) now end with a visible truncation marker, matching the per-section cap.
+
+### Removed
+
+- The unused template writeup builder in the forensics writeup module. Writeup generation has no template fallback; its docstring now says so.
+
 ## [0.6.70] - 2026-11-12 -- Freeflow investigations promote their artifacts to leads
 
 ### Fixed
