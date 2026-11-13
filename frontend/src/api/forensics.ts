@@ -55,11 +55,12 @@ export function useForensicsQuery<T>(
   path: string,
   parse: (raw: unknown) => T,
   refetchInterval: number | false = false,
+  enabled: boolean = true,
 ) {
   return useQuery({
     queryKey: ["forensics", projectId, ...key],
     queryFn: async () => parse(await apiFetch<unknown>(path)),
-    enabled: Boolean(projectId),
+    enabled: Boolean(projectId) && enabled,
     retry: false,
     refetchInterval,
   });
@@ -559,11 +560,9 @@ export function parseStructuredAnalysis(raw: unknown, sectionKeys: readonly stri
 
 /* --- authenticated download ------------------------------------------- */
 
-/** Fetch `path` with the Bearer token and save the body under `filename`.
- * Reads the response as a Blob so binary payloads (carved files) survive;
- * apiFetch would decode them as UTF-8 text. Throws on any non-2xx. */
-export async function downloadForensicsFile(path: string, filename: string): Promise<void> {
-  const res = await authorizedFetch(path);
+/** Reject a non-2xx response; return the body as a Blob so binary payloads
+ * (carved files) survive. apiFetch would decode them as UTF-8 text. */
+async function checkedBlob(res: Response): Promise<Blob> {
   if (res.status === 401) {
     throw new Error("Session expired -- sign in again.");
   }
@@ -571,11 +570,94 @@ export async function downloadForensicsFile(path: string, filename: string): Pro
     const detail = await res.text().catch(() => "");
     throw new ApiError(res.status, detail || res.statusText);
   }
-  const blob = await res.blob();
+  return res.blob();
+}
+
+function saveBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+/** Filename from a `Content-Disposition` header, or null when absent. */
+function dispositionFilename(header: string | null): string | null {
+  if (header === null) return null;
+  const m = /filename=(?:"([^"]+)"|([^;]+))/i.exec(header);
+  if (!m) return null;
+  const name = (m[1] ?? m[2] ?? "").trim();
+  return name === "" ? null : name;
+}
+
+/** Last path segment of a Windows or POSIX path; null when there is none. */
+export function pathBaseName(p: string): string | null {
+  const parts = p.split(/[\\/]/).filter((s) => s !== "");
+  return parts.length > 0 ? parts[parts.length - 1] : null;
+}
+
+/** Fetch `path` with the Bearer token and save the body under `filename`.
+ * Throws on any non-2xx. */
+export async function downloadForensicsFile(path: string, filename: string): Promise<void> {
+  saveBlob(await checkedBlob(await authorizedFetch(path)), filename);
+}
+
+/** POST `body` as JSON to a forensics retrieval endpoint and save the streamed
+ * file. The saved name comes from the response `Content-Disposition`, falling
+ * back to `fallbackName`. Returns the saved name. */
+async function postForensicsDownload(
+  path: string,
+  body: Record<string, unknown>,
+  fallbackName: string,
+): Promise<string> {
+  const res = await authorizedFetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const blob = await checkedBlob(res);
+  const name = dispositionFilename(res.headers.get("content-disposition")) ?? fallbackName;
+  saveBlob(blob, name);
+  return name;
+}
+
+export const DISK_IMAGE_EVIDENCE_TYPE = "disk_image";
+export const RAW_DIRECTORY_KIND = "raw_directory";
+
+/** Extract an in-image `virtualPath` (file or directory) from the project's
+ * disk image. `evidenceId` selects one image; null lets the backend pick the
+ * project's only image. Returns the saved filename. */
+export function retrieveImageFile(
+  projectId: string,
+  virtualPath: string,
+  evidenceId: string | null,
+): Promise<string> {
+  return postForensicsDownload(
+    `/forensics/projects/${projectId}/retrieve-file`,
+    { virtual_path: virtualPath, ...(evidenceId !== null ? { evidence_id: evidenceId } : {}) },
+    pathBaseName(virtualPath) ?? "retrieved.bin",
+  );
+}
+
+/** Save a raw_directory evidence file or directory (zipped by the analyzer).
+ * Returns the saved filename. */
+export function fetchRawEvidence(projectId: string, evidence: EvidenceItem): Promise<string> {
+  return postForensicsDownload(
+    `/forensics/projects/${projectId}/fetch-raw`,
+    { evidence_id: evidence.id },
+    pathBaseName(evidence.file_path) ?? "retrieved.bin",
+  );
+}
+
+/** Disk-image evidence rows for the extract picker (first 500 by server order). */
+export function useDiskImages(projectId: string, enabled: boolean) {
+  return useForensicsQuery(
+    projectId,
+    ["evidence", DISK_IMAGE_EVIDENCE_TYPE],
+    `/forensics/projects/${projectId}/evidence?evidence_type=${DISK_IMAGE_EVIDENCE_TYPE}&page=1&page_size=500`,
+    parseEvidencePage,
+    false,
+    enabled,
+  );
 }

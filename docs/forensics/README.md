@@ -479,8 +479,8 @@ The module has no frontend directory. Forensics UI lives in the shared console s
 | `ArtifactExplorer`      | Browse all extracted artifacts by family and type          |
 | `LeadScoreCard`         | Top promoted leads with scoring breakdown                  |
 | `MachineReadinessCheck` | Tool installation status (green / red per tool)            |
-| `RetrieveFilePanel`     | Pull a specific file out of a disk image                   |
-| `FetchRawFilePanel`     | Fetch a file or directory from a raw-directory project     |
+
+File retrieval is available from the Evidence and Findings tabs: the Evidence tab extracts a typed in-image path or fetches a raw-directory file, and the Findings tab extracts paths shown next to each finding.
 
 
 ---

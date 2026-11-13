@@ -1395,11 +1395,14 @@ def create_forensics_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
         page: int = Query(default=1, ge=1),
         page_size: int = Query(default=100, ge=1, le=500),
+        evidence_type: str | None = Query(default=None),
     ) -> DataEnvelope[PaginatedResponse[EvidenceItem]]:
         # SQL-level pagination (finding 59-3.4): LIMIT/OFFSET on a stable
         # ORDER BY (created_at DESC, id ASC tiebreak) bounds the response to
         # page_size items. The page carries the project's evidence total so
-        # a caller can tell a partial page from the whole set.
+        # a caller can tell a partial page from the whole set. When
+        # ``evidence_type`` is set, the total and the page both cover only
+        # rows of that type.
         del request
 
         from aila.modules.forensics.db_models import ForensicsProjectRecord, ProjectEvidenceRecord
@@ -1412,14 +1415,15 @@ def create_forensics_router() -> APIRouter:
                 raise HTTPException(status_code=404, detail=f"Project {project_id} not found.")
             _require_project_ownership(project, auth)
 
+            scope = [ProjectEvidenceRecord.project_id == project_id]
+            if evidence_type is not None:
+                scope.append(ProjectEvidenceRecord.evidence_type == evidence_type)
             total = (await uow.session.exec(
-                select(sa_func.count()).select_from(ProjectEvidenceRecord).where(
-                    ProjectEvidenceRecord.project_id == project_id
-                )
+                select(sa_func.count()).select_from(ProjectEvidenceRecord).where(*scope)
             )).one()
             rows = (await uow.session.exec(
                 select(ProjectEvidenceRecord)
-                .where(ProjectEvidenceRecord.project_id == project_id)
+                .where(*scope)
                 .order_by(
                     ProjectEvidenceRecord.created_at.desc(),  # type: ignore[union-attr]
                     ProjectEvidenceRecord.id.asc(),  # type: ignore[union-attr]

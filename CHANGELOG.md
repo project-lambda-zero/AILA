@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.118] - 2026-11-14 -- Forensics file retrieval from the Evidence and Findings tabs
+
+### Added
+
+- The forensics Evidence tab can fetch raw-directory evidence and extract any in-image path from a chosen disk image, and the Findings tab offers extract buttons next to in-image file paths. Failures show the server's reason (#529).
+- The forensics evidence list accepts an `evidence_type` filter (#529).
+
 ## [0.6.117] - 2026-11-14 -- Carved file-type histogram on the forensics Artifacts tab
 
 ### Added
