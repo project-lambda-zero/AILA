@@ -5,13 +5,16 @@
  * download button.
  */
 import type { JSX, ReactNode } from "react";
+import { useState } from "react";
 
 import { useMutation } from "@tanstack/react-query";
 
-import { downloadForensicsFile } from "../../../../api/forensics";
+import { downloadForensicsFile, pathBaseName, retrieveImageFile } from "../../../../api/forensics";
+import type { EvidenceItem } from "../../../../api/forensics";
 import { apiErrDetail, asRecord } from "../../../../api/parse";
 import { css } from "../../../css";
 import { toast } from "../../../toast";
+import { Select } from "../formControls";
 import { CtlBtn, KV, Panel, emptyNote } from "../panels";
 
 export interface TabProps {
@@ -81,6 +84,55 @@ export function DownloadBtn({
       onClick={() => m.mutate()}
       disabled={disabled || m.isPending}
     />
+  );
+}
+
+/** Extract an in-image path from a disk image and save it locally. Success
+ * and failure both surface as toasts. */
+function useExtractFile(projectId: string) {
+  return useMutation({
+    mutationFn: ({ virtualPath, evidenceId }: { virtualPath: string; evidenceId: string | null }) =>
+      retrieveImageFile(projectId, virtualPath, evidenceId),
+    onSuccess: (name) => toast.success(`saved ${name}`),
+    onError: (e) => toast.fail("extract", apiErrDetail(e)),
+  });
+}
+
+/** Extract control for an in-image path. Renders nothing when the project has
+ * no disk image. With several images it adds a picker; the chosen image's id
+ * is sent as `evidence_id`, otherwise the backend uses the only image. */
+export function ExtractBtn({
+  projectId,
+  virtualPath,
+  diskImages,
+}: {
+  projectId: string;
+  virtualPath: string;
+  diskImages: EvidenceItem[];
+}): JSX.Element | null {
+  const [chosen, setChosen] = useState("");
+  const m = useExtractFile(projectId);
+  const first = diskImages[0];
+  if (first === undefined) return null;
+  const selected = diskImages.find((i) => i.id === chosen) ?? first;
+  const multi = diskImages.length > 1;
+  const trimmed = virtualPath.trim();
+  return (
+    <>
+      {multi ? (
+        <Select
+          value={selected.id}
+          onChange={setChosen}
+          options={diskImages.map((i) => ({ value: i.id, label: pathBaseName(i.file_path) ?? i.file_path }))}
+        />
+      ) : null}
+      <CtlBtn
+        label={m.isPending ? "extracting\u2026" : "extract"}
+        title="save this in-image path to a local file"
+        onClick={() => m.mutate({ virtualPath: trimmed, evidenceId: multi ? selected.id : null })}
+        disabled={trimmed === "" || m.isPending}
+      />
+    </>
   );
 }
 

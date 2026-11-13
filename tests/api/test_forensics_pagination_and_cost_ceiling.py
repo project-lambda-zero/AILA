@@ -182,6 +182,7 @@ async def test_list_evidence_returns_bounded_page(test_db) -> None:
         auth=_admin(),
         page=1,
         page_size=2,
+        evidence_type=None,
     )
     assert len(envelope.data.items) == 2
     assert envelope.data.total == 5
@@ -193,9 +194,54 @@ async def test_list_evidence_returns_bounded_page(test_db) -> None:
         auth=_admin(),
         page=3,
         page_size=2,
+        evidence_type=None,
     )
     assert len(last.data.items) == 1
     assert last.data.total == 5
+
+
+async def test_list_evidence_filters_by_evidence_type(test_db) -> None:
+    """evidence_type narrows both the page and the reported total."""
+    suffix = uuid4().hex[:8]
+    pid = await _seed_project(suffix)
+    async with async_session_scope() as session:
+        for i in range(2):
+            session.add(ProjectEvidenceRecord(
+                project_id=pid,
+                file_path=f"/evidence/disk-{i}.raw",
+                evidence_type="disk_image",
+            ))
+        for i in range(3):
+            session.add(ProjectEvidenceRecord(
+                project_id=pid,
+                file_path=f"/evidence/other-{i}.bin",
+                evidence_type="memory_dump",
+            ))
+        await session.commit()
+
+    list_evidence = _endpoint("/projects/{project_id}/evidence", "GET")
+    filtered = await list_evidence(
+        request=_Req(),
+        project_id=pid,
+        auth=_admin(),
+        page=1,
+        page_size=100,
+        evidence_type="disk_image",
+    )
+    assert len(filtered.data.items) == 2
+    assert filtered.data.total == 2
+    assert {item.evidence_type for item in filtered.data.items} == {"disk_image"}
+
+    unfiltered = await list_evidence(
+        request=_Req(),
+        project_id=pid,
+        auth=_admin(),
+        page=1,
+        page_size=100,
+        evidence_type=None,
+    )
+    assert len(unfiltered.data.items) == 5
+    assert unfiltered.data.total == 5
 
 
 async def test_list_findings_page_caps_artifact_fetch(test_db) -> None:

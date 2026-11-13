@@ -1,7 +1,7 @@
 import type { JSX } from "react";
 import { useState } from "react";
 
-import { parseFinding, parseRows, useForensicsQuery } from "../../../../api/forensics";
+import { RAW_DIRECTORY_KIND, parseFinding, parseRows, useDiskImages, useForensicsQuery } from "../../../../api/forensics";
 import type { ForensicsFinding, ProjectSummary } from "../../../../api/forensics";
 import { legalNextStates, useFindingWorkflowStates, useTransitionFinding } from "../../../../api/findingWorkflow";
 import { css } from "../../../css";
@@ -9,8 +9,26 @@ import { WorkflowStateBadge } from "../../badges";
 import { SuppressFindingForm } from "../forms";
 import { CtlBtn, DataTable, DictPanel, H, KV } from "../panels";
 import type { TableColumn } from "../panels";
-import { TableWithDetail, detailCaption, queryState } from "./shared";
+import { ExtractBtn, TableWithDetail, detailCaption, queryState } from "./shared";
 import type { TabProps } from "./shared";
+
+/** A value the analyzer can address inside a disk image: a non-empty path
+ * containing a separator. Bare names (for example a prefetch program name)
+ * cannot identify a file, so they are not offered for extraction. */
+function extractablePath(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const t = value.trim();
+  return t !== "" && /[\\/]/.test(t) ? t : null;
+}
+
+/** Path behind a finding's `executable`, following the backend precedence
+ * (`executable`, then `command`, then `image_path`). A `command` line names no
+ * file, so it yields null. */
+function executableSourcePath(raw: Record<string, unknown>): string | null {
+  if (raw.executable) return typeof raw.executable === "string" ? raw.executable : null;
+  if (raw.command) return null;
+  return typeof raw.image_path === "string" ? raw.image_path : null;
+}
 
 /** Per-row workflow-transition control. Fetches the forensics-scoped state
  * machine once and only surfaces the buttons that map to a legal outbound
@@ -131,6 +149,8 @@ function emptyFindingsLabel(project: ProjectSummary | null): string {
 
 export function FindingsTab({ projectId, project }: TabProps & { project: ProjectSummary | null }): JSX.Element {
   const q = useForensicsQuery(projectId, ["findings"], `/forensics/projects/${projectId}/findings`, (raw) => parseRows(raw, parseFinding));
+  const diskImagesQ = useDiskImages(projectId, project !== null && project.project_kind !== RAW_DIRECTORY_KIND);
+  const diskImages = diskImagesQ.data?.items ?? [];
   const rows = q.data ?? [];
   const [sel, setSel] = useState<ForensicsFinding | null>(null);
   const [suppress, setSuppress] = useState<ForensicsFinding | null>(null);
@@ -147,37 +167,69 @@ export function FindingsTab({ projectId, project }: TabProps & { project: Projec
               columns={COLS}
               selected={sel}
               onSelect={(r) => setSel((c) => (c === r ? null : r))}
-              rowActions={(r) => <CtlBtn label="suppress" tone="warn" onClick={() => setSuppress(r)} />}
+              rowActions={(r) => {
+                const filePath = extractablePath(r.path);
+                return (
+                  <>
+                    {filePath !== null ? (
+                      <ExtractBtn projectId={projectId} virtualPath={filePath} diskImages={diskImages} />
+                    ) : null}
+                    <CtlBtn label="suppress" tone="warn" onClick={() => setSuppress(r)} />
+                  </>
+                );
+              }}
             />
           )
         }
         detail={sel}
         onClose={() => setSel(null)}
-        detailRenderer={(row) => (
-          <div style={css("padding:11px 13px;display:flex;flex-direction:column;gap:12px;")}>
-            <KV
-              entries={[
-                ["fingerprint", row.fingerprint || "\u2014"],
-                ["artifact type", row.artifact_type || "\u2014"],
-                ["artifact family", row.artifact_family],
-                ["source tool", row.source_tool],
-                ["executable", row.executable ?? "\u2014"],
-                ["path", row.path ?? "\u2014"],
-                ["name", row.name ?? "\u2014"],
-                ["user", row.user ?? "\u2014"],
-                ["reasons", row.suspicious_reasons],
-                ["last run", row.last_run],
-                ["run count", row.run_count],
-                ["occurrences", row.occurrences],
-              ]}
-            />
-            <ForensicsFindingTransition row={row} />
-            <div>
-              <div style={detailCaption}>raw record</div>
-              <DictPanel data={row.raw_record} />
+        detailRenderer={(row) => {
+          const filePath = extractablePath(row.path);
+          const exePath = extractablePath(executableSourcePath(row.raw_record));
+          return (
+            <div style={css("padding:11px 13px;display:flex;flex-direction:column;gap:12px;")}>
+              <KV
+                entries={[
+                  ["fingerprint", row.fingerprint || "\u2014"],
+                  ["artifact type", row.artifact_type || "\u2014"],
+                  ["artifact family", row.artifact_family],
+                  ["source tool", row.source_tool],
+                  [
+                    "executable",
+                    exePath !== null ? (
+                      <span>
+                        {exePath} <ExtractBtn projectId={projectId} virtualPath={exePath} diskImages={diskImages} />
+                      </span>
+                    ) : (
+                      row.executable ?? "\u2014"
+                    ),
+                  ],
+                  [
+                    "path",
+                    filePath !== null ? (
+                      <span>
+                        {row.path} <ExtractBtn projectId={projectId} virtualPath={filePath} diskImages={diskImages} />
+                      </span>
+                    ) : (
+                      row.path ?? "\u2014"
+                    ),
+                  ],
+                  ["name", row.name ?? "\u2014"],
+                  ["user", row.user ?? "\u2014"],
+                  ["reasons", row.suspicious_reasons],
+                  ["last run", row.last_run],
+                  ["run count", row.run_count],
+                  ["occurrences", row.occurrences],
+                ]}
+              />
+              <ForensicsFindingTransition row={row} />
+              <div>
+                <div style={detailCaption}>raw record</div>
+                <DictPanel data={row.raw_record} />
+              </div>
             </div>
-          </div>
-        )}
+          );
+        }}
       />
       {suppress ? <SuppressFindingForm projectId={projectId} row={suppress} onClose={() => setSuppress(null)} /> : null}
     </>
