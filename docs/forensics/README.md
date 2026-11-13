@@ -494,7 +494,7 @@ All endpoints use `DataEnvelope[T]`, platform auth, and rate limiting.
 | `DELETE` | `/forensics/projects/:id`                                           | Delete project + all its data                                    |
 | `POST` | `/forensics/projects/:id/full-analysis`                               | Trigger the full-analysis pipeline                               |
 | `POST` | `/forensics/projects/:id/readiness-check`                             | Check analyzer-machine tool readiness                            |
-| `GET`  | `/forensics/projects/:id/evidence`                                    | List evidence files                                              |
+| `GET`  | `/forensics/projects/:id/evidence`                                    | List evidence files (paginated, with total)                      |
 | `GET`  | `/forensics/projects/:id/findings`                                    | Confident findings extracted from artifacts                      |
 | `GET`  | `/forensics/projects/:id/artifacts`                                   | Query artifacts (family / type filter, paginated)                |
 | `GET`  | `/forensics/projects/:id/leads`                                       | Top promoted leads                                               |
