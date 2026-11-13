@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.66] - 2026-11-12 -- Directory retrievals report the archive digest
+
+### Fixed
+
+- Retrieving a directory from a forensics project (disk image or raw directory) no longer fails with a hash mismatch and quarantines the archive. The extraction scripts now report the SHA-256 of the finished zip archive, which is the file the API host pulls and re-hashes, instead of a digest over the member contents.
+
 ## [0.6.65] - 2026-11-12 -- Evidence classifier routes .img, syslog, and memory.raw to their lanes
 
 ### Fixed
