@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.63] - 2026-11-12 -- Forensics script lint no longer rejects benign scripts
+
+### Fixed
+
+- The forensics investigator's pre-flight dissect API lint now rejects a script only when the script contains a known API mistake. A precedence error made every entry after the first fire unconditionally, so every script without `Target(` (including a plain assignment or a `t.fs.walk()` loop) was rejected with the `.rglob(` message and never reached the analyzer. `Target(` keeps its `Target.open(` exception.
+
 ## [0.6.62] - 2026-11-12 -- Workflow run records close at the terminal state
 
 ### Fixed

@@ -104,3 +104,60 @@ async def test_investigator_execute_script_returns_policy_rejection() -> None:
     assert result["stdout"] == ""
     assert result["stderr"].startswith("blocked:")
     forward.assert_not_awaited()
+
+
+async def _run_investigator_script(script: str) -> tuple[dict, AsyncMock]:
+    """Run ``_execute_script`` with the executor and timeout config stubbed."""
+    from aila.modules.forensics.agents import investigator as investigator_module
+
+    inv = HonestInvestigator.__new__(HonestInvestigator)
+    inv.investigation_id = "inv-test-439"
+    inv.settings = None
+    inv.integration = _INTEGRATION
+    inv.analyzer_os = "linux"
+    forward = AsyncMock(return_value={"stdout": "ok\n", "stderr": "", "exit_code": 0})
+    with (
+        patch.object(ScriptExecutorTool, "forward", new=forward),
+        patch.object(
+            investigator_module, "_read_float_config", new=AsyncMock(return_value=30.0),
+        ),
+    ):
+        result = await inv._execute_script(script)
+    return result, forward
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        "x = 1\n",
+        "x = 1\nprint(x)\n",
+        "for entry in t.fs.walk('/'):\n    print(entry)\n",
+        "t = Target.open('/evidence/disk.img')\nprint(t.hostname)\n",
+    ],
+)
+async def test_investigator_dissect_lint_lets_benign_scripts_reach_executor(
+    script: str,
+) -> None:
+    result, forward = await _run_investigator_script(script)
+
+    assert result["exit_code"] == 0
+    assert result["stdout"] == "ok\n"
+    forward.assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    ("script", "message"),
+    [
+        ("for p in t.fs.rglob('*'):\n    print(p)\n", "found `.rglob(`"),
+        ("t = Target('/evidence/disk.img')\n", "found `Target(`"),
+        ("v = key.get_value('Run')\n", "found `.get_value(`"),
+    ],
+)
+async def test_investigator_dissect_lint_rejects_known_api_mistakes(
+    script: str, message: str,
+) -> None:
+    result, forward = await _run_investigator_script(script)
+
+    assert result["exit_code"] == 1
+    assert message in result["stderr"]
+    forward.assert_not_awaited()
