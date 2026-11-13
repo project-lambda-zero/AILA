@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.80] - 2026-11-12 -- Forensics project updated_at advances on status changes
+
+### Fixed
+
+- A forensics project's `updated_at` now advances on every update, including each status change written by the workflow. It previously stayed equal to `created_at` for the life of the project.
+
 ## [0.6.79] - 2026-11-12 -- Readiness probes honor the tool's exit status
 
 ### Fixed

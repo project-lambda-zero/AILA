@@ -31,7 +31,11 @@ class ForensicsProjectRecord(SQLModel, table=True):
     status: str = Field(default="created", index=True)
     team_id: str | None = Field(default=None, index=True)
     created_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
-    updated_at: datetime = Field(default_factory=utc_now, sa_type=DateTime(timezone=True))
+    updated_at: datetime = Field(
+        default_factory=utc_now,
+        sa_type=DateTime(timezone=True),
+        sa_column_kwargs={"onupdate": utc_now},
+    )
 
 
 class ProjectEvidenceRecord(SQLModel, table=True):
