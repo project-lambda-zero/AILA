@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.117] - 2026-11-14 -- Carved file-type histogram on the forensics Artifacts tab
+
+### Added
+
+- The forensics Artifacts tab shows the project's carved file-type histogram (files per MIME type across all captures), or says that nothing was carved (#527).
+
 ## [0.6.116] - 2026-11-14 -- OIDC sign-in from the console, refused for team-less accounts
 
 ### Security

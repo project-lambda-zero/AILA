@@ -159,8 +159,47 @@ export interface Artifact {
   carved: CarvedFile | null;
 }
 
+/** artifact_type the pcap collector emits for each Zeek-carved file. */
+export const CARVED_FILE_TYPE = "carved_file";
+
+/** artifact_type of the per-capture carved file-type histogram summary. */
+export const CARVED_FILE_TYPES_TYPE = "carved_file_types";
+
+export interface CarvedMimeCount {
+  mime_type: string;
+  count: number;
+}
+
+export interface CarvedFileTypes {
+  captures: number;
+  total_carved: number;
+  mimes: CarvedMimeCount[];
+}
+
+/** Merge the per-capture `carved_file_types` summaries into one project-wide
+ * histogram: counts add per MIME, most frequent first. */
+export function aggregateCarvedFileTypes(items: Artifact[]): CarvedFileTypes {
+  const counts = new Map<string, number>();
+  let captures = 0;
+  let totalCarved = 0;
+  for (const item of items) {
+    if (item.artifact_type !== CARVED_FILE_TYPES_TYPE) continue;
+    captures += 1;
+    totalCarved += readNum(item.data, "total_carved") ?? 0;
+    for (const row of readRecordArray(item.data, "rows")) {
+      const mime = readStr(row, "mime_type");
+      const count = readNum(row, "count");
+      if (!mime || count === null || count <= 0) continue;
+      counts.set(mime, (counts.get(mime) ?? 0) + count);
+    }
+  }
+  const mimes = [...counts].map(([mime_type, count]) => ({ mime_type, count }));
+  mimes.sort((a, b) => b.count - a.count || (a.mime_type < b.mime_type ? -1 : a.mime_type > b.mime_type ? 1 : 0));
+  return { captures, total_carved: totalCarved, mimes };
+}
+
 function carvedFileOf(artifactType: string, data: Obj): CarvedFile | null {
-  if (artifactType !== "carved_file") return null;
+  if (artifactType !== CARVED_FILE_TYPE) return null;
   const sha256 = readStr(data, "sha256");
   if (!sha256) return null;
   return { sha256, filename: readStr(data, "filename_guess") ?? `carved_${sha256.slice(0, 12)}.bin` };
