@@ -34,6 +34,7 @@ from aila.modules.forensics.db_models import InvestigationRunRecord
 from aila.modules.forensics.workflow.inputs import FreeFlowInput
 from aila.platform.exceptions import AILAError
 from aila.platform.llm.cost_record import LLMCostRecord
+from aila.platform.llm.errors import LLMError
 from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import StateResult
 from aila.storage.registry import ConfigRegistry
@@ -286,7 +287,7 @@ async def state_freeflow(
             "agent.investigate() returned: steps=%d, answer=%s",
             len(result.get("steps", [])), bool(result.get("answer")),
         )
-    except (OSError, TimeoutError, RuntimeError, ValueError, KeyError, AILAError) as exc:
+    except (OSError, TimeoutError, RuntimeError, ValueError, KeyError, AILAError, LLMError) as exc:
         _log.exception("agent.investigate() FAILED: %s", exc)
         await services.emitter.emit(
             "freeflow",
