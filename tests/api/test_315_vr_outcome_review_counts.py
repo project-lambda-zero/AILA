@@ -22,6 +22,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from sqlalchemy import event
+from sqlalchemy.engine import Engine
 
 from aila.api.auth import AuthContext
 from aila.modules.vr.api_router import create_vr_router
@@ -33,7 +34,7 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
     VRWorkspaceRecord,
 )
-from aila.storage.database import async_session_scope, get_async_engine
+from aila.storage.database import async_session_scope
 
 _LIST_PATH = "/investigations/{investigation_id}/outcomes"
 
@@ -228,16 +229,18 @@ async def test_vr_outcome_list_issues_one_grouped_review_query(test_db) -> None:
         await _seed_review(oid, br[5], "approve")
 
     captured: list[str] = []
-    engine = get_async_engine()
 
     def _capture(_conn, _cursor, statement, _params, _context, _executemany):
         captured.append(statement)
 
-    event.listen(engine.sync_engine, "before_cursor_execute", _capture)
+    # Listen on the Engine class, not one instance: the cached session
+    # factory may be bound to a different engine than ``get_async_engine()``
+    # returns once another test file has run in the same process.
+    event.listen(Engine, "before_cursor_execute", _capture)
     try:
         items = await _list(inv_id, team_id)
     finally:
-        event.remove(engine.sync_engine, "before_cursor_execute", _capture)
+        event.remove(Engine, "before_cursor_execute", _capture)
 
     assert set(items) == set(outcome_ids)
     review_selects = [
