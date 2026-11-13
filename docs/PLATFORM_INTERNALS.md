@@ -245,6 +245,17 @@ emitter.emit(PlatformEvent(stage="inventory", action="start", message="..."))
       (consumed by frontend SSE)
 ```
 
+### Domain events
+
+Typed domain events (`platform/events/domain_events.py`) go through `DomainEventBus` (`platform/events/bus.py`) via `publish()`. They are separate from the per-request `EventEmitter` stages. The default bus has two subscribers in every process:
+
+- `journal_persist` (`platform/events/persistence.py`) writes each event as one `kind="domain_event"` row in the hash-chained `platform_journal`.
+- `redis_bridge_publisher` (`platform/events/redis_bridge.py`) relays the event over Redis. The API process consumes the relay and republishes the event on its local bus.
+
+The API process adds `sse_investigation_status` (`api/events.py`), which pushes only `EntityStatusChanged` events for investigations and projects to SSE clients.
+
+`module.workflow.completed` (`ModuleWorkflowCompleted`) is journal-only. The forensics write-up state publishes it after the write-up is persisted, and the vulnerability reporting state publishes it after the report narrative is built. Other modules do not publish it. No subscriber acts on it, and it does not mark the run's terminal state: completion behavior belongs on status change events or the workflow cursor.
+
 ### Thread safety
 
 `ThreadSafeEventEmitter` wraps emit() in a drain queue with a non-blocking lock. Parallel SSH workers, DAG stages, and scoring threads all call emit() safely without external locking. The drain loop is synchronous; async destinations receive events in drain order without blocking fast sync destinations.
