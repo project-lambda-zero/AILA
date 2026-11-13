@@ -515,12 +515,20 @@ async def _seed_inv_cursor(task_id: str, inv_id: str, current_state: str) -> Non
 
 def _vr_binding():
     from aila.modules.vr.db_models import VRInvestigationRecord
+    from aila.platform.services.investigation_lifecycle import PreparedSubmit
     from aila.platform.tasks.state_reconciler import (
         InvestigationRecoveryBinding,
     )
 
-    async def _submit_one(inv_id: str) -> None:
-        del inv_id
+    async def _prepare_submit(
+        inv_id: str, branch_id: str | None,
+    ) -> PreparedSubmit:
+        del inv_id, branch_id
+
+        async def _send() -> None:
+            return None
+
+        return _send
 
     return InvestigationRecoveryBinding(
         module_id="vr",
@@ -528,7 +536,7 @@ def _vr_binding():
         track="vr",
         fn_path_pattern="%run_vr_investigate%",
         inv_model=VRInvestigationRecord,
-        submit_one=_submit_one,
+        prepare_submit=_prepare_submit,
         branch_model=None,
         branch_status_active=None,
     )

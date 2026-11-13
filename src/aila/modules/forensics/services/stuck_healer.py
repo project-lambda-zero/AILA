@@ -15,11 +15,10 @@ The forensics investigate surface has two task shapes:
 * ``run_forensics_investigation`` -- freeflow, requires ``project_id`` /
   ``question`` / ``integration`` / ``analyzer_os`` /
   ``evidence_directory`` reconstructed from the project row. The healer
-  does NOT reconstruct that surface -- a freeflow inv with no active
-  panel branch falls through the ``_submit_one`` fallback path and
-  raises, which the per-id catch in the platform sweep logs and skips.
-  Operator remediation for a stuck freeflow stays the ``rerun``
-  endpoint (creates a fresh row) rather than an in-place resubmit.
+  is re-driven from the project row by the shared
+  :func:`~aila.modules.forensics.services.recovery_submit.prepare_recovery_submit`
+  builder. A branched investigation with no active panel branch is
+  refused (the per-id catch in the platform sweep logs and skips it).
 
 The ``fn_path`` LIKE pattern uses ``investigat`` (no trailing character)
 so ``taskrecord`` rows for either shape (``run_forensics_investigation``
@@ -45,6 +44,7 @@ from aila.modules.forensics.db_models import (
     ForensicsInvestigationBranchRecord,
     InvestigationRunRecord,
 )
+from aila.modules.forensics.services.recovery_submit import prepare_recovery_submit
 from aila.platform.services.stuck_healer import (
     sweep_stuck_investigations as _platform_sweep,
 )
@@ -67,55 +67,13 @@ _FORENSICS_RUNNING_STATUSES: tuple[str, ...] = (
 _FORENSICS_BRANCH_ACTIVE = "active"
 
 
-async def _submit_one(inv_id: str, branch_id: str | None) -> None:
-    """Enqueue one ``run_forensics_panel_investigate`` task for a branch.
-
-    The panel task takes only ``investigation_id`` + ``branch_id``; every
-    other kwarg the freeflow surface needs (project fields, SSH
-    integration) is not part of the panel entry contract.
-
-    A ``branch_id=None`` call means the row had no active panel branch
-    when :func:`_fan_out_reenqueue_submit` inspected it. That is the
-    freeflow shape, which this healer does not reconstitute -- raise so
-    the platform sweep's per-id catch logs and moves on. The row stays
-    ``running`` until the operator picks it up manually.
-
-    ``bypass_dedup=True`` mirrors the malware submitter: without it the
-    platform ``TaskQueue`` input-hash dedup would collide with the
-    CANCELLED-but-not-yet-purged row this heal just cancelled.
-
-    Deferred imports because this module sits on the worker boot path.
-    """
-    if branch_id is None:
-        raise RuntimeError(
-            f"forensics stuck_healer: investigation {inv_id!r} has no "
-            "active panel branch; freeflow re-enqueue is not automated "
-            "here -- operator can call the /rerun endpoint instead."
-        )
-    from aila.modules.forensics._task_queue import default_task_queue
-    from aila.modules.forensics.workflow.panel.task import (
-        run_forensics_panel_investigate,
-    )
-
-    task_queue = default_task_queue()
-    await task_queue.submit(
-        track="forensics",
-        fn=run_forensics_panel_investigate,
-        kwargs={"investigation_id": inv_id, "branch_id": branch_id},
-        user_id="system",
-        group_id="forensics_stuck_healer",
-        team_id=None,
-        bypass_dedup=True,
-    )
-
-
 sweep_stuck_investigations = partial(
     _platform_sweep,
     inv_model=InvestigationRunRecord,
     running_status_values=_FORENSICS_RUNNING_STATUSES,
     fn_path_pattern=_FORENSICS_INVESTIGATE_FN_PATTERN,
     module_id="forensics",
-    submit_one=_submit_one,
+    prepare_submit=prepare_recovery_submit,
     branch_model=ForensicsInvestigationBranchRecord,
     branch_status_active=_FORENSICS_BRANCH_ACTIVE,
     # ``InvestigationRunRecord`` predates the platform

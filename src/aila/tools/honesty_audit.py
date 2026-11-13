@@ -4672,7 +4672,7 @@ class _HonestyVisitor(ast.NodeVisitor):
             body_calls = _call_names_in_body(node)
             # Substring match so a heal dispatching through a private
             # wrapper (``self._flip_status(...)``) or a composed helper
-            # (``_fan_out_reenqueue_submit(...)``, ``_should_drop_lock(...)``)
+            # (``_prepare_reenqueue_sends(...)``, ``_should_drop_lock(...)``)
             # still counts as "this function's body mutates run state".
             # Exact-match would silently skip every heal that owns a
             # module-private mutation helper, which is precisely the

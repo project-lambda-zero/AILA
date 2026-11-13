@@ -56,6 +56,8 @@ _log = logging.getLogger(__name__)
 
 __all__ = [
     "PauseInvestigationError",
+    "PrepareSubmit",
+    "PreparedSubmit",
     "ReenqueueInvestigationError",
     "ResumeInvestigationError",
     "cancel_investigation_tasks",
@@ -66,6 +68,18 @@ __all__ = [
     "resume_investigation",
     "supersede_unratified_replan_requests",
 ]
+
+# A dispatch split into build and send, so a re-enqueue can validate every
+# dispatch before it resets anything. ``PrepareSubmit`` takes
+# ``(investigation_id, branch_id | None)``, performs every lookup and
+# validation for one worker task, and returns a ``PreparedSubmit``: the
+# zero-argument async closure that enqueues that task. It raises
+# :class:`ReenqueueInvestigationError` when the dispatch cannot be built.
+# :func:`reenqueue_investigation` awaits every ``PrepareSubmit`` before its
+# reset transaction and every returned ``PreparedSubmit`` once after that
+# transaction commits.
+PreparedSubmit = Callable[[], Awaitable[None]]
+PrepareSubmit = Callable[[str, str | None], Awaitable[PreparedSubmit]]
 
 
 async def purge_investigation_cursors(
@@ -745,7 +759,7 @@ async def resume_investigation(
     # it run again", so fall back to the full reset
     # (:func:`reenqueue_investigation`: reset to CREATED, cancel stale
     # tasks, wipe every prior-run cursor, submit fresh) in the same call
-    # and surface the actual action taken. The fallback's fn_path
+    # and surface the actual action taken.
     # The stale-task cancel pattern derives from ``task_fn`` via the same
     # helper TaskQueue.submit uses, so the LIKE match hits the exact rows
     # the module's own /re-enqueue endpoint would cancel; the branch
@@ -754,30 +768,36 @@ async def resume_investigation(
     # setup submit, matching VR's submit-once convention).
     fn_path = qualified_task_name(task_fn)
 
-    async def _submit_one(inv_id: str, branch_id: str | None) -> None:
+    async def _prepare_submit(
+        inv_id: str, branch_id: str | None,
+    ) -> PreparedSubmit:
         fb_kwargs: dict[str, Any] = {"investigation_id": inv_id}
         if branch_id:
             fb_kwargs["branch_id"] = branch_id
-        await task_queue.submit(
-            track=track,
-            fn=task_fn,
-            kwargs=fb_kwargs,
-            user_id=auth_user_id or user_id,
-            group_id=auth_role,
-            team_id=auth_team_id,
-        )
+
+        async def _send() -> None:
+            await task_queue.submit(
+                track=track,
+                fn=task_fn,
+                kwargs=fb_kwargs,
+                user_id=auth_user_id or user_id,
+                group_id=auth_role,
+                team_id=auth_team_id,
+            )
+
+        return _send
 
     try:
         reenqueued = await reenqueue_investigation(
             investigation_id,
             inv_model=inv_model,
             fn_path_pattern=f"%{fn_path}%",
-            submit_one=_submit_one,
+            prepare_submit=_prepare_submit,
             branch_model=branch_model,
             branch_status_active="active",
         )
     except (ReenqueueInvestigationError, SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
-        # The reset itself failed (row vanished, transport error) -- the
+        # The dispatch could not be built or the reset itself failed (row vanished, transport error) -- the
         # investigation stays PAUSED with no cursors restored and no
         # tasks enqueued; report the no-op truthfully so the operator
         # knows resume did not silently "succeed".
@@ -796,25 +816,26 @@ async def resume_investigation(
     return summary
 
 
-async def _fan_out_reenqueue_submit(
+async def _prepare_reenqueue_sends(
     investigation_id: str,
     *,
-    submit_one: Callable[[str, str | None], Awaitable[None]],
+    prepare_submit: PrepareSubmit,
     branch_model: type[Any] | None,
     branch_status_active: str | None,
-) -> int:
-    """Fan the fresh submit out across active branches (platform-owned).
+) -> list[PreparedSubmit]:
+    """Prepare the fresh-submit sends across active branches (platform-owned).
 
-    ``branch_model is None`` selects submit-once mode (VR): one task with
+    ``branch_model is None`` selects submit-once mode (VR): one send with
     no branch id, and the setup state respawns/reuses the persona
-    branches on dispatch. Otherwise (malware) one task is submitted per
-    active branch, or one setup task when no branch is active. Returns
-    the number of submit calls made. This orchestration lives in the
-    platform so a module cannot get the branch fan-out wrong.
+    branches on dispatch. Otherwise (malware) one send is prepared per
+    active branch, or one setup send when no branch is active. Every
+    ``prepare_submit`` call happens here, before the caller's reset
+    transaction, so a dispatch that cannot be built refuses the whole
+    re-enqueue while the row is still unchanged. This orchestration lives
+    in the platform so a module cannot get the branch fan-out wrong.
     """
     if branch_model is None:
-        await submit_one(investigation_id, None)
-        return 1
+        return [await prepare_submit(investigation_id, None)]
     async with UnitOfWork() as uow:
         branch_stmt = (
             select(branch_model.id)
@@ -825,11 +846,11 @@ async def _fan_out_reenqueue_submit(
             str(bid) for bid in (await uow.session.exec(branch_stmt)).all()
         ]
     if branch_ids:
-        for branch_id in branch_ids:
-            await submit_one(investigation_id, branch_id)
-        return len(branch_ids)
-    await submit_one(investigation_id, None)
-    return 1
+        return [
+            await prepare_submit(investigation_id, branch_id)
+            for branch_id in branch_ids
+        ]
+    return [await prepare_submit(investigation_id, None)]
 
 
 async def reenqueue_investigation(
@@ -837,7 +858,7 @@ async def reenqueue_investigation(
     *,
     inv_model: type[Any],
     fn_path_pattern: str,
-    submit_one: Callable[[str, str | None], Awaitable[None]],
+    prepare_submit: PrepareSubmit,
     branch_model: type[Any] | None = None,
     branch_status_active: str | None = None,
     new_kind: str | None = None,
@@ -862,14 +883,17 @@ async def reenqueue_investigation(
     update ``inv.kind`` / ``inv.strategy_family`` when supplied; the
     caller resolves the module's kind-to-strategy default map.
 
-    The only module-specific input is the atomic submit primitive:
-    ``submit_one(investigation_id, branch_id | None) -> None`` submits
-    exactly one worker task. ``branch_model`` (with ``branch_status_active``)
-    selects the fan-out: ``None`` submits once (VR, setup respawns the
-    branches); a branch model submits one task per active branch, or one
-    setup task when no branch is active (malware). The branch fan-out
-    itself is platform-owned; the module supplies only the one-submit
-    primitive and the branch-query parameters as data.
+    The only module-specific input is the dispatch builder:
+    ``prepare_submit(investigation_id, branch_id | None)`` resolves every
+    lookup and validation for exactly one worker task and returns the
+    zero-argument send closure. ``branch_model`` (with
+    ``branch_status_active``) selects the fan-out: ``None`` sends once (VR,
+    setup respawns the branches); a branch model sends one task per active
+    branch, or one setup task when no branch is active (malware). The
+    branch fan-out itself is platform-owned; the module supplies only the
+    dispatch builder and the branch-query parameters as data. Every builder
+    runs before the reset, so a builder that raises leaves the row
+    unchanged; the sends run after the commit.
     """
     summary: dict[str, Any] = {
         "submitted": 0,
@@ -879,6 +903,15 @@ async def reenqueue_investigation(
         "investigation_id": investigation_id,
     }
     now = utc_now()
+
+    # Build every dispatch before anything is reset: a dispatch that cannot
+    # be resolved raises here and the row stays exactly as it was.
+    sends = await _prepare_reenqueue_sends(
+        investigation_id,
+        prepare_submit=prepare_submit,
+        branch_model=branch_model,
+        branch_status_active=branch_status_active,
+    )
 
     async with UnitOfWork() as uow:
         inv_stmt = (
@@ -953,14 +986,11 @@ async def reenqueue_investigation(
 
         await uow.session.commit()
 
-    # Commit precedes submit: the same UoW would race with the dedup
-    # session opened inside the submit primitive's TaskQueue.submit.
-    summary["submitted"] = await _fan_out_reenqueue_submit(
-        investigation_id,
-        submit_one=submit_one,
-        branch_model=branch_model,
-        branch_status_active=branch_status_active,
-    )
+    # Commit precedes the sends: the same UoW would race with the dedup
+    # session opened inside each send's TaskQueue.submit.
+    for send in sends:
+        await send()
+    summary["submitted"] = len(sends)
 
     # RFC-07 #31 -- the full re-enqueue is a durable, replayable
     # recovery event: an operator (or an automated healer) reset an

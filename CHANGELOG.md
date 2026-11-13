@@ -5,6 +5,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.96] - 2026-11-12 -- Stuck forensics investigations are re-enqueued
+
+### Added
+
+- Migration `149_forensics_inv_lifecycle_cols` adds nullable `pause_reason` and `started_at` columns to `forensics_investigations`, so the platform investigation reset applies to forensics rows.
+
+### Changed
+
+- Investigation re-enqueue now takes a dispatch builder (`prepare_submit`) instead of a one-shot submitter. Every module builds its worker dispatch before the reset transaction and sends it after the commit; the operator re-enqueue routes, stuck healers, and investigation reconcilers of vr, malware, forensics, and the module template use it.
+
+### Fixed
+
+- Re-enqueueing a stuck forensics investigation no longer fails with a missing-field error, so the forensics stuck healer and reconciler stop retrying the same row on every tick.
+- A stuck forensics freeflow investigation is re-driven by submitting exactly one freeflow task rebuilt from its project and analyzer rows, and the investigation row points at the new task. A branched investigation with no active panel branch is refused instead of being re-driven as freeflow.
+- A re-enqueue whose dispatch cannot be built (missing investigation, project, or analyzer system) now refuses before any reset write, leaving the row, its cursors, and its tasks unchanged.
+
 ## [0.6.95] - 2026-11-12 -- Forensics projects end failed, with a reason, when analysis fails after intake
 
 ### Fixed

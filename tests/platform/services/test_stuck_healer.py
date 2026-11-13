@@ -26,7 +26,6 @@ unit under test, not the downstream re-enqueue mechanics.
 from __future__ import annotations
 
 import json
-from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import uuid4
 
@@ -43,6 +42,7 @@ from aila.modules.vr.services.stuck_healer import (
     sweep_stuck_investigations as _vr_module_sweep,
 )
 from aila.platform.services import recovery_service as _rec_mod
+from aila.platform.services.investigation_lifecycle import PreparedSubmit, PrepareSubmit
 from aila.platform.services.ledger import InvestigationLedgerRecord
 from aila.platform.services.stuck_healer import sweep_stuck_investigations
 from aila.platform.tasks.models import TaskRecord
@@ -190,14 +190,14 @@ class _CaptureReenqueue:
         *,
         inv_model: type[Any],
         fn_path_pattern: str,
-        submit_one: Callable[[str, str | None], Awaitable[None]],
+        prepare_submit: PrepareSubmit,
         branch_model: type[Any] | None = None,
         branch_status_active: str | None = None,
         new_kind: str | None = None,
         new_strategy: str | None = None,
     ) -> dict[str, Any]:
         del inv_model, fn_path_pattern, branch_model, branch_status_active
-        del new_kind, new_strategy, submit_one  # unused by the spy
+        del new_kind, new_strategy, prepare_submit  # unused by the spy
         self.calls.append({"investigation_id": investigation_id})
         return {
             "submitted": 1,
@@ -207,9 +207,14 @@ class _CaptureReenqueue:
         }
 
 
-async def _noop_submit(inv_id: str, branch_id: str | None) -> None:
-    """Sweep's ``submit_one`` is opaque -- the spy short-circuits it."""
+async def _noop_prepare_submit(inv_id: str, branch_id: str | None) -> PreparedSubmit:
+    """Sweep's ``prepare_submit`` is opaque -- the spy short-circuits it."""
     del inv_id, branch_id
+
+    async def _send() -> None:
+        return None
+
+    return _send
 
 
 async def _read_recovery_events(
@@ -302,7 +307,7 @@ async def test_stuck_healer_full_matrix(monkeypatch: pytest.MonkeyPatch) -> None
         running_status_values=("running",),
         fn_path_pattern="%run_vr_investigate%",
         module_id="vr",
-        submit_one=_noop_submit,
+        prepare_submit=_noop_prepare_submit,
         branch_model=None,
         branch_status_active=None,
         # Explicit knobs so the test never depends on operator config.
@@ -367,13 +372,13 @@ async def test_stuck_healer_per_id_failure_isolates(
         *,
         inv_model: type[Any],
         fn_path_pattern: str,
-        submit_one: Callable[[str, str | None], Awaitable[None]],
+        prepare_submit: PrepareSubmit,
         branch_model: type[Any] | None = None,
         branch_status_active: str | None = None,
         new_kind: str | None = None,
         new_strategy: str | None = None,
     ) -> dict[str, Any]:
-        del inv_model, fn_path_pattern, submit_one
+        del inv_model, fn_path_pattern, prepare_submit
         del branch_model, branch_status_active, new_kind, new_strategy
         if investigation_id == _failed_id:
             raise OSError("simulated re-enqueue failure")
@@ -401,7 +406,7 @@ async def test_stuck_healer_per_id_failure_isolates(
         running_status_values=("running",),
         fn_path_pattern="%run_vr_investigate%",
         module_id="vr",
-        submit_one=_noop_submit,
+        prepare_submit=_noop_prepare_submit,
         idle_grace_s=600,
         max_heals_per_tick=10,
     )

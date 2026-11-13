@@ -781,6 +781,9 @@ async def test_reenqueue_per_branch_fan_out() -> None:
     submit-once mode. An inactive branch is excluded.
     """
     from aila.platform.services.investigation_lifecycle import (  # noqa: PLC0415
+        PreparedSubmit,
+    )
+    from aila.platform.services.investigation_lifecycle import (
         reenqueue_investigation as platform_reenqueue,
     )
 
@@ -798,14 +801,17 @@ async def test_reenqueue_per_branch_fan_out() -> None:
 
     calls: list[tuple[str, str | None]] = []
 
-    async def _submit_one(inv: str, branch_id: str | None) -> None:
-        calls.append((inv, branch_id))
+    async def _prepare_submit(inv: str, branch_id: str | None) -> PreparedSubmit:
+        async def _send() -> None:
+            calls.append((inv, branch_id))
+
+        return _send
 
     summary = await platform_reenqueue(
         inv_id,
         inv_model=VRInvestigationRecord,
         fn_path_pattern="%run_vr_investigate%",
-        submit_one=_submit_one,
+        prepare_submit=_prepare_submit,
         branch_model=VRInvestigationBranchRecord,
         branch_status_active="active",
     )
@@ -832,6 +838,9 @@ async def test_reenqueue_no_active_branch_single_submit() -> None:
     respawns the branches on dispatch.
     """
     from aila.platform.services.investigation_lifecycle import (  # noqa: PLC0415
+        PreparedSubmit,
+    )
+    from aila.platform.services.investigation_lifecycle import (
         reenqueue_investigation as platform_reenqueue,
     )
 
@@ -840,14 +849,17 @@ async def test_reenqueue_no_active_branch_single_submit() -> None:
 
     calls: list[tuple[str, str | None]] = []
 
-    async def _submit_one(inv: str, branch_id: str | None) -> None:
-        calls.append((inv, branch_id))
+    async def _prepare_submit(inv: str, branch_id: str | None) -> PreparedSubmit:
+        async def _send() -> None:
+            calls.append((inv, branch_id))
+
+        return _send
 
     summary = await platform_reenqueue(
         inv_id,
         inv_model=VRInvestigationRecord,
         fn_path_pattern="%run_vr_investigate%",
-        submit_one=_submit_one,
+        prepare_submit=_prepare_submit,
         branch_model=VRInvestigationBranchRecord,
         branch_status_active="active",
     )

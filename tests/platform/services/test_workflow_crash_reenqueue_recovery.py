@@ -30,6 +30,7 @@ from aila.modules.vr.db_models import (
     VRWorkspaceRecord,
 )
 from aila.platform.services.investigation_lifecycle import (
+    PreparedSubmit,
     purge_investigation_cursors,
     reenqueue_investigation,
 )
@@ -335,14 +336,17 @@ async def test_reenqueue_nulls_wall_clock_origin(test_db) -> None:
 
     submitted: list[str] = []
 
-    async def _submit_one(investigation_id: str, _branch_id: str | None) -> None:
-        submitted.append(investigation_id)
+    async def _prepare_submit(investigation_id: str, _branch_id: str | None) -> PreparedSubmit:
+        async def _send() -> None:
+            submitted.append(investigation_id)
+
+        return _send
 
     summary = await reenqueue_investigation(
         inv_id,
         inv_model=VRInvestigationRecord,
         fn_path_pattern="%/run_vr%",
-        submit_one=_submit_one,
+        prepare_submit=_prepare_submit,
     )
 
     assert summary["submitted"] == 1
