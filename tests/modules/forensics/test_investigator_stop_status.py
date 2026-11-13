@@ -32,6 +32,7 @@ from aila.modules.forensics.db_models import (
 from aila.modules.forensics.workflow.states import freeflow as freeflow_module
 from aila.modules.forensics.workflow.states.freeflow import state_freeflow
 from aila.platform.contracts.reasoning import ReasoningTurnDecision
+from aila.platform.llm.errors import BudgetExceededError, LLMError
 from aila.platform.llm.cost_record import LLMCostRecord
 from aila.platform.prompts import LoadedPrompt
 from aila.platform.services.reasoning import CyberReasoningEngine
@@ -379,3 +380,32 @@ async def test_freeflow_cost_ceiling_still_exhausts_the_investigation(
     assert status == "exhausted"
     assert final_answer is not None
     assert final_answer.startswith("<budget_exhausted:")
+
+
+@pytest.mark.parametrize(
+    "error",
+    [LLMError("provider rejected the request"), BudgetExceededError("provider rejected the request")],
+    ids=["llm_error", "budget_exceeded"],
+)
+async def test_freeflow_provider_failure_fails_the_investigation(
+    error: Exception, calls: dict[str, list[Any]],
+) -> None:
+    project_id, inv_id = await _seed("pending")
+
+    async def raise_error(_call_number: int) -> ReasoningTurnDecision:
+        raise error
+
+    engine = _engine(calls, raise_error)
+    emitter = _Emitter()
+
+    with pytest.raises(type(error)):
+        await state_freeflow(
+            _freeflow_input(project_id, inv_id, max_attempts=3),
+            _services(engine, emitter),
+        )
+
+    assert len(calls["provider"]) == 1
+    assert emitter.stages.count("agent_failed") == 1
+    status, final_answer = await _persisted(inv_id)
+    assert status == "failed"
+    assert final_answer == "provider rejected the request"

@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.69] - 2026-11-12 -- Freeflow marks the investigation failed on LLM errors
+
+### Fixed
+
+- A forensics freeflow investigation whose LLM call fails with an LLM subsystem error (for example a budget stop or a disabled provider) is now marked failed and emits an agent failure event. The error escaped the freeflow failure handler, so the workflow crashed while the investigation stayed running in the UI.
+
 ## [0.6.68] - 2026-11-12 -- Leads tab requests stay within the route limit
 
 ### Fixed
