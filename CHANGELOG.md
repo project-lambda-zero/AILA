@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.106] - 2026-11-12 -- Calibration sweep reports failed table reads instead of an idle install
+
+### Fixed
+
+- The calibration proposer sweep now lists every outcome and review table pair whose read failed in its report errors, with the failure class, instead of reporting zero samples and no errors as if the install were idle. Override pairs that name an unsafe table or are malformed are also listed. A readable pair with no reviews in the window still reports zero samples and no error.
+
 ## [0.6.105] - 2026-11-12 -- A task queue drain now stops submissions from every caller in the deployment
 
 ### Fixed
