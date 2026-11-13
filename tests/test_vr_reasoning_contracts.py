@@ -45,9 +45,12 @@ class TestInvestigationEnums:
         }
 
     def test_pause_reason_values(self) -> None:
+        # ``awaiting_unpack_target_analysis`` parks a malware investigation
+        # while the unpacked child target it spawned is still being analyzed.
         assert {m.value for m in InvestigationPauseReason} == {
             "operator", "low_confidence", "cost_budget",
             "awaiting_campaign", "awaiting_mcp",
+            "awaiting_unpack_target_analysis",
         }
 
 
