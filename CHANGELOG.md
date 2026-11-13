@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.97] - 2026-11-12 -- Long-running workflow states keep a fresh task heartbeat
+
+### Fixed
+
+- A workflow task whose state handler runs longer than `platform.reaper_zombie_heartbeat_min` (for example a forensics freeflow investigation or a long LLM turn) is no longer cancelled as a zombie while it is still running. The engine now refreshes `taskrecord.heartbeat_at` every `platform.heartbeat_interval_s` while a handler runs and stops the refresher when the handler returns, raises, or times out, so a task whose worker died is still reaped within the configured threshold.
+
 ## [0.6.96] - 2026-11-12 -- Stuck forensics investigations are re-enqueued
 
 ### Added
