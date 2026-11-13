@@ -41,10 +41,7 @@ const REGISTRY_SECTIONS: SectionDefs = [
   ["recent_docs", "recent docs"],
   ["network_interfaces", "network interfaces"],
   ["shellbags", "shellbags"],
-  ["amcache", "amcache"],
   ["shimcache", "shimcache"],
-  ["bam", "bam"],
-  ["security_packages", "security packages"],
 ];
 
 export function NetworkAnalysisTab({ projectId }: TabProps): JSX.Element {

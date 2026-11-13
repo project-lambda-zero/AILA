@@ -46,7 +46,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import func as sa_func
-from sqlmodel import select
+from sqlmodel import col, select
 
 from aila.api.schemas.common import PaginatedResponse
 from aila.api.schemas.envelope import DataEnvelope
@@ -355,7 +355,7 @@ class NetworkAnalysis(BaseModel):
 
 
 class RegistryAnalysis(BaseModel):
-    """Windows registry analysis result."""
+    """Host configuration and persistence artifacts grouped by bucket."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -367,10 +367,28 @@ class RegistryAnalysis(BaseModel):
     recent_docs: list[dict[str, Any]] = Field(default_factory=list)
     network_interfaces: list[dict[str, Any]] = Field(default_factory=list)
     shellbags: list[dict[str, Any]] = Field(default_factory=list)
-    amcache: list[dict[str, Any]] = Field(default_factory=list)
     shimcache: list[dict[str, Any]] = Field(default_factory=list)
-    bam: list[dict[str, Any]] = Field(default_factory=list)
-    security_packages: list[dict[str, Any]] = Field(default_factory=list)
+
+
+# Disk-collector artifact type (dissect query name with ``.`` -> ``_``) ->
+# RegistryAnalysis bucket. Keys must be types the disk collector emits.
+_REGISTRY_BUCKET_BY_TYPE: dict[str, str] = {
+    "runkeys": "autoruns",
+    "startupinfo": "autoruns",
+    "plist_launchagents": "autoruns",
+    "plist_launchdaemons": "autoruns",
+    "plist_loginitems": "autoruns",
+    "services": "services",
+    "tasks": "services",
+    "apps_installed": "installed_software",
+    "users": "user_accounts",
+    "usb": "usb_history",
+    "mru_recentdocs": "recent_docs",
+    "recently_used": "recent_docs",
+    "ips": "network_interfaces",
+    "shellbags": "shellbags",
+    "prefetch": "shimcache",
+}
 
 
 class TimelineEntry(BaseModel):
@@ -2915,63 +2933,22 @@ def create_forensics_router() -> APIRouter:
                 raise HTTPException(status_code=404, detail=f"Project {project_id} not found.")
             _require_project_ownership(project, auth)
 
-            from sqlmodel import or_
-
             rows = (await uow.session.exec(
                 select(ArtifactRecord).where(
                     ArtifactRecord.project_id == project_id,
-                    or_(
-                        ArtifactRecord.artifact_family == "registry",
-                        ArtifactRecord.artifact_family == "filesystem",
-                        ArtifactRecord.artifact_family == "execution",
-                    ),
+                    ArtifactRecord.source_tool == "dissect",
+                    col(ArtifactRecord.artifact_type).in_(_REGISTRY_BUCKET_BY_TYPE),
                 )
             )).all()
 
-        _REG_TYPE_TO_BUCKET: dict[str, str] = {
-            "runkeys": "autoruns",
-            "startup": "autoruns",
-            "services": "services",
-            "apps_installed": "installed_software",
-            "users": "user_accounts",
-            "usb": "usb_history",
-            "recentfiles": "recent_docs",
-            "shellbags": "shellbags",
-            "registry_hivelist": "autoruns",
-            "shell_history_powershell": "autoruns",
-            "prefetch": "shimcache",
-            "tasks": "services",
-        }
-
-        buckets: dict[str, list[dict[str, Any]]] = {
-            "autoruns": [], "services": [], "installed_software": [],
-            "user_accounts": [], "usb_history": [], "recent_docs": [],
-            "network_interfaces": [], "shellbags": [], "amcache": [],
-            "shimcache": [], "bam": [], "security_packages": [],
-        }
-
+        buckets: dict[str, list[dict[str, Any]]] = {name: [] for name in RegistryAnalysis.model_fields}
         for row in rows:
             data = json.loads(row.data_json)
             data["_artifact_type"] = row.artifact_type
             data["_artifact_family"] = row.artifact_family
-            bucket_name = _REG_TYPE_TO_BUCKET.get(row.artifact_type)
-            if bucket_name and bucket_name in buckets:
-                buckets[bucket_name].append(data)
+            buckets[_REGISTRY_BUCKET_BY_TYPE[row.artifact_type]].append(data)
 
-        return DataEnvelope(data=RegistryAnalysis(
-            autoruns=buckets["autoruns"],
-            services=buckets["services"],
-            installed_software=buckets["installed_software"],
-            user_accounts=buckets["user_accounts"],
-            usb_history=buckets["usb_history"],
-            recent_docs=buckets["recent_docs"],
-            network_interfaces=buckets["network_interfaces"],
-            shellbags=buckets["shellbags"],
-            amcache=buckets["amcache"],
-            shimcache=buckets["shimcache"],
-            bam=buckets["bam"],
-            security_packages=buckets["security_packages"],
-        ))
+        return DataEnvelope(data=RegistryAnalysis(**buckets))
 
     @router.get(
         "/projects/{project_id}/timeline",
