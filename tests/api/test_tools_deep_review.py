@@ -33,6 +33,10 @@ class _MockTool:
         return {"echo": kwargs}
 
 
+class _OperatorMockTool(_MockTool):
+    operator_invocable = True
+
+
 # ===========================================================================
 # Group 1: Redundancy removal verification
 # ===========================================================================
@@ -126,7 +130,7 @@ async def test_invoke_tool_operator_allowed(
     client = async_client_with_registries
     app = client._transport.app  # type: ignore[attr-defined]
     registry = app.state.platform.runtime.tool_registry
-    registry.register("test.op_invoke", _MockTool(name="op_tool", description="Operator invoke test"))
+    registry.register("test.op_invoke", _OperatorMockTool(name="op_tool", description="Operator invoke test"))
 
     resp = await client.post(
         "/tools/test.op_invoke",

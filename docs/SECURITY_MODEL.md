@@ -293,7 +293,7 @@ all reader endpoints. An admin token can access all endpoints.
 | Role | Level | Typical permissions |
 |------|-------|-------------------|
 | `reader` | 0 | Read-only access: GET endpoints for systems, findings, reports, tasks, sessions |
-| `operator` | 1 | Reader + write operations: POST scans, create sessions, submit tasks, invoke tools |
+| `operator` | 1 | Reader + write operations: POST scans, create sessions, submit tasks, invoke tools declaring `operator_invocable` |
 | `admin` | 2 | Operator + administrative: create/revoke API keys, modify config, delete systems |
 
 ### Enforcement
@@ -320,6 +320,13 @@ async def create_key(
 1. First runs `require_api_key` (JWT decode + blacklist check)
 2. Then checks `ROLE_LEVELS[key.role] >= ROLE_LEVELS["admin"]`
 3. Returns 403 if the caller's role level is too low
+
+**Direct tool invocation** (`POST /tools/{tool_key}`):
+
+The route requires the operator role, then refuses any tool that does not declare
+`operator_invocable = True` (`aila.platform.tools._common.Tool`, default `False`)
+unless the caller is a platform administrator (`admin` role with `team_id` unset).
+Refused calls return 403. An unknown tool key still returns 404 before the check runs.
 
 ### Public endpoints
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Generator
 from itertools import islice
-from typing import Any
+from typing import Any, ClassVar
 
 from ..contracts._common import utc_now as utc_now
 from ..runtime.tools import ToolProtocol
@@ -18,6 +18,12 @@ class Tool(ToolProtocol):
 
     name: str = ""
     description: str = ""
+    # Whether operators may run the tool through the generic direct invocation
+    # route. False restricts direct invocation to platform administrators (admin
+    # role, no team scope). Set True only on tools that make no writes, start no
+    # processes or MCP children, make no LLM calls, read no caller-supplied
+    # paths, and read only team-filtered rows or fixed public reference feeds.
+    operator_invocable: ClassVar[bool] = False
 
     def forward(self, *args: Any, **kwargs: Any) -> Any:
         """Execute the tool's action and return the result."""
