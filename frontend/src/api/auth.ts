@@ -1,9 +1,8 @@
 import { create } from "zustand";
 
-import { apiFetch, configureApi } from "./client";
+import { configureApi, renewAccessToken, sessionRequest } from "./client";
+import { apiErrDetail } from "./parse";
 import type { LoginResponse, User } from "./types";
-
-const TOKEN_KEY = "aila.token";
 
 /** Decode the JWT payload for profile fields. External input -> narrow, no casts. */
 function decodeToken(token: string): User {
@@ -26,31 +25,29 @@ function decodeToken(token: string): User {
 }
 
 interface AuthState {
+  /** Access token, in memory only; a reload restores it through the refresh cookie. */
   token: string | null;
   user: User | null;
-  status: "anon" | "authed";
+  /** "restoring" until the startup refresh settles. */
+  status: "restoring" | "anon" | "authed";
   error: string | null;
   busy: boolean;
   login: (username: string, password: string) => Promise<void>;
   logout: () => void;
 }
 
-const initialToken = localStorage.getItem(TOKEN_KEY);
+const SIGNED_OUT: Pick<AuthState, "token" | "user" | "status" | "error"> = { token: null, user: null, status: "anon", error: null };
 
 export const useAuth = create<AuthState>((set) => ({
-  token: initialToken,
-  user: initialToken ? decodeToken(initialToken) : null,
-  status: initialToken ? "authed" : "anon",
+  token: null,
+  user: null,
+  status: "restoring",
   error: null,
   busy: false,
   login: async (username, password) => {
     set({ busy: true, error: null });
     try {
-      const res = await apiFetch<LoginResponse>("/auth/login", {
-        method: "POST",
-        body: JSON.stringify({ username, password }),
-      });
-      localStorage.setItem(TOKEN_KEY, res.access_token);
+      const res = await sessionRequest<LoginResponse>("/auth/login", { username, password });
       set({
         token: res.access_token,
         user: res.user ?? { username, ...decodeToken(res.access_token) },
@@ -58,16 +55,42 @@ export const useAuth = create<AuthState>((set) => ({
         busy: false,
       });
     } catch (e) {
-      set({ error: e instanceof Error ? e.message : "Sign-in failed.", busy: false });
+      set({ error: apiErrDetail(e) || "Sign-in failed.", busy: false });
     }
   },
   logout: () => {
-    localStorage.removeItem(TOKEN_KEY);
-    set({ token: null, user: null, status: "anon", error: null });
+    set(SIGNED_OUT);
+    // Revoke the refresh token and clear its cookie server-side. The local
+    // session is already gone, so a failed call changes nothing here.
+    sessionRequest("/auth/logout").catch(() => {});
   },
 }));
 
+/** Exchange the refresh cookie for a new access token. Any failure signs the
+ * user out locally and resolves null. */
+async function renewSession(): Promise<string | null> {
+  try {
+    const res = await sessionRequest<LoginResponse>("/auth/refresh/user");
+    // Token claims (id, role, team) come from the new token; the username the
+    // login response supplied is kept, since the token does not carry it.
+    const user: User = { ...useAuth.getState().user, ...decodeToken(res.access_token) };
+
+    useAuth.setState({ token: res.access_token, user, status: "authed", error: null });
+
+    return res.access_token;
+  } catch {
+    useAuth.setState(SIGNED_OUT);
+
+    return null;
+  }
+}
+
 configureApi({
   getToken: () => useAuth.getState().token,
-  onUnauthorized: () => useAuth.getState().logout(),
+  renewSession,
 });
+
+/** Restore the session after a page load from the refresh cookie. */
+export function restoreSession(): Promise<string | null> {
+  return renewAccessToken();
+}

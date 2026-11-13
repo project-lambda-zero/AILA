@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.103] - 2026-11-12 -- The console renews an expired access token instead of signing the user out
+
+### Fixed
+
+- When the access token expires, the console renews it through the refresh cookie and retries the failed request once, so users are no longer returned to the sign in screen every hour while their refresh session is valid. Concurrent requests that hit an expired token share a single renewal. The user is signed out only when the renewal itself fails.
+- Report and evidence downloads, the vulnerability report explanation, and live event streams use the same renewal path instead of signing the user out on the first 401.
+
+### Changed
+
+- The console keeps the access token in memory only and no longer writes it to browser storage. Login, refresh, and logout requests send the session cookies and the CSRF header, and a page reload restores the session through the refresh cookie.
+
 ## [0.6.102] - 2026-11-12 -- An empty forensics findings tab no longer reads as a clean result before analysis
 
 ### Fixed
