@@ -262,6 +262,7 @@ async def run_ghidra_on_sample(
     sample: dict[str, Any],
     emitter: Any,
     on_artifact: Any,
+    analyzer_os: str,
     already_collected: set | None = None,
 ) -> list[dict[str, Any]]:
     """Run the two Ghidra passes on one discovery result and emit artifacts.
@@ -275,6 +276,14 @@ async def run_ghidra_on_sample(
     size = int(sample.get("size") or 0)
     basename = sample.get("basename") or "sample.bin"
 
+    if analyzer_os != "windows":
+        # The scratch paths and the analyzeHeadless install below are
+        # Windows forms; no POSIX Ghidra location is configured.
+        await safe_emit(emitter, "ghidra_stage_skipped",
+                        f"ghidra: skipped {basename} -- analyzer os {analyzer_os} unsupported",
+                        {"sha256": sha, "basename": basename,
+                         "reason": "analyzer_os_unsupported", "analyzer_os": analyzer_os})
+        return []
     if not sha:
         await safe_emit(emitter, "ghidra_stage_skipped",
                         f"ghidra: skipped {basename} -- no sha256 on record",
