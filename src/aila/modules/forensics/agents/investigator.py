@@ -499,6 +499,13 @@ class HonestInvestigator:
         # per-turn persistence stamps it onto every child row (#59).
         self.team_id = project_team_id
 
+        # A redispatched run (task retry, stuck healer) can find the row
+        # already cancelled, paused, or terminal. Honor that before the flip
+        # to running, which would otherwise overwrite it and start a turn.
+        stop_status = await self._stop_status()
+        if stop_status is not None:
+            return await self._stopped_result(stop_status, 0, [], emitter)
+
         # Flip investigation to "running" so the reconciler can tell the
         # difference between "never started" and "in flight". Uses its own
         # short-lived UoW so a later turn failure cannot roll back this flip.
@@ -538,39 +545,8 @@ class HonestInvestigator:
             # safe boundary: no provider or tool call starts once the row
             # has left running.
             stop_status = await self._stop_status()
-            if stop_status == InvestigationStatus.CANCELLED.value:
-                _log.info(
-                    "HonestInvestigator inv_id=%s cancelled by analyst at turn %d",
-                    self.investigation_id, turn,
-                )
-                if emitter:
-                    await emitter.emit(
-                        "freeflow",
-                        "Investigation cancelled by analyst.",
-                        {"stage": "cancelled", "attempt": turn},
-                    )
-                return {
-                    "answer": "Cancelled by analyst.",
-                    "confidence": "unknown",
-                    "attempts_used": turn - 1,
-                    "steps": steps,
-                    "cancelled": True,
-                }
             if stop_status is not None:
-                # Paused or terminal: the workflow owns the persisted
-                # status, so the investigator only reports the stop.
-                _log.info(
-                    "HonestInvestigator inv_id=%s stopped at turn %d: status=%s",
-                    self.investigation_id, turn, stop_status,
-                )
-                return {
-                    "answer": None,
-                    "confidence": "unknown",
-                    "attempts_used": turn - 1,
-                    "steps": steps,
-                    "cancelled": False,
-                    "stopped_status": stop_status,
-                }
+                return await self._stopped_result(stop_status, turn - 1, steps, emitter)
 
             if emitter:
                 await emitter.emit(
@@ -825,12 +801,64 @@ class HonestInvestigator:
                         InvestigationRunRecord.id == self.investigation_id
                     )
                 )).first()
-                if row is not None and row.status != status_value:
-                    row.status = status_value
-                    uow.session.add(row)
-                    await uow.commit()
+                if row is None or row.status == status_value:
+                    return
+                if row.status == InvestigationStatus.CANCELLED.value:
+                    # Cancellation is final; no later write may undo it.
+                    _log.info(
+                        "investigation %s is cancelled; not overwriting with %s",
+                        self.investigation_id, status_value,
+                    )
+                    return
+                row.status = status_value
+                uow.session.add(row)
+                await uow.commit()
         except (OSError, RuntimeError, AILAError):
             _log.exception("Failed to set investigation status=%s", status_value)
+
+    async def _stopped_result(
+        self,
+        stop_status: str,
+        attempts_used: int,
+        steps: list[dict[str, Any]],
+        emitter: Any,
+    ) -> dict[str, Any]:
+        """Result for a run that stops because the row left pending/running.
+
+        A cancelled row reports the analyst cancellation; a paused or
+        terminal row reports the stop only, because the workflow owns that
+        persisted status.
+        """
+        if stop_status == InvestigationStatus.CANCELLED.value:
+            _log.info(
+                "HonestInvestigator inv_id=%s cancelled by analyst at turn %d",
+                self.investigation_id, attempts_used + 1,
+            )
+            if emitter:
+                await emitter.emit(
+                    "freeflow",
+                    "Investigation cancelled by analyst.",
+                    {"stage": "cancelled", "attempt": attempts_used + 1},
+                )
+            return {
+                "answer": "Cancelled by analyst.",
+                "confidence": "unknown",
+                "attempts_used": attempts_used,
+                "steps": steps,
+                "cancelled": True,
+            }
+        _log.info(
+            "HonestInvestigator inv_id=%s stopped at turn %d: status=%s",
+            self.investigation_id, attempts_used + 1, stop_status,
+        )
+        return {
+            "answer": None,
+            "confidence": "unknown",
+            "attempts_used": attempts_used,
+            "steps": steps,
+            "cancelled": False,
+            "stopped_status": stop_status,
+        }
 
     async def _stop_status(self) -> str | None:
         """One indexed PK lookup returning the status that stops the loop.
