@@ -78,6 +78,10 @@ _REASON_SKIP_KEYS: frozenset[str] = frozenset({
     "_type",
     "record_type",
     "record_name",
+    # The operator's question and requested answer format restate what was
+    # asked, not what was found; a keyword there is not evidence.
+    "question",
+    "answer_format",
 })
 
 # Path segments that name the *scanner*, not the evidence. A dissect
