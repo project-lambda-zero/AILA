@@ -175,7 +175,7 @@
     {
       "name": "volatility3",
       "linux": {
-        "check_command": "vol -v 2>&1 | grep -iq 'volatility\\|version' || vol --help 2>&1 | grep -iq volatility",
+        "check_command": "vol --help",
         "install_commands": [
           "pip3 install volatility3"
         ],
@@ -183,7 +183,7 @@
         "offline_package": "volatility3"
       },
       "macos": {
-        "check_command": "vol -v 2>&1 | grep -iq 'volatility\\|version' || vol --help 2>&1 | grep -iq volatility",
+        "check_command": "vol --help",
         "install_commands": [
           "pip3 install volatility3"
         ],
@@ -208,7 +208,7 @@
     {
       "name": "tshark",
       "linux": {
-        "check_command": "tshark --version 2>&1 | head -1",
+        "check_command": "tshark --version",
         "install_commands": [
           "DEBIAN_FRONTEND=noninteractive apt-get install -y tshark"
         ],
@@ -216,7 +216,7 @@
         "offline_package": "tshark"
       },
       "macos": {
-        "check_command": "tshark --version 2>&1 | head -1",
+        "check_command": "tshark --version",
         "install_commands": [
           "brew install --cask wireshark"
         ],
@@ -241,7 +241,7 @@
     {
       "name": "zeek",
       "linux": {
-        "check_command": "zeek --version 2>&1 | grep -iq 'zeek\\|version'",
+        "check_command": "zeek --version",
         "install_commands": [
           "apt-get install -y zeek"
         ],
@@ -249,7 +249,7 @@
         "offline_package": "zeek"
       },
       "macos": {
-        "check_command": "zeek --version 2>&1 | grep -iq 'zeek\\|version'",
+        "check_command": "zeek --version",
         "install_commands": [
           "brew install zeek"
         ],
@@ -272,7 +272,7 @@
     {
       "name": "floss",
       "linux": {
-        "check_command": "floss --version 2>&1 | head -1",
+        "check_command": "floss --version",
         "install_commands": [
           "pip3 install flare-floss"
         ],
@@ -280,7 +280,7 @@
         "offline_package": "flare-floss"
       },
       "macos": {
-        "check_command": "floss --version 2>&1 | head -1",
+        "check_command": "floss --version",
         "install_commands": [
           "pip3 install flare-floss"
         ],
@@ -303,7 +303,7 @@
     {
       "name": "capa",
       "linux": {
-        "check_command": "capa --version 2>&1 | head -1",
+        "check_command": "capa --version",
         "install_commands": [
           "pip3 install flare-capa"
         ],
@@ -311,7 +311,7 @@
         "offline_package": "flare-capa"
       },
       "macos": {
-        "check_command": "capa --version 2>&1 | head -1",
+        "check_command": "capa --version",
         "install_commands": [
           "pip3 install flare-capa"
         ],
@@ -350,7 +350,7 @@
         "offline_package": "yara"
       },
       "windows": {
-        "check_command": "powershell -NoProfile -Command \"$ErrorActionPreference='SilentlyContinue'; if (Test-Path 'C:/Tools/yara/yara64.exe') { exit 0 }; if (Get-ChildItem -Path 'C:/Tools/yara' -Recurse -Filter 'yara64.exe' -ErrorAction SilentlyContinue | Select-Object -First 1) { exit 0 }; exit 1\"",
+        "check_command": "powershell -NoProfile -Command \"$ErrorActionPreference='SilentlyContinue'; if (Test-Path 'C:/Tools/yara/yara64.exe') { exit 0 }; if (@(Get-ChildItem -Path 'C:/Tools/yara' -Recurse -Filter 'yara64.exe' -ErrorAction SilentlyContinue).Count -gt 0) { exit 0 }; exit 1\"",
         "install_commands": [
           "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $d='C:/Tools/yara'; if (Test-Path \"$d/yara64.exe\") { & \"$d/yara64.exe\" --version; exit 0 }; $found = Get-ChildItem -Path $d -Recurse -Filter 'yara64.exe' -ErrorAction SilentlyContinue | Select-Object -First 1; if ($found) { Write-Host 'already installed at' $found.FullName; exit 0 }; New-Item -ItemType Directory -Force -Path $d | Out-Null; $z = Join-Path $env:TEMP 'yara.zip'; Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/VirusTotal/yara/releases/download/v4.5.2/yara-v4.5.2-2326-win64.zip' -OutFile $z; Expand-Archive -Force -Path $z -DestinationPath $d; Remove-Item $z; $subs = Get-ChildItem -Path $d -Directory; $files = Get-ChildItem -Path $d -File; if ($subs.Count -eq 1 -and $files.Count -eq 0 -and -not (Test-Path \"$d/yara64.exe\")) { $single = $subs[0].FullName; Get-ChildItem -Path $single -Force | Move-Item -Destination $d -Force; Remove-Item -Recurse -Force $single }; if (Test-Path \"$d/yara64.exe\") { & \"$d/yara64.exe\" --version } else { $found = Get-ChildItem -Path $d -Recurse -Filter 'yara64.exe' -ErrorAction SilentlyContinue | Select-Object -First 1; if (-not $found) { throw 'yara64.exe not found anywhere under ' + $d }; Write-Host 'Installed at' $found.FullName; & $found.FullName --version }\" 2>&1"
         ],
@@ -400,7 +400,7 @@
     {
       "name": "rizin",
       "linux": {
-        "check_command": "rizin -v 2>&1 | head -1",
+        "check_command": "rizin -v",
         "install_commands": [
           "apt-get install -y rizin"
         ],
@@ -408,7 +408,7 @@
         "offline_package": "rizin"
       },
       "macos": {
-        "check_command": "rizin -v 2>&1 | head -1",
+        "check_command": "rizin -v",
         "install_commands": [
           "brew install rizin"
         ],
@@ -416,7 +416,7 @@
         "offline_package": "rizin"
       },
       "windows": {
-        "check_command": "powershell -NoProfile -Command \"$ErrorActionPreference='SilentlyContinue'; if (Test-Path 'C:/Tools/rizin/bin/rizin.exe') { exit 0 }; if (Get-ChildItem -Path 'C:/Tools/rizin' -Recurse -Filter 'rizin.exe' -ErrorAction SilentlyContinue | Select-Object -First 1) { exit 0 }; exit 1\"",
+        "check_command": "powershell -NoProfile -Command \"$ErrorActionPreference='SilentlyContinue'; if (Test-Path 'C:/Tools/rizin/bin/rizin.exe') { exit 0 }; if (@(Get-ChildItem -Path 'C:/Tools/rizin' -Recurse -Filter 'rizin.exe' -ErrorAction SilentlyContinue).Count -gt 0) { exit 0 }; exit 1\"",
         "install_commands": [
           "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $d='C:/Tools/rizin'; if (Test-Path \"$d/bin/rizin.exe\") { & \"$d/bin/rizin.exe\" -v; exit 0 }; $found = Get-ChildItem -Path $d -Recurse -Filter 'rizin.exe' -ErrorAction SilentlyContinue | Select-Object -First 1; if ($found) { Write-Host 'already installed at' $found.FullName; exit 0 }; New-Item -ItemType Directory -Force -Path $d | Out-Null; $z = Join-Path $env:TEMP 'rizin.zip'; Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/rizinorg/rizin/releases/download/v0.8.2/rizin-windows-shared64-v0.8.2.zip' -OutFile $z; Expand-Archive -Force -Path $z -DestinationPath $d; Remove-Item $z; $subs = Get-ChildItem -Path $d -Directory; $files = Get-ChildItem -Path $d -File; if ($subs.Count -eq 1 -and $files.Count -eq 0 -and -not (Test-Path \"$d/bin/rizin.exe\")) { $single = $subs[0].FullName; Get-ChildItem -Path $single -Force | Move-Item -Destination $d -Force; Remove-Item -Recurse -Force $single }; if (Test-Path \"$d/bin/rizin.exe\") { & \"$d/bin/rizin.exe\" -v } else { $found = Get-ChildItem -Path $d -Recurse -Filter 'rizin.exe' -ErrorAction SilentlyContinue | Select-Object -First 1; if (-not $found) { throw 'rizin.exe not found anywhere under ' + $d }; Write-Host 'Installed at' $found.FullName; & $found.FullName -v }\" 2>&1"
         ],
@@ -433,7 +433,7 @@
     {
       "name": "binwalk",
       "linux": {
-        "check_command": "binwalk --help 2>&1 | head -1",
+        "check_command": "command -v binwalk",
         "install_commands": [
           "pip3 install binwalk"
         ],
@@ -441,7 +441,7 @@
         "offline_package": "binwalk"
       },
       "macos": {
-        "check_command": "binwalk --help 2>&1 | head -1",
+        "check_command": "command -v binwalk",
         "install_commands": [
           "pip3 install binwalk"
         ],
@@ -480,18 +480,12 @@
         "offline_type": "brew",
         "offline_package": "foremost"
       },
-      "windows": {
-        "check_command": "echo foremost not supported on windows",
-        "install_commands": [],
-        "offline_type": "unsupported",
-        "offline_note": "foremost has no native Windows port; use Linux analyzer for file carving"
-      },
       "required": true
     },
     {
       "name": "bulk_extractor",
       "linux": {
-        "check_command": "bulk_extractor -h 2>&1 | head -1",
+        "check_command": "bulk_extractor -V",
         "install_commands": [
           "apt-get install -y bulk-extractor"
         ],
@@ -499,7 +493,7 @@
         "offline_package": "bulk-extractor"
       },
       "macos": {
-        "check_command": "bulk_extractor -h 2>&1 | head -1",
+        "check_command": "bulk_extractor -V",
         "install_commands": [
           "brew install bulk_extractor"
         ],
@@ -525,7 +519,7 @@
     {
       "name": "plaso",
       "linux": {
-        "check_command": "log2timeline.py --version 2>&1 | head -1",
+        "check_command": "log2timeline.py --version",
         "install_commands": [
           "pip3 install plaso"
         ],
@@ -533,7 +527,7 @@
         "offline_package": "plaso"
       },
       "macos": {
-        "check_command": "log2timeline.py --version 2>&1 | head -1",
+        "check_command": "log2timeline.py --version",
         "install_commands": [
           "pip3 install plaso"
         ],
@@ -589,7 +583,7 @@
     {
       "name": "hashcat",
       "linux": {
-        "check_command": "hashcat --version 2>&1 | head -1",
+        "check_command": "hashcat --version",
         "install_commands": [
           "apt-get install -y hashcat"
         ],
@@ -597,7 +591,7 @@
         "offline_package": "hashcat"
       },
       "macos": {
-        "check_command": "hashcat --version 2>&1 | head -1",
+        "check_command": "hashcat --version",
         "install_commands": [
           "brew install hashcat"
         ],
@@ -620,7 +614,7 @@
     {
       "name": "john",
       "linux": {
-        "check_command": "john --help 2>&1 | head -1",
+        "check_command": "command -v john",
         "install_commands": [
           "apt-get install -y john"
         ],
@@ -628,7 +622,7 @@
         "offline_package": "john"
       },
       "macos": {
-        "check_command": "john --help 2>&1 | head -1",
+        "check_command": "command -v john",
         "install_commands": [
           "brew install john"
         ],
@@ -636,7 +630,7 @@
         "offline_package": "john"
       },
       "windows": {
-        "check_command": "powershell -NoProfile -Command \"$ErrorActionPreference='SilentlyContinue'; if (Test-Path 'C:/Tools/john/run/john.exe') { exit 0 }; if (Get-ChildItem -Path 'C:/Tools/john' -Recurse -Filter 'john.exe' -ErrorAction SilentlyContinue | Select-Object -First 1) { exit 0 }; exit 1\"",
+        "check_command": "powershell -NoProfile -Command \"$ErrorActionPreference='SilentlyContinue'; if (Test-Path 'C:/Tools/john/run/john.exe') { exit 0 }; if (@(Get-ChildItem -Path 'C:/Tools/john' -Recurse -Filter 'john.exe' -ErrorAction SilentlyContinue).Count -gt 0) { exit 0 }; exit 1\"",
         "install_commands": [
           "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $d='C:/Tools/john'; if (Test-Path \"$d/run/john.exe\") { & \"$d/run/john.exe\" --list=build-info; exit 0 }; $found = Get-ChildItem -Path $d -Recurse -Filter 'john.exe' -ErrorAction SilentlyContinue | Select-Object -First 1; if ($found) { Write-Host 'already installed at' $found.FullName; exit 0 }; New-Item -ItemType Directory -Force -Path $d | Out-Null; $z = Join-Path $env:TEMP 'john.zip'; Invoke-WebRequest -UseBasicParsing -Uri 'https://www.openwall.com/john/k/john-1.9.0-jumbo-1-win64.zip' -OutFile $z; Expand-Archive -Force -Path $z -DestinationPath $d; Remove-Item $z; $subs = Get-ChildItem -Path $d -Directory; $files = Get-ChildItem -Path $d -File; if ($subs.Count -eq 1 -and $files.Count -eq 0 -and -not (Test-Path \"$d/run/john.exe\")) { $single = $subs[0].FullName; Get-ChildItem -Path $single -Force | Move-Item -Destination $d -Force; Remove-Item -Recurse -Force $single }; if (Test-Path \"$d/run/john.exe\") { & \"$d/run/john.exe\" --list=build-info } else { $found = Get-ChildItem -Path $d -Recurse -Filter 'john.exe' -ErrorAction SilentlyContinue | Select-Object -First 1; if (-not $found) { throw 'john.exe not found anywhere under ' + $d }; Write-Host 'Installed at' $found.FullName; & $found.FullName --list=build-info }\" 2>&1"
         ],
@@ -653,7 +647,7 @@
     {
       "name": "apktool",
       "linux": {
-        "check_command": "apktool --version 2>&1 | head -1",
+        "check_command": "apktool --version",
         "install_commands": [
           "apt-get install -y apktool"
         ],
@@ -661,7 +655,7 @@
         "offline_package": "apktool"
       },
       "macos": {
-        "check_command": "apktool --version 2>&1 | head -1",
+        "check_command": "apktool --version",
         "install_commands": [
           "brew install apktool"
         ],
@@ -684,7 +678,7 @@
     {
       "name": "jadx",
       "linux": {
-        "check_command": "jadx --version 2>&1 | head -1",
+        "check_command": "jadx --version",
         "install_commands": [
           "apt-get install -y jadx"
         ],
@@ -692,7 +686,7 @@
         "offline_package": "jadx"
       },
       "macos": {
-        "check_command": "jadx --version 2>&1 | head -1",
+        "check_command": "jadx --version",
         "install_commands": [
           "brew install jadx"
         ],
@@ -700,7 +694,7 @@
         "offline_package": "jadx"
       },
       "windows": {
-        "check_command": "powershell -NoProfile -Command \"$ErrorActionPreference='SilentlyContinue'; if (Test-Path 'C:/Tools/jadx/bin/jadx.bat') { exit 0 }; if (Get-ChildItem -Path 'C:/Tools/jadx' -Recurse -Filter 'jadx.bat' -ErrorAction SilentlyContinue | Select-Object -First 1) { exit 0 }; exit 1\"",
+        "check_command": "powershell -NoProfile -Command \"$ErrorActionPreference='SilentlyContinue'; if (Test-Path 'C:/Tools/jadx/bin/jadx.bat') { exit 0 }; if (@(Get-ChildItem -Path 'C:/Tools/jadx' -Recurse -Filter 'jadx.bat' -ErrorAction SilentlyContinue).Count -gt 0) { exit 0 }; exit 1\"",
         "install_commands": [
           "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$ErrorActionPreference='Stop'; $d='C:/Tools/jadx'; if (Test-Path \"$d/bin/jadx.bat\") { & \"$d/bin/jadx.bat\" --version; exit 0 }; $found = Get-ChildItem -Path $d -Recurse -Filter 'jadx.bat' -ErrorAction SilentlyContinue | Select-Object -First 1; if ($found) { Write-Host 'already installed at' $found.FullName; exit 0 }; New-Item -ItemType Directory -Force -Path $d | Out-Null; $z = Join-Path $env:TEMP 'jadx.zip'; Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/skylot/jadx/releases/download/v1.5.1/jadx-1.5.1.zip' -OutFile $z; Expand-Archive -Force -Path $z -DestinationPath $d; Remove-Item $z; $subs = Get-ChildItem -Path $d -Directory; $files = Get-ChildItem -Path $d -File; if ($subs.Count -eq 1 -and $files.Count -eq 0 -and -not (Test-Path \"$d/bin/jadx.bat\")) { $single = $subs[0].FullName; Get-ChildItem -Path $single -Force | Move-Item -Destination $d -Force; Remove-Item -Recurse -Force $single }; if (Test-Path \"$d/bin/jadx.bat\") { & \"$d/bin/jadx.bat\" --version } else { $found = Get-ChildItem -Path $d -Recurse -Filter 'jadx.bat' -ErrorAction SilentlyContinue | Select-Object -First 1; if (-not $found) { throw 'jadx.bat not found anywhere under ' + $d }; Write-Host 'Installed at' $found.FullName; & $found.FullName --version }\" 2>&1"
         ],
@@ -715,7 +709,7 @@
     {
       "name": "aapt",
       "linux": {
-        "check_command": "aapt version 2>&1 | head -1",
+        "check_command": "aapt version",
         "install_commands": [
           "apt-get install -y aapt"
         ],

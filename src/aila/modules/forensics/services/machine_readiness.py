@@ -25,6 +25,7 @@ from typing import Any
 
 from aila.config import Settings
 from aila.modules.forensics.contracts.machine import MachineReadinessResult, ToolCheckResult
+from aila.modules.forensics.tools._ssh_helper import run_tool_probe
 from aila.platform.exceptions import AILAError
 
 _log = logging.getLogger(__name__)
@@ -136,8 +137,7 @@ class MachineReadinessService:
 
                 check_error: str | None = None
                 try:
-                    output = await ssh.run_command(integration, check_cmd, timeout_seconds=30.0)
-                    version = output.strip().splitlines()[0] if output.strip() else None
+                    version = await run_tool_probe(ssh, integration, check_cmd)
                     result_entry = ToolCheckResult(
                         tool_name=tool_name,
                         required=required,
@@ -357,14 +357,14 @@ class MachineReadinessService:
                 continue
 
             try:
-                verify_out = await ssh.run_command(integration, check_cmd, timeout_seconds=30.0)
+                verified_version = await run_tool_probe(ssh, integration, check_cmd)
                 _log.info("Online install verified for %s", tool_name)
                 if progress_cb:
                     await progress_cb({
                         "stage": "install_verified",
                         "tool": tool_name,
                         "message": f"{tool_name}: verified after online install",
-                        "version": (verify_out.strip().splitlines()[0] if verify_out.strip() else None),
+                        "version": verified_version,
                     })
                 return True
             except (OSError, TimeoutError, RuntimeError, AILAError) as exc:

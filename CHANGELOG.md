@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.79] - 2026-11-12 -- Readiness probes honor the tool's exit status
+
+### Fixed
+
+- Forensics analyzer readiness no longer reports a missing tool as installed. Tool check commands no longer pipe through `head` or `grep`, whose exit status hid the tool's own failure, and a probe now counts as a pass only when it exits 0 and prints no shell not-found message. Online and offline install verification use the same rule.
+- On Windows analyzers, foremost (which has no Windows port) is reported as skipped instead of installed.
+
 ## [0.6.78] - 2026-11-12 -- Failed MCP catalog fetches are retried instead of cached
 
 ### Fixed
