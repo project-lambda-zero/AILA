@@ -13,6 +13,11 @@ TSHARK_RUNNER = "forensics.tshark_runner"
 STRINGS_RUNNER = "forensics.strings_runner"
 SCRIPT_EXECUTOR = "forensics.script_executor"
 GHIDRA_RUNNER = "forensics.ghidra_runner"
+ZEEK_RUNNER = "forensics.zeek_runner"
+YARA_RUNNER = "forensics.yara_runner"
+REGISTRY_VIEWER = "forensics.registry_viewer"
+CARVING_RUNNER = "forensics.carving_runner"
+DD_RUNNER = "forensics.dd_runner"
 
 _ALL_TOOL_KEYS: tuple[str, ...] = (
     EVIDENCE_INTAKE,
@@ -20,9 +25,14 @@ _ALL_TOOL_KEYS: tuple[str, ...] = (
     DISSECT_RUNNER,
     VOLATILITY_RUNNER,
     TSHARK_RUNNER,
+    ZEEK_RUNNER,
     STRINGS_RUNNER,
     SCRIPT_EXECUTOR,
     GHIDRA_RUNNER,
+    YARA_RUNNER,
+    REGISTRY_VIEWER,
+    CARVING_RUNNER,
+    DD_RUNNER,
 )
 
 
@@ -39,5 +49,10 @@ __all__ = [
     "STRINGS_RUNNER",
     "SCRIPT_EXECUTOR",
     "GHIDRA_RUNNER",
+    "ZEEK_RUNNER",
+    "YARA_RUNNER",
+    "REGISTRY_VIEWER",
+    "CARVING_RUNNER",
+    "DD_RUNNER",
     "all_tool_keys",
 ]

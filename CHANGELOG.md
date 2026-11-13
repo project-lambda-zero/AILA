@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.76] - 2026-11-12 -- artifact_query is a valid agent action; every forensics tool has a key
+
+### Fixed
+
+- The forensics agent can now use the `artifact_query` action its prompt tells it to use for reading deep analysis and Ghidra artifacts. The shared reasoning action vocabulary did not include it, so such a decision failed validation and the investigator's query branch was unreachable. VR, malware, and the module template reject `artifact_query` explicitly with an unsupported action message instead of treating it as a plain turn.
+- Forensics tool keys now cover every tool in the forensics catalog (zeek, yara, registry viewer, carving, dd), so those tools appear in the module's required tools and capability profiles.
+
 ## [0.6.75] - 2026-11-12 -- Seal content retention can be enabled through config
 
 ### Fixed
