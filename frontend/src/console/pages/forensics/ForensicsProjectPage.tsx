@@ -385,7 +385,7 @@ function renderTab(
     case "solid-evidence":
       return <SolidEvidenceTab {...p} />;
     case "findings":
-      return <FindingsTab {...p} />;
+      return <FindingsTab {...p} project={project} />;
     case "suppressions":
       return <SuppressionsTab {...p} />;
     case "network-analysis":

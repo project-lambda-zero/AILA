@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.102] - 2026-11-12 -- An empty forensics findings tab no longer reads as a clean result before analysis
+
+### Fixed
+
+- The forensics findings tab shows "no suspicious findings." only after analysis produced artifacts. With no artifacts it says the project is not analyzed yet, that analysis is still running, that analysis failed, or that analysis produced no artifacts, so an unanalyzed project is no longer reported as clean.
+
 ## [0.6.101] - 2026-11-12 -- Retrying a failed forensics readiness check no longer creates another project
 
 ### Fixed

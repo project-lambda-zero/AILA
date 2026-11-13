@@ -2,7 +2,7 @@ import type { JSX } from "react";
 import { useState } from "react";
 
 import { parseFinding, parseRows, useForensicsQuery } from "../../../../api/forensics";
-import type { ForensicsFinding } from "../../../../api/forensics";
+import type { ForensicsFinding, ProjectSummary } from "../../../../api/forensics";
 import { legalNextStates, useFindingWorkflowStates, useTransitionFinding } from "../../../../api/findingWorkflow";
 import { css } from "../../../css";
 import { WorkflowStateBadge } from "../../badges";
@@ -107,12 +107,34 @@ const COLS: TableColumn<ForensicsFinding>[] = [
   },
 ];
 
-export function FindingsTab({ projectId }: TabProps): JSX.Element {
+/** Label for an empty findings table. "no suspicious findings." is a clean
+ * verdict, so it appears only once analysis has produced artifacts to check;
+ * otherwise the label says why there is nothing to show. */
+function emptyFindingsLabel(project: ProjectSummary | null): string {
+  if (project === null) return "no findings; project status unavailable.";
+
+  if (project.artifact_count > 0) {
+    return project.status === "analyzing" ? "no suspicious findings yet; analysis still running." : "no suspicious findings.";
+  }
+
+  switch (project.status) {
+    case "analyzing":
+      return "analysis running; no artifacts parsed yet.";
+    case "failed":
+      return "analysis failed before producing artifacts; nothing was checked.";
+    case "completed":
+      return "analysis produced no artifacts; nothing was checked.";
+    default:
+      return "not analyzed yet; run analysis to produce artifacts and findings.";
+  }
+}
+
+export function FindingsTab({ projectId, project }: TabProps & { project: ProjectSummary | null }): JSX.Element {
   const q = useForensicsQuery(projectId, ["findings"], `/forensics/projects/${projectId}/findings`, (raw) => parseRows(raw, parseFinding));
   const rows = q.data ?? [];
   const [sel, setSel] = useState<ForensicsFinding | null>(null);
   const [suppress, setSuppress] = useState<ForensicsFinding | null>(null);
-  const state = queryState(q, "no suspicious findings.", "/findings", rows.length === 0);
+  const state = queryState(q, emptyFindingsLabel(project), "/findings", rows.length === 0);
   return (
     <>
       <TableWithDetail
