@@ -5,6 +5,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.93] - 2026-11-12 -- Forensics project creation goes through the readiness wizard; intake failures keep their reason
+
+### Fixed
+
+- The forensics projects page "+ new" button now opens the forensics intake wizard, which checks analyzer readiness before analysis starts, instead of a generic create form that skipped the readiness check.
+- A failed forensics intake now stores a bounded failure reason (exception class and message) on the project. The reason is returned with project summaries and shown on the project overview while the project is failed. A later non-failed status write clears it.
+
+### Added
+
+- Migration `148_project_failure_reason` adds a nullable `failure_reason` column to `forensics_projects`.
+
+### Removed
+
+- The generic `forensics:projects` create form spec.
+
 ## [0.6.92] - 2026-11-12 -- readiness requires a readable evidence directory
 
 ### Fixed

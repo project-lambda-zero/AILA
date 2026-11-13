@@ -901,6 +901,7 @@ def create_forensics_router() -> APIRouter:
             analyzer_os=record.analyzer_os,
             project_kind=record.project_kind,
             status=record.status,
+            failure_reason=record.failure_reason,
             created_at=record.created_at,
             updated_at=record.updated_at,
         ))
@@ -987,6 +988,7 @@ def create_forensics_router() -> APIRouter:
                 analyzer_os=r.analyzer_os,
                 project_kind=r.project_kind,
                 status=r.status,
+                failure_reason=r.failure_reason,
                 evidence_count=evidence_by_pid.get(r.id, 0),
                 artifact_count=artifact_by_pid.get(r.id, 0),
                 lead_count=lead_by_pid.get(r.id, 0),
@@ -1069,6 +1071,7 @@ def create_forensics_router() -> APIRouter:
             analyzer_os=project.analyzer_os,
             project_kind=project.project_kind,
             status=project.status,
+            failure_reason=project.failure_reason,
             evidence_count=evidence_count,
             artifact_count=artifact_count,
             lead_count=lead_count,

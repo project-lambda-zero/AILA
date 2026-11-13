@@ -78,6 +78,7 @@ export interface ProjectSummary {
   analyzer_os: string;
   project_kind: string;
   status: string;
+  failure_reason?: string | null;
   evidence_count: number;
   artifact_count: number;
   lead_count: number;
@@ -97,6 +98,7 @@ export function parseProjectSummary(o: Obj): ProjectSummary {
     analyzer_os: str(o, "analyzer_os"),
     project_kind: str(o, "project_kind"),
     status: str(o, "status"),
+    failure_reason: readStr(o, "failure_reason"),
     evidence_count: readNum(o, "evidence_count") ?? 0,
     artifact_count: readNum(o, "artifact_count") ?? 0,
     lead_count: readNum(o, "lead_count") ?? 0,
