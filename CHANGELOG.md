@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.82] - 2026-11-12 -- Lead reasons no longer cite the question as evidence
+
+### Fixed
+
+- A lead's reason and evidence list no longer report a keyword that appears only in the investigation's question or requested answer format; those fields restate what was asked, not what was found. Keywords in the answer and other evidence fields are still reported, and the keyword score boost follows the same rule.
+
 ## [0.6.81] - 2026-11-12 -- Intake records evidence SHA-256 under a size cap
 
 ### Added
