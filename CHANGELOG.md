@@ -5,6 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.94] - 2026-11-12 -- Forensics registry analysis buckets are filled from the artifact types the disk collector emits
+
+### Fixed
+
+- The forensics registry analysis view now fills its buckets from the artifact types the disk collector actually writes. User accounts (written under the `user` family) and Windows startup entries (`startupinfo`) were never shown, and macOS launch agents, launch daemons, login items, recent documents, and interface addresses were dropped.
+
+### Changed
+
+- Registry analysis rows are selected by dissect artifact type instead of by artifact family. Types without a bucket (shell and command history, recycle bin, spotlight) are not listed in this view.
+
+### Removed
+
+- The `amcache`, `bam`, and `security_packages` registry analysis buckets and their tab sections. No collector produced rows for them, so they were always empty.
+
 ## [0.6.93] - 2026-11-12 -- Forensics project creation goes through the readiness wizard; intake failures keep their reason
 
 ### Fixed
