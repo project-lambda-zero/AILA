@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.101] - 2026-11-12 -- Retrying a failed forensics readiness check no longer creates another project
+
+### Fixed
+
+- In the forensics intake wizard, Retry after a failed readiness check (and Next with unchanged inputs) re-runs the readiness check on the project the wizard already created instead of creating a new project each time. Changing the project inputs and checking again creates exactly one new project.
+
 ## [0.6.100] - 2026-11-12 -- The forensics evidence tab pages through every evidence file and shows the total
 
 ### Changed
