@@ -308,13 +308,10 @@ async def run_ghidra_on_sample(
                         {"sha256": sha, "basename": basename, "reason": "signed_hint"})
         return []
 
-    cache_key = (None, "ghidra_decompilation", "ghidra")
     if already_collected is not None:
-        # Dispatcher tracks by (source_evidence_id, artifact_type, source_tool).
-        # We don't have an evidence-id scoped cache here -- the dispatcher
-        # will still collapse duplicates per-evidence via that tuple -- but
-        # we add an in-process guard keyed by sha256 to avoid double-runs
-        # within the same collection pass.
+        # The dispatcher dedupes persisted rows per (evidence, type, tool,
+        # sample); this in-process guard keyed by sha256 avoids running
+        # Ghidra twice on one binary within the same collection pass.
         sha_key = ("__ghidra_sha__", sha)
         if sha_key in already_collected:
             await safe_emit(emitter, "ghidra_stage_skipped",
@@ -322,7 +319,6 @@ async def run_ghidra_on_sample(
                             {"sha256": sha, "reason": "sha_cached_in_pass"})
             return []
         already_collected.add(sha_key)
-        del cache_key  # kept for intent; not used here
 
     scratch = rf"%TEMP%\aila_ba\{sha[:2]}\{sha[:12]}_{basename}"
     project_dir = rf"%TEMP%\aila_gh\{sha[:8]}"

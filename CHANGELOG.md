@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.91] - 2026-11-12 -- one binary-analysis artifact per sample
+
+### Fixed
+
+- Forensics collection persists every successful binary-analysis result for an evidence file as its own artifact. Previously all results of one evidence file shared a single duplicate-detection key, so only the first result was stored (#459).
+- A binary-analysis sample that cannot be read or staged is reported as a `binary_analysis_sample_failed` collection event instead of being stored as an artifact, and a failure row stored by an earlier run no longer blocks a later successful result for that sample (#459).
+
 ## [0.6.90] - 2026-11-12 -- forensics evidence paths are quoted for the analyzer shell
 
 ### Fixed

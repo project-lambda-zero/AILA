@@ -104,6 +104,20 @@ def _file_matches_lane(f: dict[str, Any], lane: str) -> bool:
     return etype in _LANE_EVIDENCE_TYPES.get(lane, set())
 
 
+# Binary analysis yields one artifact per discovered sample, so its
+# collection key adds the sample identity (sha256 + path inside the image);
+# every other artifact type is one per (evidence, type, tool).
+_PER_SAMPLE_ARTIFACT_TYPES = frozenset({"binary_analysis", "ghidra_functions", "ghidra_decompilation"})
+
+
+def _collection_key(
+    evidence_id: str | None, artifact_type: str, source_tool: str, data: dict[str, Any],
+) -> tuple[Any, ...]:
+    if artifact_type in _PER_SAMPLE_ARTIFACT_TYPES:
+        return (evidence_id, artifact_type, source_tool, data.get("sha256"), data.get("path"))
+    return (evidence_id, artifact_type, source_tool)
+
+
 async def _read_collection_timeout_seconds() -> float:
     """Resolve forensics.collection_timeout_seconds via ConfigRegistry.
 
@@ -169,6 +183,7 @@ async def _state_collection_body(
         },
     )
 
+    from sqlmodel import col
     from sqlmodel import select as _select
 
     from aila.modules.forensics.db_models import ArtifactRecord
@@ -184,21 +199,45 @@ async def _state_collection_body(
     file_error_count = 0
     skipped_file_count = 0
 
-    # Pre-fetch every (source_evidence_id, artifact_type, source_tool) tuple
-    # already persisted for this project so we skip queries that have results
-    # carried over from a prior run. Incremental collection is the rule --
-    # "full analysis from scratch" is only what the very first run does.
+    # Pre-fetch the collection key of every artifact already persisted for
+    # this project so we skip queries that have results carried over from a
+    # prior run. Incremental collection is the rule -- "full analysis from
+    # scratch" is only what the very first run does. Per-sample rows need
+    # their payload for the sample identity; a stored failure row never
+    # blocks a later successful result.
     async with UnitOfWork() as uow_prefetch:
         existing_rows = (await uow_prefetch.session.exec(
             _select(
                 ArtifactRecord.source_evidence_id,
                 ArtifactRecord.artifact_type,
                 ArtifactRecord.source_tool,
-            ).where(ArtifactRecord.project_id == project_id)
+            ).where(
+                ArtifactRecord.project_id == project_id,
+                col(ArtifactRecord.artifact_type).not_in(_PER_SAMPLE_ARTIFACT_TYPES),
+            )
         )).all()
-    already_collected: set[tuple[str | None, str, str]] = {
+        sample_rows = (await uow_prefetch.session.exec(
+            _select(
+                ArtifactRecord.source_evidence_id,
+                ArtifactRecord.artifact_type,
+                ArtifactRecord.source_tool,
+                ArtifactRecord.data_json,
+            ).where(
+                ArtifactRecord.project_id == project_id,
+                col(ArtifactRecord.artifact_type).in_(_PER_SAMPLE_ARTIFACT_TYPES),
+            )
+        )).all()
+    already_collected: set[tuple[Any, ...]] = {
         (row[0], row[1], row[2]) for row in existing_rows
     }
+    for row_evidence_id, row_type, row_tool, row_json in sample_rows:
+        try:
+            row_data = json.loads(row_json or "{}")
+        except json.JSONDecodeError:
+            _log.warning("artifact payload for %s/%s is not JSON; not treated as collected", row_evidence_id, row_type)
+            continue
+        if isinstance(row_data, dict) and not row_data.get("error"):
+            already_collected.add(_collection_key(row_evidence_id, row_type, row_tool, row_data))
     await emitter.emit(
         "collection",
         f"Incremental mode -- {len(already_collected)} artifact(s) already on record for this project.",
@@ -268,7 +307,7 @@ async def _state_collection_body(
             async def _on_artifact(art: dict[str, Any]) -> None:
                 atype = art.get("type", "unknown")
                 stool = art.get("source_tool", "")
-                key = (evidence_id, atype, stool)
+                key = _collection_key(evidence_id, atype, stool, art.get("data", {}))
                 if key in already_collected:
                     nonlocal file_skipped
                     file_skipped += 1
