@@ -21,6 +21,7 @@ from aila.platform.llm.correlation import (
     current_join_keys,
     current_prompt_version,
 )
+from aila.platform.llm.errors import LLMDisabledError
 from aila.platform.prompts import PromptRegistry
 from aila.platform.prompts.version_store import PromptVersionStore
 from aila.platform.services.factory import ServiceFactory
@@ -47,6 +48,7 @@ _USER_BUNDLE_CHAR_CAP = 32_000
 _PER_SECTION_CAP = 6_000
 _STEP_STDOUT_CAP = 400
 _STEP_REASONING_CAP = 400
+_STEP_FIELD_TRUNCATION_MARKER = "…[truncated]…"
 
 # Hard refusal threshold on the assembled user bundle. If the raw sum of
 # every section exceeds this many chars we refuse rather than silently
@@ -190,7 +192,15 @@ async def _generate_writeup_content(
     hypotheses: list[dict[str, Any]],
     rejected: list[dict[str, Any]],
 ) -> str:
-    """Generate write-up content via LLM; fall back to template on failure."""
+    """Generate write-up content via the LLM.
+
+    There is no template fallback: every failure propagates to the caller.
+
+    Raises:
+        ValueError: The assembled bundle exceeds the hard size limit.
+        LLMDisabledError: The operator LLM kill switch is active.
+        Exception: Any error raised by the LLM client propagates unchanged.
+    """
     # Assemble the case bundle the model will reason over. Everything
     # downstream of here is deterministic summarisation of what the
     # investigator actually produced -- no prose, no guesswork.
@@ -257,7 +267,7 @@ async def _generate_writeup_content(
             max_output_tokens=_LLM_MAX_OUTPUT_TOKENS,
         )
     if resp.disabled:
-        raise RuntimeError("LLM kill-switch active")
+        raise LLMDisabledError()
     return _truncate_output(resp.content)
 
 
@@ -505,15 +515,22 @@ def _section_hypotheses(
     return "\n".join(lines)
 
 
+def _cap_step_field(text: str, cap: int) -> str:
+    """Cap one step-log field at ``cap`` chars, marking a cut visibly."""
+    if len(text) <= cap:
+        return text
+    return text[:cap] + _STEP_FIELD_TRUNCATION_MARKER
+
+
 def _section_step_log(steps: list[dict[str, Any]]) -> str:
     lines = ["# STEP LOG"]
     for s in steps:
         n = s.get("step_number", "?")
         action = s.get("action", "?")
-        cmd = (s.get("command") or "")[:200]
-        reasoning = (s.get("reasoning") or "")[:_STEP_REASONING_CAP]
-        stdout = (s.get("stdout") or "")[:_STEP_STDOUT_CAP]
-        stderr = (s.get("stderr") or "")[:200]
+        cmd = _cap_step_field(s.get("command") or "", 200)
+        reasoning = _cap_step_field(s.get("reasoning") or "", _STEP_REASONING_CAP)
+        stdout = _cap_step_field(s.get("stdout") or "", _STEP_STDOUT_CAP)
+        stderr = _cap_step_field(s.get("stderr") or "", 200)
         lines.append(f"## step {n} -- {action}")
         if cmd:
             lines.append(f"command: {cmd}")
@@ -595,87 +612,3 @@ def _truncate_output(content: str, cap: int = _OUTPUT_CHAR_CAP) -> str:
     if len(content) <= cap:
         return content
     return content[:cap] + _OUTPUT_TRUNCATION_MARKER
-
-
-def _build_template_writeup(
-    question: str,
-    answer: str | None,
-    confidence: str,
-    steps: list[dict[str, Any]],
-    tools_used: list[str],
-    observables: dict[str, Any],
-    artefacts_by_family: dict[str, list[dict[str, Any]]],
-) -> str:
-    """Fallback structured template when the LLM is unavailable.
-
-    The template deliberately mirrors the 15-section contract so that a
-    kill-switched / offline write-up still carries the same shape an
-    analyst can complete by hand.
-    """
-    timestamp = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-    out: list[str] = []
-    out.append("# Forensic Investigation Report")
-    out.append(f"*Generated {timestamp} -- LLM unavailable, template fallback.*")
-    out.append("")
-    out.append("## 1. Executive Summary")
-    out.append(
-        f"Investigation of *{question}* completed across {len(steps)} step(s) "
-        f"using: {', '.join(tools_used) or 'n/a'}."
-    )
-    out.append("")
-    out.append("## 2. Investigation Question and Answer")
-    out.append(f"- **Question**: {question}")
-    out.append(f"- **Answer**: {answer or '_No definitive answer within budget._'}")
-    out.append(f"- **Confidence**: {confidence or '-'}")
-    out.append("")
-
-    out.append("## 3. Evidence Inventory")
-    out.append("| name | libmagic | sha256 | size | path |")
-    out.append("| --- | --- | --- | --- | --- |")
-    seen: set[str] = set()
-    for a in artefacts_by_family.get("malware", []) + artefacts_by_family.get("binary", []):
-        d = a.get("data") or {}
-        sha = str(d.get("sha256") or "")
-        if not sha or sha in seen:
-            continue
-        seen.add(sha)
-        out.append(
-            f"| {d.get('basename','?')} | {d.get('filetype_desc', d.get('filetype','?'))} | "
-            f"{sha[:16]}… | {d.get('size','?')} | {d.get('evidence_path', d.get('path',''))} |"
-        )
-    if not seen:
-        out.append("| _none_ | | | | |")
-    out.append("")
-
-    for heading in (
-        "4. File Identification",
-        "5. Strings Analysis",
-        "6. Binary Structure",
-        "7. Obfuscation & Anti-Analysis",
-        "8. Disassembly & Decompilation Highlights",
-        "9. Cryptography",
-        "10. C2 / Network",
-        "11. MITRE ATT&CK Mapping",
-        "12. Indicators of Compromise",
-        "13. CTF Hypothesis Q&A",
-    ):
-        out.append(f"## {heading}")
-        out.append("*No findings in this layer -- LLM fallback, template only. See §14 for raw step evidence.*")
-        out.append("")
-
-    out.append("## 14. Timeline of Investigator Actions")
-    out.append("| # | action | tool | intent | outcome |")
-    out.append("| --- | --- | --- | --- | --- |")
-    for s in steps:
-        n = s.get("step_number", "?")
-        act = s.get("action", "?")
-        cmd = (s.get("command") or "").split(" ", 1)[0]
-        intent = (s.get("reasoning") or "").replace("|", "/")[:120]
-        outcome = "ok" if s.get("stdout") else ("err" if s.get("stderr") else "-")
-        out.append(f"| {n} | {act} | {cmd} | {intent} | {outcome} |")
-    out.append("")
-
-    out.append("## 15. Conclusions & Confidence")
-    out.append(f"Confidence: **{confidence or '-'}**. ")
-    out.append(f"Observables captured: {list((observables or {}).keys())[:30]}")
-    return "\n".join(out)
