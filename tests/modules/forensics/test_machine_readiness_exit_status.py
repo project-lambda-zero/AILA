@@ -97,6 +97,7 @@ async def _check_os(
             integration=_INTEGRATION,
             system_id=1,
             system_name="analyzer",
+            evidence_directory="/evidence",
             analyzer_os=analyzer_os,
             install_missing=False,
         )

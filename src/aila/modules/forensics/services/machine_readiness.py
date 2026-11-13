@@ -19,13 +19,14 @@ from __future__ import annotations
 
 import json
 import logging
+import shlex
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
 from aila.config import Settings
 from aila.modules.forensics.contracts.machine import MachineReadinessResult, ToolCheckResult
-from aila.modules.forensics.tools._ssh_helper import run_tool_probe
+from aila.modules.forensics.tools._ssh_helper import ps_literal, run_tool_probe
 from aila.platform.exceptions import AILAError
 
 _log = logging.getLogger(__name__)
@@ -37,6 +38,31 @@ def _load_tool_requirements() -> dict[str, list[dict[str, Any]]]:
     """Load tool requirements from the bundled JSON file."""
     data_path = Path(__file__).parent.parent / "data" / "tool_requirements.json"
     return json.loads(data_path.read_text(encoding="utf-8"))
+
+
+async def _evidence_directory_error(
+    ssh: Any, integration: dict[str, Any], evidence_directory: str, analyzer_os: str,
+) -> str | None:
+    """Return why ``evidence_directory`` is unusable, or None when it is a readable directory."""
+    if analyzer_os == "windows":
+        literal = ps_literal(evidence_directory)
+        probe = (
+            'powershell -NoProfile -Command "'
+            f"if (-not (Test-Path -LiteralPath {literal} -PathType Container)) {{ exit 2 }}; "
+            f"Get-ChildItem -LiteralPath {literal} -Force -ErrorAction Stop | Select-Object -First 1 | Out-Null"
+            '"'
+        )
+    else:
+        quoted = shlex.quote(evidence_directory)
+        probe = f"test -d {quoted} && test -r {quoted} && test -x {quoted}"
+    try:
+        await ssh.run_command(integration, probe, timeout_seconds=30.0)
+    except (OSError, TimeoutError, RuntimeError, AILAError) as exc:
+        return (
+            f"Evidence directory {evidence_directory} is missing or unreadable on the analyzer "
+            f"({str(exc)[:200]})."
+        )
+    return None
 
 
 class MachineReadinessService:
@@ -81,19 +107,23 @@ class MachineReadinessService:
         integration: dict[str, Any],
         system_id: int,
         system_name: str,
+        evidence_directory: str,
         analyzer_os: str = "linux",
         install_missing: bool = True,
         progress_cb: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
     ) -> MachineReadinessResult:
-        """Check tool readiness on the analyzer machine.
+        """Check tool readiness and evidence access on the analyzer machine.
 
         For each missing tool, attempts online install first, then falls
-        back to offline install (SFTP + local install) if that fails.
+        back to offline install (SFTP + local install) if that fails. The
+        project's evidence directory must also be a readable directory on
+        the analyzer; otherwise the result is not ready and says why.
 
         Args:
             integration: SSH connection fields.
             system_id: Platform system ID.
             system_name: System display name.
+            evidence_directory: The project's evidence directory on the analyzer.
             analyzer_os: Target OS -- ``"linux"``, ``"macos"``, or ``"windows"``.
             install_missing: If True, attempt to install missing tools.
 
@@ -285,13 +315,23 @@ class MachineReadinessService:
                         "message": f"{tool_name} [{severity.upper()}] MISSING -- {check_error}",
                     })
 
-        ready = all_required_ok
+        evidence_error = await _evidence_directory_error(ssh, integration, evidence_directory, analyzer_os)
+        if progress_cb:
+            await progress_cb({
+                "stage": "evidence_checked",
+                "ok": evidence_error is None,
+                "message": evidence_error or f"Evidence directory {evidence_directory} is readable.",
+            })
+
+        ready = all_required_ok and evidence_error is None
         installed_count = sum(1 for r in results if r.status == "installed")
         missing_count = sum(1 for r in results if r.status == "missing")
         message = (
             f"{installed_count} tools ready, {missing_count} missing. "
-            + ("All required tools are installed." if ready else "Some required tools are missing.")
+            + ("All required tools are installed." if all_required_ok else "Some required tools are missing.")
         )
+        if evidence_error is not None:
+            message = f"{evidence_error} {message}"
 
         return MachineReadinessResult(
             ready=ready,

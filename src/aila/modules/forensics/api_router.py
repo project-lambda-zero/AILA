@@ -1293,6 +1293,7 @@ def create_forensics_router() -> APIRouter:
             integration=integration,
             system_id=system.id,
             system_name=system.name,
+            evidence_directory=project.evidence_directory,
             analyzer_os=project.analyzer_os,
             progress_cb=_log_progress,
         )
