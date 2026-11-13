@@ -17,8 +17,12 @@ Guarantees:
       max then both INSERT (Phase 178 fix 2). PK collisions retry with
       a SAVEPOINT.
     - ARQ-native retries: retriable exceptions raise ``arq.Retry`` after
-      persisting the cursor (D-13). No parallel heartbeat or custom
-      liveness keys.
+      persisting the cursor (D-13). No custom liveness keys.
+    - Heartbeat: every committed transition stamps
+      ``taskrecord.heartbeat_at``, and while a handler runs a refresher
+      task stamps it every ``platform.heartbeat_interval_s`` so a long
+      single state is not reaped as a zombie. The refresher is cancelled
+      when the handler returns, raises, or times out.
     - Optimistic locking: stale UPDATE (0 rows) raises
       ``WorkflowConflictError``; ARQ retries the job; next attempt
       reloads the cursor and discovers the new version (D-32 -- no
@@ -43,8 +47,10 @@ worker or the task-system code.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import time
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any, NoReturn
 
@@ -52,12 +58,13 @@ import pydantic
 import sqlalchemy as sa
 import structlog
 from arq.worker import Retry
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from aila.platform.observability import (
     GEN_AI_OPERATION_INVOKE_AGENT,
     gen_ai_span,
 )
+from aila.platform.tasks.constants import HEARTBEAT_INTERVAL_S
 from aila.platform.tasks.models import TaskRecord
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import WorkflowStateCursor
@@ -83,6 +90,66 @@ from .types import (
 )
 
 _log = structlog.get_logger(__name__)
+
+
+async def _resolve_heartbeat_interval_s() -> float:
+    """Return ``platform.heartbeat_interval_s``, or the compiled default."""
+    # Lazy import: the config reader pulls the storage registry, which this
+    # module must not load at import time (same deferral as phase_graph).
+    from aila.platform.config_base import ModuleConfigReader
+
+    try:
+        interval = await ModuleConfigReader("platform").get_float("heartbeat_interval_s")
+    except (OSError, RuntimeError, TimeoutError, ValueError, TypeError, SQLAlchemyError):
+        return float(HEARTBEAT_INTERVAL_S)
+    return interval if interval > 0 else float(HEARTBEAT_INTERVAL_S)
+
+
+async def _refresh_heartbeat(run_id: str) -> None:
+    """Stamp ``taskrecord.heartbeat_at`` for ``run_id`` every interval.
+
+    Runs until cancelled. ``run_id`` is the task id for ``@platform_task``
+    workflow jobs; a run without a TaskRecord updates zero rows. A failed
+    write is logged and the loop keeps going, so one DB hiccup does not
+    stop the heartbeat for the rest of the handler.
+    """
+    interval_s = await _resolve_heartbeat_interval_s()
+    while True:
+        await asyncio.sleep(interval_s)
+        try:
+            async with async_session_scope() as session:
+                await session.execute(
+                    sa.update(TaskRecord)
+                    .where(TaskRecord.id == run_id)  # type: ignore[arg-type]
+                    .values(heartbeat_at=datetime.now(UTC))
+                )
+                await session.commit()
+        except (SQLAlchemyError, OSError) as exc:
+            _log.warning(
+                "workflow.heartbeat_refresh_failed",
+                run_id=run_id,
+                error_class=type(exc).__name__,
+            )
+
+
+@contextlib.asynccontextmanager
+async def _heartbeat_while_running(run_id: str) -> AsyncIterator[None]:
+    """Keep the task heartbeat fresh for the duration of the block."""
+    refresher = asyncio.create_task(_refresh_heartbeat(run_id))
+    try:
+        yield
+    finally:
+        refresher.cancel()
+        # ``asyncio.wait`` does not raise the refresher's CancelledError, so
+        # a cancellation of the enclosing task still propagates.
+        await asyncio.wait({refresher})
+        stopped_by = None if refresher.cancelled() else refresher.exception()
+        if stopped_by is not None:
+            _log.warning(
+                "workflow.heartbeat_refresher_stopped",
+                run_id=run_id,
+                error_class=type(stopped_by).__name__,
+            )
 
 
 class DurableStateMachine:
@@ -640,13 +707,15 @@ class DurableStateMachine:
                 duration_ms=0,
             )
 
-        # Step 3: run handler under timeout.
+        # Step 3: run handler under timeout, refreshing the task heartbeat
+        # while it runs (the transition commit stamps it only between states).
         start = time.monotonic()
         try:
-            result = await asyncio.wait_for(
-                spec.handler(state.input, services),
-                timeout=spec.timeout_s,
-            )
+            async with _heartbeat_while_running(run_id):
+                result = await asyncio.wait_for(
+                    spec.handler(state.input, services),
+                    timeout=spec.timeout_s,
+                )
         except TimeoutError as exc:
             duration_ms = int((time.monotonic() - start) * 1000)
             # D-16: timeout is non-retriable EVEN IF TimeoutError is

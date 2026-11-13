@@ -154,21 +154,27 @@ FAILED  -> QUEUED (reaper crash recovery with checkpoint)
 
 ### How it works
 
-While a task is RUNNING, a heartbeat loop writes the current timestamp to
-`TaskRecord.heartbeat_at` every N seconds:
+While a workflow task is RUNNING, `TaskRecord.heartbeat_at` is written at
+attempt start (`_on_job_start`), on every committed state transition, and
+every N seconds while a state handler runs:
 
 ```
 heartbeat_interval_s = 30 (default, configurable)
 ```
 
-The heartbeat runs as an `asyncio.Task` alongside the actual job execution.
-It is cancelled in the `finally` block when the job completes (success, failure, or cancellation).
+The in-handler refresher is an `asyncio.Task` the workflow engine starts
+alongside each state handler. It is cancelled when the handler returns,
+raises, or times out.
 
 ### What to check
 
 **Healthy task:** `heartbeat_at` is within `heartbeat_interval_s` of now.
 
-**Stale task:** `heartbeat_at` is older than `reaper_heartbeat_threshold_s` (default 86400s) -- or, when `heartbeat_at` is NULL, `started_at` is older than `reaper_zombie_threshold_s` (default 3300s).
+**Stale task:** the cron zombie sweep (`reap_zombie_tasks_and_cursors`)
+cancels a running task whose `heartbeat_at` is older than
+`reaper_zombie_heartbeat_min` (default 10 minutes). Sub-sweep 1 below uses
+`reaper_heartbeat_threshold_s` (default 86400s), or, when `heartbeat_at` is
+NULL, `started_at` older than `reaper_zombie_threshold_s` (default 3300s).
 This indicates the worker crashed without cleanup.
 
 ### Query for stale tasks

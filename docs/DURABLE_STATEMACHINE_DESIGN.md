@@ -506,12 +506,12 @@ In ONE transaction:
      runs in the same transaction) so the state machine's log is
      intact. Source: `src/aila/platform/workflows/engine.py:971-999`.
   5. Best-effort heartbeat: UPDATE
-     `taskrecord SET heartbeat_at = NOW() WHERE id = run_id`. This
-     is the only place the engine writes `heartbeat_at`. The reaper
-     uses this to distinguish actively-progressing jobs from
+     `taskrecord SET heartbeat_at = NOW() WHERE id = run_id`. The
+     reaper uses this to distinguish actively-progressing jobs from
      zombies. A missing TaskRecord (e.g. in tests) UPDATEs zero rows
-     -- harmless. Per-task heartbeats are EXCLUSIVELY emitted here;
-     no parallel heartbeat thread, no liveness key in Redis.
+     -- harmless. The other engine heartbeat write is the in-handler
+     refresher described in section 13; there is no liveness key in
+     Redis.
   6. Run record lifecycle: `finalize_run`
      (`src/aila/platform/workflows/run_lifecycle.py`) closes the
      matching `WorkflowRunRecord` when `new_state.current` is a
@@ -574,10 +574,22 @@ audit row and the cursor land atomically.
 
 ## 13. Heartbeats and the reaper
 
-The engine writes `heartbeat_at` to `TaskRecord` exactly once per
-successful state commit (inside `_commit_transition`, step 5).
-There is no parallel heartbeat thread. There is no Redis liveness
-key. There is no other heartbeat path.
+The engine writes `heartbeat_at` to `TaskRecord` in two places:
+
+  - once per committed transition (inside `_commit_transition`,
+    step 5), atomically with the cursor advance;
+  - while a state handler runs: `_step_once_body` wraps the handler
+    call in `_heartbeat_while_running(run_id)`, which starts a
+    refresher task that stamps `heartbeat_at = now()` every
+    `platform.heartbeat_interval_s` seconds (default 30; the compiled
+    `HEARTBEAT_INTERVAL_S` when the registry cannot be read). The
+    refresher is cancelled and awaited when the handler returns,
+    raises, or hits its `timeout_s`, so no refresher outlives its
+    handler. A failed refresher write is logged
+    (`workflow.heartbeat_refresh_failed`) and the loop continues.
+
+The attempt-start hook (`_on_job_start` in `tasks/hooks.py`) also
+stamps `heartbeat_at` so a running task is never null-heartbeat.
 
 The reaper (operator-facing component, NOT inside the engine) uses
 `heartbeat_at` to distinguish:
@@ -587,20 +599,19 @@ The reaper (operator-facing component, NOT inside the engine) uses
   - zombie job: `taskrecord.status='running' AND heartbeat_at <
     NOW() - <freshness window>`
 
-A handler that runs longer than the freshness window without
-producing any state transitions will eventually be flagged as a
-zombie because no commits → no heartbeat updates. The engine's
-position is: a state that takes longer than the freshness window
-to produce a single transition is a state that should be split, OR
-the handler should be returning intermediate states so the audit
-trail and the heartbeat reflect real progress.
+The worker reaper cron's `reap_zombie_tasks_and_cursors`
+(`tasks/cursor_reaper.py`) uses `platform.reaper_zombie_heartbeat_min`
+(default 10 minutes) as that window. Because the refresher keeps the
+heartbeat fresh for as long as the worker process is alive and its
+event loop is running, a single long state (a forensics freeflow
+investigation, one long LLM turn) is no longer reaped mid-flight. A
+worker that stopped stops refreshing, so its task still goes stale and
+is cancelled after the threshold. A handler that blocks the event loop
+also blocks the refresher; keep handler work async.
 
 The engine does NOT write `heartbeat_at` on the `entered` row
-commit. Per §9 step 1, the `entered` write is intentionally NOT
-bundled with downstream writes. The first heartbeat update lands
-on the FIRST `exited:*` commit. A state that hangs forever in its
-handler will have an `entered` row in the audit log but no
-heartbeat update beyond the cursor's last commit.
+commit. Per section 9 step 1, the `entered` write is intentionally
+NOT bundled with downstream writes.
 
 ---
 
@@ -645,9 +656,11 @@ Anything NOT calling `DurableStateMachine.execute` MUST NOT:
   2. Write to `workflow_state_transitions` directly. The audit log
      is append-only AND seq-allocated; outside writes break the
      `MAX(seq) + 1` race-safety.
-  3. Set `taskrecord.heartbeat_at` outside the engine's commit
-     path. Heartbeats from outside the engine make the reaper unable
-     to tell a real progressing run from a fake-heartbeat scribble.
+  3. Set `taskrecord.heartbeat_at` outside the engine's commit path
+     and in-handler refresher (the attempt-start hook is the one
+     platform exception). Heartbeats from outside the engine make the
+     reaper unable to tell a real progressing run from a
+     fake-heartbeat scribble.
   4. Force-flip the cursor from a terminal state back to a non-
      terminal state. The engine treats terminals as absorbing.
      Reopening a "completed" workflow is a phase-handoff operation

@@ -171,9 +171,13 @@ async def _on_job_start(ctx: dict[str, Any]) -> None:
         # heartbeat_at=None, queue.py), and restarted turn 1 from scratch --
         # a loop that never converged (156 of 225 reaped VR tasks were
         # null-heartbeat). Stamping heartbeat_at here routes liveness through
-        # the 24h heartbeat window instead; genuinely dead workers are still
-        # reaped via the lock_missing sweep, and hung turns via the ARQ job
-        # timeout.
+        # the heartbeat instead. From then on the workflow engine keeps it
+        # fresh: every committed transition stamps it, and a refresher stamps
+        # it every ``platform.heartbeat_interval_s`` while a handler runs. The
+        # reaper's stale-heartbeat sweep (``reap_zombie_tasks_and_cursors``)
+        # cancels a running task whose heartbeat is older than
+        # ``platform.reaper_zombie_heartbeat_min``, so only a task whose
+        # worker stopped goes stale; hung turns end via the ARQ job timeout.
         values: dict[str, Any] = {
             "updated_at": utc_now(),
             "started_at": utc_now(),
