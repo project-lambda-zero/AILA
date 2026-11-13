@@ -79,7 +79,7 @@ async def get_dashboard(
                 try:
                     counts = await module.report_count("", session, team_id=auth.team_id)
                 except (OSError, RuntimeError, ValueError, TypeError, KeyError, AttributeError):
-                    _log.debug(
+                    _log.warning(
                         "report_count via module %r unavailable; excluded from totals",
                         module.module_id,
                         exc_info=True,
