@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.114] - 2026-11-14 -- Cancelled SSH commands close their channel
+
+### Fixed
+
+- Cancelling a task that is waiting on an SSH command, including a workflow state timeout, now closes the command's SSH channel, so the worker thread stops instead of reading until the remote command exits. Pooled connections stay pooled (#520).
+
 ## [0.6.113] - 2026-11-13 -- Forensics evidence hub failures mark the project failed
 
 ### Fixed
