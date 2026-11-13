@@ -148,7 +148,6 @@ if resolved.is_dir():
     # Zip the directory tree into a temp archive on the analyzer.
     fd, tmp_path = tempfile.mkstemp(prefix="aila_retrieve_", suffix=".zip")
     os.close(fd)
-    h = hashlib.sha256()
     file_count = 0
     root_name = resolved.name or "retrieved_dir"
     try:
@@ -187,7 +186,6 @@ if resolved.is_dir():
                                     if not chunk:
                                         break
                                     dst.write(chunk)
-                                    h.update(chunk)
                         file_count += 1
                         # Enforce size ceiling against the archive on disk.
                         try:
@@ -219,8 +217,17 @@ if resolved.is_dir():
         print(json.dumps({{"error": "read_failed", "message": str(exc)}}))
         sys.exit(4)
 
+    # The reported digest covers the archive bytes that are pulled, not
+    # the member contents, so the API host can verify the pulled file.
+    archive_hash = hashlib.sha256()
     try:
         archive_size = os.path.getsize(tmp_path)
+        with open(tmp_path, "rb") as archive:
+            while True:
+                chunk = archive.read(1048576)
+                if not chunk:
+                    break
+                archive_hash.update(chunk)
     except OSError:
         archive_size = -1
 
@@ -229,7 +236,7 @@ if resolved.is_dir():
         "kind": "dir",
         "tmp_path": tmp_path,
         "size": archive_size,
-        "sha256": h.hexdigest(),
+        "sha256": archive_hash.hexdigest(),
         "resolved": str(resolved),
         "file_count": file_count,
         "root_name": root_name,
@@ -339,7 +346,6 @@ if not os.path.exists(TARGET):
 if os.path.isdir(TARGET):
     fd, tmp_path = tempfile.mkstemp(prefix="aila_retrieve_raw_", suffix=".zip")
     os.close(fd)
-    h = hashlib.sha256()
     file_count = 0
     root_name = os.path.basename(os.path.normpath(TARGET)) or "retrieved_dir"
     try:
@@ -356,7 +362,6 @@ if os.path.isdir(TARGET):
                                 if not chunk:
                                     break
                                 dst.write(chunk)
-                                h.update(chunk)
                         file_count += 1
                         try:
                             cur_archive_size = os.path.getsize(tmp_path)
@@ -387,8 +392,17 @@ if os.path.isdir(TARGET):
         print(json.dumps({{"error": "read_failed", "message": str(exc)}}))
         sys.exit(4)
 
+    # The reported digest covers the archive bytes that are pulled, not
+    # the member contents, so the API host can verify the pulled file.
+    archive_hash = hashlib.sha256()
     try:
         archive_size = os.path.getsize(tmp_path)
+        with open(tmp_path, "rb") as archive:
+            while True:
+                chunk = archive.read(1048576)
+                if not chunk:
+                    break
+                archive_hash.update(chunk)
     except OSError:
         archive_size = -1
 
@@ -397,7 +411,7 @@ if os.path.isdir(TARGET):
         "kind": "dir",
         "tmp_path": tmp_path,
         "size": archive_size,
-        "sha256": h.hexdigest(),
+        "sha256": archive_hash.hexdigest(),
         "resolved": TARGET,
         "file_count": file_count,
         "root_name": root_name,
