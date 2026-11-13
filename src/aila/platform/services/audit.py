@@ -1,12 +1,31 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 
 from ...storage.db_models import AuditEventRecord
 from ..tasks.queue import _current_task_team_id
 from .journal import JournalEntry, append_sync
 
-__all__ = ["record_audit_event", "record_audit_event_sync"]
+__all__ = ["AuditActor", "record_audit_event", "record_audit_event_sync"]
+
+
+@dataclass(frozen=True, slots=True)
+class AuditActor:
+    """The operator behind a control action (pause, resume, cancel, delete).
+
+    Platform services that commit a state change inside their own
+    UnitOfWork take an optional ``AuditActor`` so the audit row lands in
+    that same transaction: it commits or rolls back together with the
+    state change. ``stage`` is the owning module id (``vr``, ``malware``,
+    ``forensics``); ``user_id`` and ``team_id`` come from the request's
+    ``AuthContext``. Automated callers (sweeps, stall recovery, cost caps)
+    pass no actor and write no operator audit row.
+    """
+
+    stage: str
+    user_id: str
+    team_id: str | None
 
 
 def record_audit_event(

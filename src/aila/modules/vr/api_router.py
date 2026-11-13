@@ -1619,6 +1619,8 @@ def create_vr_router() -> APIRouter:
         auth: AuthContext = Depends(require_auth),
     ) -> Response:
         del request
+        from aila.platform.services.audit import record_audit_event
+
         from .db_models import VRFindingRecord, VRProjectRecord
 
         async with UnitOfWork() as uow:
@@ -1637,6 +1639,19 @@ def create_vr_router() -> APIRouter:
             )).all()
             for f in findings:
                 await uow.session.delete(f)
+            record_audit_event(
+                uow.session,
+                run_id=project_id,
+                stage="vr",
+                action="project_deleted",
+                target=f"project:{project_id}",
+                user_id=auth.user_id,
+                team_id=auth.team_id,
+                details={
+                    "project_id": project_id,
+                    "findings_deleted": len(findings),
+                },
+            )
             await uow.session.delete(project)
             await uow.session.commit()
 
@@ -2676,7 +2691,27 @@ def create_vr_router() -> APIRouter:
                 # Keep attempts counter -- operator visibility into retry depth.
                 stages.set(stage_name, status_obj)
                 reset_count += 1
-        await save_target_stages(target_id, stages)
+
+        from aila.platform.services.audit import record_audit_event
+
+        def _record_resume_audit(session: Any) -> None:
+            record_audit_event(
+                session,
+                run_id=target_id,
+                stage="vr",
+                action="target_analysis_resumed",
+                target=f"target:{target_id}",
+                user_id=auth.user_id,
+                team_id=auth.team_id,
+                details={
+                    "target_id": target_id,
+                    "stages_reset": reset_count,
+                },
+            )
+
+        await save_target_stages(
+            target_id, stages, before_commit=_record_resume_audit,
+        )
 
         # Fan out enrichment. CAPABILITY_PROFILE + FUNCTION_RANKING both
         # depend on INGESTION (need handles/index_id) and are now sequenced
@@ -5303,6 +5338,7 @@ def create_vr_router() -> APIRouter:
         §32/§33/§35/§47.
         """
         del request
+        from aila.platform.services.audit import AuditActor
         from aila.platform.services.investigation_lifecycle import (
             PauseInvestigationError,
             pause_investigation,
@@ -5339,6 +5375,9 @@ def create_vr_router() -> APIRouter:
                 branch_table="vr_investigation_branches",
                 track="vr",
                 pause_reason=InvestigationPauseReason.OPERATOR.value,
+                actor=AuditActor(
+                    stage="vr", user_id=auth.user_id, team_id=auth.team_id,
+                ),
                 user_id=auth.user_id,
             )
         except PauseInvestigationError as exc:
@@ -5389,6 +5428,7 @@ def create_vr_router() -> APIRouter:
         Closes §34.
         """
         from aila.api.deps import get_task_queue
+        from aila.platform.services.audit import AuditActor
         from aila.platform.services.investigation_lifecycle import (
             ResumeInvestigationError,
             resume_investigation,
@@ -5424,6 +5464,9 @@ def create_vr_router() -> APIRouter:
                 branch_model=VRInvestigationBranchRecord,
                 branch_table="vr_investigation_branches",
                 track="vr",
+                actor=AuditActor(
+                    stage="vr", user_id=auth.user_id, team_id=auth.team_id,
+                ),
                 task_fn=run_vr_investigate,
                 task_queue=task_queue,
                 user_id=auth.user_id,
@@ -7409,11 +7452,18 @@ def create_vr_router() -> APIRouter:
     ) -> DataEnvelope[dict]:
         del request
         from aila.modules.vr.agents.branch_manager import BranchManager
+        from aila.platform.services.audit import AuditActor
 
         await _load_branch_or_404(investigation_id, branch_id, auth)
         mgr = BranchManager(investigation_id=investigation_id)
         return await _wrap_branch_op_call(
-            mgr.pause(branch_id=branch_id, reason=body.reason),
+            mgr.pause(
+                branch_id=branch_id,
+                actor=AuditActor(
+                    stage="vr", user_id=auth.user_id, team_id=auth.team_id,
+                ),
+                reason=body.reason,
+            ),
             "pause",
         )
 
@@ -7432,11 +7482,18 @@ def create_vr_router() -> APIRouter:
     ) -> DataEnvelope[dict]:
         del request
         from aila.modules.vr.agents.branch_manager import BranchManager
+        from aila.platform.services.audit import AuditActor
 
         await _load_branch_or_404(investigation_id, branch_id, auth)
         mgr = BranchManager(investigation_id=investigation_id)
         return await _wrap_branch_op_call(
-            mgr.resume(branch_id=branch_id, reason=body.reason),
+            mgr.resume(
+                branch_id=branch_id,
+                actor=AuditActor(
+                    stage="vr", user_id=auth.user_id, team_id=auth.team_id,
+                ),
+                reason=body.reason,
+            ),
             "resume",
         )
 

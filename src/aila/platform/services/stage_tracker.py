@@ -58,6 +58,7 @@ Semantics:
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from datetime import UTC, timedelta
 from typing import Any, ClassVar, Self
 
@@ -231,6 +232,7 @@ async def save_target_stages(
     *,
     extra_columns: dict[str, Any] | None = None,
     target_model: Any,
+    before_commit: Callable[[Any], None] | None = None,
 ) -> None:
     """Write back the stages struct + recompute the rolled-up enum.
 
@@ -242,6 +244,10 @@ async def save_target_stages(
     SAME transaction that flips the stage state -- eliminating the
     crash-window between persisting work output and recording the
     state transition.
+
+    ``before_commit`` (optional) receives the transaction's session just
+    before the commit, so a caller can add a row (e.g. an audit event)
+    that commits atomically with the stage write.
     """
     async with UnitOfWork() as uow:
         row = (await uow.session.exec(
@@ -251,6 +257,8 @@ async def save_target_stages(
             raise StageTrackerError(f"target {target_id} not found")
         _apply_stages_to_row(row, stages, extra_columns)
         uow.session.add(row)
+        if before_commit is not None:
+            before_commit(uow.session)
         await uow.session.commit()
 
 

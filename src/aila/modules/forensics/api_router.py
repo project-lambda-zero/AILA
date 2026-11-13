@@ -53,6 +53,7 @@ from aila.api.schemas.envelope import DataEnvelope
 from aila.modules.forensics.config_schema import ForensicsConfigSchema
 from aila.platform.contracts.auth import AuthContext, require_auth
 from aila.platform.exceptions import AILAError
+from aila.platform.services.audit import record_audit_event
 from aila.platform.tasks.queue import qualified_task_name
 from aila.platform.uow import UnitOfWork
 from aila.storage.registry import ConfigRegistry
@@ -1260,6 +1261,19 @@ def create_forensics_router() -> APIRouter:
                 )
             )
             await uow.session.delete(project)
+            record_audit_event(
+                uow.session,
+                run_id=project_id,
+                stage="forensics",
+                action="project_deleted",
+                target=f"project:{project_id}",
+                user_id=auth.user_id,
+                team_id=auth.team_id,
+                details={
+                    "project_id": project_id,
+                    "investigations_deleted": len(inv_ids),
+                },
+            )
             await uow.commit()
 
     @router.post(
@@ -3721,10 +3735,27 @@ def create_forensics_router() -> APIRouter:
                 if task_cancelled:
                     task_id_for_finalize = inv.task_id
 
+            prior_status = inv.status
             inv.status = InvestigationStatus.CANCELLED.value
             if not inv.final_answer:
                 inv.final_answer = "Cancelled by analyst."
             uow.session.add(inv)
+            record_audit_event(
+                uow.session,
+                run_id=investigation_id,
+                stage="forensics",
+                action="investigation_cancelled",
+                target=f"investigation:{investigation_id}",
+                user_id=auth.user_id,
+                team_id=auth.team_id,
+                details={
+                    "investigation_id": investigation_id,
+                    "project_id": project_id,
+                    "prior_status": prior_status,
+                    "new_status": InvestigationStatus.CANCELLED.value,
+                    "task_cancelled": task_cancelled,
+                },
+            )
             await uow.commit()
 
         # Post-commit: drop the ARQ in-progress key. Runs outside the UoW so

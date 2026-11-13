@@ -42,6 +42,7 @@ from aila.api.limiter import limiter
 from aila.api.schemas.envelope import DataEnvelope
 from aila.platform.contracts.auth import AuthContext, require_auth
 from aila.platform.contracts.enums import BranchStatus
+from aila.platform.services.audit import AuditActor
 from aila.platform.services.investigation_cost import (
     compute_live_investigation_cost,
 )
@@ -121,6 +122,11 @@ def create_template_router() -> APIRouter:
                 branch_table=_TEMPLATE_BRANCH_TABLE,
                 track=_TEMPLATE_TRACK,
                 pause_reason=_DEFAULT_PAUSE_REASON,
+                actor=AuditActor(
+                    stage=_TEMPLATE_TRACK,
+                    user_id=auth.user_id,
+                    team_id=auth.team_id,
+                ),
                 user_id=auth.user_id,
             )
         except PauseInvestigationError as exc:
@@ -160,6 +166,11 @@ def create_template_router() -> APIRouter:
                 branch_model=TemplateInvestigationBranchRecord,
                 branch_table=_TEMPLATE_BRANCH_TABLE,
                 track=_TEMPLATE_TRACK,
+                actor=AuditActor(
+                    stage=_TEMPLATE_TRACK,
+                    user_id=auth.user_id,
+                    team_id=auth.team_id,
+                ),
                 task_fn=run_template_investigate,
                 task_queue=get_task_queue(_TEMPLATE_TRACK, request),
                 user_id=auth.user_id,
