@@ -28,10 +28,9 @@ FORENSICS_HARD_TURN_CAP = 50
 class ForensicsConfigSchema(ModuleConfigBase):
     """Operator-tunable settings for the forensics module.
 
-    ``llm_model`` is inherited from :class:`ModuleConfigBase` -- the
-    forensics module's historical default matched the platform default
-    (``PlatformConfigSchema.llm_default_model``), so no per-module
-    override is needed.
+    LLM model selection is not a module key: agents route through the
+    platform per task type keys (``platform.llm_model_<task_type>``,
+    falling back to ``platform.llm_default_model``).
     """
 
     freeflow_max_attempts: int = Field(

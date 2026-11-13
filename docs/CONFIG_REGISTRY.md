@@ -302,6 +302,10 @@ Modules register their own config schemas under their own namespace. For example
 the vulnerability module might register a `VulnerabilityConfigSchema` under
 namespace `"vulnerability"`.
 
+Module namespaces carry no LLM model key. Every agent picks its model through the
+platform per task type keys (`llm_model_{task_type}` in the `platform` namespace,
+falling back to `llm_default_model`).
+
 ### How modules register
 
 In the module's `register_tools()` method:
@@ -333,7 +337,6 @@ Registered by the VR module via `VRConfigSchema`. All keys are settable via
 
 | Key | Type | Purpose |
 |-----|------|---------|
-| `llm_model` | str | LLM model id used by every VR agent (empty falls back to the platform default) |
 | `ssh_command_timeout_seconds` | float | Timeout for individual SSH commands on the analysis host |
 | `audit_mcp_url` | str | Base URL for the audit-mcp indexer bridge |
 | `android_mcp_url` | str | Base URL for the android-mcp bridge |
@@ -353,7 +356,6 @@ read through ConfigRegistry.
 
 | Key | Type | Purpose |
 |-----|------|---------|
-| `llm_model` | str | LLM model id for every forensics agent (empty falls back to the platform default) |
 | `ssh_command_timeout_seconds` | float | Timeout for individual SSH commands on the analyzer machine |
 | `script_execution_timeout_seconds` | float | Timeout for agent-generated script execution |
 | `collection_timeout_seconds` | float | Timeout for the full artifact collection pipeline |
