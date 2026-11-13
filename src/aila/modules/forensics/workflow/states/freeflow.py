@@ -395,7 +395,7 @@ async def state_freeflow(
 
     _log.info('state_freeflow %s: inv_id=%s', final_status, data.investigation_id)
     return StateResult(
-        next_state="writeup",
+        next_state="promotion",
         output={
             "investigation_id": data.investigation_id,
             "project_id": data.project_id,

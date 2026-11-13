@@ -12,7 +12,7 @@ Mirrors the vulnerability module's architecture (Phase 180/183):
   ``intake -> collection -> deep_analysis -> promotion -> resolution -> writeup -> response_emit -> __succeeded__``
 
 - ``FORENSICS_FREEFLOW_V1`` -- bounded investigation:
-  ``freeflow -> writeup -> response_emit -> __succeeded__``
+  ``freeflow -> promotion -> writeup -> response_emit -> __succeeded__``
 
 Every ``StateSpec`` declares ``on_success`` to make the graph edges
 statically visible (not just dynamically returned by handlers).
@@ -28,7 +28,7 @@ from aila.modules.forensics.workflow.states.collection import state_collection
 from aila.modules.forensics.workflow.states.deep_analysis import state_deep_analysis
 from aila.modules.forensics.workflow.states.freeflow import state_freeflow
 from aila.modules.forensics.workflow.states.intake import state_intake
-from aila.modules.forensics.workflow.states.promotion import state_promotion
+from aila.modules.forensics.workflow.states.promotion import state_freeflow_promotion, state_promotion
 from aila.modules.forensics.workflow.states.resolution import state_resolution
 from aila.modules.forensics.workflow.states.writeup import state_writeup
 from aila.platform.exceptions import AILAError
@@ -207,6 +207,12 @@ FORENSICS_FREEFLOW_V1: WorkflowDefinition = WorkflowDefinition(
             timeout_s=6000.0,
             max_retries=1,
             retriable_on=_SSH_TRANSIENT,
+            on_success="promotion",
+        ),
+        "promotion": StateSpec(
+            handler=_h(state_freeflow_promotion),
+            timeout_s=300.0,
+            max_retries=1,
             on_success="writeup",
         ),
         "writeup": StateSpec(
