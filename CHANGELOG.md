@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.112] - 2026-11-13 -- Direct tool invocation limited to declared operator tools
+
+### Security
+
+- The generic direct tool invocation route refuses tools that do not declare operator access unless the caller is a platform administrator (admin role, no team scope). Operators and team-scoped admins can run only the 19 reviewed read-only tools; secrets, SSH, sandbox, system registry, audit log, HTTP fetch, memory, cache, knowledge, LSP, forensics runner, MCP bridge, and writing or executing vulnerability tools are platform administrators only (#517).
+
 ## [0.6.111] - 2026-11-13 -- Pause reason contract test and outcome review query count test
 
 ### Fixed

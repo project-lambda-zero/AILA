@@ -88,6 +88,7 @@ async def audit_client(test_db, admin_key_record) -> AsyncClient:
     dummy_tool = MagicMock()
     dummy_tool.name = "test_tool"
     dummy_tool.description = "A test tool"
+    dummy_tool.operator_invocable = True
     dummy_tool.inputs = {}
     dummy_tool.output_type = "string"
     dummy_tool.forward = MagicMock(return_value="ok")
@@ -414,6 +415,7 @@ async def test_tool_invoke_async_error_produces_audit(audit_client, operator_tok
     failing_tool = MagicMock()
     failing_tool.name = "async_failing_tool"
     failing_tool.description = "An async tool that raises when awaited"
+    failing_tool.operator_invocable = True
     failing_tool.inputs = {}
     failing_tool.output_type = "string"
     failing_tool.forward = AsyncMock(side_effect=RuntimeError("async audit failure"))

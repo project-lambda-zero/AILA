@@ -79,6 +79,7 @@ class AdvisoryBuilderTool(Tool):
     )
     inputs = {"action": {"type": "string", "description": "compute_cvss | map_cwe | format_advisory"}}
     output_type = "object"
+    operator_invocable = True
     skip_forward_signature_validation = True
 
     def __init__(self, cvss_path: Path | None = None, cwe_path: Path | None = None) -> None:

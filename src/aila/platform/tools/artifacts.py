@@ -255,6 +255,7 @@ class ArtifactSearchTool(Tool):
         },
     }
     output_type = "object"
+    operator_invocable = True
 
     def __init__(self, settings: PlatformSettings):
         self.settings = settings

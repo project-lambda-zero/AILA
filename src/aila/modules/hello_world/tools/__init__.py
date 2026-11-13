@@ -31,6 +31,7 @@ class HelloGreetTool(Tool):
         },
     }
     output_type = "object"
+    operator_invocable = True
     skip_forward_signature_validation = True
 
     _action = "greet"
