@@ -269,12 +269,10 @@ async def classify_evidence_directory(
             {"removed": [f["file_name_original"] for f in removed_parts], "head_count": len(heads)},
         )
 
-    # Hashing is deferred: huge E01/mem images take 5-15 min each via certutil/sha256sum,
-    # which blocks intake for hours on realistic evidence sets. Downstream tools (collection,
-    # freeflow agent) hash files on-demand when they actually open them. If callers need the
-    # hash earlier, they can call _compute_file_hash() directly on a specific file_path.
-    _log.info("intake: deferring SHA-256 hashing for %d file(s); hash on-demand downstream", len(files))
-
+    # Hashing is not done here. Intake hashes each file at or below the
+    # intake_hash_max_bytes cap via _compute_file_hash() and records the
+    # digest or its deferred/failed status. This function only lists and
+    # classifies.
     return {"files": files, "total": len(files)}
 
 

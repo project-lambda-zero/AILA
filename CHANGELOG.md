@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.81] - 2026-11-12 -- Intake records evidence SHA-256 under a size cap
+
+### Added
+
+- Forensics config key `intake_hash_max_bytes` (env `AILA_FORENSICS_INTAKE_HASH_MAX_BYTES`, default 2 GiB): the largest evidence file intake hashes on the analyzer. `0` defers hashing for every file.
+
+### Fixed
+
+- Evidence intake now stores a SHA-256 digest for every evidence file at or below the intake hash cap; the evidence list previously returned a null hash for every item. Files above the cap and files whose hash command fails keep a null digest, and the row's metadata records `hash_status` (`computed`, `deferred_over_cap`, or `failed`), so an unhashed file is distinguishable from a missing value. Re-running intake does not re-hash a file whose size is unchanged and that already has a digest.
+- Deep analysis hashes files through the same helper as intake instead of its own copy.
+
 ## [0.6.80] - 2026-11-12 -- Forensics project updated_at advances on status changes
 
 ### Fixed

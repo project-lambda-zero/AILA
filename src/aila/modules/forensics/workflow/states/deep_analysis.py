@@ -190,9 +190,11 @@ async def _analyze_single_file(
     err_sink: str,
 ) -> list[dict[str, Any]]:
     """Run all deep-analysis tools on a single file."""
+    from aila.modules.forensics.services.evidence_classifier import _compute_file_hash
+
     artifacts: list[dict[str, Any]] = []
 
-    sha256 = await _compute_hash(ssh, integration, path, analyzer_os)
+    sha256 = await _compute_file_hash(ssh, integration, path, analyzer_os)
     if sha256:
         artifacts.append({
             "family": "filesystem",
@@ -240,23 +242,6 @@ async def _analyze_single_file(
             })
 
     return artifacts
-
-
-async def _compute_hash(ssh: Any, integration: dict, path: str, analyzer_os: str) -> str | None:
-    """Compute SHA-256 of the file on the analyzer machine."""
-    from aila.modules.forensics.tools._ssh_helper import hash_cmd as build_hash_cmd
-
-    try:
-        output = await ssh.run_command(
-            integration, build_hash_cmd(path, analyzer_os), timeout_seconds=60.0,
-        )
-        for line in output.strip().splitlines():
-            candidate = line.strip().split()[0] if line.strip() else ""
-            if re.fullmatch(r"[0-9a-fA-F]{64}", candidate):
-                return candidate.lower()
-    except (OSError, TimeoutError, RuntimeError, AILAError):
-        _log.debug("hash failed for %s", path, exc_info=True)
-    return None
 
 
 async def _extract_strings_iocs(

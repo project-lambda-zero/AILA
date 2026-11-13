@@ -71,6 +71,18 @@ class ForensicsConfigSchema(ModuleConfigBase):
             "malicious archive cannot OOM the worker."
         ),
     )
+    intake_hash_max_bytes: int = Field(
+        default=2 * 1024 * 1024 * 1024,  # 2 GiB
+        ge=0,
+        description=(
+            "Largest evidence file, in bytes, that intake SHA-256 hashes on "
+            "the analyzer machine. Files above the cap keep a null digest and record "
+            "``hash_status=deferred_over_cap`` in the evidence row's "
+            "metadata, so an unhashed file is distinguishable from a missing "
+            "value. A value of 0 defers hashing for every file. "
+            "Env: AILA_FORENSICS_INTAKE_HASH_MAX_BYTES."
+        ),
+    )
     freeflow_max_cost_usd: float = Field(
         default=25.0,
         ge=0.0,
