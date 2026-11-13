@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.89] - 2026-11-12 -- binary analysis runs on POSIX analyzers
+
+### Fixed
+
+- The forensics binary-analysis collector now issues every remote step in the form of the project's analyzer OS. POSIX analyzers get `python3`, a `/tmp` script path, and `rm -f` cleanup instead of Windows commands that never ran there; Windows analyzers keep `python`, `%TEMP%`, and `del /f /q` (#440).
+- The image OS sniff passes the image path as a quoted argument instead of embedding it in Python source, so paths containing quotes, spaces, or shell metacharacters reach the analyzer intact (#440).
+- The Ghidra stage of binary analysis reports `ghidra_stage_skipped` with reason `analyzer_os_unsupported` on non-Windows analyzers instead of probing Windows scratch paths (#440).
+
 ## [0.6.88] - 2026-11-12 -- one active forensics full-analysis task per project
 
 ### Fixed
