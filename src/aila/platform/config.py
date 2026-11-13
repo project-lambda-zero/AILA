@@ -95,6 +95,10 @@ _PLATFORM_DYNAMIC_FAMILIES: tuple[DynamicKeyFamily, ...] = (
     DynamicKeyFamily("llm_tool_timeout_s_", float, description="Per-task-type per-tool timeout (s)."),
     DynamicKeyFamily("llm_data_direction_", str, description="Per-task-type data-direction constraint."),
     DynamicKeyFamily("llm_budget_max_total_tokens_", int, description="Per-task-type token budget ceiling."),
+    DynamicKeyFamily(
+        "llm_seal_store_content_", bool,
+        description="Per-task-type opt-in to store full prompt and response bodies in the LLM seal.",
+    ),
     # Per-team monthly budget ceiling (USD).
     DynamicKeyFamily("llm_monthly_budget_usd_", float, description="Per-team monthly budget ceiling (USD)."),
     # Per-model pricing (USD per 1k tokens). Suffix is the normalized model

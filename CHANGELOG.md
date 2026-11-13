@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.75] - 2026-11-12 -- Seal content retention can be enabled through config
+
+### Fixed
+
+- The per task type `llm_seal_store_content_<task_type>` setting, which the LLM log names as the switch for full prompt and response retention, can now be set through the validated config path. The key family was undeclared, so setting it was rejected as unknown. It accepts boolean values and rejects anything else.
+
 ## [0.6.74] - 2026-11-12 -- Dashboard warns when a module is excluded from finding totals
 
 ### Fixed
