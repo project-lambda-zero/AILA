@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.64] - 2026-11-12 -- Readiness enqueue guard tests exercise the real stored task path
+
+### Fixed
+
+- The forensics readiness enqueue guard tests now seed task rows with the task path exactly as the queue stores it. The previous constant double-qualified the path, so the positive cases failed and the negative cases passed without exercising the guard. Each negative case now also asserts that a matching live task is detected on the same query.
+
 ## [0.6.63] - 2026-11-12 -- Forensics script lint no longer rejects benign scripts
 
 ### Fixed
