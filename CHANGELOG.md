@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.70] - 2026-11-12 -- Freeflow investigations promote their artifacts to leads
+
+### Fixed
+
+- A forensics freeflow investigation now promotes the artifacts it wrote to leads before its writeup, so the leads tab and lead consumers show its conclusions without waiting for a later full analysis run. Collector artifacts still never become leads.
+- Lead promotion skips artifacts that already have a lead, so a retried promotion state or a full analysis run after a freeflow investigation does not create duplicate leads.
+
 ## [0.6.69] - 2026-11-12 -- Freeflow marks the investigation failed on LLM errors
 
 ### Fixed
