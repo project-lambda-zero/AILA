@@ -30,6 +30,11 @@ Guarantees:
     - Step limit: ``MAX_STEPS_PER_JOB`` caps transitions per single
       ``execute`` call to protect against malformed definitions that
       loop (Phase 178 fix 6).
+    - Run record lifecycle: a committed terminal transition closes the
+      matching ``WorkflowRunRecord`` in the same transaction, once per run,
+      except a dispatcher's ``__succeeded__``, which hands the run to its
+      inner definition. Starting an attempt on a closed run reopens it. See
+      ``aila.platform.workflows.run_lifecycle`` for the status mapping.
 
 The engine runs inside an ARQ job; Phase 179's ``@platform_task`` wrapper
 will instantiate this engine per attempt. Phase 178 does NOT touch the
@@ -65,6 +70,7 @@ from .errors import (
     WorkflowStepLimitExceeded,
 )
 from .log import emit_transition_event, safe_exc_message, write_entered, write_exited
+from .run_lifecycle import finalize_run, reopen_run
 from .types import (
     MAX_STEPS_PER_JOB,
     RESERVED_CRASHED,
@@ -261,6 +267,7 @@ class DurableStateMachine:
                 branch_id=str(br_id) if br_id else None,
             )
             session.add(new_row)
+            await reopen_run(session, run_id)
             try:
                 await session.commit()
                 return State(
@@ -347,6 +354,7 @@ class DurableStateMachine:
                     version=0,
                 )
                 session.add(new_row)
+                await reopen_run(session, run_id)
                 await session.commit()
                 return State(
                     current=definition.start_state,
@@ -420,6 +428,7 @@ class DurableStateMachine:
                     "Concurrent workflow modification detected"
                 )
 
+            await reopen_run(session, run_id)
             await session.commit()
 
         # Phase 181 D-02: best-effort SSE fan-out after commit.
@@ -1114,6 +1123,7 @@ class DurableStateMachine:
                     version=loaded_state.version + 1,
                 )
                 session.add(new_row)
+                await reopen_run(session, run_id)
                 # Skip the version check + UPDATE below; we just
                 # created a fresh cursor row. write_exited still runs
                 # covering the audit trail. Use a flag to short-circuit.
@@ -1189,6 +1199,7 @@ class DurableStateMachine:
                 .values(heartbeat_at=_emit_now)
             )
 
+            await finalize_run(session, run_id, definition, new_state.current)
             try:
                 await session.commit()
             except IntegrityError:
