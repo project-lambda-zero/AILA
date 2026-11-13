@@ -60,6 +60,7 @@ from aila.platform.config import PlatformConfigSchema
 from aila.platform.contracts import utc_now
 from aila.platform.eval.calibration_sweep import (
     DEFAULT_CALIBRATION_TABLES,
+    CalibrationReadError,
     _read_samples_from_table_pair,
 )
 from aila.platform.eval.metrics import ece
@@ -606,10 +607,16 @@ class CalibrationTrainer:
         fit: list[tuple[float, bool]] = []
         audit: list[tuple[str, str, float, bool]] = []
         for outcome_table, review_table in self._table_pairs:
-            samples = await _read_samples_from_table_pair(
-                outcome_table, review_table,
-                cutoff=cutoff, sample_cap=self._sample_cap,
-            )
+            try:
+                samples = await _read_samples_from_table_pair(
+                    outcome_table, review_table,
+                    cutoff=cutoff, sample_cap=self._sample_cap,
+                )
+            except CalibrationReadError as exc:
+                # The helper logged the failure; the fit uses the pairs
+                # that read, as it did before reads raised.
+                _log.info("calibrator: skipping pair %s/%s (%s)", exc.outcome_table, exc.review_table, exc.reason)
+                continue
             for sample in samples:
                 if sample.verdict not in {_VOTE_APPROVE, _VOTE_REJECT}:
                     continue

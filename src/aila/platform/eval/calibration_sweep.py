@@ -33,6 +33,7 @@ __all__ = [
     "CalibrationSweepReport",
     "CalibratorTrainerSweepReport",
     "DEFAULT_CALIBRATION_TABLES",
+    "CalibrationReadError",
     "run_calibration_sweep",
     "run_calibrator_trainer_sweep",
 ]
@@ -146,6 +147,26 @@ class CalibrationSweepReport(TypedDict):
     errors: list[str]
 
 
+class CalibrationReadError(RuntimeError):
+    """A sample read for one ``(outcome, review)`` pair failed or was refused.
+
+    Distinct from an empty result: an empty list means the pair was read and
+    holds no accept/reject reviews in the window. ``reason`` is the failure
+    class name, or ``unsafe_table_name`` for a refused pair.
+    """
+
+    def __init__(self, outcome_table: str, review_table: str, reason: str) -> None:
+        super().__init__(f"{outcome_table}/{review_table}: {reason}")
+        self.outcome_table = outcome_table
+        self.review_table = review_table
+        self.reason = reason
+
+
+def _read_error_entry(outcome_table: str, review_table: str, reason: str) -> str:
+    """Report ``errors`` entry for a pair whose samples were not read."""
+    return f"read:{outcome_table}/{review_table}:{reason}"
+
+
 def _is_safe_table_name(name: str) -> bool:
     """Reject anything but a plain snake_case identifier.
 
@@ -200,25 +221,31 @@ def _coerce_float(raw: object, default: float) -> float:
 
 def _coerce_pairs(
     raw: object,
-) -> tuple[tuple[str, str], ...]:
+) -> tuple[tuple[tuple[str, str], ...], list[str]]:
     """Validate an operator-supplied ``table_pairs`` override.
 
-    Accepts a list of ``[outcome_table, review_table]`` two-tuples;
-    rejects anything else so the default allowlist stays authoritative
-    on a malformed override.
+    Accepts a list of ``[outcome_table, review_table]`` two-tuples and
+    returns ``(pairs, rejected)``. Entries that are not two-tuples or
+    name an unsafe table are skipped and named in ``rejected`` (report
+    ``errors`` entries); the default allowlist is used when no entry
+    survives, so a malformed override never widens what is read.
     """
     if not isinstance(raw, list) or not raw:
-        return DEFAULT_CALIBRATION_TABLES
+        return DEFAULT_CALIBRATION_TABLES, []
     out: list[tuple[str, str]] = []
+    rejected: list[str] = []
     for pair in raw:
         if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            rejected.append("table_pairs:malformed_entry")
             continue
         outcome_table, review_table = str(pair[0]), str(pair[1])
         if _is_safe_table_name(outcome_table) and _is_safe_table_name(
             review_table,
         ):
             out.append((outcome_table, review_table))
-    return tuple(out) if out else DEFAULT_CALIBRATION_TABLES
+        else:
+            rejected.append(_read_error_entry(outcome_table, review_table, "unsafe_table_name"))
+    return (tuple(out) if out else DEFAULT_CALIBRATION_TABLES), rejected
 
 
 async def _current_threshold(outcome_kind: str) -> float:
@@ -278,6 +305,10 @@ async def _read_samples_from_table_pair(
     whose review ``created_at`` is older than ``cutoff`` are excluded.
     Result is capped at ``sample_cap`` most-recent rows per pair so a
     single very active table cannot blow the sweep's memory budget.
+
+    Raises :class:`CalibrationReadError` when the pair names an unsafe
+    table or the read fails, so callers can tell a failure from an
+    empty window.
     """
     if not (
         _is_safe_table_name(outcome_table)
@@ -288,7 +319,7 @@ async def _read_samples_from_table_pair(
             "outcome=%r review=%r -- skipping pair",
             outcome_table, review_table,
         )
-        return []
+        raise CalibrationReadError(outcome_table, review_table, "unsafe_table_name")
 
     # Table names are code-owned (DEFAULT_CALIBRATION_TABLES + the
     # snake_case gate above); vote filter and cutoff/cap are bound
@@ -315,7 +346,7 @@ async def _read_samples_from_table_pair(
             outcome_table, review_table, type(exc).__name__,
             exc_info=exc,
         )
-        return []
+        raise CalibrationReadError(outcome_table, review_table, type(exc).__name__) from exc
 
     out: list[CalibrationSample] = []
     for kind, vote, confidence in rows:
@@ -341,9 +372,9 @@ async def run_calibration_sweep(**kwargs: object) -> CalibrationSweepReport:
     ``action_kwargs_json`` on the schedule row MAY carry:
 
     * ``table_pairs``: ``list[[outcome_table, review_table]]`` override
-      of :data:`DEFAULT_CALIBRATION_TABLES`. Names that fail the
-      snake_case gate are silently dropped and the default allowlist is
-      used if none survive.
+      of :data:`DEFAULT_CALIBRATION_TABLES`. Malformed entries and names
+      that fail the snake_case gate are skipped and reported in
+      ``errors``; the default allowlist is used if none survive.
     * ``window_days``: recent-review window (int > 0); default 30.
     * ``sample_cap``: max rows read per pair (int > 0); default 5000.
     * ``min_evidence``: minimum samples per kind before a proposal is
@@ -351,8 +382,8 @@ async def run_calibration_sweep(**kwargs: object) -> CalibrationSweepReport:
     * ``margin``: additive raise / subtractive drop distance
       (float > 0); default 0.05. Passed to :class:`CalibrationProposer`.
 
-    Each stage isolates its own failures: a table read that fails does
-    not stop later pairs, a ``propose`` that fails does not stop later
+    Each stage isolates its own failures: a table read that fails is
+    reported in ``errors`` and does not stop later pairs, a ``propose`` that fails does not stop later
     kinds, and a ``persist`` that fails does not stop later kinds. The
     sweep NEVER raises; the returned :class:`CalibrationSweepReport`
     carries the error trail so the schedule's ``last_run_result``
@@ -364,7 +395,7 @@ async def run_calibration_sweep(**kwargs: object) -> CalibrationSweepReport:
     _ = kwargs.pop("target_name", None)
     _ = kwargs.pop("execution_context", None)
 
-    pairs = _coerce_pairs(kwargs.get("table_pairs"))
+    pairs, rejected_pairs = _coerce_pairs(kwargs.get("table_pairs"))
     window_days = _coerce_int(kwargs.get("window_days"), _DEFAULT_WINDOW_DAYS)
     sample_cap = _coerce_int(kwargs.get("sample_cap"), _DEFAULT_SAMPLE_CAP)
     min_evidence = _coerce_int(
@@ -379,19 +410,20 @@ async def run_calibration_sweep(**kwargs: object) -> CalibrationSweepReport:
         "samples_read": 0,
         "proposals_persisted": 0,
         "kinds_below_min_evidence": 0,
-        "errors": [],
+        "errors": list(rejected_pairs),
     }
 
     all_samples: list[CalibrationSample] = []
     for outcome_table, review_table in pairs:
-        samples = await _read_samples_from_table_pair(
-            outcome_table, review_table,
-            cutoff=cutoff, sample_cap=sample_cap,
-        )
-        if not samples:
-            # An empty read is either "no traffic in window" (no error)
-            # or a failure already logged inside the helper; either way
-            # the sweep continues to the next pair.
+        try:
+            samples = await _read_samples_from_table_pair(
+                outcome_table, review_table,
+                cutoff=cutoff, sample_cap=sample_cap,
+            )
+        except CalibrationReadError as exc:
+            # Logged inside the helper; the report names the pair so a
+            # failed read is not mistaken for a pair with no reviews.
+            report["errors"].append(_read_error_entry(exc.outcome_table, exc.review_table, exc.reason))
             continue
         all_samples.extend(samples)
 
