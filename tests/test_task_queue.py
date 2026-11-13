@@ -63,11 +63,13 @@ class MockRegistry:
         return None
 
 
-def _install_fake_enqueue(tq, *, ok: bool = True) -> AsyncMock:
-    """Replace ``tq._arq_enqueue_async`` with an AsyncMock that returns ``ok``.
+def _install_fake_broker(tq, *, ok: bool = True) -> AsyncMock:
+    """Replace the queue's Redis touchpoints: the drain-flag read reports no
+    drain, and ``tq._arq_enqueue_async`` becomes an AsyncMock returning ``ok``.
 
-    Returned mock lets tests assert the enqueue was awaited when needed.
+    Returned enqueue mock lets tests assert the enqueue was awaited when needed.
     """
+    tq._drain_requested = AsyncMock(return_value=False)  # type: ignore[method-assign]
     fake = AsyncMock(return_value=ok)
     tq._arq_enqueue_async = fake  # type: ignore[method-assign]
     return fake
@@ -350,7 +352,7 @@ class TestSubmit:
             config_registry=MockRegistry(redis_url="redis://127.0.0.1:6379/0"),
             module_id="vulnerability",
         )
-        _install_fake_enqueue(tq, ok=True)
+        _install_fake_broker(tq, ok=True)
         handle = await tq.submit(track="vuln", fn=fn, kwargs={"target": "192.168.1.1"})
 
         assert isinstance(handle, TaskHandle)
@@ -368,7 +370,7 @@ class TestSubmit:
             config_registry=MockRegistry(redis_url="redis://127.0.0.1:6379/0"),
             module_id="vulnerability",
         )
-        _install_fake_enqueue(tq, ok=True)
+        _install_fake_broker(tq, ok=True)
         handle = await tq.submit(
             track="vuln",
             fn=fn,
@@ -396,7 +398,7 @@ class TestSubmit:
             config_registry=MockRegistry(redis_url="redis://127.0.0.1:6379/0"),
             module_id="vulnerability",
         )
-        _install_fake_enqueue(tq, ok=True)
+        _install_fake_broker(tq, ok=True)
 
         # Distinct kwargs per task: the dedup hash is over {fn, kwargs} and
         # excludes depends_on, so identical kwargs would collapse B into A's
@@ -425,7 +427,7 @@ class TestSubmit:
             config_registry=MockRegistry(redis_url="redis://127.0.0.1:6379/0"),
             module_id="vulnerability",
         )
-        _install_fake_enqueue(tq, ok=True)
+        _install_fake_broker(tq, ok=True)
         handle = await tq.submit(track="vuln", fn=fn, kwargs={})
 
         with session_scope() as s:
@@ -486,7 +488,7 @@ class TestSubmit:
             config_registry=MockRegistry(redis_url="redis://127.0.0.1:6379/0"),
             module_id="vulnerability",
         )
-        _install_fake_enqueue(tq, ok=False)
+        _install_fake_broker(tq, ok=False)
 
         with pytest.raises(WorkerUnreachableError):
             await tq.submit(track="vuln", fn=fn, kwargs={})

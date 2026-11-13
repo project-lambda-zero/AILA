@@ -98,13 +98,14 @@ class TaskActionResponse(APIModel):
 
 
 class DrainQueueResponse(APIModel):
-    """Response for POST /tasks/drain (OPS-05).
+    """Response for POST /tasks/drain and POST /tasks/undrain (OPS-05, #434).
 
-    Returns the number of pending tasks and whether draining is active.
+    Returns the number of queued tasks and whether the deployment-wide drain is
+    in effect after the call.
     """
 
     pending: int = Field(description="Number of tasks still pending in the queue")
-    draining: bool = Field(description="Whether the queue is now in draining mode")
+    draining: bool = Field(description="Whether new submissions are now rejected for every caller")
 
 
 class ScanStatusResponse(APIModel):

@@ -50,6 +50,7 @@ def _endpoint(path: str, method: str):
 def _queue() -> queue_mod.TaskQueue:
     tq = queue_mod.TaskQueue(config_registry=None, module_id="forensics")
     tq._get_redis_url = lambda: "redis://fake:6379/0"  # type: ignore[method-assign]
+    tq._drain_requested = AsyncMock(return_value=False)  # type: ignore[method-assign]
     tq._compute_investigation_defer = AsyncMock(return_value=0.0)  # type: ignore[method-assign]
     tq._arq_enqueue_async = AsyncMock(return_value=True)  # type: ignore[method-assign]
     return tq

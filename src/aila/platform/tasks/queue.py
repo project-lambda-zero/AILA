@@ -36,6 +36,7 @@ from graphlib import CycleError, TopologicalSorter
 
 from arq.connections import RedisSettings, create_pool
 from redis import asyncio as aioredis
+from redis.exceptions import RedisError
 from sqlalchemy import cast
 from sqlalchemy import delete as _delete
 from sqlalchemy.dialects.postgresql import JSONB
@@ -52,6 +53,7 @@ from aila.platform.tasks.constants import (
     ARQ_RETRY_PREFIX,
     CONFIG_KEY_REDIS_URL,
     CONFIG_NS_PLATFORM,
+    QUEUE_DRAINING_KEY,
 )
 from aila.platform.tasks.models import TaskHandle, TaskRecord, TaskStatus
 from aila.storage.database import async_session_scope
@@ -398,7 +400,6 @@ class TaskQueue:
         """
         self._config_registry = config_registry
         self._module_id = module_id
-        self._draining: bool = False
 
     async def submit(
         self,
@@ -443,7 +444,10 @@ class TaskQueue:
             WorkerUnreachableError: When Redis/ARQ broker is unreachable.
                 The envelope pipeline (176a) returns HTTP 503 with a hint.
         """
-        if self._draining:
+        # #434: the drain flag lives in Redis, so a drain issued through any
+        # TaskQueue instance or process stops every caller's submissions.
+        redis_url = self._get_redis_url()
+        if redis_url and await self._drain_requested(redis_url):
             raise RuntimeError("Queue is draining; new submissions rejected")
 
         # #53: inherit the running task's team_id for a follow-up that does not
@@ -559,10 +563,8 @@ class TaskQueue:
         # is the single source of truth for "broker is usable" -- if the check
         # passes but the actual enqueue later fails, that exception is also
         # surfaced as WorkerUnreachableError so no orphan DB record remains.
-        redis_url = None
         defer_seconds = 0.0
         if not depends_on:
-            redis_url = self._get_redis_url()
             if not redis_url:
                 raise WorkerUnreachableError(
                     "Task queue Redis URL is not configured -- submission rejected."
@@ -797,14 +799,55 @@ class TaskQueue:
             return {status: count for status, count in rows}
 
     async def drain(self) -> int:
-        """Pause new submissions and return pending task count."""
-        self._draining = True
+        """Reject new submissions from every caller until :meth:`undrain`, and
+        return the queued task count. Queued and running tasks are untouched."""
+        await self._write_drain_flag(draining=True)
+        return await self._queued_count()
+
+    async def undrain(self) -> int:
+        """Lift a drain so submissions are accepted again; return the queued task count."""
+        await self._write_drain_flag(draining=False)
+        return await self._queued_count()
+
+    async def _queued_count(self) -> int:
         async with async_session_scope() as session:
             count = (await session.exec(
                 select(func.count(TaskRecord.id))
                 .where(TaskRecord.status == "queued")
             )).one()
             return count
+
+    async def _drain_requested(self, redis_url: str) -> bool:
+        """Read the deployment-wide drain flag. Fails closed: an unreachable
+        broker raises ``WorkerUnreachableError`` like the enqueue would."""
+        client = aioredis.Redis.from_url(redis_url, socket_connect_timeout=2.0)
+        try:
+            return bool(await client.exists(QUEUE_DRAINING_KEY))
+        except (OSError, TimeoutError, RedisError) as exc:
+            raise WorkerUnreachableError(
+                f"Task queue Redis is unreachable (url={redis_url}) -- submission rejected."
+            ) from exc
+        finally:
+            await client.aclose()
+
+    async def _write_drain_flag(self, *, draining: bool) -> None:
+        redis_url = self._get_redis_url()
+        if not redis_url:
+            raise WorkerUnreachableError(
+                "Task queue Redis URL is not configured -- drain state not changed."
+            )
+        client = aioredis.Redis.from_url(redis_url, socket_connect_timeout=2.0)
+        try:
+            if draining:
+                await client.set(QUEUE_DRAINING_KEY, "1")
+            else:
+                await client.delete(QUEUE_DRAINING_KEY)
+        except (OSError, TimeoutError, RedisError) as exc:
+            raise WorkerUnreachableError(
+                f"Task queue Redis is unreachable (url={redis_url}) -- drain state not changed."
+            ) from exc
+        finally:
+            await client.aclose()
 
     async def enqueued_investigation_ids(
         self, investigation_ids: Sequence[str],
