@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.98] - 2026-11-12 -- Failed and cancelled workflow runs no longer mark their task done
+
+### Fixed
+
+- A workflow-engine task whose run ends in `__failed__` or `__crashed__` (for example a state handler that raises) is now recorded `failed` with an error starting `code=WORKFLOW_FAILED` and naming the failed state and error class, instead of `done`. Its waiting dependents are no longer released.
+- A workflow-engine task whose run ends in `__cancelled__` is now recorded `cancelled` instead of `done`. A `__succeeded__` run still records `done`, and run-record finalization is unchanged.
+
 ## [0.6.97] - 2026-11-12 -- Long-running workflow states keep a fresh task heartbeat
 
 ### Fixed

@@ -6,7 +6,7 @@ Two callables here populate the ARQ ``WorkerSettings``:
   bind structlog, populate ``WorkflowRunRecord.plan_json`` for engine tasks.
 * :func:`_on_job_end` -- single source of truth for TaskRecord terminal
   state. Reads the per-job outcome stashed by the ``@platform_task``
-  wrapper and drives one of six D-14 branches.
+  wrapper and drives one of seven terminal-state branches.
 
 The stash pattern (``_OUTCOME_STASH``) exists because ARQ's ``on_job_end``
 hook receives only ``ctx``; it does NOT see the job's return value or the
@@ -58,6 +58,7 @@ OutcomeKind = Literal[
     "success",
     "retry_signalled",
     "exception",
+    "workflow_failed",
     "cancelled",
     "timeout",
 ]
@@ -69,7 +70,9 @@ class _JobOutcome:
 
     Attributes:
         kind: Discriminant consumed by :func:`_on_job_end`'s branch switch.
-        result: Return value on ``kind == "success"``. ``None`` otherwise.
+        result: The wrapper's return value on ``success`` and on the
+            workflow-terminal kinds (``workflow_failed`` and a ``cancelled``
+            run). ``None`` otherwise.
         exception: The raised exception (if any). Carried for debug logging
             only; never persisted verbatim to avoid leaking stack frames.
         exception_class: ``type(exc).__name__`` -- safe to label metrics with.
@@ -255,7 +258,7 @@ async def _on_job_end(ctx: dict[str, Any]) -> None:
     """ARQ ``on_job_end`` hook -- the single source of truth for terminal state.
 
     Reads the outcome stash written by :func:`~aila.platform.tasks.template.platform_task`
-    and drives one of six D-14 branches:
+    and drives one of seven branches:
 
     1. ``success`` -> ``DONE``, enqueue dependents.
     2. ``retry_signalled`` (the wrapper raised ``arq.Retry``) -> touch
@@ -264,6 +267,9 @@ async def _on_job_end(ctx: dict[str, Any]) -> None:
        leave RUNNING.
     4. ``exception`` + final try -> ``DEAD_LETTER``, persist payload,
        increment counter.
+    4b. ``workflow_failed`` (the workflow engine returned after closing the
+       run ``failed``) -> ``FAILED`` with ``code=WORKFLOW_FAILED``, no
+       dead-letter, dependents not enqueued.
     5. ``timeout`` -> ``DEAD_LETTER`` with ``code=JOB_TIMEOUT``.
     6. ``cancelled`` -> ``CANCELLED``, no dead-letter.
 
@@ -349,6 +355,16 @@ async def _on_job_end(ctx: dict[str, Any]) -> None:
                     dead_letter_exception_class = (
                         outcome.exception_class or "Unknown"
                     )
+
+            elif outcome.kind == "workflow_failed":
+                # Branch 4b. The workflow engine returned normally but its run
+                # ended in ``__failed__`` / ``__crashed__``. The failure is
+                # terminal (a retry would replay the terminal cursor), so the
+                # task is FAILED rather than retried or dead-lettered.
+                values["status"] = TaskStatus.FAILED
+                values["error"] = _workflow_failure_text(outcome.result)
+                values["completed_at"] = now
+                terminal_branch = "workflow_failed"
 
             elif outcome.kind == "timeout":
                 # Branch 5.
@@ -470,6 +486,22 @@ def _safe_error_text(exc: BaseException | None) -> str:
         return str(exc)[:2000]
     except Exception:
         return f"<unreprable {type(exc).__name__}>"
+
+
+def _workflow_failure_text(result: dict[str, Any] | None) -> str:
+    """Render the ``TaskRecord.error`` for a workflow run that ended failed.
+
+    The engine's terminal payload for a failure path carries
+    ``failed_state`` and ``error_class`` (see ``DurableStateMachine.execute``);
+    both are included when present.
+    """
+    parts = ["code=WORKFLOW_FAILED"]
+    payload = result or {}
+    for key in ("failed_state", "error_class"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            parts.append(f"{key}={value}")
+    return " ".join(parts)[:2000]
 
 
 async def _enqueue_dependents(completed_task_id: str) -> None:

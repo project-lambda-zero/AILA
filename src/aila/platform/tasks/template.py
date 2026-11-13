@@ -191,6 +191,25 @@ async def _ensure_run_record(run_id: str, query_text: str) -> None:
         await session.commit()
 
 
+async def _workflow_run_status(run_id: str) -> str | None:
+    """Return the ``WorkflowRunRecord.status`` the engine recorded for ``run_id``.
+
+    The engine closes the run row in the same transaction as the terminal
+    cursor (``run_lifecycle.finalize_run``): ``completed`` for
+    ``__succeeded__``, ``failed`` for ``__failed__`` / ``__crashed__``,
+    ``cancelled`` for ``__cancelled__``. A normal return from
+    ``DurableStateMachine.execute`` therefore carries its outcome here.
+    """
+    from aila.storage.database import async_session_scope
+    from aila.storage.db_models import WorkflowRunRecord
+
+    status_col = WorkflowRunRecord.__table__.c.status  # type: ignore[attr-defined]
+    id_col = WorkflowRunRecord.__table__.c.id  # type: ignore[attr-defined]
+    async with async_session_scope() as session:
+        row = (await session.execute(sa.select(status_col).where(id_col == run_id))).first()
+    return None if row is None else str(row[0])
+
+
 async def _update_plan_json(run_id: str, plan: dict[str, Any]) -> None:
     """Persist ``plan_json`` for ``run_id`` (D-13).
 
@@ -568,11 +587,18 @@ def platform_task(
                     # its return shape; we only require it be a dict.
                     result = await fn(task_context, **kwargs)
 
-                _stash_outcome(
-                    job_id,
-                    job_try,
-                    _JobOutcome(kind="success", result=result),
-                )
+                # The engine returns normally for every terminal cursor, so
+                # a workflow run's outcome is read from the run row it
+                # closed: a failed or crashed run is not a success, and a
+                # cancelled run is recorded cancelled.
+                outcome = _JobOutcome(kind="success", result=result)
+                if definition is not None:
+                    run_status = await _workflow_run_status(task_context.task_id)
+                    if run_status == "failed":
+                        outcome = _JobOutcome(kind="workflow_failed", result=result)
+                    elif run_status == "cancelled":
+                        outcome = _JobOutcome(kind="cancelled", result=result)
+                _stash_outcome(job_id, job_try, outcome)
                 return result
 
             except WorkflowConflictError as conflict:
