@@ -26,7 +26,11 @@ export function ForensicsWizard({ onBind }: { onBind: IntakeWizardProps["onBind"
   // stages come from the backend result, not a local animation.
   const [fxSystems, setFxSystems] = useState<Array<{ id: number; name: string; host: string; distro: string }>>([]);
   const [fxBusy, setFxBusy] = useState<boolean>(false);
-  const [fxProjectId, setFxProjectId] = useState<string | null>(null);
+  // The project this wizard created and the create request body it was
+  // created from. Retry reuses it while that body is unchanged, so a failed
+  // readiness check does not leave an abandoned project per attempt.
+  const [fxProject, setFxProject] = useState<{ id: string; createBody: string } | null>(null);
+  const fxProjectId = fxProject?.id ?? null;
   const [fxResult, setFxResult] = useState<{
     ready: boolean;
     system_name: string;
@@ -81,21 +85,29 @@ export function ForensicsWizard({ onBind }: { onBind: IntakeWizardProps["onBind"
     // wizard used to animate are replaced by the backend's tool checks.
     // apiFetch already strips the {data:...} DataEnvelope, so read the
     // unwrapped object directly -- NOT `.data.id` / `.data`.
-    apiFetch<{ id: string; name: string }>("/forensics/projects", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: projectName,
-        description,
-        system_id: systemId,
-        evidence_directory: evdir,
-        analyzer_os: analyzerOs,
-        project_kind: currentKind,
-      }),
-    })
-      .then(async (created) => {
-        const projectId = created.id;
-        setFxProjectId(projectId);
+    const createBody = JSON.stringify({
+      name: projectName,
+      description,
+      system_id: systemId,
+      evidence_directory: evdir,
+      analyzer_os: analyzerOs,
+      project_kind: currentKind,
+    });
+    const existing = fxProject !== null && fxProject.createBody === createBody ? fxProject.id : null;
+    const projectReady: Promise<string> =
+      existing !== null
+        ? Promise.resolve(existing)
+        : apiFetch<{ id: string; name: string }>("/forensics/projects", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: createBody,
+          }).then((created) => {
+            setFxProject({ id: created.id, createBody });
+            return created.id;
+          });
+
+    projectReady
+      .then(async (projectId) => {
         const res = await apiFetch<{
           ready: boolean;
           system_name: string;
