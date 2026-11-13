@@ -30,9 +30,10 @@ async def _dummy_task(ctx: dict, **kwargs: object) -> dict:
 def _make_queue() -> queue_mod.TaskQueue:
     tq = queue_mod.TaskQueue(config_registry=None, module_id=MODULE_ID_PLATFORM)
     # Reach TaskRecord creation without touching real Redis: the URL check
-    # passes, defer is zero, and the enqueue is a successful no-op so the
-    # record is not rolled back.
+    # passes, no drain is in effect, defer is zero, and the enqueue is a
+    # successful no-op so the record is not rolled back.
     tq._get_redis_url = lambda: "redis://fake:6379/0"  # type: ignore[method-assign]
+    tq._drain_requested = AsyncMock(return_value=False)  # type: ignore[method-assign]
     tq._compute_investigation_defer = AsyncMock(return_value=0.0)  # type: ignore[method-assign]
     tq._arq_enqueue_async = AsyncMock(return_value=True)  # type: ignore[method-assign]
     return tq

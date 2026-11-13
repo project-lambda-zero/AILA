@@ -5,6 +5,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.105] - 2026-11-12 -- A task queue drain now stops submissions from every caller in the deployment
+
+### Fixed
+
+- Draining the task queue now rejects new submissions from every caller, including module routes, workers, and other API processes. The drain flag was held on the single queue object that served the admin request, so submissions through any other queue object were still accepted.
+
+### Added
+
+- An admin undrain route and a "resume submissions" action on the admin task queue page lift a drain. The drain state is kept in Redis and therefore survives API restarts, so it is lifted explicitly instead of by restarting.
+
+### Changed
+
+- The drain confirmation on the admin task queue page now states that new submissions are rejected until resumed and that queued tasks still run.
+
 ## [0.6.104] - 2026-11-12 -- Team-scoped admins can no longer change deployment config or operate the shared task queue
 
 ### Fixed

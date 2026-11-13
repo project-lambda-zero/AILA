@@ -221,10 +221,27 @@ async def drain_queue(
     request: Request,
     auth: AuthContext = Depends(_require_platform_admin),
 ) -> DataEnvelope[DrainQueueResponse]:
-    """Pause new task submissions and return pending task count. God-tier admin only."""
+    """Reject new task submissions from every caller until undrained; return
+    the queued task count. God-tier admin only."""
     queue = _get_task_queue(request)
     pending = await queue.drain()
     return DataEnvelope(data=DrainQueueResponse(pending=pending, draining=True))
+
+
+@limiter.limit("5/minute")
+@router.post(
+    "/undrain",
+    response_model=DataEnvelope[DrainQueueResponse],
+    summary="Lift a drain - accept new submissions again",
+)
+async def undrain_queue(
+    request: Request,
+    auth: AuthContext = Depends(_require_platform_admin),
+) -> DataEnvelope[DrainQueueResponse]:
+    """Accept new task submissions again and return the queued task count. God-tier admin only."""
+    queue = _get_task_queue(request)
+    pending = await queue.undrain()
+    return DataEnvelope(data=DrainQueueResponse(pending=pending, draining=False))
 
 
 @limiter.limit("5/minute")
