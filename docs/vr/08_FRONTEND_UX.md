@@ -87,7 +87,7 @@ Widgets are shell-level and module-agnostic. The shell defines seven kinds in `W
 - **Windows:** every page renders inside `ConsoleWindow` (close, minimize, fullscreen, z-order and focus managed by the shell host).
 - **Admin gating:** pages that are restricted (for example reconcile and the cross-team heatmap) are hidden from the rail for non-god-tier admins and also gate inside the page (`GOD_TIER_ADMIN_ITEMS` in `nav.ts`).
 - **Error and empty states:** list pages show explicit empty and error notes (`DataPage`); mutations surface errors through the shell toast (`frontend/src/console/toast.tsx`). Data-fetching components handle loading, error, and empty states honestly.
-- **Authentication:** requests carry a Bearer token from the auth store; a 401 signs the user out (`frontend/src/api/client.ts`).
+- **Authentication:** requests carry an in-memory Bearer access token from the auth store; a 401 renews it once through the refresh cookie and retries, and only a failed renewal signs the user out (`frontend/src/api/client.ts`).
 
 ---
 

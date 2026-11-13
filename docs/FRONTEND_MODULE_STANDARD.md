@@ -152,7 +152,7 @@ Frontend code must not consume:
 - local filesystem paths
 - storage-layer data contracts that are not part of the HTTP surface
 
-The API base is derived from the page hostname on port 8000 (`API_BASE` in `frontend/src/api/client.ts`); requests carry a Bearer token from the auth store, and a 401 signs the user out.
+The API base is derived from the page hostname on port 8000 (`API_BASE` in `frontend/src/api/client.ts`); requests carry a Bearer access token the auth store holds in memory. A 401 renews the token once through the refresh cookie (one refresh shared by concurrent requests) and retries the request; the user is signed out only when that renewal fails. A page load restores the session the same way. Module helpers that need the raw `Response` (downloads, SSE) call `authorizedFetch` to get the same handling.
 
 ## Truthfulness Rules
 

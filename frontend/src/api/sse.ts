@@ -7,8 +7,10 @@
  * resets only after a connection stayed healthy for 15s, which keeps a
  * flapping backend from burning the per-user rate limit on /events/stream
  * (10 connects per minute, 300s server-side lifetime). A 429/503 with
- * Retry-After waits at least that long. 401 signs the user out; 401, 403 and
- * 404 close the stream for good, as does the configured stop event.
+ * Retry-After waits at least that long. A 401 renews the access token once
+ * and reconnects (a failed renewal signs the user out); a 401 that survives
+ * renewal, 403 and 404 close the stream for good, as does the configured stop
+ * event.
  *
  * When `resumeParam` is set, the last received `id:` is sent back as that
  * query parameter on reconnect so the server resumes after it.
@@ -16,8 +18,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { useAuth } from "./auth";
-import { API_BASE } from "./client";
+import { API_BASE, authorizedFetch } from "./client";
 
 export type SseConnectionState = "connecting" | "open" | "reconnecting" | "closed";
 
@@ -165,18 +166,18 @@ export function useSseStream(opts: UseSseStreamOptions): SseStreamStatus {
     async function connectOnce(): Promise<Outcome> {
       const url = new URL(API_BASE + path);
       if (resumeParam && lastEventId) url.searchParams.set(resumeParam, lastEventId);
-      const token = useAuth.getState().token;
-      const headers: Record<string, string> = { Accept: "text/event-stream" };
-      if (token) headers.Authorization = `Bearer ${token}`;
 
       let res: Response;
       try {
-        res = await fetch(url, { signal, headers, cache: "no-store" });
+        res = await authorizedFetch(url.pathname + url.search, {
+          signal,
+          headers: { Accept: "text/event-stream" },
+          cache: "no-store",
+        });
       } catch {
         return signal.aborted ? { kind: "aborted" } : { kind: "retry", healthyMs: 0, waitAtLeastMs: 0 };
       }
       if (res.status === 401) {
-        useAuth.getState().logout();
         return { kind: "fatal", error: "401 session expired" };
       }
       if (res.status === 403 || res.status === 404) {

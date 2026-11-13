@@ -9,8 +9,7 @@
  */
 import { useQuery } from "@tanstack/react-query";
 
-import { useAuth } from "./auth";
-import { API_BASE, ApiError, apiFetch } from "./client";
+import { ApiError, apiFetch, authorizedFetch } from "./client";
 import {
   asRecord,
   readBool,
@@ -525,12 +524,8 @@ export function parseStructuredAnalysis(raw: unknown, sectionKeys: readonly stri
  * Reads the response as a Blob so binary payloads (carved files) survive;
  * apiFetch would decode them as UTF-8 text. Throws on any non-2xx. */
 export async function downloadForensicsFile(path: string, filename: string): Promise<void> {
-  const token = useAuth.getState().token;
-  const res = await fetch(API_BASE + path, {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
-  });
+  const res = await authorizedFetch(path);
   if (res.status === 401) {
-    useAuth.getState().logout();
     throw new Error("Session expired -- sign in again.");
   }
   if (!res.ok) {
