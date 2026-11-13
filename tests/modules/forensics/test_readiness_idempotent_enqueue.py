@@ -14,21 +14,19 @@ import json
 import pytest
 
 from aila.modules.forensics.api_router import _active_analysis_task_id
-from aila.modules.forensics.workflow.task import run_forensics_analysis
+from aila.modules.forensics.workflow.task import (
+    run_forensics_analysis,
+    run_forensics_investigation,
+)
 from aila.platform.tasks.models import TaskRecord
 from aila.platform.tasks.queue import TaskQueue
 from aila.platform.uow import UnitOfWork
 
-# Derive the stored fn_path the same way TaskQueue.submit does, so the seeded
-# rows match whatever the guard computes even if the task module moves. The
-# coupling test below anchors this to TaskQueue._get_fn_path so a future change
-# to how submit stores fn_path cannot silently turn the guard into a no-op.
-_ANALYSIS_FN_PATH = (
-    f"{run_forensics_analysis.__module__}.{run_forensics_analysis.__qualname__}"
-)
-_INVESTIGATION_FN_PATH = (
-    "aila.modules.forensics.workflow.task.run_forensics_investigation"
-)
+# Seed rows with the fn_path exactly as ``TaskQueue.submit`` stores it, so the
+# positive cases fail if the guard's derivation ever diverges from submit.
+_SUBMIT_QUEUE = TaskQueue(config_registry=None, module_id="forensics")
+_ANALYSIS_FN_PATH = _SUBMIT_QUEUE._get_fn_path(run_forensics_analysis)
+_INVESTIGATION_FN_PATH = _SUBMIT_QUEUE._get_fn_path(run_forensics_investigation)
 
 
 async def _seed_task(
@@ -55,29 +53,36 @@ async def _seed_task(
         await uow.session.commit()
 
 
-@pytest.mark.usefixtures("test_db")
-async def test_active_analysis_task_detected() -> None:
-    await _seed_task(task_id="t-active", project_id="proj-1", status="running")
+async def _active_task(project_id: str) -> str | None:
     async with UnitOfWork() as uow:
-        found = await _active_analysis_task_id(uow.session, "proj-1")
-    assert found == "t-active"
+        return await _active_analysis_task_id(uow.session, project_id)
+
+
+@pytest.mark.usefixtures("test_db")
+@pytest.mark.parametrize("status", ["queued", "running", "waiting"])
+async def test_active_analysis_task_detected(status: str) -> None:
+    await _seed_task(task_id=f"t-{status}", project_id="proj-1", status=status)
+
+    assert await _active_task("proj-1") == f"t-{status}"
 
 
 @pytest.mark.usefixtures("test_db")
 async def test_terminal_task_not_detected() -> None:
-    # A DONE task must not block a fresh enqueue.
+    # A DONE task must not block a fresh enqueue; a live one for the same
+    # project still does (positive control on the same query).
     await _seed_task(task_id="t-done", project_id="proj-2", status="done")
-    async with UnitOfWork() as uow:
-        found = await _active_analysis_task_id(uow.session, "proj-2")
-    assert found is None
+    assert await _active_task("proj-2") is None
+
+    await _seed_task(task_id="t-live", project_id="proj-2", status="running")
+    assert await _active_task("proj-2") == "t-live"
 
 
 @pytest.mark.usefixtures("test_db")
 async def test_other_project_not_detected() -> None:
     await _seed_task(task_id="t-other", project_id="proj-A", status="running")
-    async with UnitOfWork() as uow:
-        found = await _active_analysis_task_id(uow.session, "proj-B")
-    assert found is None
+
+    assert await _active_task("proj-B") is None
+    assert await _active_task("proj-A") == "t-other"
 
 
 @pytest.mark.usefixtures("test_db")
@@ -90,23 +95,7 @@ async def test_different_task_type_with_same_project_not_detected() -> None:
         status="running",
         fn_path=_INVESTIGATION_FN_PATH,
     )
-    async with UnitOfWork() as uow:
-        found = await _active_analysis_task_id(uow.session, "proj-3")
-    assert found is None
+    assert await _active_task("proj-3") is None
 
-
-def test_dedup_fn_path_matches_submit_derivation() -> None:
-    """The guard filters TaskRecord.fn_path by a locally-derived dotted path.
-    If that derivation ever diverges from what TaskQueue.submit actually stores,
-    the query matches nothing and the dedup guard becomes a silent no-op. Anchor
-    the derivation to the real submit path (_get_fn_path) rather than trusting
-    the other tests, which seed rows with the same derived value (circular).
-
-    _get_fn_path ignores config_registry/module_id (pure inspect over the
-    callable), and @platform_task preserves the wrapped fn's __module__ and
-    __qualname__, so the stored path equals module.__name__ + '.' + qualname.
-    """
-    stored = TaskQueue(
-        config_registry=None, module_id="forensics",
-    )._get_fn_path(run_forensics_analysis)
-    assert _ANALYSIS_FN_PATH == stored
+    await _seed_task(task_id="t-analysis", project_id="proj-3", status="running")
+    assert await _active_task("proj-3") == "t-analysis"
