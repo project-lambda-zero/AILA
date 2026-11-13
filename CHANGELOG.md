@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.65] - 2026-11-12 -- Evidence classifier routes .img, syslog, and memory.raw to their lanes
+
+### Fixed
+
+- Forensics intake now classifies `.img` files as disk images and the extensionless `syslog` file (and numbered rotations such as `syslog.1`) as log files, so they activate the disk and log analysis lanes instead of being stored as unknown.
+- Raw files whose name starts with `memory` (for example `memory.raw`) now classify as memory dumps. The pattern required a literal backslash before the extension, so these files fell through to the generic raw disk rule and ran the disk and binary analysis lanes instead of the memory lane.
+
 ## [0.6.64] - 2026-11-12 -- Readiness enqueue guard tests exercise the real stored task path
 
 ### Fixed

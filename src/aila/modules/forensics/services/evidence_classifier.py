@@ -36,7 +36,7 @@ _EVIDENCE_PATTERNS: dict[str, str] = {
     r"\.raw\.gz$": "memory_dump",
     # Name-shape matches -- anything whose basename looks like a memory
     # image wins over the generic ``.raw`` disk fallback.
-    r"memory[^/\\]*\\.raw$": "memory_dump",
+    r"memory[^/\\]*\.raw$": "memory_dump",
     r"memory[^/\\]*\.raw\.gz$": "memory_dump",
     r"memdump[^/\\]*\.raw$": "memory_dump",
     r"physmem[^/\\]*\.raw$": "memory_dump",
@@ -50,6 +50,7 @@ _EVIDENCE_PATTERNS: dict[str, str] = {
     r"\.raw$": "disk_image",
     r"\.raw\.\d+$": "disk_image",
     r"\.dd$": "disk_image",
+    r"\.img$": "disk_image",
     r"\.vmdk$": "disk_image",
     r"\.qcow2?$": "disk_image",
     r"\.vhd$": "disk_image",
@@ -67,6 +68,8 @@ _EVIDENCE_PATTERNS: dict[str, str] = {
     r"\.log$": "log_file",
     r"\.journal$": "log_file",
     r"\.tracev3$": "log_file",
+    # Extensionless syslog and its numbered rotations (syslog.1, ...).
+    r"(^|[/\\])syslog(\.\d+)?$": "log_file",
     # mobile
     r"\.apk$": "apk",
     r"\.ipa$": "mobile_app",
