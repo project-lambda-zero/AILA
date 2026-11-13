@@ -5,6 +5,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.86] - 2026-11-12 -- forensics status changes reach the live event stream
+
+### Fixed
+
+- Forensics project and investigation status changes now publish `project.status_changed` and `investigation.status_changed` events on `/events/stream`, delivered to the owning team like the VR and malware investigation events (#420).
+- The console refreshes forensics project and investigation views when one of these events arrives, and refreshes every forensics view after a stream reconnect, so status changes appear without a manual reload (#420).
+
+### Removed
+
+- The forensics SSE routes `GET /forensics/projects/{project_id}/readiness-check/stream` and `GET /forensics/projects/{project_id}/investigations/{investigation_id}/events`, which had no console consumer. Readiness checks use the synchronous `POST .../readiness-check`; forensics task progress remains available on `GET /tasks/{task_id}/events` (#420).
+
 ## [0.6.85] - 2026-11-12 -- Dumped memory regions stored as metadata under a byte cap
 
 ### Fixed

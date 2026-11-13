@@ -473,7 +473,6 @@ The module has no frontend directory. Forensics UI lives in the shared console s
 | `ArtifactExplorer`      | Browse all extracted artifacts by family and type          |
 | `LeadScoreCard`         | Top promoted leads with scoring breakdown                  |
 | `MachineReadinessCheck` | Tool installation status (green / red per tool)            |
-| `ReadinessStreamPanel`  | Live SSE stream of the readiness check while it runs       |
 | `RetrieveFilePanel`     | Pull a specific file out of a disk image                   |
 | `FetchRawFilePanel`     | Fetch a file or directory from a raw-directory project     |
 
@@ -493,7 +492,6 @@ All endpoints use `DataEnvelope[T]`, platform auth, and rate limiting.
 | `DELETE` | `/forensics/projects/:id`                                           | Delete project + all its data                                    |
 | `POST` | `/forensics/projects/:id/full-analysis`                               | Trigger the full-analysis pipeline                               |
 | `POST` | `/forensics/projects/:id/readiness-check`                             | Check analyzer-machine tool readiness                            |
-| `GET`  | `/forensics/projects/:id/readiness-check/stream`                      | Stream readiness check progress via SSE                          |
 | `GET`  | `/forensics/projects/:id/evidence`                                    | List evidence files                                              |
 | `GET`  | `/forensics/projects/:id/findings`                                    | Confident findings extracted from artifacts                      |
 | `GET`  | `/forensics/projects/:id/artifacts`                                   | Query artifacts (family / type filter, paginated)                |
@@ -504,7 +502,6 @@ All endpoints use `DataEnvelope[T]`, platform auth, and rate limiting.
 | `GET`  | `/forensics/projects/:id/investigations/:iid`                         | Investigation detail with agent steps                            |
 | `GET`  | `/forensics/projects/:id/investigations/:iid/reasoning-graphs`        | Durable reasoning-graph snapshots                                |
 | `GET`  | `/forensics/projects/:id/investigations/:iid/reasoning-graphs/diff`   | Diff two reasoning-graph snapshots                               |
-| `GET`  | `/forensics/projects/:id/investigations/:iid/events`                  | Stream investigation progress via SSE                            |
 | `POST` | `/forensics/projects/:id/investigations/:iid/cancel`                  | Hard-cancel a running investigation                              |
 | `POST` | `/forensics/projects/:id/investigations/:iid/tag`                     | Tag an investigation step as solid evidence                      |
 | `GET`  | `/forensics/projects/:id/answers`                                     | Answered questions                                               |

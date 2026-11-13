@@ -1,9 +1,8 @@
 """Workflow progress emitter for the forensics module.
 
 Publishes forensic workflow stage progress to the platform's Redis Streams
-via ``ProgressStream.emit``, so the frontend's SSE feed at
-``/forensics/projects/.../investigations/.../events`` actually receives
-live events instead of sitting on "Waiting for events…".
+via ``ProgressStream.emit`` (the task progress stream, served by
+``GET /tasks/{task_id}/events``).
 
 Also logs locally so the worker log remains a reliable post-mortem surface
 even when Redis is misconfigured.

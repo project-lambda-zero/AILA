@@ -1,6 +1,6 @@
 """Progress SSE resume cursor: ``Last-Event-ID`` header vs ``last_id`` query (#361).
 
-Drives the real scan, task and investigation stream handlers through their
+Drives the real scan and task stream handlers through their
 ``StreamingResponse`` body iterators. Redis, the database and the SSE
 connection cap are replaced at the boundary by in-memory fakes; no network.
 """
@@ -15,17 +15,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from aila.api.auth import AuthContext
-from aila.api.constants import ROLE_ADMIN
 from aila.api.routers import scans as scans_router
 from aila.api.routers import tasks as tasks_router
-from aila.modules.forensics import api_router as forensics_api
-from aila.modules.forensics.api_router import create_forensics_router
 
-_KINDS = ("scan", "task", "investigation")
+_KINDS = ("scan", "task")
 _RUN_ID = "run-361"
-_PROJECT_ID = "project-361"
-_INVESTIGATION_ID = "investigation-361"
 _ALL_IDS = [f"{n}-0" for n in range(1, 7)]
 
 
@@ -57,26 +51,6 @@ class _Request:
         return False
 
 
-class _FakeUoW:
-    def __init__(self, session: MagicMock) -> None:
-        self.session = session
-
-    async def __aenter__(self) -> _FakeUoW:
-        return self
-
-    async def __aexit__(self, *_exc: object) -> bool:
-        return False
-
-
-@pytest.fixture(autouse=True)
-def _disable_forensics_limiter() -> Iterator[None]:
-    """Disable the module-local slowapi limiter for direct-invocation tests."""
-    prev = forensics_api.limiter.enabled
-    forensics_api.limiter.enabled = False
-    yield
-    forensics_api.limiter.enabled = prev
-
-
 def _progress(stage: str) -> dict[str, str]:
     return {"stage": stage, "message": stage, "percent": "10", "timestamp": "t"}
 
@@ -85,19 +59,8 @@ def _entries() -> list[tuple[str, dict[str, str]]]:
     return [(event_id, _progress(f"stage{event_id}")) for event_id in _ALL_IDS]
 
 
-def _reads_for(kind: str) -> list[object]:
-    """Queued ``result.first()`` values, in the order each handler reads them.
-
-    scan/task: the first terminal check sees a live task, the ping sees it done.
-    investigation: project, investigation, then status reads (live, then done).
-    """
-    if kind == "investigation":
-        return [
-            SimpleNamespace(id=_PROJECT_ID, team_id=None),
-            SimpleNamespace(id=_INVESTIGATION_ID, project_id=_PROJECT_ID, task_id=_RUN_ID, status="running"),
-            SimpleNamespace(status="running"),
-            SimpleNamespace(status="completed"),
-        ]
+def _reads() -> list[object]:
+    """Queued ``result.first()`` values: the first terminal check sees a live task, the ping sees it done."""
     return [None, SimpleNamespace(status="done", heartbeat_at=None)]
 
 
@@ -115,16 +78,12 @@ def _patched(kind: str, redis: _FakeRedisStream, session: MagicMock) -> Iterator
         stack.enter_context(patch("aila.api.sse_gate.enforce_sse_cap"))
         stack.enter_context(patch("aila.platform.tasks.progress.get_redis", _get_redis))
         stack.enter_context(patch("aila.platform.tasks.get_task_tuning", lambda _key, default: default))
-        if kind == "investigation":
-            stack.enter_context(patch.object(forensics_api, "pool_available", return_value=True))
-            stack.enter_context(patch.object(forensics_api, "UnitOfWork", lambda: _FakeUoW(session)))
-        else:
-            module = scans_router if kind == "scan" else tasks_router
-            stack.enter_context(patch.object(module, "pool_available", return_value=True))
-            stack.enter_context(patch.object(module, "async_session_scope", _session_scope))
-            stack.enter_context(
-                patch.object(module.TaskRepository, "get_for_user", AsyncMock(return_value=object()))
-            )
+        module = scans_router if kind == "scan" else tasks_router
+        stack.enter_context(patch.object(module, "pool_available", return_value=True))
+        stack.enter_context(patch.object(module, "async_session_scope", _session_scope))
+        stack.enter_context(
+            patch.object(module.TaskRepository, "get_for_user", AsyncMock(return_value=object()))
+        )
         yield
 
 
@@ -133,22 +92,8 @@ async def _call(kind: str, request: _Request, last_id: str | None):
         return await scans_router.stream_scan_events(
             run_id=_RUN_ID, request=request, last_id=last_id, auth=MagicMock(),
         )
-    if kind == "task":
-        return await tasks_router.stream_task_events(
-            task_id=_RUN_ID, request=request, last_id=last_id, auth=MagicMock(),
-        )
-    endpoint = next(
-        route.endpoint
-        for route in create_forensics_router().routes
-        if getattr(route, "path", None) == "/projects/{project_id}/investigations/{investigation_id}/events"
-    )
-    admin = AuthContext(user_id="admin-361", role=ROLE_ADMIN, auth_type="user", team_id=None)
-    return await endpoint(
-        request=request,
-        project_id=_PROJECT_ID,
-        investigation_id=_INVESTIGATION_ID,
-        last_id=last_id,
-        auth=admin,
+    return await tasks_router.stream_task_events(
+        task_id=_RUN_ID, request=request, last_id=last_id, auth=MagicMock(),
     )
 
 
@@ -173,7 +118,7 @@ async def _stream(
     kind: str, *, last_id: str | None, last_event_id: str | None = None,
 ) -> list[tuple[str | None, str | None, dict | None]]:
     redis = _FakeRedisStream(_entries())
-    reads = _reads_for(kind)
+    reads = _reads()
     result = MagicMock()
     result.first.side_effect = lambda: reads.pop(0)
     session = MagicMock()
