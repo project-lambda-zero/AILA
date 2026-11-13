@@ -48,9 +48,11 @@ async def _evidence_is_reachable(
     with one clear message instead.
     """
     if analyzer_os == "windows":
+        from aila.modules.forensics.tools._ssh_helper import ps_literal
+
         probe_cmd = (
             f'powershell -NoProfile -Command "'
-            f"if (Test-Path -LiteralPath '{path}' -PathType Leaf) "
+            f"if (Test-Path -LiteralPath {ps_literal(path)} -PathType Leaf) "
             f"{{ exit 0 }} else {{ exit 2 }}"
             f'"'
         )

@@ -5,6 +5,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.90] - 2026-11-12 -- forensics evidence paths are quoted for the analyzer shell
+
+### Fixed
+
+- Forensics deep analysis (strings, FLOSS, capa, Ghidra function listing) quotes evidence paths for the analyzer shell. On POSIX analyzers, paths containing double quotes, dollar signs, or backticks now reach the tool as one literal argument instead of breaking the command or being expanded by the shell (#445).
+- Intake directory listing quotes the evidence directory: POSIX `find` and its `ls -lR` fallback receive it as one argument, and the Windows listing uses a PowerShell literal path with embedded single quotes escaped. The Windows evidence reachability probe uses the same literal quoting (#445).
+- The generated binary analysis script encodes the image path as a Python string literal, so paths containing quotes, newlines, or a trailing backslash no longer make the script unparseable (#445).
+
 ## [0.6.89] - 2026-11-12 -- binary analysis runs on POSIX analyzers
 
 ### Fixed

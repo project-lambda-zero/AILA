@@ -12,7 +12,7 @@ from aila.platform.exceptions import AILAError
 from aila.platform.services.ssh import SSHService
 
 __all__ = [
-    "get_ssh_service", "python_cmd", "temp_dir", "path_sep", "hash_cmd",
+    "get_ssh_service", "python_cmd", "temp_dir", "path_sep", "hash_cmd", "ps_literal",
     "run_command_via_file", "run_tool_probe",
 ]
 
@@ -81,6 +81,11 @@ def _posix_quote(s: str) -> str:
     """Shell-escape a string for POSIX sh (like shlex.quote)."""
     import shlex
     return shlex.quote(s)
+
+
+def ps_literal(s: str) -> str:
+    """Return ``s`` as a PowerShell single-quoted literal (embedded quotes doubled)."""
+    return "'" + s.replace("'", "''") + "'"
 
 
 async def run_command_via_file(

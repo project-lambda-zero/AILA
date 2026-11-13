@@ -15,6 +15,8 @@ from typing import Any
 
 from aila.platform.exceptions import AILAError
 
+from .collectors._helpers import sq
+
 __all__ = ["state_deep_analysis"]
 
 _log = logging.getLogger(__name__)
@@ -252,7 +254,7 @@ async def _extract_strings_iocs(
     try:
         output = await ssh.run_command(
             integration,
-            f'{strings_bin} "{path}" {err_sink}',
+            f"{strings_bin} {sq(path, analyzer_os)} {err_sink}",
             timeout_seconds=120.0,
         )
     except (OSError, TimeoutError, RuntimeError, AILAError):
@@ -299,13 +301,13 @@ async def _extract_strings_iocs(
 
 
 async def _run_floss(
-    ssh: Any, integration: dict, path: str, _analyzer_os: str, err_sink: str,
+    ssh: Any, integration: dict, path: str, analyzer_os: str, err_sink: str,
 ) -> str | None:
     """Run FLOSS for obfuscated string recovery."""
     try:
         output = await ssh.run_command(
             integration,
-            f'floss "{path}" {err_sink}',
+            f"floss {sq(path, analyzer_os)} {err_sink}",
             timeout_seconds=300.0,
         )
         return output.strip() if output.strip() else None
@@ -315,13 +317,13 @@ async def _run_floss(
 
 
 async def _run_capa(
-    ssh: Any, integration: dict, path: str, _analyzer_os: str, err_sink: str,
+    ssh: Any, integration: dict, path: str, analyzer_os: str, err_sink: str,
 ) -> str | None:
     """Run capa for ATT&CK capability mapping."""
     try:
         output = await ssh.run_command(
             integration,
-            f'capa "{path}" {err_sink}',
+            f"capa {sq(path, analyzer_os)} {err_sink}",
             timeout_seconds=300.0,
         )
         return output.strip() if output.strip() else None
@@ -352,7 +354,7 @@ async def _run_ghidra_list_functions(
     )
     analyze_cmd = (
         f"{headless} {project_dir} aila_deep_analysis "
-        f"-import \"{path}\" -overwrite "
+        f"-import {sq(path, analyzer_os)} -overwrite "
         f"-scriptPath {script_dir} -postScript ListFunctions.java "
         f"-noanalysis"
     )
