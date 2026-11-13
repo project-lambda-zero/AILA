@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 
+from aila.platform.agents.prompt_sections import render_available_tools_section
 from aila.platform.mcp.bridges.knowledge import KnowledgeBridgeTool
 
 
@@ -57,3 +58,18 @@ class TestKnowledgeBridgeScopeRefusal:
         )
         assert result["status"] == "error"
         assert "query" in result["error"].lower()
+
+
+class TestKnowledgeBridgePromptSignature:
+    def test_rendered_retrieve_signature_lists_its_arguments(self) -> None:
+        specs = _run(KnowledgeBridgeTool().list_tool_specs())
+        out = render_available_tools_section(
+            "source_repo",
+            {"knowledge": specs},
+            applicable_servers={"knowledge"},
+            applicable_servers_for_kind=lambda _kind: set(),
+        )
+        line = next(ln for ln in out.splitlines() if "`knowledge.retrieve(" in ln)
+        assert "query: string [required]" in line
+        assert "limit: integer = 8" in line
+        assert "route: string" in line

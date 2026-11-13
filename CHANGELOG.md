@@ -5,6 +5,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.72] - 2026-11-12 -- Agent prompt shows the knowledge retrieve arguments
+
+### Fixed
+
+- The agent prompt now lists the knowledge retrieve signature with its `query` (required), `limit`, and `route` arguments. The knowledge bridge published its argument list under a key the prompt renderer does not read, so the tool appeared with no arguments under a header telling the agent to use the exact parameter names shown.
+
 ## [0.6.71] - 2026-11-12 -- Writeup fails with a typed reason when the LLM is disabled
 
 ### Fixed

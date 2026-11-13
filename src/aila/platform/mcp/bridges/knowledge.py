@@ -64,7 +64,7 @@ class KnowledgeBridgeTool(Tool):
                     "relevance-floored and sanitize/classify gated. The "
                     "search scope is your own workspace, set automatically."
                 ),
-                "parameters": [
+                "params": [
                     {
                         "name": "query",
                         "type": "string",
