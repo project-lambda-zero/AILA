@@ -5,6 +5,13 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.99] - 2026-11-12 -- Forensics intake config declares only the fields its wizard uses
+
+### Removed
+
+- The forensics intake config no longer carries step labels, a header, a tagline, a demo analyzer list, a readiness checklist, a new-case label, or a launch label. The forensics wizard renders its own steps and labels, lists analyzers from the systems registry, and shows the backend's readiness results, so none of these values was ever displayed.
+- The unused `ModuleCfg` union, its `flow` discriminant, and the uncalled `getCfg` helper are removed; the intake overlay picks its wizard by module id.
+
 ## [0.6.98] - 2026-11-12 -- Failed and cancelled workflow runs no longer mark their task done
 
 ### Fixed
