@@ -107,6 +107,10 @@ HONESTY_WHITELIST = [
     # so the state-file registration cycle stays unbroken.
     ("malware/agents/outcome_dispatcher.py", "_dispatch_sub_investigation", "noqa"),
     ("vr/workflow/states/investigation_emit.py", "_run_pattern_extraction", "noqa"),
+    # The panel task imports the phase definition, which imports emit. The
+    # revised-draft reviewer re-drive therefore resolves the task callable
+    # only when it runs, after registration has completed.
+    ("forensics/workflow/panel/emit.py", "noqa_inline", "noqa"),
     ("vr/workflow/task.py", "run_target_analysis", "noqa"),
     ("vr/workflow/task.py", "run_fuzz_campaign_launch", "noqa"),
     ("vr/services/target_analysis.py", "_run_git", "noqa"),
@@ -620,6 +624,8 @@ HONESTY_WHITELIST = [
     ("malware/agents/malware_researcher.py", "seed_prompt_versions",
      "promotion_without_gate"),
     ("forensics/agents/investigator.py", "seed_prompt_versions",
+     "promotion_without_gate"),
+    ("forensics/agents/panel_prompts.py", "seed_prompt_versions",
      "promotion_without_gate"),
     ("platform/prompts/seeds.py", "seed_platform_prompts",
      "promotion_without_gate"),

@@ -47,13 +47,14 @@ export function InvestigateForm({
   const qc = useQueryClient();
   const [question, setQuestion] = useState("");
   const [maxAttempts, setMaxAttempts] = useState(10);
+  const [mode, setMode] = useState<"freeflow" | "panel">("freeflow");
   const [err, setErr] = useState<string | null>(null);
   const m = useMutation({
     mutationFn: async (): Promise<InvestigationSummary> =>
       parseOne(
         await apiFetch<unknown>(`/forensics/projects/${projectId}/investigate`, {
           method: "POST",
-          body: JSON.stringify({ question, max_attempts: maxAttempts }),
+          body: JSON.stringify({ question, max_attempts: maxAttempts, mode }),
         }),
         parseInvestigationSummary,
       ),
@@ -80,12 +81,24 @@ export function InvestigateForm({
       submitting={m.isPending}
       error={err}
     >
-      <Field label="question" hint={"1\u20134000 chars. Frames the free-flow agent's investigation."}>
+      <Field label="mode" hint="Free-flow uses one examiner. Panel uses three examiners with sibling review before an answer is recorded.">
+        <Radio
+          value={mode}
+          onChange={setMode}
+          options={[
+            { value: "freeflow", label: "free-flow" },
+            { value: "panel", label: "panel (3 examiners)" },
+          ]}
+        />
+      </Field>
+      <Field label="question" hint={"1\u20134000 chars. Frames the selected investigation."}>
         <TextArea value={question} onChange={setQuestion} rows={5} placeholder="What executed on host X between 12:00 and 13:00 UTC?" />
       </Field>
-      <Field label="max attempts" hint={"Turn budget for the agent. 1\u201350; default 10."}>
-        <NumberInput value={maxAttempts} onChange={setMaxAttempts} min={1} max={50} />
-      </Field>
+      {mode === "freeflow" ? (
+        <Field label="max attempts" hint={"Turn budget for the free-flow agent. 1\u201350; default 10."}>
+          <NumberInput value={maxAttempts} onChange={setMaxAttempts} min={1} max={50} />
+        </Field>
+      ) : null}
     </FormBox>
   );
 }

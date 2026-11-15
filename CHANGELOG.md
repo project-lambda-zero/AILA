@@ -5,6 +5,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.119] - 2026-11-15 -- Real three-examiner forensics panel investigations
+
+### Added
+
+- Forensics investigations can run in panel mode with three examiner branches that execute analyzer actions, review draft answers, record the approved answer, and generate a write-up.
+- The console offers free-flow or panel mode and a panel drill-down with branch state, votes, provenance, contributions, and recent analyzer results.
+- Panel state is available through a typed read API, and panel tasks are registered from the ordinary forensics worker import path.
+
+### Changed
+
+- Free-flow and panel investigations now share analyzer actions, step records, artifact queries, and live cost-ceiling accounting.
+- Panel settlement closes finished branches, re-drives closed reviewers for a successor draft, and uses periodic finalization and orphan-branch sweeps.
+
+### Fixed
+
+- Free-flow shell commands issued through tool_run now follow the documented analyzer JSON command contract instead of being rejected.
+- A rejected panel answer no longer leaves a successor draft without enough eligible reviewers; each examiner may propose once, keeping deliberation bounded.
+- Panel recovery submissions retain the investigation team, and project deletion removes panel reviews, outcomes, messages, branches, and patterns.
+
+### Upgrade notes
+
+- Apply Alembic migrations 151 and 152 before starting the forensics workers; they add the panel investigation fields and terminal timestamp.
+- Installations with an existing forensics free-flow production prompt alias must promote the newly seeded prompt version to deploy the corrected tool_run contract. Seeding only sets aliases that are absent.
+
 ## [0.6.118] - 2026-11-14 -- Forensics file retrieval from the Evidence and Findings tabs
 
 ### Added

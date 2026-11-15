@@ -24,6 +24,7 @@ from aila.modules.forensics.db_models import (
     ForensicsProjectRecord,
     InvestigationRunRecord,
 )
+from aila.modules.forensics.services import analyzer_actions
 from aila.modules.forensics.tool_catalog import iter_tool_specs
 from aila.modules.forensics.tool_keys import all_tool_keys
 from aila.platform.contracts.reasoning import ReasoningTurnDecision
@@ -52,14 +53,16 @@ def ssh_calls(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     """Ledger of shell commands the investigator would send to the analyzer."""
     ledger: list[str] = []
 
-    async def fake_command(self: HonestInvestigator, command: str) -> dict[str, Any]:
+    async def fake_command(
+        *, settings: Any, integration: Any, investigation_id: str, command: str,
+    ) -> dict[str, Any]:
         ledger.append(command)
         return {"stdout": "", "stderr": "", "exit_code": 0}
 
     async def fake_prompt(analyzer_os: str, *, investigation_id: str) -> LoadedPrompt:
         return LoadedPrompt(body="system prompt", version=None)
 
-    monkeypatch.setattr(HonestInvestigator, "_execute_command", fake_command)
+    monkeypatch.setattr(analyzer_actions, "execute_command", fake_command)
     monkeypatch.setattr(investigator_module, "_resolve_freeflow_prompt", fake_prompt)
     return ledger
 

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlmodel import select as _select
 
@@ -45,6 +45,9 @@ from aila.platform.workflows.types import (
     StateResult,
 )
 from aila.storage.db_models import WorkflowStateCursor
+
+if TYPE_CHECKING:
+    from aila.platform.agents.tool_execution import ToolExecutionResult
 
 _log = logging.getLogger(__name__)
 
@@ -293,6 +296,10 @@ def state_investigation_loop(
     runner selects for this phase (via the ``_directive.phase_strategy_family``
     observable); None keeps the investigation-level family.
     """
+    if (bindings.executor_factory is None) == (bindings.action_dispatcher is None):
+        raise ValueError(
+            "state_investigation_loop: bind exactly one of executor_factory or action_dispatcher",
+        )
     del hooks  # loop takes no optional hooks today
     _phase_servers = (
         frozenset(phase_allowed_servers)
@@ -368,7 +375,9 @@ def state_investigation_loop(
             engine, investigation_id, branch_id, raw_cve_intel, raw_patterns,
             raw_retrieved,
         )
-        executor = bindings.executor_factory()
+        executor = (
+            bindings.executor_factory() if bindings.executor_factory is not None else None
+        )
 
         last_turn_idx = 0
         last_outcome_id: str | None = None
@@ -479,7 +488,17 @@ def state_investigation_loop(
             last_action = result.decision.action
             last_outcome_id = result.outcome_id
 
-            if result.decision.action == "tool_run":
+            tool_outcome: ToolExecutionResult | None = None
+            if bindings.action_dispatcher is not None:
+                if not result.terminal:
+                    tool_outcome = await bindings.action_dispatcher(
+                        investigation_id=investigation_id,
+                        branch_id=branch_id,
+                        decision=result.decision,
+                        at_turn=result.turn,
+                        phase_allowed_servers=_phase_servers,
+                    )
+            elif executor is not None and result.decision.action == "tool_run":
                 tool_outcome = await executor.execute(
                     investigation_id=investigation_id,
                     branch_id=branch_id,
@@ -487,6 +506,7 @@ def state_investigation_loop(
                     at_turn=result.turn,
                     phase_allowed_servers=_phase_servers,
                 )
+            if tool_outcome is not None:
                 _log.info(
                     "investigation_loop TOOL inv=%s turn=%d server=%s tool=%s success=%s",
                     investigation_id, result.turn,
@@ -517,7 +537,7 @@ def state_investigation_loop(
                     )
                     break
             else:
-                # Non-tool_run turn: clear any accumulated streak so
+                # Non-tool turn: clear any accumulated streak so
                 # HARD-BLOCK escalation requires CONSECUTIVE offenses.
                 await _update_hard_block_streak(
                     bindings.branch_model, branch_id, bump=False,

@@ -21,9 +21,9 @@ forensics record models.
 
 The 3-role spine:
 
-  halvar (primary)  researcher   -- proposes findings from the evidence
+  halvar (primary)  lead examiner -- builds the answer from primary evidence
   maddie            critic       -- falsifies claims, demands proof
-  renzo             implementer  -- validates / reproduces the finding
+  renzo             corroboration -- independently verifies the evidence chain
 
 Sibling additions (specialists, additional critics) are optional and
 routed via the same platform on-demand specialist path; the baseline
@@ -289,12 +289,15 @@ def state_forensics_panel_setup(next_state: str) -> Any:
             # already carries its own branch_id and MUST NOT recursively
             # spawn (the platform spawn is idempotent per persona but
             # skipping the call keeps the hot path cheap).
+            # Mark running before any sibling can be picked up. Otherwise a
+            # fast worker sees PENDING in the loop liveness poll and exits
+            # without firing its first turn.
+            await _mark_investigation_running(investigation_id)
             await _spawn_forensics_panel(
                 investigation_id=investigation_id,
                 primary_branch_id=primary_branch_id,
                 team_id=inv_team_id,
             )
-            await _mark_investigation_running(investigation_id)
 
         # RFC-12 pattern retrieval: pull prior forensics techniques /
         # triage rules scoped to this project so the loop can surface

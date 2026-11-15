@@ -6,6 +6,7 @@ directly -- all wiring happens here.
 from __future__ import annotations
 
 import logging
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -27,6 +28,7 @@ from aila.platform.modules import (
     action_id_for,
 )
 from aila.platform.runtime import ToolRegistry
+from aila.platform.services.branch_reaper import sweep_orphan_active_branches
 from aila.platform.tasks.sweeps import (
     SweepPriority,
     all_periodic_sweeps,
@@ -34,8 +36,10 @@ from aila.platform.tasks.sweeps import (
 )
 
 from .capabilities import CAPABILITY_DESCRIPTION, CAPABILITY_EXAMPLES
+from .db_models import ForensicsInvestigationBranchRecord, InvestigationRunRecord
 from .services.investigation_reconciler import sweep_investigations_reconcile
 from .services.stuck_healer import sweep_stuck_investigations
+from .workflow.panel.finalize import sweep_finalizable_panel_investigations
 
 __all__ = ["ForensicsModule", "create_module"]
 
@@ -409,18 +413,19 @@ class ForensicsModule(ModuleProtocol):
         return {}
 
     async def seed_prompts(self) -> int:
-        """RFC-09 activation: seed the forensics free-flow prompts into the
-        version store and set production aliases where none exist.
+        """RFC-09 activation: seed the forensics free-flow and panel prompts
+        into the version store and set production aliases where none exist.
 
         Discovered by :func:`aila.platform.prompts.bootstrap.seed_module_prompts`
         at app startup. Delegates to
         :func:`aila.modules.forensics.agents.investigator.seed_prompt_versions`
-        so the prompt inventory lives with the agent that consumes it --
+        and :func:`aila.modules.forensics.agents.panel_prompts.seed_prompt_versions`
+        so each prompt inventory lives with the agent that consumes it --
         same shape vr and malware use.
         """
-        from .agents.investigator import seed_prompt_versions
+        from .agents import investigator, panel_prompts
 
-        return await seed_prompt_versions()
+        return await investigator.seed_prompt_versions() + await panel_prompts.seed_prompt_versions()
 
     def health_checks(self) -> dict[str, object]:
         """Return SSH reachability probe callable for the platform health router.
@@ -520,8 +525,28 @@ def _register_forensics_periodic_sweeps() -> None:
     the registry in an autouse fixture automatically re-register on
     the next ``create_module()`` call.
     """
-    if "forensics.stuck_healer" in all_periodic_sweeps():
+    if "forensics.finalize" in all_periodic_sweeps():
         return
+
+    # Close branches left active after their investigation became terminal.
+    # The shared reaper binds module models only; it contains no module logic.
+    register_periodic_sweep(
+        "forensics.branch_reaper",
+        partial(
+            sweep_orphan_active_branches,
+            branch_model=ForensicsInvestigationBranchRecord,
+            investigation_model=InvestigationRunRecord,
+        ),
+        order=SweepPriority.ORPHAN_BRANCH_REAPER,
+    )
+
+    # Settle a panel after its last branch closes, including when the worker
+    # stopped between branch closure and the emit state's finalize call.
+    register_periodic_sweep(
+        "forensics.finalize",
+        sweep_finalizable_panel_investigations,
+        order=SweepPriority.NO_FINDING_SYNTHESIS,
+    )
 
     # forensics.stuck_healer -- RFC-07 #31 criterion 6. Detects
     # investigations stuck at ``running`` with no live task and no
@@ -536,8 +561,8 @@ def _register_forensics_periodic_sweeps() -> None:
     )
 
     # forensics.investigation_reconciler -- RFC-07 reconcile wave (L3.4):
-    # the investigation-scoped reconciler authority pass. Runs AFTER
-    # stall(500) / stuck(600) as the last-resort convergence step: it
+    # the investigation-scoped reconciler authority pass. Runs after
+    # stall recovery (500) and stuck healing (600) as the last-resort step: it
     # reconciles every task + cursor of each non-terminal, non-paused
     # investigation and drives recovery (same-job-id resume or full
     # re-enqueue) when the row is RUNNING/CREATED-but-dead, so no path

@@ -18,7 +18,7 @@ Scope: MASVS report-section writer, forensics writeup builder, and the
 platform ``human_cost`` estimator. The remaining sites migrated in the
 same slice (forensics investigator freeflow turn, VR advisory narrative,
 VR PoC development) are exercised through their ``_load_*_prompt`` /
-``_load_freeflow_prompt`` accessors -- the byte-identity check plus the
+``load_freeflow_prompt`` accessors -- the byte-identity check plus the
 compile-level presence of ``correlation_scope`` around each call is
 sufficient here; end-to-end coverage lives with each site's existing
 behavioural tests.
@@ -320,11 +320,11 @@ def test_forensics_freeflow_prompt_assembles_from_base_plus_os_hint() -> None:
     linux = (prompts_dir / "os_hint_linux.md").read_text(encoding="utf-8")
     windows = (prompts_dir / "os_hint_windows.md").read_text(encoding="utf-8")
 
-    assert investigator._load_freeflow_prompt("linux") == base + linux
-    assert investigator._load_freeflow_prompt("windows") == base + windows
+    assert investigator.load_freeflow_prompt("linux") == base + linux
+    assert investigator.load_freeflow_prompt("windows") == base + windows
     # Fallback (unknown analyzer OS) mirrors the pre-RFC-09 behaviour: any
     # value other than "windows" gets the Linux hint.
-    assert investigator._load_freeflow_prompt("darwin") == base + linux
+    assert investigator.load_freeflow_prompt("darwin") == base + linux
 
 
 # ---------------------------------------------------------------------------

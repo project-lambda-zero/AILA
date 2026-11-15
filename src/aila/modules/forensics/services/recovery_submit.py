@@ -50,7 +50,14 @@ async def prepare_recovery_submit(inv_id: str, branch_id: str | None) -> Prepare
     task_queue = default_task_queue()
 
     if branch_id is not None:
+        async with UnitOfWork() as uow:
+            inv = (await uow.session.exec(
+                select(InvestigationRunRecord).where(InvestigationRunRecord.id == inv_id),
+            )).first()
+        if inv is None:
+            raise ReenqueueInvestigationError(f"Investigation {inv_id!r} not found.")
         panel_kwargs: dict[str, Any] = {"investigation_id": inv_id, "branch_id": branch_id}
+        panel_team_id = inv.team_id
 
         async def _send_panel() -> None:
             await task_queue.submit(
@@ -59,7 +66,7 @@ async def prepare_recovery_submit(inv_id: str, branch_id: str | None) -> Prepare
                 kwargs=panel_kwargs,
                 user_id="system",
                 group_id=_RECOVERY_GROUP_ID,
-                team_id=None,
+                team_id=panel_team_id,
                 bypass_dedup=True,
             )
 

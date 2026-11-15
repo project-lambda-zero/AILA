@@ -18,8 +18,8 @@ Two acceptance clauses:
 
 * ``test_emit_swallows_experience_writer_failure`` -- a raising
   :meth:`ExperienceWriter.record` is logged + swallowed; the emit
-  state returns cleanly and the finalized investigation status the
-  primary-branch path derived still propagates on the output payload.
+  state returns cleanly and the finalizer's investigation status still
+  propagates on the output payload.
 """
 from __future__ import annotations
 
@@ -36,6 +36,7 @@ from aila.modules.forensics.services.outcome_review import (
     QuorumOutcome,
 )
 from aila.modules.forensics.workflow.panel import emit as panel_emit
+from aila.modules.forensics.workflow.panel.finalize import PanelFinalizeResult
 from aila.platform.workflows.types import RESERVED_SUCCEEDED
 
 # ---------------------------------------------------------------------------
@@ -192,8 +193,8 @@ def _install_panel_stubs(
     The test drives ``state_forensics_panel_emit`` end to end with no
     live DB; every ``async with UnitOfWork()`` inside the emit body
     routes through :class:`_FakeUow`, and the four DB-lookup helpers
-    (``_load_draft_outcome_ids``, ``_is_primary_branch``,
-    ``_finalize_investigation_if_ready``, ``_load_outcome_payload``)
+    (``_load_draft_outcome_ids``, ``_close_branch_after_loop``,
+    ``finalize_panel_investigation``, ``_load_outcome_payload``)
     return canned values.
     """
     _FakeExperienceWriter.instances = []
@@ -204,21 +205,19 @@ def _install_panel_stubs(
     async def _fake_evaluate_quorum(oid: str) -> QuorumOutcome:
         return _approved_verdict(oid)
 
-    async def _fake_is_primary(_bid: str) -> bool:
-        return True
+    async def _fake_close(_bid: str, _reason: str) -> None:
+        return None
 
-    async def _fake_finalize(_inv_id: str) -> str | None:
-        return finalized_status
+    async def _fake_finalize(_inv_id: str) -> PanelFinalizeResult:
+        return PanelFinalizeResult(_inv_id, finalized_status)
 
     async def _fake_load_payload(_oid: str) -> str | None:
         return payload_json
 
     monkeypatch.setattr(panel_emit, "_load_draft_outcome_ids", _fake_load_draft_ids)
     monkeypatch.setattr(panel_emit, "evaluate_quorum", _fake_evaluate_quorum)
-    monkeypatch.setattr(panel_emit, "_is_primary_branch", _fake_is_primary)
-    monkeypatch.setattr(
-        panel_emit, "_finalize_investigation_if_ready", _fake_finalize,
-    )
+    monkeypatch.setattr(panel_emit, "_close_branch_after_loop", _fake_close)
+    monkeypatch.setattr(panel_emit, "finalize_panel_investigation", _fake_finalize)
     monkeypatch.setattr(panel_emit, "_load_outcome_payload", _fake_load_payload)
     monkeypatch.setattr(panel_emit, "UnitOfWork", _make_uow_factory(inv))
     monkeypatch.setattr(panel_emit, "PatternStore", _FakePatternStore)
@@ -277,8 +276,8 @@ async def test_emit_records_experience_on_approved_quorum(
     assert "Suspicious lateral movement" in call["body"]
     assert call["summary"] == call["summary"].strip()
 
-    # State finalization still returned SUCCEEDED with the primary branch's
-    # derived status echoed on the output payload.
+    # State finalization still returned SUCCEEDED with the settled status
+    # echoed on the output payload.
     assert result.next_state == RESERVED_SUCCEEDED
     assert result.output["quorum_evaluated_outcome_ids"] == [outcome_id]
     assert result.output["investigation_status"] == "completed"

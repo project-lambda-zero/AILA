@@ -74,6 +74,13 @@ from .contracts import (
 from .contracts.directive import AnalystDirective, AnalystDirectiveCreate
 from .contracts.finding_suppression import FindingSuppression, FindingSuppressionRequest
 from .contracts.investigation import AgentStep
+from .contracts.panel import (
+    ForensicsPanelBranch,
+    ForensicsPanelMessage,
+    ForensicsPanelOutcome,
+    ForensicsPanelReview,
+    ForensicsPanelView,
+)
 from .contracts.retrieve import FetchRawRequest, RetrieveFileRequest
 from .contracts.solid_evidence import SolidEvidence, TagInvestigationRequest
 from .contracts.status import InvestigationStatus, ProjectStatus
@@ -1191,6 +1198,11 @@ def create_forensics_router() -> APIRouter:
             AnswerCandidateRecord,
             ArtifactRecord,
             FindingSuppressionRecord,
+            ForensicsInvestigationBranchRecord,
+            ForensicsInvestigationMessageRecord,
+            ForensicsInvestigationOutcomeRecord,
+            ForensicsInvestigationOutcomeReviewRecord,
+            ForensicsPatternRecord,
             ForensicsProjectRecord,
             InvestigationRunRecord,
             LeadRecord,
@@ -1222,6 +1234,38 @@ def create_forensics_router() -> APIRouter:
                         AnswerCandidateRecord.investigation_id == inv_id
                     )
                 )
+            for inv_id in inv_ids:
+                outcome_ids = list((await uow.session.exec(
+                    select(ForensicsInvestigationOutcomeRecord.id).where(
+                        ForensicsInvestigationOutcomeRecord.investigation_id == inv_id,
+                    ),
+                )).all())
+                if outcome_ids:
+                    await uow.session.exec(
+                        sa_delete(ForensicsInvestigationOutcomeReviewRecord).where(
+                            ForensicsInvestigationOutcomeReviewRecord.outcome_id.in_(outcome_ids),
+                        ),
+                    )
+                await uow.session.exec(
+                    sa_delete(ForensicsInvestigationOutcomeRecord).where(
+                        ForensicsInvestigationOutcomeRecord.investigation_id == inv_id,
+                    ),
+                )
+                await uow.session.exec(
+                    sa_delete(ForensicsInvestigationMessageRecord).where(
+                        ForensicsInvestigationMessageRecord.investigation_id == inv_id,
+                    ),
+                )
+                await uow.session.exec(
+                    sa_delete(ForensicsInvestigationBranchRecord).where(
+                        ForensicsInvestigationBranchRecord.investigation_id == inv_id,
+                    ),
+                )
+            await uow.session.exec(
+                sa_delete(ForensicsPatternRecord).where(
+                    ForensicsPatternRecord.workspace_id == project_id,
+                ),
+            )
             await uow.session.exec(
                 sa_delete(InvestigationRunRecord).where(InvestigationRunRecord.project_id == project_id)
             )
@@ -1762,7 +1806,7 @@ def create_forensics_router() -> APIRouter:
     @router.post(
         "/projects/{project_id}/investigate",
         response_model=DataEnvelope[InvestigationSummary],
-        summary="Start a free-flow investigation.",
+        summary="Start a free-flow or panel investigation.",
         status_code=status.HTTP_202_ACCEPTED,
     )
     @limiter.limit("10/minute")
@@ -1776,7 +1820,10 @@ def create_forensics_router() -> APIRouter:
         from aila.api.deps import get_task_queue
         from aila.modules.forensics.db_models import ForensicsProjectRecord, InvestigationRunRecord
         from aila.modules.forensics.services.integration import build_integration_payload
-        from aila.modules.forensics.workflow.task import run_forensics_investigation
+        from aila.modules.forensics.workflow.task import (
+            run_forensics_investigation,
+            run_forensics_panel_investigate,
+        )
         from aila.storage.db_models import ManagedSystemRecord
 
         task_queue = get_task_queue("forensics", request)
@@ -1824,25 +1871,33 @@ def create_forensics_router() -> APIRouter:
 
             integration = build_integration_payload(system)
 
+        if body.mode == "panel":
+            task_fn = run_forensics_panel_investigate
+            task_kwargs: dict[str, Any] = {
+                "investigation_id": record.id,
+                "project_id": project_id,
+                "question": body.question,
+            }
+        else:
+            task_fn = run_forensics_investigation
+            task_kwargs = {
+                "investigation_id": record.id,
+                "project_id": project_id,
+                "question": body.question,
+                "max_attempts": resolved_max_attempts,
+                "integration": integration,
+                "analyzer_os": project.analyzer_os,
+                "evidence_directory": project.evidence_directory,
+                # The dispatcher's mode_selection uses this to pick
+                # FORENSICS_FREEFLOW_V1 (agentic plan-and-execute Q&A)
+                # instead of the scheduled-scan full-analysis evidence hub.
+                "mode": "freeflow",
+            }
         try:
             handle = await task_queue.submit(
                 track="forensics",
-                fn=run_forensics_investigation,
-                kwargs={
-                    "investigation_id": record.id,
-                    "project_id": project_id,
-                    "question": body.question,
-                    "max_attempts": resolved_max_attempts,
-                    "integration": integration,
-                    "analyzer_os": project.analyzer_os,
-                    "evidence_directory": project.evidence_directory,
-                    # The dispatcher's mode_selection uses this to pick
-                    # FORENSICS_FREEFLOW_V1 (agentic plan-and-execute Q&A)
-                    # instead of the scheduled-scan full-analysis evidence
-                    # hub. An investigation has a question, so the
-                    # freeflow agent is what should run.
-                    "mode": "freeflow",
-                },
+                fn=task_fn,
+                kwargs=task_kwargs,
                 user_id=auth.user_id,
                 group_id=auth.role,
                 team_id=auth.team_id,
@@ -2085,6 +2140,130 @@ def create_forensics_router() -> APIRouter:
             )
             for r in rows
         ])
+
+    @router.get(
+        "/projects/{project_id}/investigations/{investigation_id}/panel",
+        response_model=DataEnvelope[ForensicsPanelView],
+        summary="Read panel branches, outcome votes, and recent branch messages.",
+    )
+    @limiter.limit("60/minute")
+    async def get_investigation_panel(
+        request: Request,
+        project_id: str,
+        investigation_id: str,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[ForensicsPanelView]:
+        del request
+        from aila.modules.forensics.db_models import (
+            ForensicsInvestigationBranchRecord,
+            ForensicsInvestigationMessageRecord,
+            ForensicsInvestigationOutcomeRecord,
+            ForensicsInvestigationOutcomeReviewRecord,
+            ForensicsProjectRecord,
+            InvestigationRunRecord,
+        )
+        from aila.modules.forensics.services.outcome_review import (
+            summarize_outcome_for_review,
+        )
+
+        async with UnitOfWork() as uow:
+            project = (await uow.session.exec(
+                select(ForensicsProjectRecord).where(ForensicsProjectRecord.id == project_id),
+            )).first()
+            if project is None:
+                raise HTTPException(status_code=404, detail=f"Project {project_id} not found.")
+            _require_project_ownership(project, auth)
+            inv = (await uow.session.exec(
+                select(InvestigationRunRecord).where(
+                    InvestigationRunRecord.id == investigation_id,
+                    InvestigationRunRecord.project_id == project_id,
+                ),
+            )).first()
+            if inv is None:
+                raise HTTPException(status_code=404, detail="Investigation not found.")
+            branches = list((await uow.session.exec(
+                select(ForensicsInvestigationBranchRecord)
+                .where(ForensicsInvestigationBranchRecord.investigation_id == investigation_id)
+                .order_by(ForensicsInvestigationBranchRecord.created_at),
+            )).all())
+            outcomes = list((await uow.session.exec(
+                select(ForensicsInvestigationOutcomeRecord)
+                .where(ForensicsInvestigationOutcomeRecord.investigation_id == investigation_id)
+                .order_by(ForensicsInvestigationOutcomeRecord.created_at),
+            )).all())
+            outcome_ids = [outcome.id for outcome in outcomes]
+            reviews = list((await uow.session.exec(
+                select(ForensicsInvestigationOutcomeReviewRecord)
+                .where(ForensicsInvestigationOutcomeReviewRecord.outcome_id.in_(outcome_ids))
+                .order_by(ForensicsInvestigationOutcomeReviewRecord.created_at),
+            )).all()) if outcome_ids else []
+            # Return the latest 50 messages in chronological order so the UI
+            # shows current deliberation without an unbounded transcript.
+            messages = list(reversed((await uow.session.exec(
+                select(ForensicsInvestigationMessageRecord)
+                .where(ForensicsInvestigationMessageRecord.investigation_id == investigation_id)
+                .order_by(ForensicsInvestigationMessageRecord.created_at.desc())
+                .limit(50),
+            )).all()))
+
+        persona_by_branch = {branch.id: branch.persona_voice or "primary" for branch in branches}
+        reviews_by_outcome: dict[str, list[ForensicsPanelReview]] = {}
+        for review in reviews:
+            reviews_by_outcome.setdefault(review.outcome_id, []).append(ForensicsPanelReview(
+                reviewer_branch_id=review.reviewer_branch_id,
+                reviewer_persona=review.reviewer_persona,
+                vote=review.vote,
+                comment=review.comment or "",
+            ))
+        outcome_models = []
+        for outcome in outcomes:
+            payload = json.loads(outcome.payload_json or "{}")
+            provenance = payload.get("provenance")
+            contributions = payload.get("panel_contributions")
+            outcome_models.append(ForensicsPanelOutcome(
+                id=outcome.id,
+                branch_id=outcome.branch_id,
+                proposer_persona=persona_by_branch.get(outcome.branch_id, "unknown"),
+                state=outcome.state,
+                confidence=outcome.confidence,
+                answer=str(payload.get("answer") or summarize_outcome_for_review(outcome.payload_json)),
+                provenance=provenance if isinstance(provenance, dict) else {},
+                contributions=contributions if isinstance(contributions, list) else [],
+                reviews=reviews_by_outcome.get(outcome.id, []),
+                created_at=outcome.created_at,
+            ))
+        message_models = []
+        for message in messages:
+            payload = json.loads(message.payload_json or "{}")
+            text = str(payload.get("text") or payload.get("reasoning") or "")
+            message_models.append(ForensicsPanelMessage(
+                id=message.id,
+                branch_id=message.branch_id,
+                persona_voice=persona_by_branch.get(message.branch_id, "panel"),
+                sender_kind=message.sender_kind,
+                payload_kind=message.payload_kind,
+                at_turn=message.at_turn,
+                text=text,
+                action=payload.get("action"),
+                command=str(payload.get("command") or "") or None,
+                stdout=str(payload.get("stdout") or "") or None,
+                stderr=str(payload.get("stderr") or "") or None,
+                exit_code=payload.get("exit_code"),
+                created_at=message.created_at,
+            ))
+        return DataEnvelope(data=ForensicsPanelView(
+            investigation_id=investigation_id,
+            branches=[ForensicsPanelBranch(
+                id=branch.id,
+                persona_voice=branch.persona_voice or "primary",
+                status=branch.status,
+                turn_count=branch.turn_count,
+                closed_reason=branch.closed_reason,
+                created_at=branch.created_at,
+            ) for branch in branches],
+            outcomes=outcome_models,
+            messages=message_models,
+        ))
 
     @router.get(
         "/projects/{project_id}/investigations/{investigation_id}",

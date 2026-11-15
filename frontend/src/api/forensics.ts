@@ -310,6 +310,106 @@ export function parseInvestigationSummary(o: Obj): InvestigationSummary {
   };
 }
 
+/* --- panel deliberation ------------------------------------------------- */
+
+export interface ForensicsPanelBranch {
+  id: string;
+  persona_voice: string;
+  status: string;
+  turn_count: number;
+  closed_reason: string | null;
+  created_at: string | null;
+}
+
+export interface ForensicsPanelReview {
+  reviewer_branch_id: string;
+  reviewer_persona: string;
+  vote: string;
+  comment: string;
+}
+
+export interface ForensicsPanelOutcome {
+  id: string;
+  branch_id: string;
+  proposer_persona: string;
+  state: string;
+  confidence: string;
+  answer: string;
+  provenance: Record<string, unknown>;
+  contributions: Record<string, unknown>[];
+  reviews: ForensicsPanelReview[];
+  created_at: string | null;
+}
+
+export interface ForensicsPanelMessage {
+  id: string;
+  branch_id: string;
+  persona_voice: string;
+  sender_kind: string;
+  payload_kind: string;
+  at_turn: number | null;
+  text: string;
+  action: string | null;
+  command: string | null;
+  stdout: string | null;
+  stderr: string | null;
+  exit_code: number | null;
+  created_at: string | null;
+}
+
+export interface ForensicsPanelView {
+  investigation_id: string;
+  branches: ForensicsPanelBranch[];
+  outcomes: ForensicsPanelOutcome[];
+  messages: ForensicsPanelMessage[];
+}
+
+export function parseForensicsPanelView(o: Obj): ForensicsPanelView {
+  return {
+    investigation_id: str(o, "investigation_id"),
+    branches: readRecordArray(o, "branches").map((b) => ({
+      id: str(b, "id"),
+      persona_voice: str(b, "persona_voice"),
+      status: str(b, "status"),
+      turn_count: readNum(b, "turn_count") ?? 0,
+      closed_reason: readStr(b, "closed_reason"),
+      created_at: readStr(b, "created_at"),
+    })),
+    outcomes: readRecordArray(o, "outcomes").map((outcome) => ({
+      id: str(outcome, "id"),
+      branch_id: str(outcome, "branch_id"),
+      proposer_persona: str(outcome, "proposer_persona"),
+      state: str(outcome, "state"),
+      confidence: str(outcome, "confidence"),
+      answer: str(outcome, "answer"),
+      provenance: rec(outcome, "provenance"),
+      contributions: readRecordArray(outcome, "contributions"),
+      reviews: readRecordArray(outcome, "reviews").map((review) => ({
+        reviewer_branch_id: str(review, "reviewer_branch_id"),
+        reviewer_persona: str(review, "reviewer_persona"),
+        vote: str(review, "vote"),
+        comment: str(review, "comment"),
+      })),
+      created_at: readStr(outcome, "created_at"),
+    })),
+    messages: readRecordArray(o, "messages").map((message) => ({
+      id: str(message, "id"),
+      branch_id: str(message, "branch_id"),
+      persona_voice: str(message, "persona_voice"),
+      sender_kind: str(message, "sender_kind"),
+      payload_kind: str(message, "payload_kind"),
+      at_turn: readNum(message, "at_turn"),
+      text: str(message, "text"),
+      action: readStr(message, "action"),
+      command: readStr(message, "command"),
+      stdout: readStr(message, "stdout"),
+      stderr: readStr(message, "stderr"),
+      exit_code: readNum(message, "exit_code"),
+      created_at: readStr(message, "created_at"),
+    })),
+  };
+}
+
 /* --- answers ---------------------------------------------------------- */
 
 export interface AnswerCandidate {

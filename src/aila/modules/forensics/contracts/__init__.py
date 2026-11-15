@@ -17,6 +17,7 @@ from .investigation import (
     WriteUp,
  )
 from .machine import MachineReadinessResult, ToolCheckResult
+from .outcome import ForensicsOutcomeKind
 from .project import (
     AnalyzerOS,
     EvidenceItem,
@@ -42,6 +43,7 @@ __all__ = [
     "FindingSuppression",
     "FindingSuppressionRequest",
     "ForensicsOptions",
+    "ForensicsOutcomeKind",
     "ForensicsPayload",
     "InvestigationRequest",
     "MachineReadinessResult",
