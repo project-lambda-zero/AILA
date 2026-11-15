@@ -5,6 +5,27 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.120] - 2026-11-16 -- Deterministic AI endpoint pentest assessments
+
+### Added
+
+- The new pentest module configures OpenAI-compatible and generic JSON agent targets, runs six deterministic instruction-override, jailbreak, and canary probes, and stores per-attempt transcripts, detector evidence, and verdicts.
+- The console creates targets with write-only bearer and canary inputs, gates canary probes, launches and polls queued assessments, displays progress and terminal errors, and exports server-generated JSON reports.
+- Assessment execution uses a durable worker workflow with per-probe commits, retry idempotency, team-scoped reads, and queue-failure terminal accounting.
+- Reports distinguish detector hits from unscoreable results and calculate hit rate only over detected and not-detected outcomes. Detector hits are not confirmed vulnerabilities, and not_detected does not prove safety.
+
+### Security
+
+- Bearer tokens and canaries use the platform SecretStore. Target responses and database rows contain no plaintext bearer or canary values.
+- Target HTTP requests use the platform SSRF-validating client and bounded error outcomes. Canary URL evidence records hashes and match channels rather than the sensitive value.
+
+### Upgrade notes
+
+- Apply Alembic migration 153 to create pentest targets, assessments, and probe results.
+- Start a worker for the `pentest` queue. The default `start.sh` worker set includes it.
+
+---
+
 ## [0.6.119] - 2026-11-15 -- Real three-examiner forensics panel investigations
 
 ### Added

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aila"
-version = "0.6.119"
+version = "0.6.120"
 description = "Modular AI security platform with pluggable analysis modules."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -421,6 +421,9 @@ ignore = [
 "src/aila/modules/forensics/workflow/states/resolution.py" = ["PLC0415"]
 "src/aila/modules/forensics/workflow/states/writeup.py" = ["PLC0415"]
 "src/aila/modules/hello_world/module.py" = ["PLC0415"]
+# pentest/module.py: the module protocol requires the API router factory to be
+# imported in route_specs(), keeping router dependencies out of module discovery.
+"src/aila/modules/pentest/module.py" = ["PLC0415"]
 # malware/agents/auto_steering.py: PLW0603 for single module-level
 # _consecutive_failures counter; BLE001 because auto-steering must
 # never fail loud (a steering-time exception would silently break

@@ -478,6 +478,9 @@ HONESTY_WHITELIST = [
     # module_id at. Same public facade shape as vr / malware; inlining
     # would scatter the module_id binding across every panel spawn site.
     ("forensics/_task_queue.py", "default_task_queue", "consider inlining"),
+    # pentest uses the same canonical ConfigRegistry + module_id factory;
+    # keeping it named also lets API tests inject a recording queue.
+    ("pentest/_task_queue.py", "default_task_queue", "consider inlining"),
     # _template/_task_queue.default_task_queue: same public factory shape
     # as vr / malware / forensics; the scaffold ships it so a copier's
     # ``from aila.modules.<mod>._task_queue import default_task_queue``
