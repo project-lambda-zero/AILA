@@ -365,7 +365,7 @@ function renderTab(
     case "overview":
       return <OverviewTab projectId={projectId} project={project} onOpenInvestigation={onOpenInvestigation} />;
     case "evidence":
-      return <EvidenceTab {...p} />;
+      return <EvidenceTab {...p} project={project} />;
     case "artifacts":
       return <ArtifactsTab {...p} />;
     case "leads":

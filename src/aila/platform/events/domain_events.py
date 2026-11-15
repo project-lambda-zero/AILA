@@ -156,7 +156,8 @@ class ModuleWorkflowCompletedPayload(BaseModel):
     """Payload for module.workflow.completed events.
 
     ``metrics`` carries whatever counters the module considers salient
-    for the completed run (finding_count, duration_s, artifact_count).
+    for the run (finding_count, duration_s, artifact_count). The payload
+    is recorded in the platform journal; no subscriber reads it.
     """
 
     module_id: str
@@ -259,7 +260,20 @@ class ModuleWorkflowStarted(DomainEvent):
 
 @dataclass(frozen=True, slots=True)
 class ModuleWorkflowCompleted(DomainEvent):
-    """Emitted when a module's workflow run reaches its terminal state."""
+    """Journal record that a module workflow produced its result.
+
+    Published by the forensics write-up state (after the write-up row is
+    persisted, before the run's emit state) and the vulnerability reporting
+    state (after the report narrative is built, before persist). Other
+    modules do not publish it, and it does not mark the run's terminal
+    state.
+
+    Its only consumers are ``journal_persist`` (one row in the hash-chained
+    platform journal) and the Redis bridge that relays it to the API
+    process's local bus. No subscriber reacts to it: code that needs to act
+    on completion reads ``EntityStatusChanged`` events or the workflow
+    cursor instead.
+    """
 
     event_type: str = "module.workflow.completed"
     payload: ModuleWorkflowCompletedPayload = field(

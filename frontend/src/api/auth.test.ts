@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { restoreSession, useAuth } from "./auth";
+import { completeOidcSignIn, restoreSession, useAuth } from "./auth";
 import { ApiError, apiFetch } from "./client";
 
 interface Sent {
@@ -130,5 +130,70 @@ describe("session persistence", () => {
 
     expect(refreshes()).toHaveLength(1);
     expect(useAuth.getState()).toMatchObject({ token: NEW, status: "authed", user: { id: "u1", role: "operator" } });
+  });
+});
+
+describe("OIDC sign-in", () => {
+  const TEAM_JWT = jwt({ user_id: "u9", role: "operator", team_id: "team-x" });
+
+  beforeEach(() => {
+    window.history.replaceState(null, "", "/auth/callback?code=c&state=s");
+    useAuth.setState({ token: null, user: null, status: "restoring", error: null, busy: true });
+  });
+
+  afterEach(() => {
+    window.history.replaceState(null, "", "/");
+    vi.unstubAllGlobals();
+  });
+
+  it("clears the address bar, exchanges the code, and signs in with the returned token", async () => {
+    const fetchMock = vi.fn(async (_input: string | URL) => json(200, { data: { access_token: TEAM_JWT, token_type: "bearer" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await completeOidcSignIn("?code=the-code&state=the-state");
+
+    expect(window.location.pathname + window.location.search).toBe("/");
+    const requested = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(requested.pathname).toBe("/auth/oidc/callback");
+    expect(requested.searchParams.get("code")).toBe("the-code");
+    expect(requested.searchParams.get("state")).toBe("the-state");
+    expect(requested.searchParams.get("redirect_uri")).toBe(`${window.location.origin}/auth/callback`);
+    expect(useAuth.getState()).toMatchObject({
+      token: TEAM_JWT,
+      status: "authed",
+      error: null,
+      busy: false,
+      user: { id: "u9", role: "operator", team_id: "team-x" },
+    });
+  });
+
+  it("reports the identity provider's error without calling the backend", async () => {
+    const fetchMock = vi.fn(async () => json(200, { data: {} }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await completeOidcSignIn("?error=access_denied&error_description=User%20cancelled");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(useAuth.getState()).toMatchObject({ status: "anon", token: null, error: "User cancelled", busy: false });
+  });
+
+  it("shows the server's team refusal and stays signed out", async () => {
+    const detail = "OIDC sign-in requires a team. Set a default team on this identity provider.";
+    vi.stubGlobal("fetch", vi.fn(async () => json(403, { detail })));
+
+    await completeOidcSignIn("?code=c&state=s");
+
+    expect(useAuth.getState()).toMatchObject({ status: "anon", token: null, user: null, error: detail, busy: false });
+  });
+
+  it("does not call the backend when the callback has no state", async () => {
+    const fetchMock = vi.fn(async () => json(200, { data: {} }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await completeOidcSignIn("?code=abc");
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(useAuth.getState()).toMatchObject({ status: "anon", token: null, busy: false });
+    expect(useAuth.getState().error).toBeTruthy();
   });
 });

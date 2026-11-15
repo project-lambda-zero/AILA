@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -40,12 +41,13 @@ class ForensicsOptions(BaseModel):
 
 
 class InvestigationRequest(BaseModel):
-    """Request to start a free-flow investigation."""
+    """Request to start a free-flow or panel investigation."""
 
     model_config = ConfigDict(extra="forbid")
 
     question: str = Field(min_length=1)
     max_attempts: int = Field(default=10, ge=1, le=50)
+    mode: Literal["freeflow", "panel"] = "freeflow"
 
 
 class AgentStep(BaseModel):

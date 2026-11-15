@@ -1,8 +1,11 @@
 import { create } from "zustand";
 
-import { configureApi, renewAccessToken, sessionRequest } from "./client";
+import { configureApi, renewAccessToken, sessionGet, sessionRequest } from "./client";
 import { apiErrDetail } from "./parse";
-import type { LoginResponse, User } from "./types";
+import type { LoginResponse, OidcAuthorizeResponse, OidcProvider, User } from "./types";
+
+/** Console path the identity provider redirects back to after OIDC sign-in. */
+export const OIDC_CALLBACK_PATH = "/auth/callback";
 
 /** Decode the JWT payload for profile fields. External input -> narrow, no casts. */
 function decodeToken(token: string): User {
@@ -93,4 +96,65 @@ configureApi({
 /** Restore the session after a page load from the refresh cookie. */
 export function restoreSession(): Promise<string | null> {
   return renewAccessToken();
+}
+
+/** Enabled OIDC providers offered on the login page. Public; no session needed. */
+export function listOidcProviders(): Promise<OidcProvider[]> {
+  return sessionGet<OidcProvider[]>("/auth/oidc/providers/public");
+}
+
+/** Start OIDC sign-in. The backend sets the state cookie and returns the
+ * identity provider's authorization URL, which the browser then follows. */
+export async function startOidcSignIn(providerId: string): Promise<void> {
+  useAuth.setState({ busy: true, error: null });
+  const params = new URLSearchParams({
+    provider_id: providerId,
+    redirect_uri: window.location.origin + OIDC_CALLBACK_PATH,
+  });
+
+  try {
+    const res = await sessionGet<OidcAuthorizeResponse>(`/auth/oidc/authorize?${params.toString()}`);
+    window.location.assign(res.authorization_url);
+  } catch (e) {
+    useAuth.setState({ error: apiErrDetail(e) || "OIDC sign-in failed.", busy: false });
+  }
+}
+
+/** Finish OIDC sign-in on the callback page. The address bar is reset to the
+ * bare console path first, so the one-time code and state never stay in history. */
+export async function completeOidcSignIn(search: string): Promise<void> {
+  window.history.replaceState(null, "", "/");
+  const params = new URLSearchParams(search);
+  const idpError = params.get("error");
+  const code = params.get("code");
+  const state = params.get("state");
+
+  if (idpError || !code || !state) {
+    const reason =
+      params.get("error_description") ??
+      (idpError ? `Identity provider returned "${idpError}".` : "OIDC sign-in did not complete.");
+    useAuth.setState({ ...SIGNED_OUT, error: reason, busy: false });
+
+    return;
+  }
+
+  useAuth.setState({ busy: true, error: null });
+  const query = new URLSearchParams({
+    code,
+    state,
+    redirect_uri: window.location.origin + OIDC_CALLBACK_PATH,
+  });
+
+  try {
+    const res = await sessionGet<LoginResponse>(`/auth/oidc/callback?${query.toString()}`);
+    useAuth.setState({
+      token: res.access_token,
+      user: decodeToken(res.access_token),
+      status: "authed",
+      error: null,
+      busy: false,
+    });
+  } catch (e) {
+    useAuth.setState({ ...SIGNED_OUT, error: apiErrDetail(e) || "OIDC sign-in failed.", busy: false });
+  }
 }

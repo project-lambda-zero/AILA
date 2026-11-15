@@ -8,10 +8,10 @@ Mirrors the vulnerability module's architecture (Phase 180/183):
   dispatcher run and the inner-definition run through ``DurableStateMachine``,
   giving us cursor persistence, audit trails, retries, and resumability.
 
-- ``FORENSICS_FULL_ANALYSIS_V1`` -- full evidence pipeline:
-  ``intake -> collection -> deep_analysis -> promotion -> resolution -> writeup -> response_emit -> __succeeded__``;
-  any state's failure routes to ``analysis_failed -> __failed__``, which marks
-  the project failed with a reason.
+- Full analysis runs the evidence hub, ``FORENSICS_INVESTIGATE_HUB`` in
+  ``definitions_hub``, selected by ``_state_routing``. Any step's failure
+  routes to ``investigation_failed`` (``_state_analysis_failed``), which marks
+  the project failed with a reason and ends at ``__failed__``.
 
 - ``FORENSICS_FREEFLOW_V1`` -- bounded investigation:
   ``freeflow -> promotion -> writeup -> response_emit -> __succeeded__``
@@ -25,14 +25,10 @@ import asyncio
 import json
 from typing import TYPE_CHECKING, Any, cast
 
-from aila.modules.forensics.config_schema import FORENSICS_DEFAULTS
 from aila.modules.forensics.contracts.status import InvestigationStatus, ProjectStatus
-from aila.modules.forensics.workflow.states.collection import state_collection
-from aila.modules.forensics.workflow.states.deep_analysis import state_deep_analysis
 from aila.modules.forensics.workflow.states.freeflow import state_freeflow
 from aila.modules.forensics.workflow.states.intake import state_intake
-from aila.modules.forensics.workflow.states.promotion import state_freeflow_promotion, state_promotion
-from aila.modules.forensics.workflow.states.resolution import state_resolution
+from aila.modules.forensics.workflow.states.promotion import state_freeflow_promotion
 from aila.modules.forensics.workflow.states.writeup import state_writeup
 from aila.platform.exceptions import AILAError
 from aila.platform.workflows.types import (
@@ -51,7 +47,6 @@ if TYPE_CHECKING:
 __all__ = [
     "FORENSICS_DISPATCHER_V1",
     "FORENSICS_FREEFLOW_V1",
-    "FORENSICS_FULL_ANALYSIS_V1",
     "FORENSICS_MODE_DEFINITIONS",
     "FORENSICS_RAW_DIRECTORY_V1",
 ]
@@ -148,7 +143,9 @@ async def _state_analysis_failed(
 ) -> StateResult:
     """Failure terminal for project analysis runs: mark the project failed.
 
-    The engine routes here from any state's ``on_failure`` with only the
+    Shared by the evidence hub (``FORENSICS_INVESTIGATE_HUB``, as
+    ``investigation_failed``) and the raw-directory definition (as
+    ``analysis_failed``). The engine routes here from any state's ``on_failure`` with only the
     failure facts (``failed_state`` / ``error_class`` / ``error_message`` on a
     raise or timeout, ``previous_state`` / ``error`` / ``error_detail`` on an
     output-validation failure), so the project id comes from the run's
@@ -204,76 +201,6 @@ async def _state_analysis_failed(
             "failure_reason": reason,
         },
     )
-
-
-# ---------------------------------------------------------------------------
-# Mode: FULL_ANALYSIS
-# ---------------------------------------------------------------------------
-
-FORENSICS_FULL_ANALYSIS_V1: WorkflowDefinition = WorkflowDefinition(
-    definition_id="forensics.full_analysis.v1",
-    start_state="intake",
-    allow_phase_handoff=True,
-    states={
-        "intake": StateSpec(
-            handler=_h(state_intake),
-            timeout_s=300.0,
-            max_retries=2,
-            retriable_on=_SSH_TRANSIENT,
-            on_success="collection",
-            on_failure="analysis_failed",
-        ),
-        "collection": StateSpec(
-            handler=_h(state_collection),
-            timeout_s=FORENSICS_DEFAULTS.collection_timeout_seconds,
-            max_retries=1,
-            retriable_on=_SSH_TRANSIENT,
-            on_success="deep_analysis",
-            on_failure="analysis_failed",
-        ),
-        "deep_analysis": StateSpec(
-            handler=_h(state_deep_analysis),
-            timeout_s=7200.0,
-            max_retries=1,
-            retriable_on=_SSH_TRANSIENT,
-            on_success="promotion",
-            on_failure="analysis_failed",
-        ),
-        "promotion": StateSpec(
-            handler=_h(state_promotion),
-            timeout_s=300.0,
-            max_retries=1,
-            on_success="resolution",
-            on_failure="analysis_failed",
-        ),
-        "resolution": StateSpec(
-            handler=_h(state_resolution),
-            timeout_s=300.0,
-            max_retries=1,
-            on_success="writeup",
-            on_failure="analysis_failed",
-        ),
-        "writeup": StateSpec(
-            handler=_h(state_writeup),
-            timeout_s=600.0,
-            max_retries=1,
-            on_success="response_emit",
-            on_failure="analysis_failed",
-        ),
-        "response_emit": StateSpec(
-            handler=_h(_state_response_emit),
-            timeout_s=30.0,
-            on_success=RESERVED_SUCCEEDED,
-            on_failure="analysis_failed",
-        ),
-        "analysis_failed": StateSpec(
-            handler=_h(_state_analysis_failed),
-            timeout_s=30.0,
-            on_success=RESERVED_FAILED,
-        ),
-    },
-    services_factory=_build_services,
-)
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +278,6 @@ FORENSICS_RAW_DIRECTORY_V1: WorkflowDefinition = WorkflowDefinition(
 # ---------------------------------------------------------------------------
 
 FORENSICS_MODE_DEFINITIONS: dict[str, WorkflowDefinition] = {
-    FORENSICS_FULL_ANALYSIS_V1.definition_id: FORENSICS_FULL_ANALYSIS_V1,
     FORENSICS_FREEFLOW_V1.definition_id: FORENSICS_FREEFLOW_V1,
     FORENSICS_RAW_DIRECTORY_V1.definition_id: FORENSICS_RAW_DIRECTORY_V1,
 }
@@ -377,9 +303,9 @@ async def _state_routing(
         selected_id = FORENSICS_RAW_DIRECTORY_V1.definition_id
     else:
         # RFC-13 (#68): full_analysis (and any unknown mode) runs the
-        # discovery-driven evidence hub, which composes the same forensic
-        # state handlers (intake, collection, deep_analysis, promotion) as the
-        # fixed pipeline, evidence-gated. ``definitions_hub`` imports this
+        # discovery-driven evidence hub, which composes the forensic state
+        # handlers (intake, collection, deep_analysis, promotion) and gates
+        # each collector lane on discovered evidence. ``definitions_hub`` imports this
         # module's builders, so the hub is imported + registered lazily here --
         # only when full-analysis is actually routed. That avoids an import
         # cycle AND keeps a hub-import fault from gating the fixed-mode task

@@ -1,7 +1,14 @@
 import type { JSX } from "react";
 import { useState } from "react";
 
-import { carvedFilePath, parseArtifactPage, useForensicsQuery } from "../../../../api/forensics";
+import {
+  CARVED_FILE_TYPE,
+  CARVED_FILE_TYPES_TYPE,
+  aggregateCarvedFileTypes,
+  carvedFilePath,
+  parseArtifactPage,
+  useForensicsQuery,
+} from "../../../../api/forensics";
 import type { Artifact } from "../../../../api/forensics";
 import { css } from "../../../css";
 import { Select, TextInput } from "../formControls";
@@ -26,8 +33,51 @@ const ARTIFACT_FAMILIES = [
   "firmware",
 ];
 
-/** artifact_type the pcap collector emits for each Zeek-carved file. */
-const CARVED_FILE_TYPE = "carved_file";
+const chipStyle = css(
+  "font-family:var(--font-mono);font-size:11px;padding:1px 7px;border:1px solid var(--border);border-radius:999px;color:var(--text-muted);white-space:nowrap;",
+);
+
+const plural = (n: number, noun: string): string => `${n} ${noun}${n === 1 ? "" : "s"}`;
+
+/** Project-wide carved file-type histogram from the pcap collector's per-capture
+ * summaries. Independent of the table filters; renders nothing until there is
+ * at least one summary. */
+function CarvedFileTypesStrip({ projectId }: { projectId: string }): JSX.Element | null {
+  const q = useForensicsQuery(
+    projectId,
+    ["artifacts", CARVED_FILE_TYPES_TYPE],
+    `/forensics/projects/${projectId}/artifacts?artifact_type=${CARVED_FILE_TYPES_TYPE}&page=1&page_size=250`,
+    parseArtifactPage,
+  );
+  if (!q.data) return null;
+  const { items, total } = q.data;
+  const agg = aggregateCarvedFileTypes(items);
+  if (agg.captures === 0) return null;
+  const truncated = total != null && total > items.length;
+  return (
+    <div style={css("display:flex;flex-wrap:wrap;align-items:center;gap:6px 9px;padding:7px 12px;font-size:11px;color:var(--text-muted);border-bottom:1px solid var(--border);")}>
+      <span style={css("letter-spacing:0.12em;text-transform:uppercase;color:var(--text-faint);")}>carved file types</span>
+      {agg.total_carved === 0 ? (
+        <span>
+          no files carved from {plural(agg.captures, "capture")}
+          {truncated ? ` (first ${items.length} captures)` : ""}
+        </span>
+      ) : (
+        <>
+          <span>
+            {plural(agg.total_carved, "file")} {"\u00b7"} {plural(agg.captures, "capture")}
+            {truncated ? ` (first ${items.length} captures)` : ""}
+          </span>
+          {agg.mimes.map((m) => (
+            <span key={m.mime_type} style={chipStyle}>
+              {m.mime_type} {m.count}
+            </span>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
 
 const ARTIFACT_COLS: TableColumn<Artifact>[] = [
   { field: "artifact_family", label: "family", width: 100 },
@@ -113,19 +163,22 @@ export function ArtifactsTab({ projectId }: TabProps): JSX.Element {
         </>
       }
       table={
-        state ?? (
-          <DataTable
-            rows={rows}
-            columns={ARTIFACT_COLS}
-            selected={sel}
-            onSelect={(r) => setSel((c) => (c === r ? null : r))}
-            rowActions={(r) =>
-              r.carved ? (
-                <DownloadBtn path={carvedFilePath(projectId, r.carved.sha256)} filename={r.carved.filename} label="download" />
-              ) : null
-            }
-          />
-        )
+        <>
+          <CarvedFileTypesStrip projectId={projectId} />
+          {state ?? (
+            <DataTable
+              rows={rows}
+              columns={ARTIFACT_COLS}
+              selected={sel}
+              onSelect={(r) => setSel((c) => (c === r ? null : r))}
+              rowActions={(r) =>
+                r.carved ? (
+                  <DownloadBtn path={carvedFilePath(projectId, r.carved.sha256)} filename={r.carved.filename} label="download" />
+                ) : null
+              }
+            />
+          )}
+        </>
       }
       detail={sel}
       onClose={() => setSel(null)}

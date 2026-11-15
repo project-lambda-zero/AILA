@@ -13,8 +13,9 @@ Reasoning ─── strategy-neutral LLM investigator with closed-loop protocol
               (no hardcoded playbooks; the LLM is the strategist end-to-end)
 Pipeline ──── four workflow definitions (one dispatcher + three modes):
               • FORENSICS_DISPATCHER_V1   -- routing → mode_selection (selects below)
-              • FORENSICS_FULL_ANALYSIS_V1 -- intake → collection → deep_analysis
-                  → promotion → resolution → writeup → response_emit
+              • FORENSICS_INVESTIGATE_HUB -- full analysis: evidence-gated hub
+                  (setup → dispatch ⇄ lanes → deep_analysis → promotion →
+                  resolution → writeup → emit)
               • FORENSICS_FREEFLOW_V1     -- freeflow → writeup → response_emit
               • FORENSICS_RAW_DIRECTORY_V1 -- intake → __succeeded__ (raw directory intake-only)
 ```
@@ -55,8 +56,9 @@ src/aila/modules/forensics/
 ├── tools/                  13 registered SSH-based tools (see below)
 │
 ├── workflow/
-│   ├── definitions.py      FORENSICS_DISPATCHER_V1, FORENSICS_FULL_ANALYSIS_V1,
-│   │                       FORENSICS_FREEFLOW_V1, FORENSICS_RAW_DIRECTORY_V1
+│   ├── definitions.py      FORENSICS_DISPATCHER_V1, FORENSICS_FREEFLOW_V1,
+│   │                       FORENSICS_RAW_DIRECTORY_V1
+│   ├── definitions_hub.py  FORENSICS_INVESTIGATE_HUB (full analysis)
 │   ├── task.py             ARQ async task entrypoints
 │   ├── services.py         Shared services dataclass for state handlers
 │   ├── emitter.py          Real-time progress events
@@ -373,10 +375,12 @@ The `strings_runner` tool exposes a `capa` action (`src/aila/modules/forensics/t
 
 The module ships THREE ARQ-driven workflow definitions (`workflow/definitions.py`). The dispatcher (`FORENSICS_DISPATCHER_V1`) selects between them at intake.
 
-### `FORENSICS_FULL_ANALYSIS_V1`
+### Full analysis: `FORENSICS_INVESTIGATE_HUB`
+
+Full analysis runs the evidence hub (`workflow/definitions_hub.py`), selected by the dispatcher for `mode=full_analysis`. The hub enumerates evidence at setup, then activates each collector lane only when a matching evidence type was discovered (a disk image opens the disk and binary lanes, a PCAP opens the network lane). The deterministic tail (deep analysis, promotion, resolution, write-up) runs after the lanes.
 
 ```
-intake → collection → deep_analysis → promotion → resolution → writeup → response_emit
+investigation_setup (intake) → dispatch ⇄ lanes (disk, memory, network, log, binary) → deep_analysis → promotion → resolution → writeup → investigation_emit → __succeeded__
 ```
 
 | Stage             | What Happens                                                                                                                                                                                                                                                                                                                 |
@@ -389,7 +393,7 @@ intake → collection → deep_analysis → promotion → resolution → writeup
 | **Write-Up**      | LLM generates a 15-section DFIR / malware-analysis report with inline `artifact_id` citations                                                                                                                                                                                                                                |
 | **Response Emit** | Assembles the terminal `PlatformResponse` payload                                                                                                                                                                                                                                                                            |
 
-Every stage declares `on_failure="analysis_failed"`. When a stage raises after its retries, times out, or fails output validation, the run moves to `analysis_failed`, which sets a still-active project (created, ready, analyzing) to `failed` with a `failure_reason` naming the failed stage and error class, then ends at `__failed__`. A failure status intake already wrote, with its own reason, is kept. `FORENSICS_RAW_DIRECTORY_V1` uses the same failure state for its intake.
+Any hub step that raises after its retries, times out, or fails output validation routes to `investigation_failed` (`_state_analysis_failed`), which sets a still-active project (created, ready, analyzing) to `failed` with a `failure_reason` naming the failed stage and error class, then ends at `__failed__`. A failure status intake already wrote, with its own reason, is kept. `FORENSICS_RAW_DIRECTORY_V1` uses the same handler under its own `analysis_failed` state.
 
 ### `FORENSICS_FREEFLOW_V1`
 
@@ -402,6 +406,22 @@ freeflow → writeup → response_emit
 | **Free-Flow** | Bounded LLM investigation loop driven by `agents/investigator.py`. The investigator is strategy-NEUTRAL -- no hardcoded playbooks, no keyword routers, no pre-written profile bodies. It receives the artifact graph + Valuable Items + OS-dispatched system prompts, sets goals each turn, writes Python or shell commands, runs them via the script tool, learns from output, iterates ≤10× |
 | **Write-Up**  | Same writer as the full analysis variant, narrated against the freeflow trajectory                                                                                                                                                                                                                                                                                                            |
 
+### `FORENSICS_INVESTIGATE_PANEL_V1`
+
+Start an investigation with `mode="panel"` to run three examiner branches on the shared platform turn runner:
+
+- **HALVAR** is the lead examiner and builds an answer from primary evidence.
+- **MADDIE** is the critic and falsifies weak claims or missing provenance.
+- **RENZO** independently corroborates the evidence chain and timeline.
+
+Each branch runs the same forensics analyzer actions as free-flow: structured `tool_run` commands, Python `script_execute`, and `artifact_query`. Analyzer results become investigation steps and branch messages, which the next turn reads back. The branch turn budget is `forensics.max_turns_per_task`, and the `forensics.freeflow_max_cost_usd` ceiling covers all three branches together.
+
+The first submitted answer becomes the canonical draft. Siblings vote through `submit_outcome_review`; approval requires the platform quorum and one evidence-backed reject vetoes the draft. Sibling review is the panel's evidence gate. There is no separate forensics `validate_submission` gate in this workflow. Approval dispatches the answer to the investigation, creates an answer candidate, and persists its artifacts. After a rejection, another examiner may submit a successor answer and closed reviewers are re-driven so the successor can reach quorum. Each examiner may propose only once, which bounds the deliberation to three drafts.
+
+A branch closes when its own loop ends. After no branch remains active or paused, the shared panel finalizer completes an approved answer, fails a rejected answer, or marks an unfinished or cost-capped panel exhausted with the reason in `final_answer`. The `forensics.finalize` sweep retries settlement and `forensics.branch_reaper` closes terminal-parent orphans. The finalizer enqueues `FORENSICS_PANEL_WRITEUP_V1`, which reuses the ordinary promotion and write-up states instead of generating a report inside the short emit timeout.
+
+The investigation drill-down shows the panel's branches, outcome votes, provenance, contributions, and recent analyzer messages. Free-flow investigations have no branch rows and therefore do not show this section.
+
 `FORENSICS_RAW_DIRECTORY_V1` is a side variant for projects rooted at a raw filesystem directory rather than a single evidence artefact; it runs the same stages with adjusted intake.
 
 ---
@@ -412,7 +432,7 @@ The freeflow investigator is strategy-neutral by design. Replaces the prior stra
 
 - One OS-dispatched system prompt (Windows / Linux / macOS variants) names the closed-loop protocol explicitly: every step is `hypothesis → action → observation → refinement`.
 - The agent sees the full normalized artifact graph (not a curated subset), the Valuable Items rollup, and the running history of prior steps.
-- The agent picks its own tool: shell command, Python script (uploaded via `ScriptTool`), or a structured Dissect / Volatility / tshark / Zeek action.
+- The agent picks its own tool: a JSON `tool_run` command naming `analyzer.run_command`, a Python script (uploaded via `ScriptTool`), or a structured Dissect / Volatility / tshark / Zeek action.
 - Output is graded twice per investigation: (a) answer correctness; (b) whether a DFIR / CTF-grade report can be produced from the captured trajectory alone, without re-running the case.
 
 ### Stop semantics
@@ -475,8 +495,8 @@ The module has no frontend directory. Forensics UI lives in the shared console s
 | `ArtifactExplorer`      | Browse all extracted artifacts by family and type          |
 | `LeadScoreCard`         | Top promoted leads with scoring breakdown                  |
 | `MachineReadinessCheck` | Tool installation status (green / red per tool)            |
-| `RetrieveFilePanel`     | Pull a specific file out of a disk image                   |
-| `FetchRawFilePanel`     | Fetch a file or directory from a raw-directory project     |
+
+File retrieval is available from the Evidence and Findings tabs: the Evidence tab extracts a typed in-image path or fetches a raw-directory file, and the Findings tab extracts paths shown next to each finding.
 
 
 ---
@@ -498,10 +518,11 @@ All endpoints use `DataEnvelope[T]`, platform auth, and rate limiting.
 | `GET`  | `/forensics/projects/:id/findings`                                    | Confident findings extracted from artifacts                      |
 | `GET`  | `/forensics/projects/:id/artifacts`                                   | Query artifacts (family / type filter, paginated)                |
 | `GET`  | `/forensics/projects/:id/leads`                                       | Top promoted leads                                               |
-| `POST` | `/forensics/projects/:id/investigate`                                 | Start a free-flow investigation                                  |
+| `POST` | `/forensics/projects/:id/investigate`                                 | Start a free-flow or panel investigation                         |
 | `POST` | `/forensics/projects/:id/investigations/:iid/rerun`                   | Rerun an investigation, carrying prior findings forward          |
 | `GET`  | `/forensics/projects/:id/investigations`                              | List investigation runs                                          |
 | `GET`  | `/forensics/projects/:id/investigations/:iid`                         | Investigation detail with agent steps                            |
+| `GET`  | `/forensics/projects/:id/investigations/:iid/panel`                   | Panel branches, outcome votes, and recent branch messages        |
 | `GET`  | `/forensics/projects/:id/investigations/:iid/reasoning-graphs`        | Durable reasoning-graph snapshots                                |
 | `GET`  | `/forensics/projects/:id/investigations/:iid/reasoning-graphs/diff`   | Diff two reasoning-graph snapshots                               |
 | `POST` | `/forensics/projects/:id/investigations/:iid/cancel`                  | Hard-cancel a running investigation                              |

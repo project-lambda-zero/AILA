@@ -1,11 +1,22 @@
 import type { JSX } from "react";
 import { useState } from "react";
 
-import { parseEvidencePage, useForensicsQuery } from "../../../../api/forensics";
-import type { EvidenceItem } from "../../../../api/forensics";
+import { useMutation } from "@tanstack/react-query";
+
+import {
+  RAW_DIRECTORY_KIND,
+  fetchRawEvidence,
+  parseEvidencePage,
+  useDiskImages,
+  useForensicsQuery,
+} from "../../../../api/forensics";
+import type { EvidenceItem, ProjectSummary } from "../../../../api/forensics";
+import { apiErrDetail } from "../../../../api/parse";
+import { toast } from "../../../toast";
+import { TextInput } from "../formControls";
 import { CtlBtn, DataTable } from "../panels";
 import type { TableColumn } from "../panels";
-import { TableWithDetail, queryState } from "./shared";
+import { ExtractBtn, FilterField, TableWithDetail, queryState } from "./shared";
 import type { TabProps } from "./shared";
 
 function humanBytes(n: number): string {
@@ -30,10 +41,31 @@ const EVIDENCE_COLS: TableColumn<EvidenceItem>[] = [
 /** Rows per request; the list route caps page_size at 500. */
 const PAGE_SIZE = 100;
 
-export function EvidenceTab({ projectId }: TabProps): JSX.Element {
+/** Save one raw_directory evidence file or directory (zipped by the analyzer). */
+function FetchRawBtn({ projectId, evidence }: { projectId: string; evidence: EvidenceItem }): JSX.Element {
+  const m = useMutation({
+    mutationFn: () => fetchRawEvidence(projectId, evidence),
+    onSuccess: (name) => toast.success(`saved ${name}`),
+    onError: (e) => toast.fail("fetch", apiErrDetail(e)),
+  });
+  return (
+    <CtlBtn
+      label={m.isPending ? "fetching\u2026" : "fetch"}
+      title="save this evidence file or directory"
+      onClick={() => m.mutate()}
+      disabled={m.isPending}
+    />
+  );
+}
+
+export function EvidenceTab({ projectId, project }: TabProps & { project: ProjectSummary | null }): JSX.Element {
   const [page, setPage] = useState(1);
+  const [path, setPath] = useState("");
+  const isRaw = project?.project_kind === RAW_DIRECTORY_KIND;
   const qs = `page=${page}&page_size=${PAGE_SIZE}`;
   const q = useForensicsQuery(projectId, ["evidence", qs], `/forensics/projects/${projectId}/evidence?${qs}`, parseEvidencePage);
+  const diskImagesQ = useDiskImages(projectId, project !== null && !isRaw);
+  const diskImages = diskImagesQ.data?.items ?? [];
   const rows = q.data?.items ?? [];
   const total = q.data?.total ?? null;
   const [sel, setSel] = useState<EvidenceItem | null>(null);
@@ -48,9 +80,23 @@ export function EvidenceTab({ projectId }: TabProps): JSX.Element {
           <CtlBtn label={"\u25b6"} title="next page" onClick={() => setPage((p) => p + 1)} disabled={total != null ? page * PAGE_SIZE >= total : rows.length < PAGE_SIZE} />
         </>
       }
+      filters={
+        !isRaw && diskImages.length > 0 ? (
+          <FilterField label="in-image path">
+            <TextInput value={path} onChange={setPath} placeholder="C:\Windows\System32\drivers\etc\hosts" />
+            <ExtractBtn projectId={projectId} virtualPath={path} diskImages={diskImages} />
+          </FilterField>
+        ) : null
+      }
       table={
         state ?? (
-          <DataTable rows={rows} columns={EVIDENCE_COLS} selected={sel} onSelect={(r) => setSel((c) => (c === r ? null : r))} />
+          <DataTable
+            rows={rows}
+            columns={EVIDENCE_COLS}
+            selected={sel}
+            onSelect={(r) => setSel((c) => (c === r ? null : r))}
+            rowActions={isRaw ? (r) => <FetchRawBtn projectId={projectId} evidence={r} /> : undefined}
+          />
         )
       }
       detail={sel}

@@ -55,11 +55,12 @@ export function useForensicsQuery<T>(
   path: string,
   parse: (raw: unknown) => T,
   refetchInterval: number | false = false,
+  enabled: boolean = true,
 ) {
   return useQuery({
     queryKey: ["forensics", projectId, ...key],
     queryFn: async () => parse(await apiFetch<unknown>(path)),
-    enabled: Boolean(projectId),
+    enabled: Boolean(projectId) && enabled,
     retry: false,
     refetchInterval,
   });
@@ -159,8 +160,47 @@ export interface Artifact {
   carved: CarvedFile | null;
 }
 
+/** artifact_type the pcap collector emits for each Zeek-carved file. */
+export const CARVED_FILE_TYPE = "carved_file";
+
+/** artifact_type of the per-capture carved file-type histogram summary. */
+export const CARVED_FILE_TYPES_TYPE = "carved_file_types";
+
+export interface CarvedMimeCount {
+  mime_type: string;
+  count: number;
+}
+
+export interface CarvedFileTypes {
+  captures: number;
+  total_carved: number;
+  mimes: CarvedMimeCount[];
+}
+
+/** Merge the per-capture `carved_file_types` summaries into one project-wide
+ * histogram: counts add per MIME, most frequent first. */
+export function aggregateCarvedFileTypes(items: Artifact[]): CarvedFileTypes {
+  const counts = new Map<string, number>();
+  let captures = 0;
+  let totalCarved = 0;
+  for (const item of items) {
+    if (item.artifact_type !== CARVED_FILE_TYPES_TYPE) continue;
+    captures += 1;
+    totalCarved += readNum(item.data, "total_carved") ?? 0;
+    for (const row of readRecordArray(item.data, "rows")) {
+      const mime = readStr(row, "mime_type");
+      const count = readNum(row, "count");
+      if (!mime || count === null || count <= 0) continue;
+      counts.set(mime, (counts.get(mime) ?? 0) + count);
+    }
+  }
+  const mimes = [...counts].map(([mime_type, count]) => ({ mime_type, count }));
+  mimes.sort((a, b) => b.count - a.count || (a.mime_type < b.mime_type ? -1 : a.mime_type > b.mime_type ? 1 : 0));
+  return { captures, total_carved: totalCarved, mimes };
+}
+
 function carvedFileOf(artifactType: string, data: Obj): CarvedFile | null {
-  if (artifactType !== "carved_file") return null;
+  if (artifactType !== CARVED_FILE_TYPE) return null;
   const sha256 = readStr(data, "sha256");
   if (!sha256) return null;
   return { sha256, filename: readStr(data, "filename_guess") ?? `carved_${sha256.slice(0, 12)}.bin` };
@@ -267,6 +307,106 @@ export function parseInvestigationSummary(o: Obj): InvestigationSummary {
     parent_investigation_id: readStr(o, "parent_investigation_id"),
     needs_reap: readBool(o, "needs_reap") ?? false,
     needs_reap_reason: readStr(o, "needs_reap_reason"),
+  };
+}
+
+/* --- panel deliberation ------------------------------------------------- */
+
+export interface ForensicsPanelBranch {
+  id: string;
+  persona_voice: string;
+  status: string;
+  turn_count: number;
+  closed_reason: string | null;
+  created_at: string | null;
+}
+
+export interface ForensicsPanelReview {
+  reviewer_branch_id: string;
+  reviewer_persona: string;
+  vote: string;
+  comment: string;
+}
+
+export interface ForensicsPanelOutcome {
+  id: string;
+  branch_id: string;
+  proposer_persona: string;
+  state: string;
+  confidence: string;
+  answer: string;
+  provenance: Record<string, unknown>;
+  contributions: Record<string, unknown>[];
+  reviews: ForensicsPanelReview[];
+  created_at: string | null;
+}
+
+export interface ForensicsPanelMessage {
+  id: string;
+  branch_id: string;
+  persona_voice: string;
+  sender_kind: string;
+  payload_kind: string;
+  at_turn: number | null;
+  text: string;
+  action: string | null;
+  command: string | null;
+  stdout: string | null;
+  stderr: string | null;
+  exit_code: number | null;
+  created_at: string | null;
+}
+
+export interface ForensicsPanelView {
+  investigation_id: string;
+  branches: ForensicsPanelBranch[];
+  outcomes: ForensicsPanelOutcome[];
+  messages: ForensicsPanelMessage[];
+}
+
+export function parseForensicsPanelView(o: Obj): ForensicsPanelView {
+  return {
+    investigation_id: str(o, "investigation_id"),
+    branches: readRecordArray(o, "branches").map((b) => ({
+      id: str(b, "id"),
+      persona_voice: str(b, "persona_voice"),
+      status: str(b, "status"),
+      turn_count: readNum(b, "turn_count") ?? 0,
+      closed_reason: readStr(b, "closed_reason"),
+      created_at: readStr(b, "created_at"),
+    })),
+    outcomes: readRecordArray(o, "outcomes").map((outcome) => ({
+      id: str(outcome, "id"),
+      branch_id: str(outcome, "branch_id"),
+      proposer_persona: str(outcome, "proposer_persona"),
+      state: str(outcome, "state"),
+      confidence: str(outcome, "confidence"),
+      answer: str(outcome, "answer"),
+      provenance: rec(outcome, "provenance"),
+      contributions: readRecordArray(outcome, "contributions"),
+      reviews: readRecordArray(outcome, "reviews").map((review) => ({
+        reviewer_branch_id: str(review, "reviewer_branch_id"),
+        reviewer_persona: str(review, "reviewer_persona"),
+        vote: str(review, "vote"),
+        comment: str(review, "comment"),
+      })),
+      created_at: readStr(outcome, "created_at"),
+    })),
+    messages: readRecordArray(o, "messages").map((message) => ({
+      id: str(message, "id"),
+      branch_id: str(message, "branch_id"),
+      persona_voice: str(message, "persona_voice"),
+      sender_kind: str(message, "sender_kind"),
+      payload_kind: str(message, "payload_kind"),
+      at_turn: readNum(message, "at_turn"),
+      text: str(message, "text"),
+      action: readStr(message, "action"),
+      command: readStr(message, "command"),
+      stdout: readStr(message, "stdout"),
+      stderr: readStr(message, "stderr"),
+      exit_code: readNum(message, "exit_code"),
+      created_at: readStr(message, "created_at"),
+    })),
   };
 }
 
@@ -520,11 +660,9 @@ export function parseStructuredAnalysis(raw: unknown, sectionKeys: readonly stri
 
 /* --- authenticated download ------------------------------------------- */
 
-/** Fetch `path` with the Bearer token and save the body under `filename`.
- * Reads the response as a Blob so binary payloads (carved files) survive;
- * apiFetch would decode them as UTF-8 text. Throws on any non-2xx. */
-export async function downloadForensicsFile(path: string, filename: string): Promise<void> {
-  const res = await authorizedFetch(path);
+/** Reject a non-2xx response; return the body as a Blob so binary payloads
+ * (carved files) survive. apiFetch would decode them as UTF-8 text. */
+async function checkedBlob(res: Response): Promise<Blob> {
   if (res.status === 401) {
     throw new Error("Session expired -- sign in again.");
   }
@@ -532,11 +670,94 @@ export async function downloadForensicsFile(path: string, filename: string): Pro
     const detail = await res.text().catch(() => "");
     throw new ApiError(res.status, detail || res.statusText);
   }
-  const blob = await res.blob();
+  return res.blob();
+}
+
+function saveBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+/** Filename from a `Content-Disposition` header, or null when absent. */
+function dispositionFilename(header: string | null): string | null {
+  if (header === null) return null;
+  const m = /filename=(?:"([^"]+)"|([^;]+))/i.exec(header);
+  if (!m) return null;
+  const name = (m[1] ?? m[2] ?? "").trim();
+  return name === "" ? null : name;
+}
+
+/** Last path segment of a Windows or POSIX path; null when there is none. */
+export function pathBaseName(p: string): string | null {
+  const parts = p.split(/[\\/]/).filter((s) => s !== "");
+  return parts.length > 0 ? parts[parts.length - 1] : null;
+}
+
+/** Fetch `path` with the Bearer token and save the body under `filename`.
+ * Throws on any non-2xx. */
+export async function downloadForensicsFile(path: string, filename: string): Promise<void> {
+  saveBlob(await checkedBlob(await authorizedFetch(path)), filename);
+}
+
+/** POST `body` as JSON to a forensics retrieval endpoint and save the streamed
+ * file. The saved name comes from the response `Content-Disposition`, falling
+ * back to `fallbackName`. Returns the saved name. */
+async function postForensicsDownload(
+  path: string,
+  body: Record<string, unknown>,
+  fallbackName: string,
+): Promise<string> {
+  const res = await authorizedFetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const blob = await checkedBlob(res);
+  const name = dispositionFilename(res.headers.get("content-disposition")) ?? fallbackName;
+  saveBlob(blob, name);
+  return name;
+}
+
+export const DISK_IMAGE_EVIDENCE_TYPE = "disk_image";
+export const RAW_DIRECTORY_KIND = "raw_directory";
+
+/** Extract an in-image `virtualPath` (file or directory) from the project's
+ * disk image. `evidenceId` selects one image; null lets the backend pick the
+ * project's only image. Returns the saved filename. */
+export function retrieveImageFile(
+  projectId: string,
+  virtualPath: string,
+  evidenceId: string | null,
+): Promise<string> {
+  return postForensicsDownload(
+    `/forensics/projects/${projectId}/retrieve-file`,
+    { virtual_path: virtualPath, ...(evidenceId !== null ? { evidence_id: evidenceId } : {}) },
+    pathBaseName(virtualPath) ?? "retrieved.bin",
+  );
+}
+
+/** Save a raw_directory evidence file or directory (zipped by the analyzer).
+ * Returns the saved filename. */
+export function fetchRawEvidence(projectId: string, evidence: EvidenceItem): Promise<string> {
+  return postForensicsDownload(
+    `/forensics/projects/${projectId}/fetch-raw`,
+    { evidence_id: evidence.id },
+    pathBaseName(evidence.file_path) ?? "retrieved.bin",
+  );
+}
+
+/** Disk-image evidence rows for the extract picker (first 500 by server order). */
+export function useDiskImages(projectId: string, enabled: boolean) {
+  return useForensicsQuery(
+    projectId,
+    ["evidence", DISK_IMAGE_EVIDENCE_TYPE],
+    `/forensics/projects/${projectId}/evidence?evidence_type=${DISK_IMAGE_EVIDENCE_TYPE}&page=1&page_size=500`,
+    parseEvidencePage,
+    false,
+    enabled,
+  );
 }

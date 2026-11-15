@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import select as _select
@@ -28,6 +28,8 @@ from aila.platform.uow import UnitOfWork
 from aila.platform.workflows.types import StateResult
 
 if TYPE_CHECKING:
+    from aila.platform.agents.tool_execution import ToolExecutionResult
+    from aila.platform.contracts.reasoning import ReasoningTurnDecision
     from aila.platform.eval.routing_learner import (
         RoutingRecommendation,
         RoutingSample,
@@ -36,6 +38,7 @@ if TYPE_CHECKING:
 _log = logging.getLogger(__name__)
 
 __all__ = [
+    "ActionDispatcher",
     "InvestigationStateBindings",
     "InvestigationStateHooks",
     "state_investigation_setup",
@@ -61,6 +64,27 @@ _FAILURE_ESCALATION_THRESHOLD: int = 5
 # pattern lookup. Shared across modules on the platform; escalation is a
 # log-severity signal only, so cross-module counting is harmless.
 _CONSECUTIVE_PATTERN_LOOKUP_FAILURES: int = 0
+
+
+class ActionDispatcher(Protocol):
+    """Module-bound handler for the actions a loop turn can request.
+
+    The loop calls the dispatcher for every non-terminal decision when one
+    is bound. It returns the :class:`ToolExecutionResult` for an action it
+    executed, or ``None`` when the decision requested no action the
+    dispatcher handles. A returned result is a tool turn for the hard-block
+    streak; ``None`` is a non-tool turn.
+    """
+
+    async def __call__(
+        self,
+        *,
+        investigation_id: str,
+        branch_id: str,
+        decision: ReasoningTurnDecision,
+        at_turn: int,
+        phase_allowed_servers: frozenset[str] | None,
+    ) -> ToolExecutionResult | None: ...
 
 
 @dataclass(frozen=True)
@@ -104,6 +128,10 @@ class InvestigationStateBindings:
     # loop-state (Phase 4b) inputs -- optional until the loop binds them.
     researcher_factory: Callable[..., Any] | None = None
     executor_factory: Callable[[], Any] | None = None
+    # Module-bound action handler for each loop turn. Exactly one of
+    # ``executor_factory`` (tool_run through a ToolExecutor) and
+    # ``action_dispatcher`` must be bound; the loop rejects both or neither.
+    action_dispatcher: ActionDispatcher | None = None
     max_turns_reader: Callable[[], Awaitable[int]] | None = None
     researcher_error: type[BaseException] | None = None
     # on-demand specialist spawn. Polls ratified request_specialist

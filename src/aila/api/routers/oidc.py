@@ -718,6 +718,13 @@ async def oidc_callback(
         user: UserRecord | None = result.first()
 
         if user is None:
+            # A team-less account would receive an unscoped (TEAM-06) token,
+            # so refuse before any row is created.
+            if provider.default_team_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="OIDC sign-in requires a team. Set a default team on this identity provider.",
+                )
             username = (name or email or oidc_sub).replace(" ", "_").lower()[:64]
             now = utc_now()
             # #36: resolve the IdP-issued role from the id_token claims
@@ -734,8 +741,7 @@ async def oidc_callback(
                 oidc_sub=oidc_sub,
                 role=provisioned_role,
                 # #36: bind the auto-provisioned user to the provider's
-                # configured team so it is scoped on first login. None keeps
-                # the prior behavior (god-tier, TEAM-06) but now explicitly.
+                # configured team so it is scoped on first login.
                 team_id=provider.default_team_id,
                 is_active=True,
                 created_at=now,
@@ -749,23 +755,18 @@ async def oidc_callback(
             )
         elif not user.is_active:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User account is deactivated")
+        elif user.team_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="This account has no team. Ask an administrator to assign one before signing in with OIDC.",
+            )
 
         user_id = user.id
         role = user.role
-        user_team_id = getattr(user, "team_id", None)
+        user_team_id = user.team_id
 
-    # #36: the issued JWT must carry the user's team. Previously the team
-    # claim was omitted, so a team-assigned OIDC login received a god-tier
-    # (TEAM-06) token for its whole lifetime. With no team the token stays
-    # god-tier; log it so the grant does not pass silently.
-    if user_team_id is None:
-        _log.warning(
-            "OIDC user %s has no team -- token grants god-tier access "
-            "(TEAM-06). Set the provider default_team_id or assign a team "
-            "via user management to scope this account.",
-            user_id,
-        )
-
+    # #36: the issued JWT carries the user's team; the guards above ensure
+    # it is never None.
     access_token, expires_in = issue_user_jwt(user_id, role, team_id=user_team_id)
     refresh_token = await issue_user_refresh_token(user_id, role, team_id=user_team_id)
 

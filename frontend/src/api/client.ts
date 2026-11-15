@@ -159,6 +159,15 @@ export async function sessionRequest<T>(path: string, body?: unknown): Promise<T
   return unwrap<T>(await readBody(res));
 }
 
+/** GET an unauthenticated session route (OIDC authorize and callback). Sends
+ * cookies so the httponly OIDC state cookie round-trips, never a Bearer token,
+ * and never renews on 401: the caller owns the failure. Unwraps the envelope. */
+export async function sessionGet<T>(path: string): Promise<T> {
+  const res = await fetch(API_BASE + path, { method: "GET", credentials: "include" });
+
+  return unwrap<T>(await readBody(res));
+}
+
 export async function apiFetch<T>(path: string, opts: RequestInit = {}): Promise<T> {
   return unwrap<T>(await requestJson(path, opts));
 }

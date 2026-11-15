@@ -293,7 +293,7 @@ all reader endpoints. An admin token can access all endpoints.
 | Role | Level | Typical permissions |
 |------|-------|-------------------|
 | `reader` | 0 | Read-only access: GET endpoints for systems, findings, reports, tasks, sessions |
-| `operator` | 1 | Reader + write operations: POST scans, create sessions, submit tasks, invoke tools |
+| `operator` | 1 | Reader + write operations: POST scans, create sessions, submit tasks, invoke tools declaring `operator_invocable` |
 | `admin` | 2 | Operator + administrative: create/revoke API keys, modify config, delete systems |
 
 ### Enforcement
@@ -320,6 +320,13 @@ async def create_key(
 1. First runs `require_api_key` (JWT decode + blacklist check)
 2. Then checks `ROLE_LEVELS[key.role] >= ROLE_LEVELS["admin"]`
 3. Returns 403 if the caller's role level is too low
+
+**Direct tool invocation** (`POST /tools/{tool_key}`):
+
+The route requires the operator role, then refuses any tool that does not declare
+`operator_invocable = True` (`aila.platform.tools._common.Tool`, default `False`)
+unless the caller is a platform administrator (`admin` role with `team_id` unset).
+Refused calls return 403. An unknown tool key still returns 404 before the check runs.
 
 ### Public endpoints
 
@@ -411,7 +418,7 @@ login surface for OIDC-backed authentication:
 |-------|------|---------|
 | `GET /auth/oidc/providers/public` | none | Enabled providers for the login chooser (id, display name, type only) |
 | `GET /auth/oidc/authorize` | none | Returns the upstream authorization URL; sets a short-lived signed `oidc_state` cookie (CSRF) |
-| `GET /auth/oidc/callback` | none | Exchanges code, verifies `id_token` against the issuer JWKS, auto-provisions a `UserRecord`, returns the user JWT pair |
+| `GET /auth/oidc/callback` | none | Exchanges code, verifies `id_token` against the issuer JWKS, auto-provisions a `UserRecord` for a new subject, returns the user JWT pair. Refused with 403 when no team applies (see below) |
 | `GET /auth/oidc/providers` | admin | Full provider list (still never returns `client_secret`) |
 | `POST /auth/oidc/providers` | admin | Create a provider (`microsoft` / `google` / `generic`); `client_secret` is stored encrypted via `SecretStore` |
 | `PUT /auth/oidc/providers/{id}` | admin | Partial update |
@@ -419,6 +426,17 @@ login surface for OIDC-backed authentication:
 
 Implementation notes:
 
+- Every OIDC-issued token is team-scoped. A new subject is provisioned into
+  the provider's `default_team_id`; a provider without one refuses the sign-in
+  with 403 before any row is created. An existing account with no team is
+  refused with 403 as well. Assign a team to the account (or set the provider's
+  default team) and sign in again.
+- The console login page lists one "sign in with <name>" button per enabled
+  provider. The button calls `GET /auth/oidc/authorize` with the provider id and
+  the console's `/auth/callback` as `redirect_uri`, then navigates to the
+  returned authorization URL. `/auth/callback` exchanges the one-time `code` and
+  `state` and clears them from the address bar. Provider-list failure leaves
+  only the password form.
 - The `oidc_state` cookie is a 10-minute signed JWT (`AILA_JWT_SECRET_KEY`).
 - Provider secrets are encrypted at rest and never returned by any read
   endpoint.

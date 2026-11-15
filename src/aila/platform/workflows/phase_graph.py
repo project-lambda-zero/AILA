@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from aila.platform.workflows.types import (
+    RESERVED_FAILED,
     HandlerFn,
     StateResult,
     StateSpec,
@@ -35,6 +36,7 @@ from aila.platform.workflows.types import (
 __all__ = [
     "DISPATCH_STATE",
     "EMIT_STATE",
+    "FAILURE_STATE",
     "SETUP_STATE",
     "DispatchEscalationModels",
     "GateFn",
@@ -152,6 +154,8 @@ def _is_live_replan_request(row: dict[str, Any]) -> bool:
 
 SETUP_STATE = "investigation_setup"
 EMIT_STATE = "investigation_emit"
+# The failure state of a dispatch graph built with ``failure_handler``.
+FAILURE_STATE = "investigation_failed"
 # The dispatch hub state of a discovery-driven graph (build_dispatch_workflow).
 DISPATCH_STATE = "dispatch"
 
@@ -745,6 +749,7 @@ def build_dispatch_workflow(
     allow_phase_handoff: bool = False,
     escalation_models: DispatchEscalationModels | None = None,
     index_readiness_fn: Callable[[str], Awaitable[tuple[bool, str]]] | None = None,
+    failure_handler: HandlerFn | None = None,
 ) -> WorkflowDefinition:
     """Expand a discovery-driven phase graph into an engine WorkflowDefinition.
 
@@ -754,6 +759,15 @@ def build_dispatch_workflow(
     re-decides after each phase and the traversal grows with the agents'
     discoveries. The module supplies the setup and per-phase loop handlers;
     the hub handler is the substrate's.
+
+    ``failure_handler`` opts the graph into a failure state (``FAILURE_STATE``).
+    When set, setup, the hub, every phase without its own ``on_failure``, and
+    emit route a failure there, and the state ends the run through
+    ``__failed__``. The handler must end the run and receives the engine's
+    failure facts: ``failed_state``, ``error_class``, ``error_message`` (or
+    ``previous_state``, ``error``, ``error_detail``, depending on the failure
+    path). A phase's own ``on_failure`` still wins. When None, the graph has
+    no failure state and failures follow the engine default (``__crashed__``).
 
     Set ``allow_phase_handoff=True`` when this graph runs as the inner
     definition of a two-phase dispatcher (``is_dispatcher`` + ``dispatches_to``):
@@ -775,10 +789,14 @@ def build_dispatch_workflow(
         raise ValueError(
             f"{definition_id}: build_dispatch_workflow needs at least one phase",
         )
+    # Without a failure handler the graph keeps the engine default (no
+    # on_failure, so a failure ends as __crashed__).
+    default_failure = FAILURE_STATE if failure_handler is not None else None
     states: dict[str, StateSpec] = {
         SETUP_STATE: StateSpec(
             handler=setup_builder(DISPATCH_STATE),
             timeout_s=60.0,
+            on_failure=default_failure,
             max_retries=1,
         ),
         DISPATCH_STATE: StateSpec(
@@ -787,8 +805,15 @@ def build_dispatch_workflow(
                 index_readiness_fn=index_readiness_fn,
             ),
             timeout_s=30.0,
+            on_failure=default_failure,
         ),
     }
+    if failure_handler is not None:
+        states[FAILURE_STATE] = StateSpec(
+            handler=failure_handler,
+            timeout_s=30.0,
+            on_success=RESERVED_FAILED,
+        )
     for phase in phases:
         # A phase may supply its own algorithmic handler (bound to the hub
         # return state) instead of riding the module agent loop; otherwise
@@ -801,11 +826,17 @@ def build_dispatch_workflow(
         states[phase.name] = StateSpec(
             handler=phase_handler,
             timeout_s=phase.timeout_s,
-            on_failure=phase.on_failure,
+            on_failure=(
+                default_failure if phase.on_failure is None else phase.on_failure
+            ),
             max_retries=phase.max_retries,
             timeout_retriable=phase.timeout_retriable,
         )
-    states[EMIT_STATE] = StateSpec(handler=emit_handler, timeout_s=120.0)
+    states[EMIT_STATE] = StateSpec(
+        handler=emit_handler,
+        timeout_s=120.0,
+        on_failure=default_failure,
+    )
     return WorkflowDefinition(
         definition_id=definition_id,
         start_state=SETUP_STATE,

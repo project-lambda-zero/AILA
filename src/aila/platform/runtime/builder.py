@@ -127,6 +127,7 @@ class ModuleStatusTool(Tool):
     description = "Return a lightweight platform status payload for module health checks."
     inputs: dict[str, object] = {}
     output_type = "object"
+    operator_invocable = True
 
     def __init__(self, settings: PlatformSettings) -> None:
         self._settings = settings

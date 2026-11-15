@@ -100,7 +100,7 @@ async def test_seed_registers_and_aliases_both_analyzer_os_variants() -> None:
         record = await _PROMPT_VERSION_STORE.resolve(key, alias="production")
         assert record is not None, f"no production alias for {key}"
 
-        expected = investigator._load_freeflow_prompt(analyzer_os)
+        expected = investigator.load_freeflow_prompt(analyzer_os)
         assert record.body == expected
 
     # Second call is a no-op (idempotent): the production aliases are
@@ -136,7 +136,7 @@ async def test_resolve_returns_version_and_writes_pin_on_first_resolve() -> None
     # Body identity: whatever the store resolves must match the file
     # baseline. If seed drift ever changed the assembled body under the
     # same alias, we would catch it here.
-    assert loaded.body == investigator._load_freeflow_prompt("linux")
+    assert loaded.body == investigator.load_freeflow_prompt("linux")
 
     pins = await _read_pins(inv_id)
     assert pins.get(key) == seeded_version

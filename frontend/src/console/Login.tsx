@@ -1,6 +1,7 @@
+import { useQuery } from "@tanstack/react-query";
 import { type CSSProperties, type FormEvent, useState } from "react";
 
-import { useAuth } from "../api/auth";
+import { listOidcProviders, startOidcSignIn, useAuth } from "../api/auth";
 import { FaultyTerminal } from "../desktop/FaultyTerminal";
 
 const inputStyle: CSSProperties = {
@@ -25,12 +26,37 @@ const labelStyle: CSSProperties = {
   color: "var(--text-muted)",
 };
 
+const dividerStyle: CSSProperties = {
+  fontSize: 10,
+  textTransform: "uppercase",
+  letterSpacing: "0.14em",
+  color: "var(--text-faint)",
+  textAlign: "center",
+};
+
+const oidcButtonStyle: CSSProperties = {
+  height: 34,
+  background: "var(--surface-sunk)",
+  color: "var(--text-primary)",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--radius-sm)",
+  fontSize: 12,
+  textTransform: "uppercase",
+  letterSpacing: "0.1em",
+};
+
 export default function Login() {
   const login = useAuth((s) => s.login);
   const busy = useAuth((s) => s.busy);
   const error = useAuth((s) => s.error);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const providersQuery = useQuery({
+    queryKey: ["oidc-providers"],
+    queryFn: listOidcProviders,
+    retry: false,
+  });
+  const providers = providersQuery.data ?? [];
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -123,6 +149,22 @@ export default function Login() {
         >
           {busy ? "signing in..." : "sign in"}
         </button>
+        {providers.length > 0 ? (
+          <>
+            <div style={dividerStyle}>or</div>
+            {providers.map((provider) => (
+              <button
+                key={provider.id}
+                type="button"
+                disabled={busy}
+                onClick={() => void startOidcSignIn(provider.id)}
+                style={{ ...oidcButtonStyle, cursor: busy ? "default" : "pointer", opacity: busy ? 0.6 : 1 }}
+              >
+                sign in with {provider.name}
+              </button>
+            ))}
+          </>
+        ) : null}
       </form>
     </div>
   );

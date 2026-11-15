@@ -62,6 +62,7 @@ class CrashTriageTool(Tool):
         },
     }
     output_type = "object"
+    operator_invocable = True
     skip_forward_signature_validation = True
 
     async def forward(self, action: str | None = None, **kwargs: Any) -> dict:

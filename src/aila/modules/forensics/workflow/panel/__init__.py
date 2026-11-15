@@ -7,16 +7,17 @@ terminal outcome, the platform quorum kernel gates it via
 sibling review before the outcome dispatches. Mirrors the
 ultimate-argument pattern VR and malware implement (RFC-02 / RFC-04).
 
-The pre-existing free-flow / hub / dispatcher graphs stay untouched --
-this module ships bound onto its own workflow definition and is opted
-in per-investigation by the task entry (see :mod:`.task`).
+Panel mode is selected per investigation at the start route. Settlement and
+write-up orchestration live in :mod:`.finalize` and :mod:`.writeup`.
 """
 from __future__ import annotations
 
 from .definitions import FORENSICS_INVESTIGATE_PANEL_V1
 from .task import run_forensics_panel_investigate
+from .writeup import run_forensics_panel_writeup
 
 __all__ = [
     "FORENSICS_INVESTIGATE_PANEL_V1",
     "run_forensics_panel_investigate",
+    "run_forensics_panel_writeup",
 ]

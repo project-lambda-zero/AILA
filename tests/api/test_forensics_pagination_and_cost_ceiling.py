@@ -36,10 +36,10 @@ from aila.modules.forensics.db_models import (
     InvestigationRunRecord,
     ProjectEvidenceRecord,
 )
-from aila.modules.forensics.workflow.states.freeflow import (
-    _cost_ceiling_monitor,
-    _freeflow_actual_cost_usd,
-    _freeflow_cost_ceiling_exceeded,
+from aila.modules.forensics.services.cost_ceiling import (
+    actual_cost_usd,
+    cost_ceiling_exceeded,
+    cost_ceiling_monitor,
 )
 from aila.platform.llm.cost_record import LLMCostRecord
 from aila.storage.database import async_session_scope
@@ -182,6 +182,7 @@ async def test_list_evidence_returns_bounded_page(test_db) -> None:
         auth=_admin(),
         page=1,
         page_size=2,
+        evidence_type=None,
     )
     assert len(envelope.data.items) == 2
     assert envelope.data.total == 5
@@ -193,9 +194,54 @@ async def test_list_evidence_returns_bounded_page(test_db) -> None:
         auth=_admin(),
         page=3,
         page_size=2,
+        evidence_type=None,
     )
     assert len(last.data.items) == 1
     assert last.data.total == 5
+
+
+async def test_list_evidence_filters_by_evidence_type(test_db) -> None:
+    """evidence_type narrows both the page and the reported total."""
+    suffix = uuid4().hex[:8]
+    pid = await _seed_project(suffix)
+    async with async_session_scope() as session:
+        for i in range(2):
+            session.add(ProjectEvidenceRecord(
+                project_id=pid,
+                file_path=f"/evidence/disk-{i}.raw",
+                evidence_type="disk_image",
+            ))
+        for i in range(3):
+            session.add(ProjectEvidenceRecord(
+                project_id=pid,
+                file_path=f"/evidence/other-{i}.bin",
+                evidence_type="memory_dump",
+            ))
+        await session.commit()
+
+    list_evidence = _endpoint("/projects/{project_id}/evidence", "GET")
+    filtered = await list_evidence(
+        request=_Req(),
+        project_id=pid,
+        auth=_admin(),
+        page=1,
+        page_size=100,
+        evidence_type="disk_image",
+    )
+    assert len(filtered.data.items) == 2
+    assert filtered.data.total == 2
+    assert {item.evidence_type for item in filtered.data.items} == {"disk_image"}
+
+    unfiltered = await list_evidence(
+        request=_Req(),
+        project_id=pid,
+        auth=_admin(),
+        page=1,
+        page_size=100,
+        evidence_type=None,
+    )
+    assert len(unfiltered.data.items) == 5
+    assert unfiltered.data.total == 5
 
 
 async def test_list_findings_page_caps_artifact_fetch(test_db) -> None:
@@ -245,14 +291,14 @@ async def test_list_findings_page_caps_artifact_fetch(test_db) -> None:
 def test_freeflow_cost_ceiling_exceeded_pure() -> None:
     """The pure check treats cap<=0 as disabled and fires on cap crossing."""
     # Cap disabled: any actual reads as under the ceiling.
-    assert _freeflow_cost_ceiling_exceeded(0.0, 0.0) is False
-    assert _freeflow_cost_ceiling_exceeded(1000.0, 0.0) is False
-    assert _freeflow_cost_ceiling_exceeded(1000.0, -1.0) is False
+    assert cost_ceiling_exceeded(0.0, 0.0) is False
+    assert cost_ceiling_exceeded(1000.0, 0.0) is False
+    assert cost_ceiling_exceeded(1000.0, -1.0) is False
 
     # Cap active: strict-less is safe, equal-or-greater fires.
-    assert _freeflow_cost_ceiling_exceeded(0.99, 1.0) is False
-    assert _freeflow_cost_ceiling_exceeded(1.0, 1.0) is True
-    assert _freeflow_cost_ceiling_exceeded(1.5, 1.0) is True
+    assert cost_ceiling_exceeded(0.99, 1.0) is False
+    assert cost_ceiling_exceeded(1.0, 1.0) is True
+    assert cost_ceiling_exceeded(1.5, 1.0) is True
 
 
 async def test_freeflow_actual_cost_sums_llm_cost_records(test_db) -> None:
@@ -267,9 +313,9 @@ async def test_freeflow_actual_cost_sums_llm_cost_records(test_db) -> None:
     cap_usd = 1.0
 
     # Empty run: no cost, ceiling not tripped.
-    initial = await _freeflow_actual_cost_usd(investigation_id)
+    initial = await actual_cost_usd(investigation_id)
     assert initial == pytest.approx(0.0)
-    assert _freeflow_cost_ceiling_exceeded(initial, cap_usd) is False
+    assert cost_ceiling_exceeded(initial, cap_usd) is False
 
     # Under cap: two cheap calls sum to $0.60.
     async with async_session_scope() as session:
@@ -287,9 +333,9 @@ async def test_freeflow_actual_cost_sums_llm_cost_records(test_db) -> None:
         ))
         await session.commit()
 
-    under = await _freeflow_actual_cost_usd(investigation_id)
+    under = await actual_cost_usd(investigation_id)
     assert under == pytest.approx(0.60)
-    assert _freeflow_cost_ceiling_exceeded(under, cap_usd) is False
+    assert cost_ceiling_exceeded(under, cap_usd) is False
 
     # Over cap: one more call pushes cumulative cost past $1.00.
     async with async_session_scope() as session:
@@ -301,28 +347,28 @@ async def test_freeflow_actual_cost_sums_llm_cost_records(test_db) -> None:
         ))
         await session.commit()
 
-    over = await _freeflow_actual_cost_usd(investigation_id)
+    over = await actual_cost_usd(investigation_id)
     assert over == pytest.approx(1.10)
-    assert _freeflow_cost_ceiling_exceeded(over, cap_usd) is True
+    assert cost_ceiling_exceeded(over, cap_usd) is True
 
     # Cross-investigation isolation: a second run stays at zero.
     other_id = f"inv-{uuid4().hex[:8]}"
-    other = await _freeflow_actual_cost_usd(other_id)
+    other = await actual_cost_usd(other_id)
     assert other == pytest.approx(0.0)
 
 
 async def test_freeflow_actual_cost_is_zero_for_empty_investigation_id() -> None:
     """Empty investigation_id shortcuts to 0.0 without touching the DB."""
-    assert await _freeflow_actual_cost_usd("") == pytest.approx(0.0)
+    assert await actual_cost_usd("") == pytest.approx(0.0)
 
 
 async def test_freeflow_cost_ceiling_triggers_investigation_cancel(test_db) -> None:
     """The monitor loop flips the investigation to ``cancelled`` on breach.
 
     This exercises the integration path documented in freeflow.py:
-    ``_cost_ceiling_monitor`` is expected to see the seeded cost sum,
-    invoke ``_flip_investigation_cancelled``, and set the outcome flag
-    so the caller can override the final status to ``exhausted``.
+    ``cost_ceiling_monitor`` is expected to see the seeded cost sum,
+    flip the row to ``cancelled``, and set the outcome flag so the
+    caller can override the final status to ``exhausted``.
     """
     suffix = uuid4().hex[:8]
     pid = await _seed_project(suffix)
@@ -358,10 +404,11 @@ async def test_freeflow_cost_ceiling_triggers_investigation_cancel(test_db) -> N
     # cap_usd = 1.0, actual = 2.0 -> ceiling should trip on the first
     # poll and the monitor should exit without waiting a full interval.
     await asyncio.wait_for(
-        _cost_ceiling_monitor(
+        cost_ceiling_monitor(
             investigation_id=inv_id,
             cap_usd=1.0,
             emitter=emitter,
+            source="freeflow",
             stop_event=stop_event,
             outcome=outcome,
         ),

@@ -227,6 +227,13 @@ class DoThingTool(Tool):
         return {"target": target_name, "result": "done"}
 ```
 
+**Operator access.** `Tool.operator_invocable` defaults to `False`, so the generic
+direct invocation route (`POST /tools/{tool_key}`) refuses the tool for operators and
+admits only platform administrators. Set `operator_invocable = True` only on tools that
+make no writes, start no processes or MCP children, make no LLM calls, read no
+caller-supplied paths, and read only team-filtered rows or fixed public reference feeds.
+The criteria are stated in the comment on `Tool` in `src/aila/platform/tools/_common.py`.
+
 **Multi-action pattern** (when one tool covers several related operations):
 
 ```python

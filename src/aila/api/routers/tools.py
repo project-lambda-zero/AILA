@@ -1,7 +1,9 @@
 """Tools router for AILA REST API.
 
 Provides read access to registered tool metadata and direct invocation.
-POST /tools/{tool_key} requires operator+ role (D-20).
+POST /tools/{tool_key} requires operator+ role (D-20). Direct invocation is
+further restricted to tools that declare operator access (``operator_invocable``);
+all other tools are invocable only by platform administrators (admin role, no team).
 """
 from __future__ import annotations
 
@@ -16,6 +18,7 @@ from aila.api.constants import (
     AUDIT_ACTION_TOOL_INVOKE,
     AUDIT_STAGE_TOOL,
     AUDIT_STATUS_COMPLETED,
+    ROLE_ADMIN,
     ROLE_OPERATOR,
     TRACK_PLATFORM,
 )
@@ -27,7 +30,7 @@ from aila.api.schemas.tools import (
     ToolInvokeResponse,
     ToolSummaryResponse,
 )
-from aila.platform.runtime.tools import ToolRegistry
+from aila.platform.runtime.tools import ToolProtocol, ToolRegistry
 from aila.platform.services.audit import record_audit_event
 from aila.storage.database import async_session_scope
 
@@ -129,30 +132,44 @@ async def invoke_tool(
 ) -> ToolInvokeResponse:
     """Invoke a registered tool directly with the provided kwargs.
 
-    Requires operator role or higher. Tool errors are returned in the
-    error field rather than raised as HTTP errors.
+    Requires operator role or higher. A tool runs only if it declares operator
+    access (``operator_invocable is True``) or the caller is a platform
+    administrator (admin role, no team scope); otherwise 403 is returned before
+    the tool runs. Undeclared tools, including protocol-only tools that do not
+    extend ``Tool``, stay admin-only. Tool errors are returned in the error
+    field rather than raised as HTTP errors.
     """
     registry: ToolRegistry = get_tool_registry(request)  # type: ignore[assignment]
 
-    def _invoke() -> tuple[object, str | None] | None:
+    def _resolve() -> ToolProtocol | None:
         try:
-            tool = registry.require(tool_key)
+            return registry.require(tool_key)
         except KeyError:
             return None
-        try:
-            result = tool.forward(**body.kwargs)
-            return result, None
-        except Exception as exc:
-            _log.warning("Tool %s invocation failed: %s", tool_key, exc, exc_info=True)
-            return None, str(exc)
 
-    invoke_result = await asyncio.to_thread(_invoke)
-    if invoke_result is None:
+    tool = await asyncio.to_thread(_resolve)
+    if tool is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Tool '{tool_key}' not registered -- list available tools via GET /tools",
         )
-    result, error = invoke_result
+    # Only an explicit `is True` declaration grants operator access; undeclared tools,
+    # including protocol-only tools that do not extend Tool, stay admin-only.
+    is_platform_admin = operator.role == ROLE_ADMIN and operator.team_id is None
+    if getattr(tool, "operator_invocable", False) is not True and not is_platform_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Tool '{tool_key}' is restricted to platform administrators.",
+        )
+
+    def _invoke() -> tuple[object, str | None]:
+        try:
+            return tool.forward(**body.kwargs), None
+        except Exception as exc:
+            _log.warning("Tool %s invocation failed: %s", tool_key, exc, exc_info=True)
+            return None, str(exc)
+
+    result, error = await asyncio.to_thread(_invoke)
     if inspect.isawaitable(result):
         try:
             result = await result

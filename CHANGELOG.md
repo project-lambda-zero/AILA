@@ -5,6 +5,85 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.119] - 2026-11-15 -- Real three-examiner forensics panel investigations
+
+### Added
+
+- Forensics investigations can run in panel mode with three examiner branches that execute analyzer actions, review draft answers, record the approved answer, and generate a write-up.
+- The console offers free-flow or panel mode and a panel drill-down with branch state, votes, provenance, contributions, and recent analyzer results.
+- Panel state is available through a typed read API, and panel tasks are registered from the ordinary forensics worker import path.
+
+### Changed
+
+- Free-flow and panel investigations now share analyzer actions, step records, artifact queries, and live cost-ceiling accounting.
+- Panel settlement closes finished branches, re-drives closed reviewers for a successor draft, and uses periodic finalization and orphan-branch sweeps.
+
+### Fixed
+
+- Free-flow shell commands issued through tool_run now follow the documented analyzer JSON command contract instead of being rejected.
+- A rejected panel answer no longer leaves a successor draft without enough eligible reviewers; each examiner may propose once, keeping deliberation bounded.
+- Panel recovery submissions retain the investigation team, and project deletion removes panel reviews, outcomes, messages, branches, and patterns.
+
+### Upgrade notes
+
+- Apply Alembic migrations 151 and 152 before starting the forensics workers; they add the panel investigation fields and terminal timestamp.
+- Installations with an existing forensics free-flow production prompt alias must promote the newly seeded prompt version to deploy the corrected tool_run contract. Seeding only sets aliases that are absent.
+
+## [0.6.118] - 2026-11-14 -- Forensics file retrieval from the Evidence and Findings tabs
+
+### Added
+
+- The forensics Evidence tab can fetch raw-directory evidence and extract any in-image path from a chosen disk image, and the Findings tab offers extract buttons next to in-image file paths. Failures show the server's reason (#529).
+- The forensics evidence list accepts an `evidence_type` filter (#529).
+
+## [0.6.117] - 2026-11-14 -- Carved file-type histogram on the forensics Artifacts tab
+
+### Added
+
+- The forensics Artifacts tab shows the project's carved file-type histogram (files per MIME type across all captures), or says that nothing was carved (#527).
+
+## [0.6.116] - 2026-11-14 -- OIDC sign-in from the console, refused for team-less accounts
+
+### Security
+
+- OIDC sign-in is refused with 403 when the account would have no team: a provider without a default team no longer provisions accounts, and an existing team-less OIDC account must be assigned a team first. OIDC-issued tokens are always team-scoped (#523).
+
+### Added
+
+- The sign-in page offers one button per enabled identity provider, and the console's return page completes OIDC sign-in and shows refusals and identity provider errors on the sign-in page (#523).
+
+## [0.6.115] - 2026-11-14 -- Journal-only role of module.workflow.completed documented
+
+### Changed
+
+- Docstrings, publish-site comments, and the platform internals doc now describe `module.workflow.completed` as a journal-only record published by the forensics write-up and vulnerability reporting states, with no subscriber acting on it (#524).
+
+## [0.6.114] - 2026-11-14 -- Cancelled SSH commands close their channel
+
+### Fixed
+
+- Cancelling a task that is waiting on an SSH command, including a workflow state timeout, now closes the command's SSH channel, so the worker thread stops instead of reading until the remote command exits. Pooled connections stay pooled (#520).
+
+## [0.6.113] - 2026-11-13 -- Forensics evidence hub failures mark the project failed
+
+### Fixed
+
+- A forensics full analysis whose setup, collector lane, tail stage, or emit step fails now marks an active project failed with a reason naming the failed state and ends the run as failed, instead of leaving the project analyzing with a crashed run (#519).
+
+### Added
+
+- `build_dispatch_workflow` accepts an optional `failure_handler`; when set, every builder-made state routes failures to a shared failure state that ends the run (#519).
+
+### Removed
+
+- The unused fixed forensics full-analysis pipeline (`FORENSICS_FULL_ANALYSIS_V1`). Full analysis runs the evidence hub (#519).
+
+## [0.6.112] - 2026-11-13 -- Direct tool invocation limited to declared operator tools
+
+### Security
+
+- The generic direct tool invocation route refuses tools that do not declare operator access unless the caller is a platform administrator (admin role, no team scope). Operators and team-scoped admins can run only the 19 reviewed read-only tools; secrets, SSH, sandbox, system registry, audit log, HTTP fetch, memory, cache, knowledge, LSP, forensics runner, MCP bridge, and writing or executing vulnerability tools are platform administrators only (#517).
+
 ## [0.6.111] - 2026-11-13 -- Pause reason contract test and outcome review query count test
 
 ### Fixed

@@ -14,9 +14,11 @@ after the lanes, in order.
 This reuses every existing forensics stage handler unchanged: each phase
 adapter runs the real stage and only overrides the next transition back to
 the hub, and each lane phase scopes ``state_collection`` to its single lane
-via ``active_lanes``. No collector machinery is rewritten and the live
-``FORENSICS_DISPATCHER_V1`` is untouched; the definition ships bound
-nowhere and is enabled by an operator seed rebind after a smoke.
+via ``active_lanes``. No collector machinery is rewritten. The
+dispatcher's ``_state_routing`` sends full-analysis runs to this graph.
+Any step's failure routes to ``investigation_failed``
+(``_state_analysis_failed``), which marks the still-active project failed
+with a reason naming the failed state and error class.
 
 The shared ledger is the evidence board: :func:`record_evidence` posts a
 discovered evidence item as a ledger ``discovery`` with its type, path, and
@@ -34,6 +36,7 @@ from aila.modules.forensics.db_models import (
 )
 from aila.modules.forensics.workflow.definitions import (
     _build_services,
+    _state_analysis_failed,
     _state_response_emit,
 )
 from aila.modules.forensics.workflow.states.collection import (
@@ -194,16 +197,16 @@ FORENSICS_INVESTIGATE_HUB = build_dispatch_workflow(
     setup_builder=_setup_builder,
     loop_builder=_loop_builder,
     emit_handler=cast("HandlerFn", _state_response_emit),
+    failure_handler=cast("HandlerFn", _state_analysis_failed),
     escalation_models=DispatchEscalationModels(
         message_model=ForensicsInvestigationMessageRecord,
         branch_model=ForensicsInvestigationBranchRecord,
     ),
     # Runs as the inner definition of FORENSICS_DISPATCHER_V1 (two-phase
     # dispatch), sharing the dispatcher's run_id -- reset the cursor from the
-    # dispatcher's terminal to this graph's start_state, like the fixed-mode
-    # definitions (FORENSICS_FULL_ANALYSIS_V1 etc.) that also set this. The
-    # dispatcher's mode registry is populated lazily by ``_state_routing`` in
+    # dispatcher's terminal to this graph's start_state. The dispatcher's
+    # mode registry is populated lazily by ``_state_routing`` in
     # ``definitions`` on the first full-analysis dispatch (acyclic + a hub
-    # import fault cannot gate the fixed-mode tasks).
+    # import fault cannot gate the other modes' tasks).
     allow_phase_handoff=True,
 )

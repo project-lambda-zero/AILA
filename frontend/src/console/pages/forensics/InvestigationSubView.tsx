@@ -18,6 +18,11 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiFetch } from "../../../api/client";
+import {
+  parseForensicsPanelView,
+  parseOne,
+  useForensicsQuery,
+} from "../../../api/forensics";
 import { useReasoningGraphs } from "../../../api/forensicsReasoning";
 import { css } from "../../css";
 import {
@@ -30,6 +35,7 @@ import {
   H,
 } from "./panels";
 import { RerunForm, TagInvestigationForm } from "./forms";
+import { PanelSection } from "./PanelSection";
 import { ReasoningGraphReplay } from "./ReasoningGraphReplay";
 
 interface AgentStep {
@@ -90,11 +96,19 @@ export function InvestigationSubView({
   });
 
   const graphs = useReasoningGraphs(projectId, investigationId);
+  const detailStatus = detail.data?.status ?? "";
+  const panelQ = useForensicsQuery(
+    projectId,
+    ["investigation", investigationId, "panel"],
+    `/forensics/projects/${projectId}/investigations/${investigationId}/panel`,
+    (raw) => parseOne(raw, parseForensicsPanelView),
+    detailStatus === "running" || detailStatus === "pending" ? 5000 : false,
+  );
 
   const [rerunOpen, setRerunOpen] = useState(false);
   const [tagOpen, setTagOpen] = useState(false);
   const [openStepIds, setOpenStepIds] = useState<Record<string, true>>({});
-  const [pane, setPane] = useState<"steps" | "graphs">("steps");
+  const [pane, setPane] = useState<"steps" | "graphs" | "panel">("steps");
 
   const cancel = useMutation({
     mutationFn: () =>
@@ -130,7 +144,7 @@ export function InvestigationSubView({
   if (!d) return <div style={emptyNote}>investigation not found.</div>;
 
   const running = d.status === "running" || d.status === "pending";
-  const paneBtn = (id: "steps" | "graphs", label: string): JSX.Element => (
+  const paneBtn = (id: "steps" | "graphs" | "panel", label: string): JSX.Element => (
     <button
       key={id}
       type="button"
@@ -197,6 +211,7 @@ export function InvestigationSubView({
           <span style={css("flex:1;")} />
           {paneBtn("steps", "steps")}
           {paneBtn("graphs", `reasoning graphs${graphs.data ? ` \u00b7 ${graphs.data.length}` : ""}`)}
+          {(panelQ.data?.branches.length ?? 0) > 0 ? paneBtn("panel", "panel") : null}
         </div>
       </Panel>
 
@@ -225,8 +240,12 @@ export function InvestigationSubView({
             </div>
           )}
         </Panel>
-      ) : (
+      ) : pane === "graphs" ? (
         <ReasoningGraphReplay projectId={projectId} investigationId={investigationId} />
+      ) : panelQ.data ? (
+        <PanelSection view={panelQ.data} />
+      ) : (
+        <div style={emptyNote}>loading panel deliberation...</div>
       )}
 
       {rerunOpen ? (
