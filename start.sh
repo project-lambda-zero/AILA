@@ -33,7 +33,7 @@
 #   BACKEND_PORT          default 8000
 #   FRONTEND_PORT         default 3000
 #   AUDIT_MCP_PORT        default 18822
-#   WORKERS               default "default vr vulnerability forensics malware"
+#   WORKERS               default "default vr vulnerability forensics malware pentest"
 #   AUDIT_MCP_DIR         default ../audit-mcp (relative to repo root)
 #   AUDIT_MCP_WORKERS     default 1
 #   AILA_START_FRONTEND   1/0 (default 1)
@@ -53,7 +53,7 @@ COMMAND="${1:-start}"
 : "${BACKEND_PORT:=8000}"
 : "${FRONTEND_PORT:=3000}"
 : "${AUDIT_MCP_PORT:=18822}"
-: "${WORKERS:=default vr vulnerability forensics malware}"
+: "${WORKERS:=default vr vulnerability forensics malware pentest}"
 # Per-queue worker concurrency. The vr queue runs LLM-heavy investigations
 # with multi-minute LLM retries; one worker per queue serializes them
 # behind whichever investigation is mid-call. Default vr=5 so the queue
@@ -63,6 +63,7 @@ COMMAND="${1:-start}"
 : "${WORKER_COUNT_DEFAULT:=1}"
 : "${WORKER_COUNT_VULNERABILITY:=1}"
 : "${WORKER_COUNT_FORENSICS:=1}"
+: "${WORKER_COUNT_PENTEST:=1}"
 : "${AUDIT_MCP_DIR:=../audit-mcp}"
 : "${AILA_START_FRONTEND:=1}"
 : "${AILA_START_AUDIT_MCP:=1}"

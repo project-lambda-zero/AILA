@@ -78,6 +78,12 @@ export const MODULES: ModuleDef[] = [
     pages: [page("projects")],
   },
   {
+    id: "pentest",
+    label: "AI pentest",
+    noun: "assessments",
+    pages: [page("assessments")],
+  },
+  {
     id: "malware",
     label: "malware analysis",
     noun: "investigations",

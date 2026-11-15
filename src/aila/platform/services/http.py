@@ -6,7 +6,9 @@ import httpx
 
 from .ssrf import SSRFValidatingAsyncTransport, SSRFValidatingTransport
 
-__all__ = ["HTTPClientSettings", "build_async_http_client", "build_http_client"]
+__all__ = ["HTTPClientSettings", "HTTPError", "build_async_http_client", "build_http_client"]
+
+HTTPError = httpx.HTTPError
 
 
 class HTTPClientSettings(Protocol):
