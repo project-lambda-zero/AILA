@@ -19,6 +19,11 @@ from aila.modules.forensics.db_models import (
     AnalystDirectiveRecord,
     AnswerCandidateRecord,
     FindingSuppressionRecord,
+    ForensicsInvestigationBranchRecord,
+    ForensicsInvestigationMessageRecord,
+    ForensicsInvestigationOutcomeRecord,
+    ForensicsInvestigationOutcomeReviewRecord,
+    ForensicsPatternRecord,
     ForensicsProjectRecord,
     InvestigationRunRecord,
     SolidEvidenceRecord,
@@ -79,10 +84,39 @@ async def test_delete_project_purges_all_child_tables(test_db) -> None:
         inv = InvestigationRunRecord(project_id=pid, question="q")
         session.add(inv)
         await session.flush()
+        inv_id = inv.id
         session.add(AnswerCandidateRecord(project_id=pid, investigation_id=inv.id))
         session.add(AnalystDirectiveRecord(project_id=pid))
         session.add(FindingSuppressionRecord(project_id=pid, fingerprint="fp-1"))
         session.add(SolidEvidenceRecord(project_id=pid, verdict="confirmed"))
+        proposer = ForensicsInvestigationBranchRecord(
+            investigation_id=inv.id, persona_voice="halvar",
+        )
+        reviewer = ForensicsInvestigationBranchRecord(
+            investigation_id=inv.id, persona_voice="maddie",
+        )
+        session.add(proposer)
+        session.add(reviewer)
+        await session.flush()
+        outcome = ForensicsInvestigationOutcomeRecord(
+            investigation_id=inv.id, branch_id=proposer.id,
+            outcome_kind="forensic_answer", confidence="strong",
+            payload_json='{"answer":"RunOnce persistence"}',
+        )
+        session.add(outcome)
+        await session.flush()
+        session.add(ForensicsInvestigationOutcomeReviewRecord(
+            outcome_id=outcome.id, reviewer_branch_id=reviewer.id,
+            reviewer_persona="maddie", vote="approve",
+        ))
+        session.add(ForensicsInvestigationMessageRecord(
+            investigation_id=inv.id, branch_id=proposer.id,
+            sender_kind="engine", payload_kind="text", payload_json='{"text":"checking"}',
+        ))
+        session.add(ForensicsPatternRecord(
+            workspace_id=pid, investigation_id=inv.id,
+            kind="triage_rule", summary="Check RunOnce values",
+        ))
         await session.commit()
 
     # Precondition: every child row exists.
@@ -105,4 +139,35 @@ async def test_delete_project_purges_all_child_tables(test_db) -> None:
                 select(ForensicsProjectRecord).where(ForensicsProjectRecord.id == pid)
             )
         ).first()
+        outcome_ids = select(ForensicsInvestigationOutcomeRecord.id).where(
+            ForensicsInvestigationOutcomeRecord.investigation_id == inv_id,
+        )
+        remaining_panel_rows = [
+            (await session.exec(
+                select(sa_func.count()).select_from(ForensicsInvestigationOutcomeRecord).where(
+                    ForensicsInvestigationOutcomeRecord.investigation_id == inv_id,
+                ),
+            )).one(),
+            (await session.exec(
+                select(sa_func.count()).select_from(ForensicsInvestigationOutcomeReviewRecord).where(
+                    ForensicsInvestigationOutcomeReviewRecord.outcome_id.in_(outcome_ids),
+                ),
+            )).one(),
+            (await session.exec(
+                select(sa_func.count()).select_from(ForensicsInvestigationMessageRecord).where(
+                    ForensicsInvestigationMessageRecord.investigation_id == inv_id,
+                ),
+            )).one(),
+            (await session.exec(
+                select(sa_func.count()).select_from(ForensicsInvestigationBranchRecord).where(
+                    ForensicsInvestigationBranchRecord.investigation_id == inv_id,
+                ),
+            )).one(),
+            (await session.exec(
+                select(sa_func.count()).select_from(ForensicsPatternRecord).where(
+                    ForensicsPatternRecord.workspace_id == pid,
+                ),
+            )).one(),
+        ]
     assert gone is None
+    assert remaining_panel_rows == [0, 0, 0, 0, 0]

@@ -29,11 +29,13 @@ from aila.modules.forensics.db_models import (
     ForensicsProjectRecord,
     InvestigationRunRecord,
 )
+from aila.modules.forensics.services import analyzer_actions
+from aila.modules.forensics.services import cost_ceiling as cost_ceiling_module
 from aila.modules.forensics.workflow.states import freeflow as freeflow_module
 from aila.modules.forensics.workflow.states.freeflow import state_freeflow
 from aila.platform.contracts.reasoning import ReasoningTurnDecision
-from aila.platform.llm.errors import BudgetExceededError, LLMError
 from aila.platform.llm.cost_record import LLMCostRecord
+from aila.platform.llm.errors import BudgetExceededError, LLMError
 from aila.platform.prompts import LoadedPrompt
 from aila.platform.services.reasoning import CyberReasoningEngine
 from aila.storage.database import async_session_scope
@@ -42,7 +44,8 @@ pytestmark = pytest.mark.usefixtures("test_db")
 
 _STOP_STATUSES = ["paused", "completed", "exhausted", "failed"]
 _ALL_STOP_STATUSES = [*_STOP_STATUSES, "cancelled"]
-_COMMAND = json.dumps({"tool": "run_command", "args": {"command": "uname -a"}})
+_COMMAND = json.dumps({"tool": "analyzer.run_command", "args": {"command": "uname -a"}})
+_SHELL = "uname -a"
 
 Decide = Callable[[int], Awaitable[ReasoningTurnDecision]]
 
@@ -67,19 +70,24 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[Any]]:
     """Ledger of provider calls and tool executions for one test."""
     ledger: dict[str, list[Any]] = {"provider": [], "tools": []}
 
-    async def fake_command(self: HonestInvestigator, command: str) -> dict[str, Any]:
+    async def fake_command(
+        *, settings: Any, integration: Any, investigation_id: str, command: str,
+    ) -> dict[str, Any]:
         ledger["tools"].append(command)
         return {"stdout": "", "stderr": "", "exit_code": 0}
 
-    async def fake_script(self: HonestInvestigator, script_content: str) -> dict[str, Any]:
+    async def fake_script(
+        *, settings: Any, integration: Any, analyzer_os: str, investigation_id: str,
+        script_content: str,
+    ) -> dict[str, Any]:
         ledger["tools"].append(script_content)
         return {"stdout": "", "stderr": "", "exit_code": 0}
 
     async def fake_prompt(analyzer_os: str, *, investigation_id: str) -> LoadedPrompt:
         return LoadedPrompt(body="system prompt", version=None)
 
-    monkeypatch.setattr(HonestInvestigator, "_execute_command", fake_command)
-    monkeypatch.setattr(HonestInvestigator, "_execute_script", fake_script)
+    monkeypatch.setattr(analyzer_actions, "execute_command", fake_command)
+    monkeypatch.setattr(analyzer_actions, "execute_script", fake_script)
     monkeypatch.setattr(investigator_module, "_resolve_freeflow_prompt", fake_prompt)
     return ledger
 
@@ -246,7 +254,7 @@ async def test_running_investigation_takes_every_turn_and_setup_reaches_running(
     )
 
     assert len(calls["provider"]) == 2
-    assert calls["tools"] == [_COMMAND, _COMMAND]
+    assert calls["tools"] == [_SHELL, _SHELL]
     assert "stopped_status" not in result
     assert not result.get("cancelled")
     assert result["attempts_used"] == 2
@@ -392,8 +400,8 @@ async def test_freeflow_cost_ceiling_still_exhausts_the_investigation(
     async def cap_one_dollar() -> float:
         return 1.0
 
-    monkeypatch.setattr(freeflow_module, "_read_freeflow_max_cost_usd", cap_one_dollar)
-    monkeypatch.setattr(freeflow_module, "_COST_MONITOR_POLL_SECONDS", 0.01)
+    monkeypatch.setattr(freeflow_module, "read_cost_cap_usd", cap_one_dollar)
+    monkeypatch.setattr(cost_ceiling_module, "COST_MONITOR_POLL_SECONDS", 0.01)
     engine = _engine(calls, _breach_cost_then_hold_until_cancelled(inv_id))
 
     await state_freeflow(

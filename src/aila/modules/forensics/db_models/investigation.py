@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import Column, DateTime, Text
+from sqlalchemy import Boolean, Column, DateTime, Text
 from sqlmodel import Field, SQLModel
 
 from aila.platform.contracts import utc_now
@@ -76,6 +76,18 @@ class InvestigationRunRecord(SQLModel, table=True):
     # existing rows need no backfill; migration 149 adds the columns.
     pause_reason: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
     started_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
+    # Terminal transition time read by the shared orphan branch reaper.
+    # Migration 152 adds the nullable column; pre-existing terminal rows use
+    # the reaper's updated_at fallback.
+    stopped_at: datetime | None = Field(default=None, sa_type=DateTime(timezone=True))
+    # Read by the platform investigation loop: when False, an unknown-
+    # confidence decision pauses the run for operator input. Migration 151
+    # adds both columns; existing rows backfill to auto_pilot=true.
+    auto_pilot: bool = Field(
+        default=True, sa_column=Column(Boolean, nullable=False, server_default="true"),
+    )
+    # Canonical panel outcome the sibling review approved (NULL until then).
+    primary_outcome_id: str | None = Field(default=None, max_length=64)
 
 
 # Every committed status transition is announced as an

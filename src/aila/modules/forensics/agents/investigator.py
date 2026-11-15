@@ -37,16 +37,17 @@ import time
 from typing import Any
 
 from aila.config import Settings
-from aila.modules.forensics.config_schema import FORENSICS_HARD_TURN_CAP, ForensicsConfigSchema
+from aila.modules.forensics.config_schema import FORENSICS_HARD_TURN_CAP
 from aila.modules.forensics.contracts.status import InvestigationStatus
-from aila.modules.forensics.tools.script_guard import script_rejection
+from aila.modules.forensics.services import analyzer_actions
+from aila.modules.forensics.services.agent_steps import build_step_record
+from aila.modules.forensics.services.analyzer_actions import ToolRunContractError
 from aila.platform.agents.turn_helpers import auto_resolve_live_on_terminal
 from aila.platform.config_base import ModuleConfigReader
 from aila.platform.contracts.reasoning import (
     Hypothesis,
     ReasoningCaseState,
     ReasoningContract,
-    ReasoningOperatorSteering,
     ReasoningPromptContext,
     RejectedHypothesis,
     ResolvedHypothesis,
@@ -69,9 +70,13 @@ from aila.platform.prompts.seeds import (
 from aila.platform.prompts.version_store import PromptVersionStore
 from aila.platform.services.reasoning import CyberReasoningEngine
 from aila.platform.services.reasoning_graphs import ReasoningGraphService
-from aila.storage.registry import ConfigRegistry
 
-__all__ = ["HonestInvestigator"]
+__all__ = [
+    "HonestInvestigator",
+    "freeflow_analyzer_os",
+    "load_freeflow_prompt",
+    "seed_prompt_versions",
+]
 
 _log = logging.getLogger(__name__)
 _cfg = ModuleConfigReader("forensics")
@@ -88,28 +93,6 @@ _INVESTIGATOR_STOP_STATUSES = frozenset({
 })
 
 
-async def _read_float_config(key: str) -> float:
-    """Resolve a forensics float-typed config value via ConfigRegistry.
-
-    Falls back to the ForensicsConfigSchema field default on registry
-    read failure or non-numeric value so a transient DB blip never
-    replaces a bounded timeout with 0 (which would fire instantly).
-    """
-    default = float(ForensicsConfigSchema.model_fields[key].default)
-    try:
-        raw = await ConfigRegistry().get("forensics", key)
-    except (OSError, RuntimeError, AILAError) as exc:
-        _log.warning("forensics.%s registry read failed (%s); using default %.2f", key, exc, default)
-        return default
-    if raw is None:
-        return default
-    try:
-        return float(raw)
-    except (TypeError, ValueError):
-        _log.warning("forensics.%s config value %r not coercible to float; using default %.2f", key, raw, default)
-        return default
-
-
 # ---------------------------------------------------------------------------
 # System prompts -- OS-dispatched, but strategy-neutral. No CTF playbooks.
 # ---------------------------------------------------------------------------
@@ -118,8 +101,8 @@ _PROMPT_REGISTRY = PromptRegistry(module="forensics", version_store=PromptVersio
 _PROMPT_VERSION_STORE = PromptVersionStore()
 
 
-def _freeflow_analyzer_os(analyzer_os: str) -> str:
-    """Normalize the analyzer OS the way :func:`_load_freeflow_prompt` does.
+def freeflow_analyzer_os(analyzer_os: str) -> str:
+    """Normalize the analyzer OS the way :func:`load_freeflow_prompt` does.
 
     ``"windows"`` selects the Windows hint; every other value (including
     ``"darwin"`` and empty string) falls back to Linux. Keeping this in one
@@ -136,17 +119,17 @@ def _freeflow_prompt_key(analyzer_os: str) -> str:
     (base + Windows hint vs. base + Linux hint). Aligned
     with the vr / malware key convention: ``{module}/{role}/{variant}``.
     """
-    return f"forensics/freeflow/{_freeflow_analyzer_os(analyzer_os)}"
+    return f"forensics/freeflow/{freeflow_analyzer_os(analyzer_os)}"
 
 
-def _load_freeflow_prompt(analyzer_os: str) -> str:
+def load_freeflow_prompt(analyzer_os: str) -> str:
     """Return the base system prompt + the OS-specific hint concatenated.
 
     Preserves the pre-RFC-09 assembly behavior exactly: ``base + windows``
     for a Windows analyzer, ``base + linux`` otherwise.
     """
     base = FORENSICS_BASE_TEXT
-    hint_leaf = _freeflow_analyzer_os(analyzer_os)
+    hint_leaf = freeflow_analyzer_os(analyzer_os)
     hint = FORENSICS_OS_HINT_WINDOWS_TEXT if hint_leaf == "windows" else FORENSICS_OS_HINT_LINUX_TEXT
     return base + hint
 
@@ -163,7 +146,7 @@ async def _resolve_freeflow_prompt(
     RFC-09 criterion 4 safety: a live production-alias flip never
     rewrites the prompt of an in-flight investigation.
 
-    Falls back to :func:`_load_freeflow_prompt` (byte-identical file
+    Falls back to :func:`load_freeflow_prompt` (byte-identical file
     assembly) when the store has no body -- no production alias yet, a
     pin pointing at a missing version, or a store fault. The returned
     :class:`LoadedPrompt` carries ``version=None`` in the fallback path
@@ -186,7 +169,7 @@ async def _resolve_freeflow_prompt(
     if body is not None:
         return LoadedPrompt(body=body, version=version)
     return LoadedPrompt(
-        body=_load_freeflow_prompt(analyzer_os), version=None,
+        body=load_freeflow_prompt(analyzer_os), version=None,
     )
 
 
@@ -217,7 +200,7 @@ async def seed_prompt_versions() -> int:
     seeded = 0
     for analyzer_os in _SEED_ANALYZER_OS:
         try:
-            body = _load_freeflow_prompt(analyzer_os)
+            body = load_freeflow_prompt(analyzer_os)
         except (FileNotFoundError, PromptNotFoundError, OSError) as exc:
             _log.warning(
                 "forensics seed_prompt_versions skipped os=%s (%s)",
@@ -259,135 +242,8 @@ async def seed_prompt_versions() -> int:
     return seeded
 
 
-# Shell-command blocklist for the ``tool_run`` path. Dynamic analysis is
-# strictly prohibited: we never detonate the sample, never fetch remote
-# resources named in the evidence, and never contact an IOC we derived
-# from the investigation. Static analysis only.
-_COMMAND_BLOCKLIST: tuple[str, ...] = (
-    # network fetchers
-    "curl ", "wget ", "aria2c", "fetch ", "lynx ", "links ", "w3m ",
-    "iwr ", "invoke-webrequest", "invoke-restmethod",
-    "bitsadmin", "certutil -urlcache", "certutil /urlcache",
-    "powershell -c \"iex", "powershell -c 'iex", "iex(new-object",
-    # direct transports
-    "ncat ", "ncat.exe", "nc ", "nc.exe ", "socat ",
-    "telnet ", "ssh ", "scp ", "sftp ", "rsync ",
-    "ftp ", "tftp ",
-    # packet / scan
-    "nmap ", "masscan ", "zmap ", "hping3 ", "arp-scan",
-    "ping -c", "ping -n", "ping6 ", "tracert ", "traceroute ",
-    "nslookup ", "dig ", "host ", "whois ",
-    # sample detonation
-    "./a.out", "./sample", "./main.exe", "./server",
-    "wine ", "mono ",
-    "start malware", "start sample", "rundll32 ", "regsvr32 ",
-    "msiexec ", "mshta ", "cscript ", "wscript ",
-    # container / VM escape surfaces
-    "docker run", "podman run", "lxc-start", "virsh start",
-)
-
-
-def _command_rejection(command: str) -> str | None:
-    low = command.lower()
-    for needle in _COMMAND_BLOCKLIST:
-        if needle in low:
-            return (
-                f"blocked: dynamic-analysis prohibited -- command contains "
-                f"'{needle.strip()}'. Static analysis only: do NOT execute "
-                f"the sample, do NOT contact remote hosts, do NOT probe "
-                f"IOCs."
-            )
-    return None
-
-# Max bytes of stdout to keep per turn in the persisted record. Sized
-# to fit complete forensic windows (multi-entry security logs, full
-# commits.diff blobs, Action-log zip listings) without truncation.
-# The persisted record is ~512 KB; modern Postgres TEXT handles this
-# easily and the LLM context window (~200K tokens for opus-4-6) has
-# room to spare.
-_STDOUT_KEEP_BYTES = 512_000
-
-# Max bytes of stdout to render per *historical* turn into the next
-# turn's prompt. The most recent turn is always rendered uncut so the
-# agent can see the full output of the script it just ran.
-_HISTORY_STDOUT_PER_TURN = 80_000
-
 # How many recent turns to render into the next turn's prompt history.
 _HISTORY_WINDOW_TURNS = 10
-
-
-def _sanitize_for_postgres_text(s: str | None) -> str | None:
-    """Strip bytes that PostgreSQL TEXT columns refuse to store.
-
-    PostgreSQL rejects ``\\x00`` (NUL) bytes in TEXT/VARCHAR columns
-    with ``CharacterNotInRepertoireError``. They appear in our pipeline
-    when the agent runs ``strings`` or raw byte-carving against packed
-    binaries. If they reach the agent_steps INSERT they kill the whole
-    investigation: the worker catches the exception, the dispatcher
-    records "no response", and the row is left frozen in ``running``
-    forever.
-
-    Replace NULs with the unicode replacement character so the bytes
-    are still visible to the LLM on the next turn (it can see "binary
-    block, replaced ``\ufffd`` chars") without poisoning the DB write.
-    ``None`` is preserved as ``None`` so nullable columns stay null.
-    """
-    if s is None:
-        return None
-    if "\x00" not in s:
-        return s
-    return s.replace("\x00", "\ufffd")
-
-
-# Persisted step reasoning stays valid JSON at any turn size: free text is
-# bounded per field before serialization instead of slicing the serialized
-# string, which would cut the JSON mid-token.
-_STEP_REASONING_MAX_CHARS = 6000
-_STEP_FIELD_MAX_CHARS = 2000
-
-
-def _bound_text(value: str, limit: int) -> str:
-    if len(value) <= limit:
-        return value
-    return f"{value[:limit]}... [{len(value) - limit} chars truncated]"
-
-
-def _bound_strings(value: Any, limit: int) -> Any:
-    """Return ``value`` with every string leaf bounded to ``limit`` characters."""
-    if isinstance(value, str):
-        return _bound_text(value, limit)
-    if isinstance(value, dict):
-        return {key: _bound_strings(item, limit) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_bound_strings(item, limit) for item in value]
-    return value
-
-
-def _compose_step_reasoning(turn: dict[str, Any]) -> str:
-    """Build the persisted reasoning blob used by the UI and write-up."""
-    blob = {
-        "reasoning": _bound_text(str(turn.get("reasoning") or ""), _STEP_REASONING_MAX_CHARS),
-        "expected_observation": turn.get("expected_observation", ""),
-        "strategy_family": turn.get("strategy_family", "generic"),
-        "contract": turn.get("contract", {}),
-        "hypotheses": turn.get("hypotheses", []),
-        "rejected": turn.get("rejected", []),
-        # Auto-bucketed hypotheses at terminal submit (issue #175).
-        # Empty on non-terminal turns; consumers must not treat
-        # ``resolved`` as an alternative to ``rejected``.
-        "resolved": turn.get("resolved", []),
-        "observables": turn.get("observables", {}),
-        "evidence_graph": turn.get("evidence_graph", {}),
-        "provenance": turn.get("provenance", {}),
-        "submitted": bool(turn.get("submitted")),
-    }
-    bounded = {
-        key: value if key == "reasoning" else _bound_strings(value, _STEP_FIELD_MAX_CHARS)
-        for key, value in blob.items()
-    }
-    # ``default=str`` renders any non-JSON value (enum, datetime) as text, so
-    # serialization cannot fail and there is no non-JSON fallback.
-    return json.dumps(bounded, ensure_ascii=False, default=str)
 
 
 class HonestInvestigator:
@@ -455,7 +311,7 @@ class HonestInvestigator:
         # rendered into turn 1's history slot. Cleared after consumption.
         self._parent_summary: str | None = None
         # Denormalised copy of the parent project's ``team_id`` (#59).
-        # Populated by :meth:`_load_project_context` on the first turn
+        # Populated by ``analyzer_actions.load_project_context`` on the first turn
         # so every persisted ``AgentStepRecord`` / ``AnswerCandidateRecord``
         # / summary flip carries the same tenant marker as the parent
         # ``InvestigationRunRecord`` -- the team-scope listener then
@@ -481,7 +337,6 @@ class HonestInvestigator:
         from sqlmodel import select
 
         from aila.modules.forensics.db_models import (
-            AgentStepRecord,
             AnswerCandidateRecord,
             InvestigationRunRecord,
         )
@@ -494,7 +349,7 @@ class HonestInvestigator:
             max_turns, (question or "")[:120],
         )
 
-        evidence_listing, evidence_dir, project_kind, project_team_id = await self._load_project_context()
+        evidence_listing, evidence_dir, project_kind, project_team_id = await analyzer_actions.load_project_context(project_id=self.project_id)
         # Cache the parent project's team_id on the agent so downstream
         # per-turn persistence stamps it onto every child row (#59).
         self.team_id = project_team_id
@@ -566,7 +421,7 @@ class HonestInvestigator:
             # Each turn owns its own UoW. A crash in one turn must NOT
             # roll back earlier turns' persisted steps/answers.
             try:
-                artifacts_snapshot = await self._snapshot_artifacts()
+                artifacts_snapshot = await analyzer_actions.snapshot_artifacts(project_id=self.project_id)
                 turn_result = await self._run_turn(
                     question=question,
                     turn=turn,
@@ -613,19 +468,13 @@ class HonestInvestigator:
             # Persist step in its own UoW.
             try:
                 async with UnitOfWork() as step_uow:
-                    step_uow.session.add(AgentStepRecord(
+                    step_uow.session.add(build_step_record(
                         investigation_id=self.investigation_id,
                         # Denormalised parent team_id (#59) so the
                         # team-scope listener auto-filters step reads.
                         team_id=self.team_id,
                         step_number=turn,
-                        action=turn_result.get("action", "reasoning"),
-                        script_content=_sanitize_for_postgres_text(turn_result.get("script_content")),
-                        command=_sanitize_for_postgres_text(turn_result.get("command")),
-                        stdout=_sanitize_for_postgres_text(turn_result.get("stdout")),
-                        stderr=_sanitize_for_postgres_text(turn_result.get("stderr")),
-                        exit_code=turn_result.get("exit_code"),
-                        reasoning=_sanitize_for_postgres_text(_compose_step_reasoning(turn_result)),
+                        turn_result=turn_result,
                     ))
                     # Bump attempts_used incrementally so the frontend
                     # sees progress without waiting for the final commit.
@@ -906,7 +755,7 @@ class HonestInvestigator:
     ) -> dict[str, Any]:
         case_state = self._case_state()
         case_model = self.reasoning_engine.render_case_model(case_state)
-        prev_text = self._render_previous(previous[-_HISTORY_WINDOW_TURNS:])
+        prev_text = analyzer_actions.render_previous(previous[-_HISTORY_WINDOW_TURNS:])
         # On turn 1 of an enriched rerun, prepend the parent-attempt
         # summary into the `previous` slot so the LLM sees what the
         # earlier run found before it picks its first action. The block
@@ -919,7 +768,10 @@ class HonestInvestigator:
                 + prev_text
             )
             self._parent_summary = None
-        steering = await self._load_operator_steering()
+        steering = await analyzer_actions.load_operator_steering(
+            project_id=self.project_id,
+            investigation_id=self.investigation_id,
+        )
         domain_profile = self.reasoning_engine.resolve_domain_profile("forensics")
         strategy_family = self.reasoning_engine.select_strategy_family(
             question=question,
@@ -1061,7 +913,13 @@ class HonestInvestigator:
                     f"Turn {turn}: executing script on analyzer ({len(script)} chars)",
                     {"stage": "ssh_exec_script", "step": turn, "script": script},
                 )
-            exec_res = await self._execute_script(script)
+            exec_res = await analyzer_actions.execute_script(
+                settings=self.settings,
+                integration=self.integration,
+                analyzer_os=self.analyzer_os,
+                investigation_id=self.investigation_id,
+                script_content=script,
+            )
             result.update(exec_res)
             if emitter:
                 await emitter.emit(
@@ -1083,14 +941,25 @@ class HonestInvestigator:
                 result["stderr"] = "LLM emitted tool_run with empty command"
                 result["exit_code"] = 1
                 return result
-            result["command"] = cmd
+            try:
+                shell_cmd = analyzer_actions.parse_tool_run_command(cmd)
+            except ToolRunContractError as exc:
+                result["stderr"] = str(exc)
+                result["exit_code"] = 1
+                return result
+            result["command"] = shell_cmd
             if emitter:
                 await emitter.emit(
                     "freeflow",
-                    f"Turn {turn}: running command -- {cmd[:160]}",
-                    {"stage": "ssh_exec_command", "step": turn, "command": cmd},
+                    f"Turn {turn}: running command -- {shell_cmd[:160]}",
+                    {"stage": "ssh_exec_command", "step": turn, "command": shell_cmd},
                 )
-            exec_res = await self._execute_command(cmd)
+            exec_res = await analyzer_actions.execute_command(
+                settings=self.settings,
+                integration=self.integration,
+                investigation_id=self.investigation_id,
+                command=shell_cmd,
+            )
             result.update(exec_res)
             if emitter:
                 await emitter.emit(
@@ -1109,26 +978,14 @@ class HonestInvestigator:
         if action == 'artifact_query':
             # Let the agent search/filter project artifacts by family, type, or text.
             search_text = (decision.command or '').strip()  # reuse command field for search query
-            family_filter = self.observables.get('_artifact_family', '')
-            type_filter = self.observables.get('_artifact_type', '')
-            from aila.modules.forensics.tools.artifact_query import ArtifactQueryTool
-            tool = ArtifactQueryTool(self.settings)
-            try:
-                query_result = await tool.forward(
-                    action='search' if search_text else 'list',
-                    project_id=self.project_id,
-                    artifact_family=family_filter or None,
-                    artifact_type=type_filter or None,
-                    search_text=search_text or None,
-                    limit=20,
-                )
-                import json as _json
-                result['stdout'] = _json.dumps(query_result, default=str)[:_STDOUT_KEEP_BYTES]
-                result['exit_code'] = 0
-                result['command'] = f'artifact_query search={search_text!r} family={family_filter!r} type={type_filter!r}'
-            except (ValueError, RuntimeError, OSError, KeyError) as exc:
-                result['stderr'] = f'artifact_query failed: {exc}'
-                result['exit_code'] = 1
+            exec_res = await analyzer_actions.execute_artifact_query(
+                settings=self.settings,
+                project_id=self.project_id,
+                search_text=search_text,
+                artifact_family=self.observables.get('_artifact_family', ''),
+                artifact_type=self.observables.get('_artifact_type', ''),
+            )
+            result.update(exec_res)
             if emitter:
                 await emitter.emit(
                     'freeflow',
@@ -1389,185 +1246,7 @@ class HonestInvestigator:
             + ("..." if len(unresolved) > 5 else "")
         )
 
-    def _render_previous(self, prev: list[dict[str, Any]]) -> str:
-        if not prev:
-            return ""
-
-        def _trunc(label: str, value: str | None, limit: int | None) -> str | None:
-            if not value:
-                return None
-            s = str(value)
-            if limit is None or len(s) <= limit:
-                return f"  {label}: {s}"
-            kept = s[:limit]
-            dropped = len(s) - limit
-            return (
-                f"  {label}: {kept}\n"
-                f"  ...[truncated {dropped:,} more bytes -- re-run with grep/head/tail "
-                f"to view more]"
-            )
-
-        out: list[str] = []
-        last_idx = len(prev) - 1
-        for i, s in enumerate(prev):
-            is_last = (i == last_idx)
-            # The most recent turn is rendered uncut so the agent can
-            # act on the freshest evidence. Older turns get a generous
-            # per-turn budget (_HISTORY_STDOUT_PER_TURN) instead of the
-            # old 600-char cap that was hiding multi-entry log dumps.
-            stdout_limit = None if is_last else _HISTORY_STDOUT_PER_TURN
-            stderr_limit = None if is_last else 4_000
-            reasoning_limit = None if is_last else 2_000
-
-            out.append(
-                f"[turn {s.get('step_number', '?')}] "
-                f"action={s.get('action', '?')}"
-                + ("  (most recent)" if is_last else "")
-            )
-            line = _trunc("reasoning", s.get("reasoning"), reasoning_limit)
-            if line:
-                out.append(line)
-            line = _trunc("command  ", s.get("command"), 1_000)
-            if line:
-                out.append(line)
-            line = _trunc("script   ", s.get("script_content"), 4_000)
-            if line:
-                out.append(line)
-            if s.get("exit_code") is not None:
-                out.append(f"  exit     : {s['exit_code']}")
-            line = _trunc("stdout   ", s.get("stdout"), stdout_limit)
-            if line:
-                out.append(line)
-            line = _trunc("stderr   ", s.get("stderr"), stderr_limit)
-            if line:
-                out.append(line)
-        return "\n".join(out)
-
-    # --------------------------------------------------- execution helpers
-
-    async def _execute_script(self, script_content: str) -> dict[str, Any]:
-        """Execute a Python script on the analyzer via ``ScriptExecutorTool``.
-
-        Safety blocklist is applied here; all SSH, temp-file handling, and
-        OS dispatch are owned by the tool.
-        """
-        rejection = script_rejection(script_content)
-        if rejection is not None:
-            _log.warning("script blocked for investigation %s: %s", self.investigation_id, rejection)
-            return {"stdout": "", "stderr": rejection, "exit_code": 1}
-
-        # Pre-flight syntax check -- catch IndentationError/SyntaxError before
-        # wasting an SSH round-trip and a turn on broken Python.
-        try:
-            compile(script_content, '<investigator_script>', 'exec')
-        except SyntaxError as syn_err:
-            msg = f'SyntaxError before execution (line {syn_err.lineno}): {syn_err.msg}'
-            _log.warning('script syntax error for investigation %s: %s', self.investigation_id, msg)
-            return {'stdout': '', 'stderr': msg, 'exit_code': 1}
-
-        # Pre-flight dissect API lint -- catch the top mistakes before SSH.
-        _dissect_mistakes = [
-            ('Target(', 'Target.open(', 'Use Target.open(path), not Target(path)'),
-            ('.rglob(', '.walk(', 'RootFilesystem has no rglob(). Use t.fs.walk() or t.fs.path().iterdir()'),
-            ('.get_value(', '.value(', 'RegfKey has no get_value(). Use key.value(name)'),
-            ('.iter_values(', '.values()', 'RegfKey has no iter_values(). Use key.values()'),
-            ('.get_subkey(', '.subkeys()', 'RegfKey has no get_subkey(). Use key.subkeys()'),
-            ('hive.get_key(', 't.registry.key(', 'Do not open raw regf hives. Use t.registry.key(path)'),
-            ('RegistryHive(', 't.registry.key(', 'Do not open raw regf hives. Use t.registry.key(path)'),
-        ]
-        for bad, good, explanation in _dissect_mistakes:
-            if bad not in script_content:
-                continue
-            if bad == 'Target(' and 'Target.open(' in script_content.split(bad, maxsplit=1)[0][-20:]:
-                continue
-            msg = f'API mistake: found `{bad}` -- {explanation}. Use `{good}` instead.'
-            _log.warning('script API lint for investigation %s: %s', self.investigation_id, msg)
-            return {'stdout': '', 'stderr': msg, 'exit_code': 1}
-
-        from aila.modules.forensics.tools.script_tool import ScriptExecutorTool
-
-        tool = ScriptExecutorTool(self.settings)
-        result = await tool.forward(
-            script_content=script_content,
-            integration=self.integration,
-            analyzer_os=self.analyzer_os,
-            timeout_seconds=await _read_float_config("script_execution_timeout_seconds"),
-        )
-        stdout = _sanitize_for_postgres_text(
-            (result.get("stdout") or "")[:_STDOUT_KEEP_BYTES]
-        )
-        return {
-            "stdout": stdout,
-            "stderr": _sanitize_for_postgres_text(result.get("stderr") or ""),
-            "exit_code": result.get("exit_code", 0),
-        }
-
-    async def _execute_command(self, command: str) -> dict[str, Any]:
-        """Run a shell command on the analyzer via the platform SSH service.
-
-        The ``_command_rejection`` guard enforces static-analysis-only
-        policy: network fetchers (curl, wget, invoke-webrequest),
-        transports (ncat, ssh, ftp), scanners (nmap, ping), sample
-        detonators (rundll32, mshta, wine) and container launchers are
-        refused before they reach SSH.
-        """
-        rejection = _command_rejection(command)
-        if rejection is not None:
-            _log.warning("command blocked for investigation %s: %s", self.investigation_id, rejection)
-            return {"stdout": "", "stderr": rejection, "exit_code": 1}
-
-        from aila.modules.forensics.tools._ssh_helper import get_ssh_service
-
-        ssh = await get_ssh_service(self.settings)
-        try:
-            stdout = await ssh.run_command(
-                self.integration, command,
-                timeout_seconds=await _read_float_config("ssh_command_timeout_seconds"),
-            )
-            return {
-                "stdout": _sanitize_for_postgres_text((stdout or "")[:_STDOUT_KEEP_BYTES]),
-                "stderr": "",
-                "exit_code": 0,
-            }
-        except (OSError, TimeoutError, RuntimeError, AILAError) as exc:
-            return {
-                "stdout": "",
-                "stderr": _sanitize_for_postgres_text(str(exc)[:2000]),
-                "exit_code": 1,
-            }
-
     # ------------------------------------------------------ context loaders
-
-    async def _load_project_context(self) -> tuple[str, str, str, str | None]:
-        """Return ``(evidence_listing, evidence_dir, project_kind, team_id)``."""
-        from sqlmodel import select
-
-        from aila.modules.forensics.db_models import (
-            ForensicsProjectRecord,
-            ProjectEvidenceRecord,
-        )
-        from aila.platform.uow import UnitOfWork
-
-        async with UnitOfWork() as uow:
-            project = (await uow.session.exec(
-                select(ForensicsProjectRecord).where(ForensicsProjectRecord.id == self.project_id)
-            )).first()
-            evidence_rows = (await uow.session.exec(
-                select(ProjectEvidenceRecord).where(
-                    ProjectEvidenceRecord.project_id == self.project_id
-                )
-            )).all()
-
-        evidence_dir = project.evidence_directory if project else "/evidence"
-        project_kind = project.project_kind if project else "disk_evidence"
-        team_id = project.team_id if project else None
-        if not evidence_rows:
-            return "", evidence_dir, project_kind, team_id
-        lines = [
-            f"- {r.file_path} ({r.evidence_type}, {r.size_bytes or '?'} bytes)"
-            for r in evidence_rows
-        ]
-        return "\n".join(lines[:80]), evidence_dir, project_kind, team_id
 
     async def _load_parent_findings(self) -> str | None:
         """Hydrate observables from the parent attempt and render a summary.
@@ -1678,149 +1357,3 @@ class HonestInvestigator:
         if len(rendered) > 4000:
             rendered = rendered[:3997] + "..."
         return rendered
-
-    async def _load_operator_steering(self) -> ReasoningOperatorSteering:
-        """Return structured analyst steering for the current turn.
-
-        Project-wide directives apply first, then investigation-scoped ones.
-        Structured fields (``strategy_family`` / ``required_artifact``) take
-        precedence over legacy text conventions like ``strategy: <family>``.
-        """
-        from sqlmodel import select
-
-        from aila.modules.forensics.db_models import AnalystDirectiveRecord
-        from aila.platform.uow import UnitOfWork
-
-        async with UnitOfWork() as uow:
-            stmt = select(AnalystDirectiveRecord).where(
-                AnalystDirectiveRecord.project_id == self.project_id,
-                AnalystDirectiveRecord.active.is_(True),  # type: ignore[union-attr]
-                (AnalystDirectiveRecord.investigation_id.is_(None))  # type: ignore[union-attr]
-                | (AnalystDirectiveRecord.investigation_id == self.investigation_id),
-            )
-            rows = (await uow.session.exec(stmt)).all()
-        if not rows:
-            return ReasoningOperatorSteering()
-        rows_sorted = sorted(rows, key=lambda r: (r.investigation_id is not None, r.created_at))
-
-        steering = ReasoningOperatorSteering()
-        for row in rows_sorted:
-            scope = "I" if row.investigation_id else "P"
-            stamp = row.created_at.strftime("%Y-%m-%d %H:%M") if row.created_at else "?"
-            text = (row.text or "").strip().replace("\n", " ")
-            if len(text) > 600:
-                text = text[:597] + "..."
-            line = f"[{scope}] {stamp} -- {text}"
-            if row.strategy_family and row.verdict is None:
-                steering.pinned_strategy_family = row.strategy_family
-            if row.required_artifact and row.verdict is None:
-                steering.required_artifacts.append(f"[{scope}] {row.required_artifact}")
-
-            lowered = text.lower()
-            if lowered.startswith("strategy:") and row.verdict is None and steering.pinned_strategy_family is None:
-                candidate = text.split(":", 1)[1].strip().lower()
-                if candidate in {
-                    "filesystem_triage",
-                    "persistence_hunt",
-                    "memory_forensics",
-                    "network_forensics",
-                    "malware_static",
-                    "vulnerability_research",
-                    "web_pentest",
-                    "mobile_reverse",
-                    "generic",
-                }:
-                    steering.pinned_strategy_family = candidate  # type: ignore[assignment]
-                    continue
-            if lowered.startswith("artifact:") and row.verdict is None and not row.required_artifact:
-                artifact = text.split(":", 1)[1].strip()
-                if artifact:
-                    steering.required_artifacts.append(f"[{scope}] {artifact}")
-                    continue
-            if row.verdict == "true":
-                steering.confirmed_facts.append(line)
-            elif row.verdict == "false":
-                steering.disproved_hypotheses.append(line)
-            else:
-                steering.guidance.append(line)
-        return steering
-
-    async def _snapshot_artifacts(self) -> str:
-        """Compact artefact snapshot for prompt injection.
-
-        Unlike the old agent, this function does NOT inject CTF-shaped
-        keywords (``win_apis``, ``telegram_overlay_root``, …). It emits a
-        neutral shape: family -> type -> top records -> key=value fields.
-        """
-        from sqlmodel import select
-
-        from aila.modules.forensics.db_models import ArtifactRecord, LeadRecord
-        from aila.platform.uow import UnitOfWork
-
-        async with UnitOfWork() as uow:
-            artifacts = (await uow.session.exec(
-                select(ArtifactRecord)
-                .where(ArtifactRecord.project_id == self.project_id)
-                .order_by(ArtifactRecord.lead_score.desc())
-                .limit(60)
-            )).all()
-            leads = (await uow.session.exec(
-                select(LeadRecord)
-                .where(LeadRecord.project_id == self.project_id)
-                .order_by(LeadRecord.score.desc())
-                .limit(10)
-            )).all()
-
-        if not artifacts and not leads:
-            return ""
-
-        sections: list[str] = []
-
-        if leads:
-            sections.append("== LEADS (highest score) ==")
-            for lead in leads:
-                sections.append(
-                    f"  [lead:{lead.id}] family={lead.artifact_family} score={lead.score:.0f} reason={lead.reason[:200]}"
-                )
-
-        by_family: dict[str, list[ArtifactRecord]] = {}
-        for art in artifacts:
-            by_family.setdefault(art.artifact_family or "unknown", []).append(art)
-
-        for family, arts in sorted(by_family.items(), key=lambda x: -max((a.lead_score or 0) for a in x[1])):
-            sections.append(f"\n== {family.upper()} ({len(arts)} artefacts) ==")
-            for art in arts[:8]:
-                try:
-                    data = json.loads(art.data_json) if art.data_json else {}
-                except (json.JSONDecodeError, TypeError):
-                    data = {}
-                head = f"  [art:{art.id}] type={art.artifact_type} score={art.lead_score or 0:.0f}"
-                if isinstance(data, dict):
-                    flat: list[str] = []
-                    for k, v in list(data.items())[:8]:
-                        if k.startswith("_"):
-                            continue
-                        if v in (None, "", [], {}):
-                            continue
-                        if isinstance(v, (list, dict)):
-                            rendered = json.dumps(v, default=str)[:140]
-                        else:
-                            rendered = str(v)[:140]
-                        flat.append(f"{k}={rendered}")
-                    if flat:
-                        head = head + " | " + " | ".join(flat)
-                sections.append(head)
-                if isinstance(data, dict):
-                    records = data.get("records")
-                    if isinstance(records, list):
-                        real = [r for r in records if isinstance(r, dict) and r.get("_type") != "recorddescriptor"]
-                        for rec in real[:6]:
-                            pairs = [
-                                f"{k}={str(v)[:120]}"
-                                for k, v in list(rec.items())[:6]
-                                if not k.startswith("_") and v not in (None, "", [], {})
-                            ]
-                            if pairs:
-                                sections.append("    - " + " | ".join(pairs))
-
-        return "\n".join(sections)[:18_000]

@@ -15,10 +15,20 @@ from __future__ import annotations
 from typing import Any
 
 from aila.modules.forensics.workflow.definitions import FORENSICS_DISPATCHER_V1
+
+# Import the panel task modules at the ordinary forensics task import root so
+# worker boot registers every forensics callable without a separate import list.
+from aila.modules.forensics.workflow.panel.task import run_forensics_panel_investigate
+from aila.modules.forensics.workflow.panel.writeup import run_forensics_panel_writeup
 from aila.platform.tasks.context import TaskContext
 from aila.platform.tasks.template import platform_task
 
-__all__ = ["run_forensics_analysis", "run_forensics_investigation"]
+__all__ = [
+    "run_forensics_analysis",
+    "run_forensics_investigation",
+    "run_forensics_panel_investigate",
+    "run_forensics_panel_writeup",
+]
 
 
 @platform_task(

@@ -406,6 +406,22 @@ freeflow → writeup → response_emit
 | **Free-Flow** | Bounded LLM investigation loop driven by `agents/investigator.py`. The investigator is strategy-NEUTRAL -- no hardcoded playbooks, no keyword routers, no pre-written profile bodies. It receives the artifact graph + Valuable Items + OS-dispatched system prompts, sets goals each turn, writes Python or shell commands, runs them via the script tool, learns from output, iterates ≤10× |
 | **Write-Up**  | Same writer as the full analysis variant, narrated against the freeflow trajectory                                                                                                                                                                                                                                                                                                            |
 
+### `FORENSICS_INVESTIGATE_PANEL_V1`
+
+Start an investigation with `mode="panel"` to run three examiner branches on the shared platform turn runner:
+
+- **HALVAR** is the lead examiner and builds an answer from primary evidence.
+- **MADDIE** is the critic and falsifies weak claims or missing provenance.
+- **RENZO** independently corroborates the evidence chain and timeline.
+
+Each branch runs the same forensics analyzer actions as free-flow: structured `tool_run` commands, Python `script_execute`, and `artifact_query`. Analyzer results become investigation steps and branch messages, which the next turn reads back. The branch turn budget is `forensics.max_turns_per_task`, and the `forensics.freeflow_max_cost_usd` ceiling covers all three branches together.
+
+The first submitted answer becomes the canonical draft. Siblings vote through `submit_outcome_review`; approval requires the platform quorum and one evidence-backed reject vetoes the draft. Sibling review is the panel's evidence gate. There is no separate forensics `validate_submission` gate in this workflow. Approval dispatches the answer to the investigation, creates an answer candidate, and persists its artifacts. After a rejection, another examiner may submit a successor answer and closed reviewers are re-driven so the successor can reach quorum. Each examiner may propose only once, which bounds the deliberation to three drafts.
+
+A branch closes when its own loop ends. After no branch remains active or paused, the shared panel finalizer completes an approved answer, fails a rejected answer, or marks an unfinished or cost-capped panel exhausted with the reason in `final_answer`. The `forensics.finalize` sweep retries settlement and `forensics.branch_reaper` closes terminal-parent orphans. The finalizer enqueues `FORENSICS_PANEL_WRITEUP_V1`, which reuses the ordinary promotion and write-up states instead of generating a report inside the short emit timeout.
+
+The investigation drill-down shows the panel's branches, outcome votes, provenance, contributions, and recent analyzer messages. Free-flow investigations have no branch rows and therefore do not show this section.
+
 `FORENSICS_RAW_DIRECTORY_V1` is a side variant for projects rooted at a raw filesystem directory rather than a single evidence artefact; it runs the same stages with adjusted intake.
 
 ---
@@ -416,7 +432,7 @@ The freeflow investigator is strategy-neutral by design. Replaces the prior stra
 
 - One OS-dispatched system prompt (Windows / Linux / macOS variants) names the closed-loop protocol explicitly: every step is `hypothesis → action → observation → refinement`.
 - The agent sees the full normalized artifact graph (not a curated subset), the Valuable Items rollup, and the running history of prior steps.
-- The agent picks its own tool: shell command, Python script (uploaded via `ScriptTool`), or a structured Dissect / Volatility / tshark / Zeek action.
+- The agent picks its own tool: a JSON `tool_run` command naming `analyzer.run_command`, a Python script (uploaded via `ScriptTool`), or a structured Dissect / Volatility / tshark / Zeek action.
 - Output is graded twice per investigation: (a) answer correctness; (b) whether a DFIR / CTF-grade report can be produced from the captured trajectory alone, without re-running the case.
 
 ### Stop semantics
@@ -502,10 +518,11 @@ All endpoints use `DataEnvelope[T]`, platform auth, and rate limiting.
 | `GET`  | `/forensics/projects/:id/findings`                                    | Confident findings extracted from artifacts                      |
 | `GET`  | `/forensics/projects/:id/artifacts`                                   | Query artifacts (family / type filter, paginated)                |
 | `GET`  | `/forensics/projects/:id/leads`                                       | Top promoted leads                                               |
-| `POST` | `/forensics/projects/:id/investigate`                                 | Start a free-flow investigation                                  |
+| `POST` | `/forensics/projects/:id/investigate`                                 | Start a free-flow or panel investigation                         |
 | `POST` | `/forensics/projects/:id/investigations/:iid/rerun`                   | Rerun an investigation, carrying prior findings forward          |
 | `GET`  | `/forensics/projects/:id/investigations`                              | List investigation runs                                          |
 | `GET`  | `/forensics/projects/:id/investigations/:iid`                         | Investigation detail with agent steps                            |
+| `GET`  | `/forensics/projects/:id/investigations/:iid/panel`                   | Panel branches, outcome votes, and recent branch messages        |
 | `GET`  | `/forensics/projects/:id/investigations/:iid/reasoning-graphs`        | Durable reasoning-graph snapshots                                |
 | `GET`  | `/forensics/projects/:id/investigations/:iid/reasoning-graphs/diff`   | Diff two reasoning-graph snapshots                               |
 | `POST` | `/forensics/projects/:id/investigations/:iid/cancel`                  | Hard-cancel a running investigation                              |

@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from aila.modules.forensics.agents.investigator import HonestInvestigator
+from aila.modules.forensics.services import analyzer_actions
 from aila.modules.forensics.tools.script_tool import ScriptExecutorTool
 
 _INTEGRATION: dict = {
@@ -94,11 +94,15 @@ async def test_forward_benign_script_uploads_and_runs_once() -> None:
 
 async def test_investigator_execute_script_returns_policy_rejection() -> None:
     """The investigator pre-check returns the shared rejection and never reaches the tool."""
-    inv = HonestInvestigator.__new__(HonestInvestigator)
-    inv.investigation_id = "inv-test-310"
     forward = AsyncMock()
     with patch.object(ScriptExecutorTool, "forward", new=forward):
-        result = await inv._execute_script("import socket\n")
+        result = await analyzer_actions.execute_script(
+            settings=None,
+            integration=_INTEGRATION,
+            analyzer_os="linux",
+            investigation_id="inv-test-310",
+            script_content="import socket\n",
+        )
 
     assert result["exit_code"] == 1
     assert result["stdout"] == ""
@@ -107,22 +111,21 @@ async def test_investigator_execute_script_returns_policy_rejection() -> None:
 
 
 async def _run_investigator_script(script: str) -> tuple[dict, AsyncMock]:
-    """Run ``_execute_script`` with the executor and timeout config stubbed."""
-    from aila.modules.forensics.agents import investigator as investigator_module
-
-    inv = HonestInvestigator.__new__(HonestInvestigator)
-    inv.investigation_id = "inv-test-439"
-    inv.settings = None
-    inv.integration = _INTEGRATION
-    inv.analyzer_os = "linux"
+    """Run ``analyzer_actions.execute_script`` with the executor and timeout config stubbed."""
     forward = AsyncMock(return_value={"stdout": "ok\n", "stderr": "", "exit_code": 0})
     with (
         patch.object(ScriptExecutorTool, "forward", new=forward),
         patch.object(
-            investigator_module, "_read_float_config", new=AsyncMock(return_value=30.0),
+            analyzer_actions, "_read_float_config", new=AsyncMock(return_value=30.0),
         ),
     ):
-        result = await inv._execute_script(script)
+        result = await analyzer_actions.execute_script(
+            settings=None,
+            integration=_INTEGRATION,
+            analyzer_os="linux",
+            investigation_id="inv-test-439",
+            script_content=script,
+        )
     return result, forward
 
 

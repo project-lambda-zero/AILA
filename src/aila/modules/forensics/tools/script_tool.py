@@ -159,7 +159,7 @@ class ScriptExecutorTool(Tool):
         # Connection-level failures (AuthenticationError, UpstreamError,
         # platform TimeoutError) now propagate to the caller by design --
         # they mean "the script never ran", not "the script exited
-        # nonzero", and the callers (investigator._execute_script,
+        # nonzero", and the callers (analyzer_actions.execute_script,
         # file_retriever._run_script_and_pull) surface them as 5xx.
         try:
             stdout, stderr, exit_code = await ssh.run_command_full(

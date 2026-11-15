@@ -297,3 +297,105 @@ async def test_low_confidence_pause_on_last_turn_keeps_paused_exit() -> None:
     assert result.output["exit_reason"].startswith("inv_status_flipped:")
     status, _ = await _investigation_state(inv_id)
     assert status == InvestigationStatus.PAUSED.value
+
+
+class _StubDispatcher:
+    """Fake ActionDispatcher that returns scripted outcomes in call order."""
+
+    def __init__(self, outcomes: list[Any]) -> None:
+        self._outcomes = list(outcomes)
+        self.calls: list[dict] = []
+
+    async def __call__(self, **kwargs: object):
+        self.calls.append(kwargs)
+        return self._outcomes.pop(0)
+
+
+def _hard_blocked() -> SimpleNamespace:
+    return SimpleNamespace(
+        server_id="s", tool_name="t", success=False,
+        error="HARD-BLOCKED: identical call already failed",
+    )
+
+
+def _dispatcher_handler(researcher: Any, dispatcher: Any):
+    bindings = InvestigationStateBindings(
+        inv_model=VRInvestigationRecord,
+        branch_model=VRInvestigationBranchRecord,
+        researcher_factory=lambda *a: researcher,
+        action_dispatcher=dispatcher,
+        max_turns_reader=lambda: _reader(5),
+        researcher_error=_StubError,
+        track="vr",
+        branch_table="vr_investigation_branches",
+    )
+    return state_investigation_loop(bindings, InvestigationStateHooks())
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_dispatcher_none_turn_resets_hard_block_streak() -> None:
+    inv_id, br_id = await _seed(InvestigationStatus.RUNNING)
+    tool_run = '{"tool": "x", "args": {}}'
+    researcher = _StubResearcher([
+        _result(1, "tool_run", terminal=False, command=tool_run),
+        _result(2, "tool_run", terminal=False, command=tool_run),
+        _result(3, "reason", terminal=False),
+        _result(4, "tool_run", terminal=False, command=tool_run),
+        _result(5, "tool_run", terminal=False, command=tool_run),
+        _result(6, "reason", terminal=True, outcome_id="o6"),
+    ])
+    dispatcher = _StubDispatcher([_hard_blocked(), _hard_blocked(), None,
+                                  _hard_blocked(), _hard_blocked()])
+    handler = _dispatcher_handler(researcher, dispatcher)
+
+    result = await handler(
+        {"investigation_id": inv_id, "branch_id": br_id, "max_turns": 10},
+        SimpleNamespace(llm_client=None),
+    )
+
+    assert result.output["exit_reason"] == "terminal_submit"
+    assert result.output["last_turn_idx"] == 6
+    assert [call["at_turn"] for call in dispatcher.calls] == [1, 2, 3, 4, 5]
+
+
+@pytest.mark.usefixtures("test_db")
+async def test_consecutive_hard_blocks_from_dispatcher_exit_loop() -> None:
+    inv_id, br_id = await _seed(InvestigationStatus.RUNNING)
+    researcher = _StubResearcher([
+        _result(i, "tool_run", terminal=False, command='{"tool": "x", "args": {}}')
+        for i in range(1, 6)
+    ])
+    dispatcher = _StubDispatcher([_hard_blocked() for _ in range(5)])
+    handler = _dispatcher_handler(researcher, dispatcher)
+
+    result = await handler(
+        {"investigation_id": inv_id, "branch_id": br_id, "max_turns": 10},
+        SimpleNamespace(llm_client=None),
+    )
+
+    assert result.output["exit_reason"] == "tool_loop_blocked"
+    assert result.output["last_turn_idx"] == 3
+    assert len(dispatcher.calls) == 3
+
+
+@pytest.mark.parametrize(
+    ("bind_executor", "bind_dispatcher"),
+    [(True, True), (False, False)],
+)
+def test_loop_requires_exactly_one_action_binding(
+    bind_executor: bool, bind_dispatcher: bool,
+) -> None:
+    bindings = InvestigationStateBindings(
+        inv_model=VRInvestigationRecord,
+        branch_model=VRInvestigationBranchRecord,
+        researcher_factory=lambda *a: None,
+        executor_factory=_StubExecutor if bind_executor else None,
+        action_dispatcher=_StubDispatcher([]) if bind_dispatcher else None,
+        max_turns_reader=lambda: _reader(5),
+        researcher_error=_StubError,
+        track="vr",
+        branch_table="vr_investigation_branches",
+    )
+
+    with pytest.raises(ValueError):
+        state_investigation_loop(bindings, InvestigationStateHooks())

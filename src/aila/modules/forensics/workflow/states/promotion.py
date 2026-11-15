@@ -105,7 +105,7 @@ _REASON_SKIP_PATH_SEGMENTS: frozenset[str] = frozenset({
 _MATCH_EXCERPT_LEN = 160
 
 
-async def _promote_investigator_artifacts(
+async def promote_investigator_artifacts(
     project_id: str,
     investigation_id: str | None,
 ) -> tuple[int, list[dict[str, Any]], list[Any]]:
@@ -194,7 +194,7 @@ async def state_promotion(
 
     await services.emitter.emit("promotion", "Scoring investigator findings and building Valuable Items list...")
 
-    leads_created, top_leads, all_artifacts = await _promote_investigator_artifacts(project_id, None)
+    leads_created, top_leads, all_artifacts = await promote_investigator_artifacts(project_id, None)
     valuable_items = _build_valuable_items(all_artifacts)
 
     await services.emitter.emit(
@@ -228,7 +228,7 @@ async def state_freeflow_promotion(
     project_id = input.get("project_id", "")
     investigation_id = input.get("investigation_id", "")
 
-    leads_created, top_leads, _ = await _promote_investigator_artifacts(project_id, investigation_id)
+    leads_created, top_leads, _ = await promote_investigator_artifacts(project_id, investigation_id)
 
     await services.emitter.emit(
         "promotion",

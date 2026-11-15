@@ -1071,7 +1071,7 @@ class CyberReasoningEngine:
         if context.prebuilt_sections is not None:
             sections = list(context.prebuilt_sections)
         else:
-            sections = self._prompt_sections(context)
+            sections = self.domain_prompt_sections(context)
         # RFC-24 step 3 -- splice any RETRIEVED-tier sections resolved
         # out-of-band by the async populator on the turn runner. The
         # ``consume`` clears the buffer so a subsequent build without
@@ -1105,10 +1105,14 @@ class CyberReasoningEngine:
             raise
         return assembled.text
 
-    def _prompt_sections(
+    def domain_prompt_sections(
         self, context: ReasoningPromptContext,
     ) -> list[ContextSection]:
         """Break the per-turn prompt into RFC-24 tier-tagged sections.
+
+        Public so a caller that adds its own sections (the forensics panel
+        researcher adds persona, sibling, and review sections) starts from
+        the same domain layout and passes the result as ``prebuilt_sections``.
 
         Tier assignments:
 

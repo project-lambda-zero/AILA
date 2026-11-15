@@ -63,6 +63,7 @@ async def _seed(
     *,
     with_system: bool = True,
     branch_status: str | None = None,
+    team_id: str | None = None,
 ) -> tuple[str, str | None]:
     """Seed a running investigation carrying a stale pause and start stamp.
 
@@ -78,6 +79,7 @@ async def _seed(
             name=f"proj-{suffix}",
             system_id=system.id,
             evidence_directory=f"/evidence/{suffix}",
+            team_id=team_id,
         )
         session.add(project)
         await session.flush()
@@ -90,6 +92,7 @@ async def _seed(
             status=InvestigationStatus.RUNNING.value,
             pause_reason=InvestigationPauseReason.OPERATOR.value,
             started_at=utc_now(),
+            team_id=team_id,
         )
         session.add(inv)
         await session.flush()
@@ -169,7 +172,9 @@ async def test_branched_investigation_without_active_branch_is_refused(
 
 
 async def test_panel_investigation_is_redriven_per_active_branch(fake_queue: _FakeQueue) -> None:
-    inv_id, branch_id = await _seed(branch_status=BranchStatus.ACTIVE.value)
+    inv_id, branch_id = await _seed(
+        branch_status=BranchStatus.ACTIVE.value, team_id="team-recovery",
+    )
 
     summary = await _reenqueue(inv_id)
 
@@ -177,3 +182,4 @@ async def test_panel_investigation_is_redriven_per_active_branch(fake_queue: _Fa
     [call] = fake_queue.calls
     assert call["fn"] is run_forensics_panel_investigate
     assert call["kwargs"] == {"investigation_id": inv_id, "branch_id": branch_id}
+    assert call["team_id"] == "team-recovery"
