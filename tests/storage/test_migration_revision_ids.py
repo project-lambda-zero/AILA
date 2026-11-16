@@ -8,7 +8,7 @@ __all__: list[str] = []
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _MIGRATION_DIR = _REPO_ROOT / "src" / "aila" / "alembic" / "versions"
-_EXPECTED_HEAD = "154_pentest_campaigns"
+_EXPECTED_HEAD = "155_native_pentest_engines"
 
 
 def _assigned_literal(tree: ast.Module, name: str, path: Path) -> object:

@@ -5,6 +5,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.122] - 2026-11-16 -- Native PyRIT, Garak, and Promptfoo campaigns
+
+### Added
+
+- Pentest assessments now execute native Microsoft PyRIT 1.2.0, NVIDIA Garak 0.17.1, and Promptfoo 0.125.1 campaigns through isolated framework processes with durable per-case evidence.
+- The API and console expose installed engine versions, engine-specific campaign inputs, native provenance, per-case statistics, and report schema `pentest.assessment.report.v3`.
+- Pre-provisioning uses separate pinned Python environments for PyRIT and Garak, plus the workspace-pinned Promptfoo CLI on Node 22.22 or newer.
+
+### Changed
+
+- Target requests and scorer calls are mediated by an authenticated parent broker; framework children receive no target, database, or inherited provider credentials.
+- Native external IDs replace positional result identity for checkpoint deduplication. Empty or entirely unscoreable native campaigns fail instead of reporting a successful scan.
+- Fresh database bootstrap registers pentest models so all module tables are created at the current schema head.
+
+### Fixed
+
+- Windows workers supervise native subprocesses on a dedicated Proactor loop while preserving asyncpg and durable result callbacks on the worker's selector loop.
+- Promptfoo uses native CI execution, accepts its test-failure exit status as evidence, and records safe-mode grader failures as unscoreable errors.
+- Protocol overflow, invalid target ports, queue failure, response limits, and broker-token redaction now fail with bounded, honest diagnostics.
+
+### Upgrade notes
+
+- Apply Alembic migration 155 before starting backend and pentest workers. It removes pre-framework assessment rows because they cannot be resumed by native engines.
+- Run `python scripts/install_pentest_frameworks.py` and `pnpm install` before enabling the engines. No framework packages are downloaded during assessments.
+
+---
+
 ## [0.6.121] - 2026-11-16 -- Repeatable bounded pentest campaigns
 
 ### Added
