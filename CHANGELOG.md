@@ -5,6 +5,31 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.121] - 2026-11-16 -- Repeatable bounded pentest campaigns
+
+### Added
+
+- Pentest assessments support one to five attempts per probe, bounded concurrency up to eight requests, and an optional campaign seed passed to OpenAI-compatible targets.
+- The versioned catalog now contains twelve core and extended probes covering instruction hierarchy, jailbreak framing, canary disclosure and transformation, cross-session leakage requests, and benign false refusals.
+- Assessment responses and reports include per-attempt provider seeds, per-probe attack success rates, and hit-at-k observations calculated only from scoreable attempts. The console exposes campaign controls, statistics, and collapsed attempt evidence.
+- Target and assessment history endpoints accept bounded limit and offset parameters.
+
+### Changed
+
+- Campaign execution checkpoints each `(assessment, probe, attempt)` result and resumes only missing attempts. Target responses are streamed with a 256 KiB raw-byte ceiling before JSON parsing, while extracted response text remains capped at 32 KiB.
+- JSON reports use schema `pentest.assessment.report.v2` and record the deterministic engine, catalog version, campaign configuration, statistics, and sampling limitations.
+
+### Fixed
+
+- Redis submission failures raised as `WorkerUnreachableError` now mark the assessment failed with a terminal timestamp instead of leaving it permanently queued.
+- Migration verification registers pentest models and tracks migration 154 as the head.
+
+### Upgrade notes
+
+- Apply Alembic migration 154 before starting the backend and pentest workers. Existing assessments retain one-attempt settings and catalog version `2026.11.0`.
+
+---
+
 ## [0.6.120] - 2026-11-16 -- Deterministic AI endpoint pentest assessments
 
 ### Added
