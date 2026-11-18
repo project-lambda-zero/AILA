@@ -54,6 +54,10 @@ from aila.modules.vr.eval_suites.tasks import (
 )
 from aila.modules.vr.reporting.pdf_report import _collect_facts
 from aila.modules.vr.reporting.poc_writer import PocWriter
+from aila.modules.vr.reporting.tasks import (
+    run_vr_investigation_report,
+    run_vr_masvs_report,
+)
 from aila.modules.vr.services import TargetAnalysisService
 from aila.modules.vr.services.followup_discovery import maybe_spawn_vr_followup
 from aila.modules.vr.services.fuzz_service import FuzzCampaignService
@@ -100,6 +104,8 @@ __all__ = [
     "run_vr_auto_patch",
     "run_vr_eval_collect",
     "run_vr_eval_suite",
+    "run_vr_investigation_report",
+    "run_vr_masvs_report",
     "run_vr_claim_verifier",
     "run_vr_investigate",
     "run_vr_narrative",

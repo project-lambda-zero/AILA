@@ -237,7 +237,7 @@ server-side via `logger.exception(...)`; only the persisted row is sanitized.
 
 ## Report Artifact Protection
 
-- Report artifacts (CSV, JSON, PDF) are stored as **files on the filesystem**, not inline in the database. Only file paths are persisted in `ReportArtifactRecord`.
+- Report artifacts (CSV, JSON, PDF) are stored as **files on the filesystem**, not inline in the database. PDFs persist as file paths in `ReportArtifactRecord`; JSON results are stored through `ArtifactRecord`. No binary report bytes are kept in Redis task results.
 - The `report_store.py` rejects tilde (`~`) paths to prevent home-directory expansion in container environments.
 - Sensitive fields (SSH credentials, API keys) are excluded from exported report payloads via `to_payload()` exclusion lists.
 

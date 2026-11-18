@@ -6,6 +6,8 @@ Exposes the task queue lifecycle surface:
 - POST /tasks/{task_id}/cancel   -- cancel a non-terminal task
 - POST /tasks/{task_id}/resume   -- resume a PAUSED task (MOD-09/D-11)
 - GET  /tasks/{task_id}/events   -- SSE stream from Redis Streams (TASK-08/09)
+- GET  /tasks/{task_id}/result   -- durable JSON result of a task (404 until stored)
+- GET  /tasks/{task_id}/artifact -- durable PDF artifact of a task (404 until stored)
 - GET  /tasks/queue-depth        -- admin: task counts by status (OPS-04)
 - POST /tasks/drain              -- admin: pause new submissions (OPS-05)
 - POST /tasks/requeue-failed     -- admin: requeue recent failures (OPS-05)
@@ -27,9 +29,11 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import AsyncGenerator
+from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlmodel import select
 
 from aila.api.auth import AuthContext, require_user_or_api_key
@@ -52,12 +56,19 @@ from aila.api.schemas.tasks import (
     TaskResponse,
 )
 from aila.api.schemas.transitions import TransitionView
+from aila.config import get_settings
 from aila.platform.services.audit import record_audit_event
 from aila.platform.services.redis_pool import pool_available
+from aila.platform.services.runtime import run_blocking_io
+from aila.platform.tasks.artifacts import (
+    TASK_ARTIFACT_SCOPE,
+    TASK_PDF_ARTIFACT_TYPE,
+    TASK_RESULT_ARTIFACT_TYPE,
+)
 from aila.platform.tasks.models import TaskRecord, TaskStatus
 from aila.platform.tasks.storage import TaskRepository
 from aila.storage.database import async_session_scope
-from aila.storage.db_models import WorkflowStateTransition
+from aila.storage.db_models import ArtifactRecord, ReportArtifactRecord, WorkflowStateTransition
 
 __all__ = ["router"]
 
@@ -444,6 +455,105 @@ async def list_task_transitions(
         task_id, auth.user_id, len(rows),
     )
     return DataEnvelope(data=[TransitionView.from_model(r) for r in rows])
+
+
+def _confined_task_pdf_path(stored_path: str) -> Path:
+    """Resolve a stored task PDF path, rejecting anything outside report_dir.
+
+    Symlinks are resolved before the containment check, so a link that points
+    outside the report directory is refused the same way as a traversal path.
+    """
+    root = get_settings().report_dir.resolve()
+    candidate = Path(stored_path).resolve()
+    if candidate.parent != root or not candidate.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Task artifact file is not available.",
+        )
+    return candidate
+
+
+@limiter.limit("60/minute")
+@router.get(
+    "/{task_id}/result",
+    response_model=DataEnvelope[dict[str, Any]],
+    summary="Return the durable JSON result of a task",
+)
+async def get_task_result(
+    request: Request,
+    task_id: str,
+    auth: AuthContext = Depends(require_user_or_api_key),
+) -> DataEnvelope[dict[str, Any]]:
+    """Return the JSON result stored for a task.
+
+    Authorization follows GET /tasks/{id}. Returns 404 when the task is not
+    visible to the caller or no result has been stored for it.
+    """
+    del request  # required by rate-limiter signature
+    async with async_session_scope() as session:
+        record = await TaskRepository.get_for_user(session, task_id, auth)
+        if record is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Task {task_id!r} not found or not accessible -- verify the task_id via GET /tasks",
+            )
+        artifact = (
+            await session.exec(
+                select(ArtifactRecord).where(
+                    ArtifactRecord.run_id == task_id,
+                    ArtifactRecord.artifact_type == TASK_RESULT_ARTIFACT_TYPE,
+                )
+            )
+        ).first()
+    if artifact is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No result has been stored for task {task_id!r}.",
+        )
+    return DataEnvelope(data=json.loads(artifact.body))
+
+
+@limiter.limit("60/minute")
+@router.get(
+    "/{task_id}/artifact",
+    response_class=FileResponse,
+    summary="Download the durable PDF artifact of a task",
+)
+async def get_task_artifact(
+    request: Request,
+    task_id: str,
+    auth: AuthContext = Depends(require_user_or_api_key),
+) -> FileResponse:
+    """Stream the PDF stored for a task.
+
+    Authorization follows GET /tasks/{id}. Returns 404 until both the artifact
+    row and its file exist, and whenever the stored path is not confined to
+    the configured report directory.
+    """
+    del request  # required by rate-limiter signature
+    async with async_session_scope() as session:
+        record = await TaskRepository.get_for_user(session, task_id, auth)
+        if record is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Task {task_id!r} not found or not accessible -- verify the task_id via GET /tasks",
+            )
+        artifact = (
+            await session.exec(
+                select(ReportArtifactRecord).where(
+                    ReportArtifactRecord.run_id == task_id,
+                    ReportArtifactRecord.scope == TASK_ARTIFACT_SCOPE,
+                    ReportArtifactRecord.artifact_type == TASK_PDF_ARTIFACT_TYPE,
+                )
+            )
+        ).first()
+    if artifact is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No PDF artifact has been stored for task {task_id!r}.",
+        )
+    pdf_path = await run_blocking_io(_confined_task_pdf_path, artifact.path)
+    return FileResponse(pdf_path, media_type="application/pdf")
 
 
 @router.get(

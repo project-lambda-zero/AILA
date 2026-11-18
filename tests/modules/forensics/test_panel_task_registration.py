@@ -1,4 +1,4 @@
-"""Worker-facing forensics task import registers both panel callables."""
+"""Worker-facing forensics task import registers panel callables and readiness."""
 from __future__ import annotations
 
 import os
@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 
-def test_fresh_process_registers_panel_investigate_and_writeup() -> None:
+def test_fresh_process_registers_panel_investigate_writeup_and_readiness() -> None:
     root = Path(__file__).resolve().parents[3]
     code = r'''
 import aila.modules.forensics.workflow.task
@@ -23,6 +23,13 @@ for name in expected:
     task = _REGISTRY.get_task(name)
     assert task is not None and task.track == "forensics"
     assert task.definition is not None
+readiness = _REGISTRY.get_task(
+    "aila.modules.forensics.workflow.task.run_forensics_readiness"
+)
+assert readiness is not None
+assert readiness.track == "forensics_readiness"
+assert readiness.max_tries == 1
+assert readiness.timeout_s >= 1200.0
 '''
     env = dict(os.environ, PYTHONPATH="src")
     completed = subprocess.run(

@@ -5,6 +5,97 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.123] - 2026-11-17 -- Native pentest reliability and validation
+
+### Added
+
+- Honesty audit now detects module-service subprocess work delegated through platform blocking-I/O helpers, requiring subprocess-producing service work to run on workers.
+- `forensics_readiness` and `reporting` ARQ worker queues. `start.sh` and `start-linux.sh` start both by default, with `WORKER_COUNT_FORENSICS_READINESS` and `WORKER_COUNT_REPORTING` controlling the worker counts. `infra/utilities/docker-compose.full.yml` runs an independent worker container for every ARQ track (`default`, `vr`, `vulnerability`, `forensics`, `malware`, `pentest`, `pentest_runtime`, `forensics_readiness`, `reporting`).
+
+### Changed
+
+- Forensics analyzer readiness checks and offline tool preparation are asynchronous. The POST actions return `202 Accepted` with a `task_id` and run on the `forensics_readiness` worker; clients poll the task status and result endpoints.
+- VR investigation PDF, VR MASVS PDF, and vulnerability PDF rendering is asynchronous on the `reporting` worker. The POST submit returns `202 Accepted` with `{task_id, status: "queued"}`; the PDF is downloaded from `GET /tasks/{task_id}/artifact`. The synchronous GET PDF handlers were removed, and vulnerability JSON and CSV GET exports are unchanged.
+- The VR report subprocess offload was removed from the API. Report rendering runs only on the `reporting` worker.
+- PyRIT `attempts_per_probe` now executes a fresh scenario instance for each repetition. Completed native rows remain persisted when a later PyRIT partial failure marks the campaign failed.
+- Native outcome `external_id` values are stable hashes of native objective or test content and logical case coordinates, independent of completion order and Promptfoo global test indexes, so execution retries deduplicate cases even when frameworks generate fresh UUIDs or result IDs. Raw native identifiers remain available in evidence.
+- Promptfoo preserves structured chat roles and forwards the optional campaign seed to target and scoring requests. The console accepts one to three strategies and displays validation errors for invalid launch configurations.
+- Native runtime discovery, version, and health probes run only inside `pentest_runtime` worker tasks, as bounded synchronous `subprocess.run` calls whose processes are children of that worker. The API never probes in-process: engine listing and catalog dispatch enqueue probes through TaskQueue and await the worker result, with no in-process fallback. Engine availability therefore requires a running `pentest_runtime` worker. Campaign preflight is not performed at assessment creation; it runs during campaign execution on the `pentest` worker, which dispatches the probe to `pentest_runtime` under the shared campaign deadline. Actual campaigns remain on the `pentest` queue. Workers revalidate the selected runtime before execution, including Node 22.22 or newer and Promptfoo CLI health. Probes run fresh on each listing and execution without caching; health probes use a scrubbed environment. Failed assessments expose bounded secret-redacted native diagnostics.
+
+### Fixed
+
+- PyRIT Cyber now uses its supported dataset configuration. Jailbreak, leakage, cyber, multilingual, and scam scenarios use the same native execution path.
+- Windows cancellation and timeout handling wait for native process-tree termination before returning.
+- PyRIT grouped `ExceptionGroup` failures containing a partial failure persist completed native results before the failure propagates.
+- Garak runs count only after the native completion signal, and attempts without a detector result produce explicit `error` rows instead of being omitted.
+- Garak and Promptfoo drain late CLI result output before finalizing, so results emitted near process exit are not lost.
+- A successful execute retry clears the previous assessment error and its diagnostics.
+- Console assessment polling survives transient request errors and keeps the last nonterminal assessment data until a later read succeeds.
+
+### Removed
+
+- Promptfoo system-prompt-override was removed from the supported plugin catalog because safe mode blocks its inline JavaScript grader and cannot produce a scoreable result.
+
+### Upgrade notes
+
+- No database schema or Alembic migration change is required. PyRIT, Garak, and Promptfoo framework pins are unchanged.
+- Run a worker for the `pentest_runtime` queue (`python -m aila worker -q pentest_runtime`) alongside the `pentest` worker. Engine availability on the API is unavailable without it.
+- Run workers for the `forensics_readiness` and `reporting` queues (`python -m aila worker -q forensics_readiness`, `python -m aila worker -q reporting`). Readiness, offline preparation, and report rendering do not run in the API process and stay queued until those workers run.
+
+---
+
+## [0.6.122] - 2026-11-16 -- Native PyRIT, Garak, and Promptfoo campaigns
+
+### Added
+
+- Pentest assessments now execute native Microsoft PyRIT 1.2.0, NVIDIA Garak 0.17.1, and Promptfoo 0.125.1 campaigns through isolated framework processes with durable per-case evidence.
+- The API and console expose installed engine versions, engine-specific campaign inputs, native provenance, per-case statistics, and report schema `pentest.assessment.report.v3`.
+- Pre-provisioning uses separate pinned Python environments for PyRIT and Garak, plus the workspace-pinned Promptfoo CLI on Node 22.22 or newer.
+
+### Changed
+
+- Target requests and scorer calls are mediated by an authenticated parent broker; framework children receive no target, database, or inherited provider credentials.
+- Native external IDs replace positional result identity for checkpoint deduplication. Empty or entirely unscoreable native campaigns fail instead of reporting a successful scan.
+- Fresh database bootstrap registers pentest models so all module tables are created at the current schema head.
+
+### Fixed
+
+- Windows workers supervise native subprocesses on a dedicated Proactor loop while preserving asyncpg and durable result callbacks on the worker's selector loop.
+- Promptfoo uses native CI execution, accepts its test-failure exit status as evidence, and records safe-mode grader failures as unscoreable errors.
+- Protocol overflow, invalid target ports, queue failure, response limits, and broker-token redaction now fail with bounded, honest diagnostics.
+
+### Upgrade notes
+
+- Apply Alembic migration 155 before starting backend and pentest workers. It removes pre-framework assessment rows because they cannot be resumed by native engines.
+- Run `python scripts/install_pentest_frameworks.py` and `pnpm install` before enabling the engines. No framework packages are downloaded during assessments.
+
+---
+
+## [0.6.121] - 2026-11-16 -- Repeatable bounded pentest campaigns
+
+### Added
+
+- Pentest assessments support one to five attempts per probe, bounded concurrency up to eight requests, and an optional campaign seed passed to OpenAI-compatible targets.
+- The versioned catalog now contains twelve core and extended probes covering instruction hierarchy, jailbreak framing, canary disclosure and transformation, cross-session leakage requests, and benign false refusals.
+- Assessment responses and reports include per-attempt provider seeds, per-probe attack success rates, and hit-at-k observations calculated only from scoreable attempts. The console exposes campaign controls, statistics, and collapsed attempt evidence.
+- Target and assessment history endpoints accept bounded limit and offset parameters.
+
+### Changed
+
+- Campaign execution checkpoints each `(assessment, probe, attempt)` result and resumes only missing attempts. Target responses are streamed with a 256 KiB raw-byte ceiling before JSON parsing, while extracted response text remains capped at 32 KiB.
+- JSON reports use schema `pentest.assessment.report.v2` and record the deterministic engine, catalog version, campaign configuration, statistics, and sampling limitations.
+
+### Fixed
+
+- Redis submission failures raised as `WorkerUnreachableError` now mark the assessment failed with a terminal timestamp instead of leaving it permanently queued.
+- Migration verification registers pentest models and tracks migration 154 as the head.
+
+### Upgrade notes
+
+- Apply Alembic migration 154 before starting the backend and pentest workers. Existing assessments retain one-attempt settings and catalog version `2026.11.0`.
+
+---
+
 ## [0.6.120] - 2026-11-16 -- Deterministic AI endpoint pentest assessments
 
 ### Added

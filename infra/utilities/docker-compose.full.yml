@@ -157,6 +157,91 @@ services:
         condition: service_healthy
     command: ["worker", "-q", "forensics"]
 
+  worker-malware:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: aila-worker-malware
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      <<: *aila-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["worker", "-q", "malware"]
+
+  worker-pentest:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: aila-worker-pentest
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      <<: *aila-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["worker", "-q", "pentest"]
+
+  worker-pentest-runtime:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: aila-worker-pentest-runtime
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      <<: *aila-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["worker", "-q", "pentest_runtime"]
+
+  worker-forensics-readiness:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: aila-worker-forensics-readiness
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      <<: *aila-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["worker", "-q", "forensics_readiness"]
+
+  worker-reporting:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: aila-worker-reporting
+    restart: unless-stopped
+    env_file:
+      - ../../.env
+    environment:
+      <<: *aila-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["worker", "-q", "reporting"]
+
   frontend:
     image: node:20-bookworm-slim
     container_name: aila-frontend

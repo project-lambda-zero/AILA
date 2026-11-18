@@ -785,6 +785,18 @@ HONESTY_WHITELIST = [
     ("re_analytics/tools_dataflow.py",
      "noqa_inline",
      "documented justification"),
+
+    # Native pentest children intentionally bootstrap before ConfigRegistry and
+    # AILA platform imports. They receive a scrubbed environment and must read
+    # only interpreter paths and isolated runtime locations. PyRIT's blocking
+    # native API runs in its own subprocess entry point, not the AILA worker.
+    ("pentest/services/child_launcher.py", "service_env_read", "ConfigRegistry"),
+    ("pentest/services/child_launcher.py", "noqa_inline", "documented justification"),
+    ("pentest/services/child_launcher.py", "isolated_data_dir", "return str"),
+    ("pentest/services/process.py", "service_env_read", "ConfigRegistry"),
+    ("pentest/services/process.py", "except_return_default", "except returns empty default"),
+    ("pentest/services/process.py", "asyncio_in_module", "threading belongs"),
+    ("pentest/services/pyrit_child.py", "asyncio_in_module", "threading belongs"),
 ]
 
 
