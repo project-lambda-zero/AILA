@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 
 import { apiFetch } from "./client";
+import { fetchAllOffsetPages, warnIfTruncated } from "./offsetPages";
 import type {
   Branch,
   DispatchState,
@@ -14,10 +15,29 @@ import type {
   VrOutcome,
 } from "./types";
 
+// Backend terminal investigation states (platform/contracts/enums.py TERMINAL_STATUSES).
+const TERMINAL_INVESTIGATION_STATUSES: Readonly<Record<string, true>> = {
+  completed: true,
+  failed: true,
+  abandoned: true,
+  stalled: true,
+};
+
+// Poll interval for investigation-scoped data: stops once the cached investigation
+// is terminal. An unknown status keeps polling until the summary is loaded.
+function investigationPollInterval(queryClient: QueryClient, id: string | null, ms: number): number | false {
+  const status = queryClient.getQueryData<Investigation>(["vr", "investigation", id])?.status;
+  return status !== undefined && TERMINAL_INVESTIGATION_STATUSES[status] === true ? false : ms;
+}
+
 export function useInvestigations() {
   return useQuery({
     queryKey: ["vr", "investigations"],
-    queryFn: () => apiFetch<Investigation[]>("/vr/investigations?limit=100"),
+    queryFn: async () => {
+      const result = await fetchAllOffsetPages<Investigation>("/vr/investigations", {}, 200);
+      warnIfTruncated("vr investigations", result);
+      return result.rows;
+    },
     staleTime: 15_000,
   });
 }
@@ -33,12 +53,19 @@ export function useInvestigation(id: string | null) {
 }
 
 export function useMessages(id: string | null) {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: ["vr", "messages", id],
     staleTime: 0,
-    queryFn: () => apiFetch<Message[]>(`/vr/investigations/${id}/messages?limit=1000`),
+    // Full bounded refresh on every poll: the server stamps superseded_at in place on
+    // existing rows (reset, reopen, branch GC), which a tail-only merge would miss.
+    queryFn: async () => {
+      const result = await fetchAllOffsetPages<Message>(`/vr/investigations/${id}/messages`, {}, 1000);
+      warnIfTruncated("vr messages", result);
+      return result.rows;
+    },
     enabled: Boolean(id),
-    refetchInterval: 8000,
+    refetchInterval: () => investigationPollInterval(queryClient, id, 8000),
   });
 }
 
@@ -61,35 +88,38 @@ export function useHypotheses(id: string | null) {
 }
 
 export function useDispatch(id: string | null) {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: ["vr", "dispatch", id],
     staleTime: 0,
     queryFn: () => apiFetch<DispatchState>(`/vr/investigations/${id}/dispatch`),
     enabled: Boolean(id),
     retry: false,
-    refetchInterval: 8000,
+    refetchInterval: () => investigationPollInterval(queryClient, id, 8000),
   });
 }
 
 export function useLedger(id: string | null) {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: ["vr", "ledger", id],
     staleTime: 0,
     queryFn: () => apiFetch<LedgerRow[]>(`/vr/investigations/${id}/ledger`),
     enabled: Boolean(id),
     retry: false,
-    refetchInterval: 8000,
+    refetchInterval: () => investigationPollInterval(queryClient, id, 8000),
   });
 }
 
 export function useMcpCalls(id: string | null) {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: ["vr", "mcp-calls", id],
     staleTime: 0,
     queryFn: () => apiFetch<McpCall[]>(`/vr/investigations/${id}/mcp-calls`),
     enabled: Boolean(id),
     retry: false,
-    refetchInterval: 8000,
+    refetchInterval: () => investigationPollInterval(queryClient, id, 8000),
   });
 }
 
@@ -211,11 +241,12 @@ export function useSpawnStrategyBranch(id: string | null) {
 }
 
 export function useVrOutcomes(id: string | null) {
+  const queryClient = useQueryClient();
   return useQuery({
     queryKey: ["vr", "outcomes", id],
     queryFn: () => apiFetch<VrOutcome[]>(`/vr/investigations/${id}/outcomes`),
     enabled: Boolean(id),
-    refetchInterval: 10_000,
+    refetchInterval: () => investigationPollInterval(queryClient, id, 10_000),
   });
 }
 

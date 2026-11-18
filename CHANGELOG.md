@@ -5,6 +5,47 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.124] - 2026-11-18 -- Pentest engine packaging and operations
+
+### Added
+
+- Optional `pentest-garak` (garak 0.17.1) and `pentest-pyrit` (pyrit 1.2.0) extras in `pyproject.toml`. The two are separate because their OpenAI client requirements conflict.
+- `tools/pentest/dependency_policy.json` records the pinned engine versions, Python and Node floors, install locations, and license files. `tools/pentest/check_dependencies.py` verifies the pins against the requirements files, the `pentest` pnpm catalog, and the `tools/promptfoo-runner` pin, and reports upgrade candidates without changing them.
+- `tools/pentest/THIRD_PARTY_NOTICES.md` lists the licenses of garak, PyRIT, Promptfoo, and bundled third-party code.
+- `tools/pentest/check_sbom.py` validates CycloneDX SBOMs generated with `cyclonedx-bom` from the installed engine environments against the engine pins and license identifiers. The `pentest-packaging` workflow generates and validates the garak and PyRIT SBOMs and runs `pip-audit` on their requirements. The Promptfoo runner SBOM is generated with `@cyclonedx/cyclonedx-npm` 7.0.1 from the pnpm production tree and validated against the Promptfoo pin and MIT license.
+- `tools/pentest/smoke_engines.py` runs fixed preflight version checks and a synthetic target health probe, reporting each engine as `passed`, `failed`, or `not_run`. Its explicit `--dynamic` mode exercises real pinned engines against scripted local targets, including adaptive sessions, detector pass/fail and grader-error outcomes, hard-budget stops, and process/workspace cleanup.
+- `.github/workflows/pentest-packaging.yml` validates the pin policy, including the `pnpm-lock.yaml` resolution of the Promptfoo runner, and confirms module discovery succeeds without any external engine installed. A separate `engine-sbom` job generates, validates, and uploads the engine SBOMs, runs the blocking `pip-audit` scan on the garak and PyRIT requirements, and runs a blocking `pnpm audit --prod --audit-level high` on the Promptfoo runner.
+- `python -m aila.modules.pentest.reporting.cli` renders a `pentest.assessment.report.v4` report as JSON, HTML, or JUnit XML (`report`) and evaluates baseline gates for new hits, unscoreable results, execution failures, and budget exhaustion (`baseline`), with documented exit codes.
+- Normalized probe, attempt, and turn evidence persists engine identity, native scores, provenance, and bounded transcripts. Migrations 156 through 158 provide populated upgrade and downgrade paths for evidence, lifecycle state, and explicit target session mappings.
+- PyRIT campaigns support red teaming, Crescendo, and TAP strategies with typed session, branching, backtracking, scoring, and hard-budget controls. TAP tree evidence is emitted as bounded structured JSON with parent and pruning linkage.
+- Promptfoo supports static and local broker-driven Crescendo campaigns. Explicit provider inference reaches native provider metadata, and failed adversarial assertions remain detector hits rather than being misclassified as infrastructure errors.
+- Assessment lifecycle APIs support per-team and global active quotas, idempotent launches, cursor pagination, cooperative cancellation, failed-only retry, retention, and audit events. A bounded periodic reaper reconciles orphaned assessments against durable task and ARQ state without overwriting concurrent operator transitions.
+- Request and token ceilings resolve to strict-minimum effective execution budgets at creation and in native/framework request ledgers. Native campaigns enforce target-request reservations immediately before dispatch and leave undispatched cases explicit on exhaustion.
+- Lifecycle metrics record queue latency, terminal duration and outcome, cancellation, persisted attempts, and broker requests/tokens with bounded engine, version, and role labels. Assessment execution spans expose bounded outcomes and record exceptions by class name only.
+- Console assessment controls expose compatible engine profiles, resolved sampling and budgets, bounded attempt and turn evidence, cancellation, retry, and explicit v4 exports.
+- `pentest.assessment.report.v4` is an explicit schema that adds engine tagging and probe, attempt, and turn provenance. Its budget fields are null when not recorded. The API default remains `pentest.assessment.report.v3`.
+
+### Changed
+
+- `scripts/install_pentest_frameworks.py` installs `garak`, `pyrit`, or `promptfoo` (or `all`) with Python and Node version checks before any environment is created. `--check` verifies existing installs without changing them, and `--upgrade-check` reports newer versions.
+- Promptfoo installs with pnpm into `tools/promptfoo-runner` at its exact pin, not into the root workspace.
+- Promptfoo campaigns require explicit target and grader provider disclosure, plus attacker disclosure for dynamic strategies. Target, attacker, and scorer traffic uses separate broker roles and budgets.
+- Shell clock updates are isolated to a leaf component, background WebGL rendering is capped and hidden-tab aware, terminal investigation polling stops, transcript and table requests are bounded, SSE invalidation is batched, and prior table rows remain visible during page transitions.
+
+### Fixed
+
+- Queue submission failures persist a terminal failed assessment instead of leaving an orphaned queued row.
+- Cancellation stops native and external-engine work without overwriting cancelled state with a late success or failure. Successful native completion uses a bounded late-result drain and reaps lingering process trees without hiding an observed nonzero leader exit. Retries receive fresh task identity and preserve deterministic evidence identity.
+- Session message pagination uses SQL limits and stable ordering instead of materializing full histories. VR transcript refreshes preserve mutable supersession evidence rather than relying on an append-only cache.
+- Campaign and adaptive budgets reach the shared request ledger, with overlapping limits resolved to the stricter value.
+- Promptfoo failed adversarial assertions remain detector hits, while native grader errors in top-level or component grading results remain unscoreable errors with bounded rationale evidence.
+
+### Upgrade notes
+
+- Run `python scripts/install_pentest_frameworks.py --framework all` after upgrading. Existing `.venv/garak` and `.venv/pyrit` environments are reused and verified against their pins.
+- Promptfoo requires Node 22.22.0 or newer and pnpm 10.30.0 or newer.
+- Installing the optional extras does not change any default dependency set.
+
 ## [0.6.123] - 2026-11-17 -- Native pentest reliability and validation
 
 ### Added

@@ -1,0 +1,11 @@
+{
+  "name": "@aila/promptfoo-runner",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.22.0"
+  },
+  "dependencies": {
+    "promptfoo": "catalog:pentest"
+  }
+}

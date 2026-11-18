@@ -163,6 +163,17 @@ class SpanHandle:
         except _TELEMETRY_SAFE_ERRORS:
             logger.debug("gen_ai_span.record_exception failed", exc_info=True)
 
+    def record_redacted_exception(self, class_name: str) -> None:
+        """Record only the exception class name; never its message, args, or traceback."""
+        if self._span is None:
+            return
+        try:
+            self._span.record_exception(RuntimeError(class_name))
+            if _OtelStatus is not None and _OtelStatusCode is not None:
+                self._span.set_status(_OtelStatus(_OtelStatusCode.ERROR, class_name))
+        except _TELEMETRY_SAFE_ERRORS:
+            logger.debug("gen_ai_span.record_redacted_exception failed", exc_info=True)
+
     def set_ok(self) -> None:
         if self._span is None or _OtelStatus is None or _OtelStatusCode is None:
             return
@@ -197,6 +208,7 @@ def gen_ai_span(
     run_id: str | None = None,
     module_id: str | None = None,
     attributes: dict[str, Any] | None = None,
+    redact_exceptions: bool = False,
 ) -> Iterator[SpanHandle]:
     """Yield a :class:`SpanHandle` scoped to one GenAI operation.
 
@@ -224,6 +236,10 @@ def gen_ai_span(
             the span at start time. Additional attributes may still be
             added afterwards through :meth:`SpanHandle.set_attribute`
             (typical usage for response-side fields like usage tokens).
+        redact_exceptions: When True, an exception leaving the ``with``
+            block is recorded as its class name only. The message, args
+            and traceback are never written to the span. Use for spans
+            whose exceptions may carry secrets or provider response bodies.
 
     The context manager yields a :class:`SpanHandle`; use its
     ``set_attribute`` / ``set_attributes`` to record post-response
@@ -276,7 +292,10 @@ def gen_ai_span(
         try:
             yield handle
         except BaseException as exc:
-            handle.record_exception(exc)
+            if redact_exceptions:
+                handle.record_redacted_exception(type(exc).__name__)
+            else:
+                handle.record_exception(exc)
             raise
         else:
             handle.set_ok()
