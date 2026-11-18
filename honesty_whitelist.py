@@ -793,7 +793,6 @@ HONESTY_WHITELIST = [
     ("pentest/services/child_launcher.py", "service_env_read", "ConfigRegistry"),
     ("pentest/services/child_launcher.py", "noqa_inline", "documented justification"),
     ("pentest/services/child_launcher.py", "isolated_data_dir", "return str"),
-    ("pentest/services/engines.py", "service_env_read", "ConfigRegistry"),
     ("pentest/services/process.py", "service_env_read", "ConfigRegistry"),
     ("pentest/services/process.py", "except_return_default", "except returns empty default"),
     ("pentest/services/process.py", "asyncio_in_module", "threading belongs"),

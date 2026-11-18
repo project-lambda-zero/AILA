@@ -8,7 +8,8 @@ enqueue are replaced.
 """
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+import json
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -17,9 +18,14 @@ from sqlmodel import select
 from aila.api.auth import AuthContext
 from aila.modules.forensics.api_router import create_forensics_router
 from aila.modules.forensics.api_router import limiter as _forensics_limiter
+from aila.modules.forensics.contracts.machine import MachineReadinessResult
 from aila.modules.forensics.db_models import ForensicsProjectRecord
-from aila.modules.forensics.workflow.task import run_forensics_analysis
+from aila.modules.forensics.workflow.task import (
+    run_forensics_analysis,
+    run_forensics_readiness,
+)
 from aila.platform.tasks import queue as queue_mod
+from aila.platform.tasks.context import TaskContext
 from aila.platform.tasks.models import TaskRecord
 from aila.platform.tasks.queue import qualified_task_name
 from aila.storage.database import async_session_scope
@@ -82,11 +88,30 @@ async def _active_tasks(project_id: str) -> list[str]:
 
 
 async def _readiness(project_id: str, auth: AuthContext) -> None:
-    with patch(
-        "aila.modules.forensics.services.machine_readiness.MachineReadinessService.check_readiness",
-        new=AsyncMock(return_value=MagicMock(ready=True)),
+    task_id = str(uuid4())
+    async with async_session_scope() as session:
+        session.add(TaskRecord(
+            id=task_id,
+            track="forensics_readiness",
+            fn_path=qualified_task_name(run_forensics_readiness),
+            fn_module="forensics",
+            status="running",
+            user_id=auth.user_id,
+            group_id=auth.role,
+            team_id=auth.team_id,
+            kwargs_json=json.dumps({"project_id": project_id}),
+        ))
+        await session.commit()
+    ctx = TaskContext(task_id=task_id, job_try=1, user_id=auth.user_id, team_id=auth.team_id)
+    with (
+        patch(
+            "aila.modules.forensics.services.machine_readiness.MachineReadinessService.check_readiness",
+            new=AsyncMock(return_value=MachineReadinessResult(ready=True, system_id=1, system_name="sys")),
+        ),
+        patch("aila.modules.forensics.workflow.task.default_task_queue", return_value=_queue()),
+        patch("aila.modules.forensics.workflow.task.store_task_json_result", new=AsyncMock()),
     ):
-        await _endpoint("/projects/{project_id}/readiness-check", "POST")(_Req(), project_id, auth=auth)
+        await run_forensics_readiness.__wrapped__(ctx, project_id=project_id)
 
 
 async def _trigger(project_id: str, auth: AuthContext) -> dict[str, str]:

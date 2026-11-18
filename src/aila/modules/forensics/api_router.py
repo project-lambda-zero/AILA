@@ -50,11 +50,11 @@ from sqlmodel import col, select
 
 from aila.api.schemas.common import PaginatedResponse
 from aila.api.schemas.envelope import DataEnvelope
+from aila.api.schemas.tasks import TaskActionResponse
 from aila.modules.forensics.config_schema import ForensicsConfigSchema
 from aila.platform.contracts.auth import AuthContext, require_auth
 from aila.platform.exceptions import AILAError
 from aila.platform.services.audit import record_audit_event
-from aila.platform.tasks.queue import qualified_task_name
 from aila.platform.uow import UnitOfWork
 from aila.storage.registry import ConfigRegistry
 
@@ -62,7 +62,6 @@ from .contracts import (
     AnswerCandidate,
     EvidenceItem,
     InvestigationRequest,
-    MachineReadinessResult,
     NormalizedArtifact,
     ProjectCreate,
     ProjectSummary,
@@ -135,31 +134,6 @@ def _finding_fingerprint(f: dict[str, Any]) -> str:
     ]
     payload = "\x1f".join(parts).encode("utf-8", errors="replace")
     return _hashlib.sha256(payload).hexdigest()
-
-
-async def _active_analysis_task_id(session: Any, project_id: str) -> str | None:
-    """Return the id of an active ``run_forensics_analysis`` task for this
-    project, or None (fix #59-3).
-
-    Readiness auto-enqueue used to transition CREATED -> READY and submit a
-    full-analysis task without checking whether one was already in flight.
-    Two rapid readiness-checks could open two full pipelines racing on
-    ArtifactRecord inserts. This detects an existing active task so the
-    caller can skip the second submit. The fn_path is derived from the
-    task callable the same way ``TaskQueue.submit`` stores it, so a future
-    module move does not silently break the match.
-    """
-    from aila.modules.forensics.workflow.task import run_forensics_analysis
-    from aila.platform.tasks.models import TaskRecord
-
-    fn_path = qualified_task_name(run_forensics_analysis)
-    return (await session.exec(
-        select(TaskRecord.id).where(
-            TaskRecord.fn_path == fn_path,
-            TaskRecord.status.in_(["queued", "running", "waiting"]),  # type: ignore[union-attr]
-            TaskRecord.kwargs_json.like(f'%"project_id": "{project_id}"%'),
-        ).limit(1)
-    )).first()
 
 
 def _agent_step_from_record(s: Any) -> AgentStep:
@@ -1122,7 +1096,10 @@ def create_forensics_router() -> APIRouter:
         investigations consume those artifacts instead of re-scanning."""
         from aila.api.deps import get_task_queue
         from aila.modules.forensics.db_models import ForensicsProjectRecord
-        from aila.modules.forensics.workflow.task import run_forensics_analysis
+        from aila.modules.forensics.workflow.task import (
+            _active_analysis_task_id,
+            run_forensics_analysis,
+        )
         from aila.storage.db_models import ManagedSystemRecord
 
         async with UnitOfWork() as uow:
@@ -1322,20 +1299,19 @@ def create_forensics_router() -> APIRouter:
 
     @router.post(
         "/projects/{project_id}/readiness-check",
-        response_model=DataEnvelope[MachineReadinessResult],
-        summary="Check analyzer machine readiness.",
-        status_code=status.HTTP_200_OK,
+        response_model=TaskActionResponse,
+        summary="Queue an analyzer machine readiness check.",
+        status_code=status.HTTP_202_ACCEPTED,
     )
     @limiter.limit("10/minute")
     async def check_readiness(
         request: Request,
         project_id: str,
         auth: AuthContext = Depends(require_auth),
-    ) -> DataEnvelope[MachineReadinessResult]:
+    ) -> TaskActionResponse:
         from aila.api.deps import get_task_queue
         from aila.modules.forensics.db_models import ForensicsProjectRecord
-        from aila.modules.forensics.services.machine_readiness import MachineReadinessService
-        from aila.modules.forensics.workflow.task import run_forensics_analysis
+        from aila.modules.forensics.workflow.task import run_forensics_readiness
         from aila.storage.db_models import ManagedSystemRecord
 
         async with UnitOfWork() as uow:
@@ -1352,80 +1328,19 @@ def create_forensics_router() -> APIRouter:
             if system is None:
                 raise HTTPException(status_code=404, detail=f"System {project.system_id} not found.")
 
-        from aila.config import get_settings
-        service = MachineReadinessService(get_settings())
-        integration = {
-            "name": system.name,
-            "host": system.host,
-            "username": system.username,
-            "port": system.port,
-            "private_key_path": system.private_key_path,
-            "password_secret_id": system.password_secret_id,
-            "known_hosts_path": system.known_hosts_path,
-            "host_key_fingerprint": system.host_key_fingerprint,
-        }
-
-        async def _log_progress(event: dict[str, Any]) -> None:
-            _log.debug("Readiness check progress: %s -- %s", event.get("tool", "system"), event.get("message"))
-
-        result = await service.check_readiness(
-            integration=integration,
-            system_id=system.id,
-            system_name=system.name,
-            evidence_directory=project.evidence_directory,
-            analyzer_os=project.analyzer_os,
-            progress_cb=_log_progress,
+        # bypass_dedup: the global TaskQueue dedup ignores team and role, so it
+        # could return another team's readiness task that this caller cannot
+        # poll. The worker result is read through GET /tasks/{id}/result.
+        handle = await get_task_queue("forensics", request).submit(
+            track="forensics_readiness",
+            fn=run_forensics_readiness,
+            kwargs={"project_id": project_id},
+            user_id=auth.user_id,
+            group_id=auth.role,
+            team_id=auth.team_id,
+            bypass_dedup=True,
         )
-
-        if result.ready:
-            enqueue_mode: str | None = None
-            async with UnitOfWork() as uow:
-                # fix #59-3: a full-analysis task may already be active for
-                # this project (double-click, or a prior submit still in
-                # flight). Detect it and skip re-enqueue so two pipelines do
-                # not race on ArtifactRecord inserts.
-                existing_task_id = await _active_analysis_task_id(
-                    uow.session, project_id,
-                )
-                if existing_task_id is not None:
-                    result.already_queued = True
-                    result.existing_task_id = existing_task_id
-                else:
-                    proj = (await uow.session.exec(
-                        select(ForensicsProjectRecord).where(ForensicsProjectRecord.id == project_id)
-                    )).first()
-                    if proj and proj.status == ProjectStatus.CREATED.value:
-                        proj.status = ProjectStatus.READY.value
-                        uow.session.add(proj)
-                        await uow.session.commit()
-                        enqueue_mode = (
-                            "raw_directory" if project.project_kind == "raw_directory" else "full_analysis"
-                        )
-
-            # Enqueue OUTSIDE the DB session (#63): the ARQ/Redis submit is a
-            # network await and must not pin the pooled DB connection. The
-            # status flip is already committed above; enqueue only if it fired.
-            if enqueue_mode is not None:
-                task_queue = get_task_queue("forensics", request)
-                await task_queue.submit(
-                    track="forensics",
-                    fn=run_forensics_analysis,
-                    kwargs={
-                        "project_id": project_id,
-                        "mode": enqueue_mode,
-                        "integration": integration,
-                        "analyzer_os": project.analyzer_os,
-                        "evidence_directory": project.evidence_directory,
-                        "project_kind": project.project_kind,
-                    },
-                    user_id=auth.user_id,
-                    group_id=auth.role,
-                    team_id=auth.team_id,
-                )
-                _log.info("Auto-enqueued %s for project %s", enqueue_mode, project_id)
-
-        return DataEnvelope(data=result)
-
+        return TaskActionResponse(task_id=handle.task_id, status="queued")
 
     @router.get(
         "/projects/{project_id}/evidence",

@@ -2,9 +2,10 @@
 
 The aggregator (R-1) is the read path that turns a completed (or in-flight)
 MASVS audit batch into a :class:`MasvsAuditAggregate` for the PDF
-renderer (R-2) and the ``GET /vr/targets/{id}/masvs-report`` payload
-(R-3). It walks every child investigation under a MASVS audit parent,
-projects each child's primary outcome through the S-4 mapping rule
+renderer (R-2) that runs on the reporting track behind the
+``POST /vr/targets/{id}/masvs-report`` 202 queued action (R-3). It walks
+every child investigation under a MASVS audit parent, projects each
+child's primary outcome through the S-4 mapping rule
 (:func:`child_outcome_to_verdict`), groups verdicts by MASVS control
 group, and tallies summary counts.
 

@@ -88,29 +88,6 @@ async def test_export_csv_returns_valid_content(
     assert len(data_rows) == 3, f"Expected 3 data rows, got {len(data_rows)}"
 
 
-async def test_export_pdf_returns_valid_content_or_503(
-    async_client: AsyncClient,
-    admin_token: str,
-    seeded_run,
-    seeded_findings,
-) -> None:
-    """PDF export returns application/pdf (if weasyprint installed) or 503."""
-    headers = {"Authorization": f"Bearer {admin_token}"}
-
-    resp = await async_client.get(
-        f"/vulnerability/reports/{seeded_run.id}",
-        params={"format": "pdf"},
-        headers=headers,
-    )
-    assert resp.status_code in (200, 503), f"Expected 200 or 503, got {resp.status_code}: {resp.text}"
-
-    if resp.status_code == 200:
-        assert resp.headers["content-type"].startswith("application/pdf")
-        # PDF magic bytes
-        assert resp.content[:5] == b"%PDF-"
-    # 503 is acceptable -- weasyprint is an optional dependency
-
-
 async def test_export_report_summary_default(
     async_client: AsyncClient,
     admin_token: str,
@@ -125,7 +102,7 @@ async def test_export_report_summary_default(
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
-    body = resp.json()
+    body = resp.json()["data"]
     assert body["run_id"] == seeded_run.id
     assert body["status"] == "completed"
     assert body["total_findings"] == 3

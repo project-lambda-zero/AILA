@@ -21,6 +21,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiFetch } from "../../../api/client";
 import { parseOne, parseProjectSummary } from "../../../api/forensics";
 import type { ProjectSummary } from "../../../api/forensics";
+import { fetchWorkerResult } from "../../../api/workerJobs";
 import type { EntityBindingProps, SectionRouteProps, WindowChromeProps } from "../../contract";
 import { css } from "../../css";
 
@@ -105,8 +106,10 @@ export default function ForensicsProjectPage(props: WindowChromeProps & SectionR
   const [notice, setNotice] = useState<{ tone: "ok" | "err" | "info"; msg: string } | null>(null);
 
   const readiness = useMutation({
-    mutationFn: () =>
-      apiFetch<ReadinessResult>(`/forensics/projects/${projectId}/readiness-check`, { method: "POST" }),
+    mutationFn: async () => {
+      const task = await apiFetch<TaskDispatch>(`/forensics/projects/${projectId}/readiness-check`, { method: "POST" });
+      return fetchWorkerResult<ReadinessResult>(task.task_id);
+    },
     onSuccess: (res) => {
       setReadinessResult(res);
       setReadinessOpen(true);

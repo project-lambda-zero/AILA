@@ -193,6 +193,8 @@ export AILA_API_PORT=8000
 export WORKER_COUNT_VR=5
 export WORKER_COUNT_VULNERABILITY=1
 export WORKER_COUNT_FORENSICS=1
+export WORKER_COUNT_FORENSICS_READINESS=1
+export WORKER_COUNT_REPORTING=1
 
 # Structured JSON logs (ELK / Datadog / CloudWatch)
 export AILA_JSON_LOGS=1
@@ -251,6 +253,10 @@ python -m aila worker -q default
 python -m aila worker -q vr
 python -m aila worker -q vulnerability
 python -m aila worker -q forensics
+python -m aila worker -q forensics_readiness
+python -m aila worker -q reporting
+python -m aila worker -q pentest
+python -m aila worker -q pentest_runtime
 ```
 
 The Make targets (`make worker`, `make worker-vr`, `make worker-vuln`,
@@ -261,6 +267,9 @@ Workers process:
 - Vulnerability scans submitted via `POST /vulnerability/analyze`
 - Forensics investigations submitted via `POST /forensics/...`
 - VR investigations dispatched from the VR module
+- VR investigation PDF, VR MASVS PDF, and vulnerability PDF rendering on the `reporting` queue (the POST submit returns 202 with `task_id`)
+- Analyzer-machine readiness checks and offline tool preparation on the `forensics_readiness` queue (202 with `task_id`)
+- Native pentest campaigns on `pentest`; runtime probes on `pentest_runtime`
 - Cross-cutting platform tasks on the `default` queue (cron automation, report explanations, etc.)
 
 Worker behavior:
@@ -274,7 +283,7 @@ Worker behavior:
 Spawn more workers per queue when one is not enough:
 
 ```bash
-WORKER_COUNT_VR=5 bash start.sh        # 5 vr workers, plus 1 each on default / vuln / forensics / sbd
+WORKER_COUNT_VR=5 bash start.sh        # 5 vr workers, plus 1 each on every other queue in WORKERS
 ```
 
 `start.sh` reads `WORKER_COUNT_<QUEUE>` for every entry in `WORKERS` and spawns

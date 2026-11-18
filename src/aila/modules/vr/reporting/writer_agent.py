@@ -277,8 +277,17 @@ class ReportWriter:
     def __init__(self, services: ServiceFactory | None = None) -> None:
         self._services = services or ServiceFactory()
 
-    async def write(self, facts: dict[str, Any]) -> ReportContent:
-        """Produce a ReportContent from a structured facts dict."""
+    async def write(
+        self,
+        facts: dict[str, Any],
+        *,
+        run_id: str | None = None,
+    ) -> ReportContent:
+        """Produce a ReportContent from a structured facts dict.
+
+        ``run_id`` attributes the LLM cost to the owning task instead of
+        the ``_no_run`` sentinel.
+        """
         system_prompt = self._system_prompt()
         # RFC-09 criterion 2: stamp the resolved prompt's content hash so
         # the LLMCostRecord + AuditSealRecord written under this
@@ -300,6 +309,7 @@ class ReportWriter:
                     {"role": "user", "content": self._render_facts(facts)},
                 ],
                 model_class=ReportContent,
+                run_id=run_id,
             )
         if response.disabled:
             raise RuntimeError("LLM kill-switch active -- cannot generate report")

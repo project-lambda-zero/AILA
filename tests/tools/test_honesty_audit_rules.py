@@ -2213,3 +2213,382 @@ class TestHealWithoutJournal:
         )
         findings = _audit(src, whitelist_path=wl_path)
         assert not any(f.rule == "heal_without_journal" for f in findings)
+
+
+# ---------------------------------------------------------------------------
+# Rule 80 -- module_subprocess_offload
+# ---------------------------------------------------------------------------
+
+_RUNTIME_IMPORT = "from aila.platform.services.runtime import run_blocking_io\n"
+
+
+def _line_of(source: str, needle: str) -> int:
+    """1-based line number of the first line containing *needle*."""
+    for index, line in enumerate(source.splitlines(), start=1):
+        if needle in line:
+            return index
+    raise AssertionError(f"needle not found: {needle!r}")
+
+
+class TestModuleSubprocessOffload:
+    """Rule 80: run_blocking_io() in aila/modules/<module>/services/** must not
+    delegate to a module-local call graph that reaches subprocess creation;
+    subprocess work belongs in a @platform_task worker. Other module
+    directories (for example reporting/) are outside this rule's scope.
+    """
+
+    MODULE_PATH = "aila/modules/pentest/services/runtime_probes.py"
+
+    def test_pyrit_two_hop_probe_offload_flagged(self, tmp_path: Path) -> None:
+        """Adversarial reproduction of the pentest pattern: a module-level
+        probe runs subprocess.run through a helper, and the probe is handed
+        to run_blocking_io through a sync wrapper.  The finding lands on the
+        run_blocking_io line, not on the subprocess line.
+        """
+        src = (
+            "import subprocess\n"
+            + _RUNTIME_IMPORT
+            + "\n"
+            + "def _run_probe(argv):\n"
+            + "    return subprocess.run(argv, capture_output=True, text=True)\n"
+            + "\n"
+            + "def _python_framework_sync(interp):\n"
+            + "    return _run_probe([str(interp), '-c', 'import sys'])\n"
+            + "\n"
+            + "async def _python_framework(interp):\n"
+            + "    return await run_blocking_io(_python_framework_sync, interp)\n"
+        )
+        path = _write(tmp_path, self.MODULE_PATH, src)
+        findings = [
+            f for f in _audit(path) if f.rule == "module_subprocess_offload"
+        ]
+        assert [f.line for f in findings] == [
+            _line_of(src, "run_blocking_io(_python_framework_sync"),
+        ]
+
+    def test_direct_local_subprocess_delegate_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """run_blocking_io(_spawn) where _spawn calls subprocess.run directly."""
+        src = (
+            "import subprocess\n"
+            + _RUNTIME_IMPORT
+            + "\n"
+            + "def _spawn(argv):\n"
+            + "    return subprocess.run(argv)\n"
+            + "\n"
+            + "async def go(argv):\n"
+            + "    return await run_blocking_io(_spawn, argv)\n"
+        )
+        path = _write(tmp_path, self.MODULE_PATH, src)
+        assert "module_subprocess_offload" in _rules(_audit(path))
+
+    def test_transitive_three_deep_chain_flagged(self, tmp_path: Path) -> None:
+        """_a -> _b -> _c -> subprocess.run is reached from run_blocking_io(_a)."""
+        src = (
+            "import subprocess\n"
+            + _RUNTIME_IMPORT
+            + "\n"
+            + "def _c(argv):\n"
+            + "    return subprocess.Popen(argv)\n"
+            + "\n"
+            + "def _b(argv):\n"
+            + "    return _c(argv)\n"
+            + "\n"
+            + "def _a(argv):\n"
+            + "    return _b(argv)\n"
+            + "\n"
+            + "async def go(argv):\n"
+            + "    return await run_blocking_io(_a, argv)\n"
+        )
+        path = _write(tmp_path, self.MODULE_PATH, src)
+        assert "module_subprocess_offload" in _rules(_audit(path))
+
+    def test_nested_local_delegate_flagged(self, tmp_path: Path) -> None:
+        """A subprocess-reaching def nested inside the offloading function
+        resolves through the enclosing scope.
+        """
+        src = (
+            "import subprocess\n"
+            + _RUNTIME_IMPORT
+            + "\n"
+            + "async def go(argv):\n"
+            + "    def _inner():\n"
+            + "        return subprocess.run(argv)\n"
+            + "    return await run_blocking_io(_inner)\n"
+        )
+        path = _write(tmp_path, self.MODULE_PATH, src)
+        assert "module_subprocess_offload" in _rules(_audit(path))
+
+    def test_class_method_self_delegate_flagged(self, tmp_path: Path) -> None:
+        """run_blocking_io(self._probe) resolves to the enclosing class's
+        method and follows its subprocess call.
+        """
+        src = (
+            "import subprocess\n"
+            + _RUNTIME_IMPORT
+            + "\n"
+            + "class Probe:\n"
+            + "    def _probe(self, argv):\n"
+            + "        return subprocess.run(argv)\n"
+            + "\n"
+            + "    async def run(self, argv):\n"
+            + "        return await run_blocking_io(self._probe, argv)\n"
+        )
+        path = _write(tmp_path, self.MODULE_PATH, src)
+        findings = [
+            f for f in _audit(path) if f.rule == "module_subprocess_offload"
+        ]
+        assert [f.line for f in findings] == [
+            _line_of(src, "run_blocking_io(self._probe"),
+        ]
+
+    def test_duplicate_method_name_clean_sibling_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """Two classes define _probe; only Dirty._probe reaches subprocess.
+        Clean's offload delegates to Clean._probe and must stay silent.
+        """
+        src = (
+            "import subprocess\n"
+            + _RUNTIME_IMPORT
+            + "\n"
+            + "class Dirty:\n"
+            + "    def _probe(self, argv):\n"
+            + "        return subprocess.run(argv)\n"
+            + "\n"
+            + "class Clean:\n"
+            + "    def _probe(self, argv):\n"
+            + "        return argv\n"
+            + "\n"
+            + "    async def go(self, argv):\n"
+            + "        return await run_blocking_io(self._probe, argv)\n"
+        )
+        path = _write(tmp_path, self.MODULE_PATH, src)
+        assert "module_subprocess_offload" not in _rules(_audit(path))
+
+    def test_cycle_reaching_subprocess_terminates_and_flags(
+        self, tmp_path: Path,
+    ) -> None:
+        """_a and _b call each other; _b also reaches subprocess.run.  The
+        walk must terminate and still report the offload.
+        """
+        src = (
+            "import subprocess\n"
+            + _RUNTIME_IMPORT
+            + "\n"
+            + "def _a(n):\n"
+            + "    return _b(n)\n"
+            + "\n"
+            + "def _b(n):\n"
+            + "    _a(n)\n"
+            + "    return subprocess.run(['true'])\n"
+            + "\n"
+            + "async def go(n):\n"
+            + "    return await run_blocking_io(_a, n)\n"
+        )
+        path = _write(tmp_path, self.MODULE_PATH, src)
+        assert "module_subprocess_offload" in _rules(_audit(path))
+
+    def test_pure_cycle_without_subprocess_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A recursion cycle with no subprocess creation terminates silently."""
+        src = (
+            _RUNTIME_IMPORT
+            + "\n"
+            + "def _a(n):\n"
+            + "    return _b(n)\n"
+            + "\n"
+            + "def _b(n):\n"
+            + "    return _a(n)\n"
+            + "\n"
+            + "async def go(n):\n"
+            + "    return await run_blocking_io(_a, n)\n"
+        )
+        path = _write(tmp_path, self.MODULE_PATH, src)
+        assert "module_subprocess_offload" not in _rules(_audit(path))
+
+    def test_import_alias_module_flagged(self, tmp_path: Path) -> None:
+        """``import subprocess as sp`` is canonicalized to subprocess.run."""
+        src = (
+            "import subprocess as sp\n"
+            + _RUNTIME_IMPORT
+            + "\n"
+            + "def _p(argv):\n"
+            + "    return sp.run(argv)\n"
+            + "\n"
+            + "async def go(argv):\n"
+            + "    return await run_blocking_io(_p, argv)\n"
+        )
+        path = _write(tmp_path, self.MODULE_PATH, src)
+        assert "module_subprocess_offload" in _rules(_audit(path))
+
+    def test_import_alias_function_flagged(self, tmp_path: Path) -> None:
+        """``from subprocess import run as sprun`` is canonicalized to subprocess.run."""
+        src = (
+            "from subprocess import run as sprun\n"
+            + _RUNTIME_IMPORT
+            + "\n"
+            + "def _p(argv):\n"
+            + "    return sprun(argv)\n"
+            + "\n"
+            + "async def go(argv):\n"
+            + "    return await run_blocking_io(_p, argv)\n"
+        )
+        path = _write(tmp_path, self.MODULE_PATH, src)
+        assert "module_subprocess_offload" in _rules(_audit(path))
+
+    def test_platform_runtime_attribute_offload_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """``rt.run_blocking_io(...)`` through a module alias is recognized."""
+        src = (
+            "import subprocess\n"
+            "from aila.platform.services import runtime as rt\n"
+            "\n"
+            "def _p(argv):\n"
+            "    return subprocess.run(argv)\n"
+            "\n"
+            "async def go(argv):\n"
+            "    return await rt.run_blocking_io(_p, argv)\n"
+        )
+        path = _write(tmp_path, self.MODULE_PATH, src)
+        assert "module_subprocess_offload" in _rules(_audit(path))
+
+    def test_platform_runtime_renamed_import_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """``run_blocking_io as rbio`` is canonicalized back to the platform path."""
+        src = (
+            "import subprocess\n"
+            "from aila.platform.services.runtime import run_blocking_io as rbio\n"
+            "\n"
+            "def _p(argv):\n"
+            "    return subprocess.run(argv)\n"
+            "\n"
+            "async def go(argv):\n"
+            "    return await rbio(_p, argv)\n"
+        )
+        path = _write(tmp_path, self.MODULE_PATH, src)
+        assert "module_subprocess_offload" in _rules(_audit(path))
+
+    def test_worker_owned_direct_subprocess_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A @platform_task worker that calls subprocess.run directly, with no
+        run_blocking_io offload, is the intended shape and stays silent.
+        """
+        src = (
+            "import subprocess\n"
+            "\n"
+            "def _run_probe(argv):\n"
+            "    return subprocess.run(argv, capture_output=True)\n"
+            "\n"
+            "async def probe_worker(argv):\n"
+            "    return _run_probe(argv)\n"
+        )
+        path = _write(tmp_path, "aila/modules/pentest/tasks/probe_worker.py", src)
+        assert "module_subprocess_offload" not in _rules(_audit(path))
+
+    def test_benign_local_offload_not_flagged(self, tmp_path: Path) -> None:
+        """run_blocking_io(_render_pdf) where the local graph has no subprocess."""
+        src = (
+            _RUNTIME_IMPORT
+            + "\n"
+            + "def _render_pdf(doc):\n"
+            + "    return doc.upper()\n"
+            + "\n"
+            + "async def go(doc):\n"
+            + "    return await run_blocking_io(_render_pdf, doc)\n"
+        )
+        path = _write(tmp_path, "aila/modules/vr/reporting/pdf_report.py", src)
+        assert "module_subprocess_offload" not in _rules(_audit(path))
+
+    def test_reporting_offload_outside_services_scope_not_flagged(
+        self, tmp_path: Path,
+    ) -> None:
+        """A subprocess-reaching offload under modules/<m>/reporting/ is outside
+        Rule 80's services/** scope and stays silent.
+        """
+        src = (
+            "import subprocess\n"
+            + _RUNTIME_IMPORT
+            + "\n"
+            + "def _render(doc):\n"
+            + "    return subprocess.run(['pandoc', doc])\n"
+            + "\n"
+            + "async def go(doc):\n"
+            + "    return await run_blocking_io(_render, doc)\n"
+        )
+        path = _write(tmp_path, "aila/modules/vr/reporting/pdf_report.py", src)
+        assert "module_subprocess_offload" not in _rules(_audit(path))
+
+    def test_task_queue_dispatch_not_flagged(self, tmp_path: Path) -> None:
+        """TaskQueue.submit / wait_result dispatch is not a run_blocking_io offload."""
+        src = (
+            "async def go(queue, argv):\n"
+            "    job = await queue.submit('probe', argv)\n"
+            "    return await queue.wait_result(job)\n"
+        )
+        path = _write(tmp_path, self.MODULE_PATH, src)
+        assert "module_subprocess_offload" not in _rules(_audit(path))
+
+    def test_direct_run_blocking_io_subprocess_not_rule_80(
+        self, tmp_path: Path,
+    ) -> None:
+        """run_blocking_io(subprocess.run, ...) names no local delegate, so it
+        is not a Rule 80 finding.
+        """
+        src = (
+            "import subprocess\n"
+            + _RUNTIME_IMPORT
+            + "\n"
+            + "async def go(argv):\n"
+            + "    return await run_blocking_io(subprocess.run, argv)\n"
+        )
+        path = _write(tmp_path, self.MODULE_PATH, src)
+        assert "module_subprocess_offload" not in _rules(_audit(path))
+
+    def test_platform_file_not_flagged(self, tmp_path: Path) -> None:
+        """Platform-owned code outside aila/modules/** is out of Rule 80 scope."""
+        src = (
+            "import subprocess\n"
+            + _RUNTIME_IMPORT
+            + "\n"
+            + "def _p(argv):\n"
+            + "    return subprocess.run(argv)\n"
+            + "\n"
+            + "async def go(argv):\n"
+            + "    return await run_blocking_io(_p, argv)\n"
+        )
+        path = _write(tmp_path, "aila/platform/services/offload_probe.py", src)
+        assert "module_subprocess_offload" not in _rules(_audit(path))
+
+    def test_api_file_not_flagged(self, tmp_path: Path) -> None:
+        """The same offload shape under aila/api/** is out of Rule 80 scope."""
+        src = (
+            "import subprocess\n"
+            + _RUNTIME_IMPORT
+            + "\n"
+            + "def _p(argv):\n"
+            + "    return subprocess.run(argv)\n"
+            + "\n"
+            + "async def go(argv):\n"
+            + "    return await run_blocking_io(_p, argv)\n"
+        )
+        path = _write(tmp_path, "aila/api/routers/probe.py", src)
+        assert "module_subprocess_offload" not in _rules(_audit(path))
+
+    def test_unresolved_delegate_not_flagged(self, tmp_path: Path) -> None:
+        """A delegate that is not a local definition (here, a call result) is
+        not followed; the rule only reasons about same-file definitions.
+        """
+        src = (
+            _RUNTIME_IMPORT
+            + "\n"
+            + "async def go(factory, argv):\n"
+            + "    return await run_blocking_io(factory(argv))\n"
+        )
+        path = _write(tmp_path, self.MODULE_PATH, src)
+        assert "module_subprocess_offload" not in _rules(_audit(path))

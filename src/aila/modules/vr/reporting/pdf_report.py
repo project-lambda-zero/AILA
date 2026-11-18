@@ -73,7 +73,6 @@ from aila.modules.vr.reporting.writer_agent import ReportContent, ReportWriter
 from aila.modules.vr.services.mcp_call_logger import record_call
 from aila.platform.config_base import _shared_registry
 from aila.platform.mcp.factory import make_bridge
-from aila.platform.services.runtime import run_blocking_io
 from aila.platform.tasks.runtime_stats import active_task_runtime_seconds
 from aila.platform.uow import UnitOfWork
 
@@ -87,13 +86,17 @@ _log = logging.getLogger(__name__)
 # ----------------------------------------------------------------------
 
 
-async def render_investigation_pdf(investigation_id: str) -> bytes:
+async def render_investigation_pdf(
+    investigation_id: str,
+    *,
+    run_id: str | None = None,
+) -> bytes:
     """Build a PDF report for one investigation.
 
-    Returns the PDF as bytes ready to write to a Response. Raises
-    ``ValueError`` when the investigation is missing, ``RuntimeError``
-    when the writer agent can't produce content. Caller wraps in a
-    FastAPI Response with the right Content-Type / Disposition.
+    Returns the PDF as bytes. Raises ``ValueError`` when the investigation
+    is missing, ``RuntimeError`` when the writer agent can't produce
+    content. ``run_id`` attributes every LLM call made for this render to
+    the owning reporting task.
 
     When the investigation has a confirmed finding (terminal
     DIRECT_FINDING) but NO PoC has been drafted yet, we run the
@@ -115,17 +118,14 @@ async def render_investigation_pdf(investigation_id: str) -> bytes:
     # the PoC persisted should hit POST /vr/findings/{id}/draft-poc
     # on a finding-backed investigation.
     if facts.get("final_answer") and not facts.get("poc_drafts"):
-        inline_poc = await _draft_poc_inline(facts)
+        inline_poc = await _draft_poc_inline(facts, run_id=run_id)
         if inline_poc is not None:
             facts["poc_drafts"] = [inline_poc]
 
     writer = ReportWriter()
-    content = await writer.write(facts)
+    content = await writer.write(facts, run_id=run_id)
 
-    # ReportLab is CPU-bound and synchronous; running it inline stalls the
-    # event loop for the whole render. Offload to the platform worker pool
-    # so a large report does not block other requests on the same worker.
-    return await run_blocking_io(_render_pdf, facts=facts, content=content)
+    return _render_pdf(facts=facts, content=content)
 
 
 def _extract_poc_draft_meta(evidence_refs_json: str | None) -> dict[str, Any]:
@@ -153,7 +153,11 @@ def _extract_poc_draft_meta(evidence_refs_json: str | None) -> dict[str, Any]:
     return {}
 
 
-async def _draft_poc_inline(facts: dict[str, Any]) -> dict[str, Any] | None:
+async def _draft_poc_inline(
+    facts: dict[str, Any],
+    *,
+    run_id: str | None = None,
+) -> dict[str, Any] | None:
     """Run PocWriter against the investigation facts and return a
     poc_drafts-shaped dict for in-memory inclusion in the PDF.
 
@@ -167,7 +171,7 @@ async def _draft_poc_inline(facts: dict[str, Any]) -> dict[str, Any] | None:
         "root_cause_summary": (facts.get("final_reasoning") or "")[:2000],
     }
     try:
-        draft = await PocWriter().write(poc_facts)
+        draft = await PocWriter().write(poc_facts, run_id=run_id)
     except (RuntimeError, ValueError) as exc:
         _log.warning("inline PocWriter failed for export: %s", exc)
         return None
@@ -428,11 +432,7 @@ async def _collect_facts(investigation_id: str) -> dict[str, Any] | None:
             "created_at": o.created_at.isoformat() if o.created_at else None,
         })
 
-    # _resolve_audit_metadata shells out to git (subprocess) and opens a
-    # sync psycopg connection; both block the event loop. Offload to the
-    # platform worker pool. It takes already-loaded plain data (inv record
-    # + descriptor dict), so it is safe to run off-thread.
-    audit_metadata = await run_blocking_io(_resolve_audit_metadata, inv, descriptor)
+    audit_metadata = _resolve_audit_metadata(inv, descriptor)
 
     facts: dict[str, Any] = {
         "investigation_id": investigation_id,

@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -29,6 +30,7 @@ from sqlmodel import select
 from aila.api.auth import AuthContext
 from aila.modules.forensics.api_router import create_forensics_router
 from aila.modules.forensics.api_router import limiter as _forensics_limiter
+from aila.modules.forensics.contracts.machine import MachineReadinessResult
 from aila.modules.forensics.contracts.status import InvestigationStatus
 from aila.modules.forensics.db_models import (
     ArtifactRecord,
@@ -41,7 +43,11 @@ from aila.modules.forensics.services.cost_ceiling import (
     cost_ceiling_exceeded,
     cost_ceiling_monitor,
 )
+from aila.modules.forensics.workflow.task import run_forensics_readiness
 from aila.platform.llm.cost_record import LLMCostRecord
+from aila.platform.tasks.context import TaskContext
+from aila.platform.tasks.models import TaskRecord
+from aila.platform.tasks.queue import qualified_task_name
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import ManagedSystemRecord
 
@@ -437,6 +443,40 @@ async def test_freeflow_cost_ceiling_triggers_investigation_cancel(test_db) -> N
 # --------------------------------------------------------------------------
 
 
+async def _seed_readiness_task(project_id: str) -> str:
+    """Persist the readiness TaskRecord the worker reads ``group_id`` from."""
+    task_id = str(uuid4())
+    async with async_session_scope() as session:
+        session.add(TaskRecord(
+            id=task_id,
+            track="forensics_readiness",
+            fn_path=qualified_task_name(run_forensics_readiness),
+            fn_module="forensics",
+            status="running",
+            user_id="admin",
+            group_id="admin",
+            team_id=None,
+            kwargs_json=json.dumps({"project_id": project_id}),
+        ))
+        await session.commit()
+    return task_id
+
+
+async def _run_readiness_worker(project_id: str, *, ready: bool, queue: MagicMock) -> None:
+    task_id = await _seed_readiness_task(project_id)
+    with (
+        patch(
+            "aila.modules.forensics.services.machine_readiness."
+            "MachineReadinessService.check_readiness",
+            new=AsyncMock(return_value=MachineReadinessResult(ready=ready, system_id=1, system_name="sys")),
+        ),
+        patch("aila.modules.forensics.workflow.task.default_task_queue", return_value=queue),
+        patch("aila.modules.forensics.workflow.task.store_task_json_result", new=AsyncMock()),
+    ):
+        ctx = TaskContext(task_id=task_id, job_try=1, user_id="admin", team_id=None)
+        await run_forensics_readiness.__wrapped__(ctx, project_id=project_id)
+
+
 async def test_readiness_enqueues_analysis_after_flip(test_db) -> None:
     """A ready machine flips CREATED->READY and enqueues the analysis task.
 
@@ -444,24 +484,13 @@ async def test_readiness_enqueues_analysis_after_flip(test_db) -> None:
     closes; this pins that the status flip still commits and the enqueue still
     fires with the project id.
     """
-    from unittest.mock import AsyncMock, MagicMock, patch
-
     suffix = uuid4().hex[:8]
     pid = await _seed_project(suffix)
     submit = AsyncMock()
     fake_queue = MagicMock()
     fake_queue.submit = submit
 
-    handler = _endpoint("/projects/{project_id}/readiness-check", "POST")
-    with (
-        patch(
-            "aila.modules.forensics.services.machine_readiness."
-            "MachineReadinessService.check_readiness",
-            new=AsyncMock(return_value=MagicMock(ready=True)),
-        ),
-        patch("aila.api.deps.get_task_queue", return_value=fake_queue),
-    ):
-        await handler(_Req(), pid, auth=_admin())
+    await _run_readiness_worker(pid, ready=True, queue=fake_queue)
 
     async with async_session_scope() as session:
         proj = (await session.exec(
@@ -475,24 +504,13 @@ async def test_readiness_enqueues_analysis_after_flip(test_db) -> None:
 
 async def test_readiness_not_ready_does_not_enqueue(test_db) -> None:
     """A not-ready machine leaves the project CREATED and enqueues nothing."""
-    from unittest.mock import AsyncMock, MagicMock, patch
-
     suffix = uuid4().hex[:8]
     pid = await _seed_project(suffix)
     submit = AsyncMock()
     fake_queue = MagicMock()
     fake_queue.submit = submit
 
-    handler = _endpoint("/projects/{project_id}/readiness-check", "POST")
-    with (
-        patch(
-            "aila.modules.forensics.services.machine_readiness."
-            "MachineReadinessService.check_readiness",
-            new=AsyncMock(return_value=MagicMock(ready=False)),
-        ),
-        patch("aila.api.deps.get_task_queue", return_value=fake_queue),
-    ):
-        await handler(_Req(), pid, auth=_admin())
+    await _run_readiness_worker(pid, ready=False, queue=fake_queue)
 
     async with async_session_scope() as session:
         proj = (await session.exec(

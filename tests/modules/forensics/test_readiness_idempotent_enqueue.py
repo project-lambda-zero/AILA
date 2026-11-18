@@ -13,8 +13,8 @@ import json
 
 import pytest
 
-from aila.modules.forensics.api_router import _active_analysis_task_id
 from aila.modules.forensics.workflow.task import (
+    _active_analysis_task_id,
     run_forensics_analysis,
     run_forensics_investigation,
 )
