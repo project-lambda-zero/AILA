@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aila"
-version = "0.6.123"
+version = "0.6.124"
 description = "Modular AI security platform with pluggable analysis modules."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -92,6 +92,16 @@ pdf-weasyprint = [
 ]
 server = [
   "gunicorn>=25.3.0",
+]
+# External pentest engines are deliberately separate extras. Garak 0.17.1
+# requires openai<3 while PyRIT 1.2.0 requires openai>=3, so an aggregate
+# pentest extra would be unsatisfiable. The administrator installer creates
+# one isolated environment per engine from the same reviewed pins.
+pentest-garak = [
+  "garak==0.17.1",
+]
+pentest-pyrit = [
+  "pyrit==1.2.0",
 ]
 otel = [
   # ENHANCEMENT #160: OpenTelemetry GenAI-conventions span emission

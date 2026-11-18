@@ -205,21 +205,42 @@
     var t0 = performance.now();
     var offset = Math.random() * 100;
     var raf = 0;
+    var lastFrame = -Infinity;
+    var frameMs = 1000 / 30;
     function frame(t) {
-      gl.uniform1f(U.iTime, ((t * 0.001) + offset) * cfg.timeScale);
-      gl.uniform1f(U.uPageLoadProgress, Math.min((t - t0) / cfg.loadMs, 1));
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      raf = 0;
+      if (document.hidden) return;
+      if (t - lastFrame >= frameMs) {
+        lastFrame = t;
+        gl.uniform1f(U.iTime, ((t * 0.001) + offset) * cfg.timeScale);
+        gl.uniform1f(U.uPageLoadProgress, Math.min((t - t0) / cfg.loadMs, 1));
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+      }
       raf = requestAnimationFrame(frame);
+    }
+    function start() {
+      if (!reduce && !raf && !document.hidden) raf = requestAnimationFrame(frame);
+    }
+    function visibilityChange() {
+      if (document.hidden) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+      } else {
+        lastFrame = -Infinity;
+        start();
+      }
     }
     if (reduce) {
       gl.uniform1f(U.iTime, 12.0);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     } else {
-      raf = requestAnimationFrame(frame);
+      document.addEventListener("visibilitychange", visibilityChange);
+      start();
     }
 
     return function () {
       cancelAnimationFrame(raf);
+      document.removeEventListener("visibilitychange", visibilityChange);
       ro.disconnect();
       if (canvas.parentElement === container) container.removeChild(canvas);
       var ext = gl.getExtension("WEBGL_lose_context");

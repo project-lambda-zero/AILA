@@ -17,7 +17,7 @@
  * project detail and the rail list.
  */
 
-import { createContext, useContext, useRef, useState, type JSX, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type JSX, type ReactNode } from "react";
 
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 
@@ -125,37 +125,97 @@ function parseLiveEvent(msg: SseMessage, seq: number): LiveEvent {
 function invalidateInvestigationLists(qc: QueryClient, module: GenericInvestigationModule): void {
   const endpoint = `/${module}/investigations`;
   void qc.invalidateQueries({ queryKey: [module, "investigations"] });
-  void qc.invalidateQueries({ queryKey: ["datapage", endpoint] });
+  // DataPage keys are `["datapage", endpoint, page]` and the endpoint carries the
+  // active server-filter query string, so match on the path before `?`.
+  void qc.invalidateQueries({
+    predicate: (q) =>
+      q.queryKey[0] === "datapage" && typeof q.queryKey[1] === "string" && q.queryKey[1].split("?")[0] === endpoint,
+  });
   void qc.invalidateQueries({ queryKey: ["target-investigations", endpoint] });
+}
+
+/**
+ * Stream events are collected for this window before one invalidation pass, so
+ * a burst of status events costs one refetch per key instead of one per event.
+ */
+const INVALIDATION_WINDOW_MS = 300;
+
+/** Invalidations queued by stream events until the current window flushes. */
+interface PendingInvalidations {
+  timer: number | undefined;
+  /** Changed investigation ids per generic module (detail keys are per id). */
+  generic: Map<GenericInvestigationModule, Set<string>>;
+  forensicsInvestigations: Set<string>;
+  forensicsProjects: Set<string>;
 }
 
 /**
  * Forensics keys are `["forensics", projectId, ...]`. An investigation event
  * carries no project id, so it matches every project's investigation keys.
  */
-function invalidateForensicsInvestigation(qc: QueryClient, investigationId: string): void {
+function invalidateForensicsInvestigations(qc: QueryClient, investigationIds: ReadonlySet<string>): void {
   void qc.invalidateQueries({
     predicate: (q) =>
       q.queryKey[0] === "forensics" &&
       (q.queryKey[2] === "investigations" ||
-        (q.queryKey[2] === "investigation" && q.queryKey[3] === investigationId)),
+        (q.queryKey[2] === "investigation" &&
+          typeof q.queryKey[3] === "string" &&
+          investigationIds.has(q.queryKey[3]))),
   });
 }
 
-/** Project keys for one project plus the project list and rail. */
-function invalidateForensicsProject(qc: QueryClient, projectId: string): void {
+/** Project keys for the changed projects plus the project list and rail. */
+function invalidateForensicsProjects(qc: QueryClient, projectIds: ReadonlySet<string>): void {
   void qc.invalidateQueries({
     predicate: (q) =>
-      q.queryKey[0] === "forensics" && (q.queryKey[1] === projectId || q.queryKey[1] === "projects"),
+      q.queryKey[0] === "forensics" &&
+      (q.queryKey[1] === "projects" || (typeof q.queryKey[1] === "string" && projectIds.has(q.queryKey[1]))),
   });
 }
 
+function flushInvalidations(qc: QueryClient, batch: PendingInvalidations): void {
+  for (const [module, ids] of batch.generic) {
+    invalidateInvestigationLists(qc, module);
+    for (const id of ids) void qc.invalidateQueries({ queryKey: [module, "investigation", id] });
+  }
+  if (batch.forensicsInvestigations.size > 0) invalidateForensicsInvestigations(qc, batch.forensicsInvestigations);
+  if (batch.forensicsProjects.size > 0) invalidateForensicsProjects(qc, batch.forensicsProjects);
+}
 
 export function LiveEventsProvider({ children }: { children: ReactNode }): JSX.Element {
   const qc = useQueryClient();
   const [events, setEvents] = useState<LiveEvent[]>([]);
   const [reconnects, setReconnects] = useState(0);
   const seq = useRef(0);
+  const pending = useRef<PendingInvalidations>({
+    timer: undefined,
+    generic: new Map(),
+    forensicsInvestigations: new Set(),
+    forensicsProjects: new Set(),
+  });
+
+  // The first queued invalidation opens the window; later events in it join the
+  // same batch. The batch is swapped out before flushing so nothing is lost.
+  const scheduleFlush = (): void => {
+    if (pending.current.timer !== undefined) return;
+    pending.current.timer = window.setTimeout(() => {
+      const batch = pending.current;
+      pending.current = {
+        timer: undefined,
+        generic: new Map(),
+        forensicsInvestigations: new Set(),
+        forensicsProjects: new Set(),
+      };
+      flushInvalidations(qc, batch);
+    }, INVALIDATION_WINDOW_MS);
+  };
+
+  useEffect(
+    () => () => {
+      window.clearTimeout(pending.current.timer);
+    },
+    [],
+  );
 
   const stream = useSseStream({
     path: "/events/stream",
@@ -178,20 +238,28 @@ export function LiveEventsProvider({ children }: { children: ReactNode }): JSX.E
       });
       const change = evt.investigation;
       if (change) {
+        const batch = pending.current;
         if (change.module === "forensics") {
-          invalidateForensicsInvestigation(qc, change.investigationId);
+          batch.forensicsInvestigations.add(change.investigationId);
         } else {
-          invalidateInvestigationLists(qc, change.module);
-          void qc.invalidateQueries({ queryKey: [change.module, "investigation", change.investigationId] });
+          const ids = batch.generic.get(change.module) ?? new Set<string>();
+          ids.add(change.investigationId);
+          batch.generic.set(change.module, ids);
         }
+        scheduleFlush();
       }
       if (evt.project) {
-        invalidateForensicsProject(qc, evt.project.projectId);
+        pending.current.forensicsProjects.add(evt.project.projectId);
+        scheduleFlush();
       }
     },
   });
 
-  const value: LiveEventsValue = { events, state: stream.state, error: stream.error, reconnects };
+  const { state, error } = stream;
+  const value = useMemo<LiveEventsValue>(
+    () => ({ events, state, error, reconnects }),
+    [events, state, error, reconnects],
+  );
   return <LiveEventsContext.Provider value={value}>{children}</LiveEventsContext.Provider>;
 }
 

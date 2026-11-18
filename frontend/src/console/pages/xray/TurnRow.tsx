@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { Suspense, memo, useCallback } from "react";
 import type { Dispatch, JSX, ReactNode, SetStateAction } from "react";
 
 import { readStr } from "../../../api/parse";
@@ -15,11 +15,14 @@ import { H, argRowStyle, codePreStyle, sectionProse } from "./theme";
 // that follow it, or a standalone reasoning / submission message. Collapsed
 // shows the action's headline reasoning; expanded splits into REASONING /
 // TOOL / OUTPUT sections so the three are visually distinct -- not one wall.
-export function TurnRow({
+// Memoized so an unrelated parent re-render (poll tick, sibling pane state) does
+// not re-render every card; the Monaco block mounts only inside the open branch.
+export const TurnRow = memo(function TurnRow({
   group,
   resolvePersona,
   showClock,
   open,
+  turnKey,
   onToggle,
   headerAction,
 }: {
@@ -27,7 +30,8 @@ export function TurnRow({
   resolvePersona: (m: Message) => Persona;
   showClock: boolean; // VR shows the step clock; malware does not.
   open: boolean;
-  onToggle: () => void;
+  turnKey: string;
+  onToggle: (turnKey: string) => void;
   // Module-specific control rendered in the card header (malware: operator
   // message ACK). Its clicks must not toggle the card.
   headerAction?: (group: readonly Message[]) => ReactNode;
@@ -57,7 +61,7 @@ export function TurnRow({
   const view = toolMsg ? toolCallView(toolMsg.payload ?? {}) : null;
   return (
     <div
-      onClick={onToggle}
+      onClick={() => onToggle(turnKey)}
       style={css(
         `display:flex;flex-direction:column;gap:5px;padding:11px 13px;border-left:${attention ? "3px" : "2px"} solid ${signal};border-bottom:1px solid var(--border-faint);cursor:pointer;${
           attention
@@ -165,7 +169,7 @@ export function TurnRow({
       )}
     </div>
   );
-}
+});
 
 // The TURNS stream: one TurnRow per action card, one card open at a time.
 export function TurnList({
@@ -183,6 +187,11 @@ export function TurnList({
   showClock: boolean;
   headerAction?: (group: readonly Message[]) => ReactNode;
 }): JSX.Element {
+  // One handler for every row: a per-row closure would defeat TurnRow's memo.
+  const onToggle = useCallback(
+    (turnKey: string) => setOpenTurn((cur) => (cur === turnKey ? null : turnKey)),
+    [setOpenTurn],
+  );
   return (
     <>
       {groups.map((g) => {
@@ -195,7 +204,8 @@ export function TurnList({
             showClock={showClock}
             headerAction={headerAction}
             open={openTurn === key}
-            onToggle={() => setOpenTurn((cur) => (cur === key ? null : key))}
+            turnKey={key}
+            onToggle={onToggle}
           />
         );
       })}

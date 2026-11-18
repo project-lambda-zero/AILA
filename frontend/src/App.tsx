@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useAuth } from "./api/auth";
 import { useCostRoi } from "./api/cost";
-import { useInvestigations } from "./api/hooks";
 import { LiveEventsProvider } from "./api/liveEvents";
 import { usePlatformSchema } from "./api/onboarding";
 import type { BoundInvestigation, ModulePageProps } from "./console/contract";
@@ -47,6 +46,22 @@ export default function App() {
   );
 }
 
+function ShellClock() {
+  const [clock, setClock] = useState("");
+
+  useEffect(() => {
+    const tick = () => {
+      const d = new Date();
+      setClock(`${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  return clock;
+}
+
 function Console() {
   const user = useAuth((s) => s.user);
 
@@ -80,17 +95,6 @@ function Console() {
   const [windows, setWindows] = useState<WindowState[]>([]);
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const winSeq = useRef(0);
-  const [clock, setClock] = useState("");
-
-  useEffect(() => {
-    const tick = () => {
-      const d = new Date();
-      setClock(`${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`);
-    };
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, []);
 
   const pageWindows = windows.filter((w) => w.kind === "page" || w.kind === "overlay");
   const activePage = [...pageWindows].reverse().find((w) => !w.minimized) ?? null;
@@ -493,7 +497,7 @@ function Console() {
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{engineLabel}</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", padding: "0 12px", borderLeft: "1px solid var(--border-soft)", color: "var(--text-faint)", textTransform: "none", letterSpacing: "0.06em" }}>
-          {clock}
+          <ShellClock />
         </div>
       </header>
 

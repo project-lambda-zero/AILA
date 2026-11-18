@@ -38,6 +38,14 @@ def _utc_now() -> datetime:
     return datetime.now(UTC)
 
 
+@pytest_asyncio.fixture()
+async def pentest_config(test_db: None) -> None:
+    from aila.modules.pentest.config_schema import PentestConfigSchema
+    from aila.storage.registry import ConfigRegistry
+
+    await ConfigRegistry().register("pentest", PentestConfigSchema)
+
+
 @pytest_asyncio.fixture(scope="session")
 async def _session_async_engine() -> AsyncGenerator[object, None]:
     """Session-scoped async engine: bootstrap the aila_test schema once.

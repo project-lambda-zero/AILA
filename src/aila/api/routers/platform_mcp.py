@@ -234,6 +234,7 @@ async def list_mcp_calls(
     request: Request,
     module_scope: list[str] | None = Query(default=None),
     server_id: str | None = Query(default=None, max_length=64),
+    target_id: str | None = Query(default=None, max_length=64),
     status_filter: list[str] | None = Query(default=None, alias="status"),
     called_at_since: datetime | None = Query(default=None),
     called_at_until: datetime | None = Query(default=None),
@@ -253,6 +254,8 @@ async def list_mcp_calls(
             base = base.where(McpCallLogRecord.module_scope.in_(scopes))  # type: ignore[union-attr]
         if server_id:
             base = base.where(McpCallLogRecord.server_id == server_id)
+        if target_id:
+            base = base.where(McpCallLogRecord.target_id == target_id)
         if statuses is not None:
             base = base.where(McpCallLogRecord.status.in_(statuses))  # type: ignore[union-attr]
         if called_at_since is not None:

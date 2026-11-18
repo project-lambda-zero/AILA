@@ -22,12 +22,43 @@
  * close does not fire (see XRayPage). Cross-window focus cycling (Ctrl+`) is a
  * host concern and lives in App.tsx, not here. */
 
-import { useEffect, useRef, useState } from "react";
-import type { CSSProperties, JSX, MouseEvent as ReactMouseEvent, ReactNode } from "react";
+import { Component, useEffect, useRef, useState } from "react";
+import type { CSSProperties, ErrorInfo, JSX, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 
 import type { ConsoleWindowProps } from "./types";
 
 export type { ConsoleWindowProps } from "./types";
+
+interface WindowBodyBoundaryState {
+  error: Error | null;
+}
+
+/** Contains a render error inside one window's body. The footer stays outside
+ * the boundary, so the window's controls remain usable. Suspense promises are
+ * not errors here, so the page-level `<Suspense>` still handles them. */
+class WindowBodyBoundary extends Component<{ children: ReactNode }, WindowBodyBoundaryState> {
+  state: WindowBodyBoundaryState = { error: null };
+
+  static getDerivedStateFromError(error: Error): WindowBodyBoundaryState {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo): void {
+    console.error("ConsoleWindow body failed to render", error, info.componentStack);
+  }
+
+  render(): ReactNode {
+    if (this.state.error === null) return this.props.children;
+    return (
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: 24 }}>
+        <span style={{ color: "var(--text-faint)", fontFamily: "var(--font-mono)", fontSize: 12 }}>this view failed to render</span>
+        <button type="button" onClick={() => this.setState({ error: null })}>
+          Retry
+        </button>
+      </div>
+    );
+  }
+}
 export type { WindowKind, WindowRect, WindowState } from "./types";
 
 const DEFAULT_MIN = { w: 320, h: 200 };
@@ -190,7 +221,11 @@ export default function ConsoleWindow(props: ConsoleWindowProps): JSX.Element | 
           }
         : { position: "absolute", inset: 0, zIndex: fixedZ, display: "flex", flexDirection: "column", background: "transparent" };
 
-  const body: ReactNode = <div style={{ flex: 1, minHeight: 0, position: "relative", display: "flex", flexDirection: "column" }}>{children}</div>;
+  const body: ReactNode = (
+    <div style={{ flex: 1, minHeight: 0, position: "relative", display: "flex", flexDirection: "column" }}>
+      <WindowBodyBoundary>{children}</WindowBodyBoundary>
+    </div>
+  );
 
   return (
     <div style={wrapStyle} onMouseDownCapture={raise}>

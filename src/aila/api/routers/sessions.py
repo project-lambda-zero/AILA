@@ -543,34 +543,37 @@ async def get_messages(
 
     Returns 404 if session not found or belongs to another user (D-25).
     """
-    from sqlmodel import select
+    from sqlmodel import func, select
 
-    async def _query() -> tuple[bool, list[SessionMessageRecord]]:
+    async def _query() -> tuple[bool, int, list[SessionMessageRecord]]:
         async with async_session_scope() as db:
             sess_record = await db.get(SessionRecord, session_id)
             if sess_record is None or sess_record.user_id != auth.user_id:
-                return False, []
+                return False, 0, []
+            count_stmt = select(func.count(SessionMessageRecord.id)).where(
+                SessionMessageRecord.session_id == session_id,
+            )
+            total = int((await db.exec(count_stmt)).one())
             stmt = (
                 select(SessionMessageRecord)
                 .where(SessionMessageRecord.session_id == session_id)
-                .order_by(SessionMessageRecord.created_at)  # type: ignore[arg-type]  # SQLModel column expression
+                .order_by(SessionMessageRecord.created_at, SessionMessageRecord.id)  # type: ignore[arg-type]  # SQLModel column expression
+                .offset((page - 1) * page_size)
+                .limit(page_size)
             )
-            return True, list((await db.exec(stmt)).all())
+            return True, total, list((await db.exec(stmt)).all())
 
-    found, rows = await _query()
+    found, total, rows = await _query()
     if not found:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Session '{session_id}' not found or belongs to another user -- verify the session_id via POST /sessions",
         )
 
-    total = len(rows)
-    offset = (page - 1) * page_size
-    page_rows = rows[offset : offset + page_size]
     return SessionMessagesResponse(
         total=total,
         page=page,
         page_size=page_size,
         pages=math.ceil(total / page_size) if total > 0 else 0,
-        items=[_message_to_response(r) for r in page_rows],
+        items=[_message_to_response(r) for r in rows],
     )

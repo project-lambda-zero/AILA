@@ -1,4 +1,4 @@
-import { useMemo, useState, type JSX } from "react";
+import { useCallback, useMemo, useState, type JSX } from "react";
 
 import {
   useBranches,
@@ -76,15 +76,18 @@ export default function XRayPage(props: WindowChromeProps & SectionRouteProps & 
   const invStatus = (inv.data?.status ?? "").toLowerCase();
   const shell = useXRayShell({ view, panes: VR_LAYOUT_PANES, status: invStatus, controllable: true, control, onNavigate });
 
-  const branchList: Branch[] = branches.data ?? [];
+  const branchList: Branch[] = useMemo(() => branches.data ?? [], [branches.data]);
   const branchMap = useMemo(() => {
     const map = new Map<string, Branch>();
     for (const b of branchList) map.set(b.id, b);
     return map;
   }, [branchList]);
-  const resolvePersona = (m: Message): Persona => personaOf(m, branchMap, VR_PERSONA_RULES);
+  const resolvePersona = useCallback(
+    (m: Message): Persona => personaOf(m, branchMap, VR_PERSONA_RULES),
+    [branchMap],
+  );
 
-  const allMsgs: Message[] = msgs.data ?? [];
+  const allMsgs: Message[] = useMemo(() => msgs.data ?? [], [msgs.data]);
   const turnGroups: Message[][] = useMemo(() => groupTurns(allMsgs), [allMsgs]);
   const recentMsgs: Message[] = useMemo(() => newestFirst(allMsgs), [allMsgs]);
   const mcpCalls = useMemo(
@@ -105,7 +108,7 @@ export default function XRayPage(props: WindowChromeProps & SectionRouteProps & 
   const dispatchState: DispatchState | undefined = dispatch.data;
   const visitedSet = useMemo(() => new Set(dispatchState?.visited ?? []), [dispatchState]);
   const currentSet = useMemo(() => new Set(dispatchState?.current ?? []), [dispatchState]);
-  const invRunning = !["completed", "failed", "cancelled"].includes(invStatus);
+  const invRunning = !["completed", "failed", "abandoned", "stalled"].includes(invStatus);
   const nodeState = (id: string) => nodeStateOf(id, { invRunning, visited: visitedSet, current: currentSet, branchCount: branchList.length });
 
   // Real append-only investigation ledger; oracle requests are its kind=request
