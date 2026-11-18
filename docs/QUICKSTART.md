@@ -242,6 +242,10 @@ python -m aila worker -q vr                  # vulnerability research (needs aud
 python -m aila worker -q malware             # malware reverse engineering (needs rea + reverser_belt)
 python -m aila worker -q vulnerability       # vulnerability scans (CVE, scoring, remediation)
 python -m aila worker -q forensics           # DFIR investigations, evidence analysis
+python -m aila worker -q forensics_readiness # analyzer-machine readiness checks and offline tool preparation
+python -m aila worker -q reporting           # VR investigation, VR MASVS, and vulnerability PDF rendering
+python -m aila worker -q pentest             # native pentest campaigns
+python -m aila worker -q pentest_runtime     # native pentest runtime probes
 ```
 
 Or via Make:
@@ -253,6 +257,8 @@ make worker-malware    # malware queue
 make worker-vuln       # vulnerability queue
 make worker-forensics  # forensics queue
 ```
+
+The `forensics_readiness`, `reporting`, `pentest`, and `pentest_runtime` queues have no Make target; use the `python -m aila worker -q <queue>` form.
 
 Each worker process subscribes to one queue (`arq:queue:<name>`). For multi-module deployments, run one worker per queue.
 

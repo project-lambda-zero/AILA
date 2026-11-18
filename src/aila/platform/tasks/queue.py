@@ -33,8 +33,10 @@ import uuid
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from graphlib import CycleError, TopologicalSorter
+from typing import Any
 
 from arq.connections import RedisSettings, create_pool
+from arq.jobs import Job, ResultNotFound
 from redis import asyncio as aioredis
 from redis.exceptions import RedisError
 from sqlalchemy import cast
@@ -1227,3 +1229,56 @@ class TaskQueue:
             redis_url=redis_url,
             defer_seconds=defer_seconds,
         )
+
+    async def wait_result(
+        self,
+        handle: TaskHandle,
+        *,
+        track: str,
+        timeout_seconds: float,
+    ) -> Any:
+        """Await an ARQ job's deserialized result through the platform Redis transport.
+
+        Module code runs on workers; this only reads the outcome of a job that a
+        worker already executed. The job is looked up on ``arq:queue:<track>``.
+
+        Errors:
+        - Missing Redis URL, unreachable broker, or invalid DSN raises
+          ``WorkerUnreachableError``.
+        - Transport failures while polling, or a job id that is no longer in the
+          queue with no stored result (``ResultNotFound``), raise
+          ``WorkerUnreachableError``.
+        - No result within ``timeout_seconds`` raises ``WorkerUnreachableError``.
+        - An exception raised by the job itself propagates unchanged. ARQ does not
+          tag job exceptions, so a job that raises ``TimeoutError`` is reported as
+          a wait timeout; the original is preserved as ``__cause__``.
+        """
+        redis_url = self._get_redis_url()
+        if not redis_url:
+            raise WorkerUnreachableError(
+                "Task queue Redis URL is not configured -- result wait rejected."
+            )
+        try:
+            pool = await create_pool(RedisSettings.from_dsn(redis_url))
+        except (OSError, TimeoutError, RedisError, ValueError) as exc:
+            raise WorkerUnreachableError(
+                f"Task queue Redis is unreachable (url={redis_url}) -- result wait rejected."
+            ) from exc
+        try:
+            job = Job(
+                handle.task_id,
+                pool,
+                _queue_name=ARQ_QUEUE_KEY_TEMPLATE.format(track=track),
+            )
+            return await job.result(timeout=timeout_seconds, poll_delay=0.5)
+        except TimeoutError as exc:
+            raise WorkerUnreachableError(
+                f"Timed out after {timeout_seconds}s waiting for task {handle.task_id}."
+            ) from exc
+        except (ResultNotFound, RedisError) as exc:
+            raise WorkerUnreachableError(
+                f"Task {handle.task_id} result is unavailable on track {track!r} -- "
+                f"wait failed: {type(exc).__name__}."
+            ) from exc
+        finally:
+            await pool.aclose()

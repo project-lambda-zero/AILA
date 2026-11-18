@@ -1,15 +1,12 @@
-"""R-3 -- ``GET /vr/targets/{target_id}/masvs-report`` streams the MASVS PDF.
+"""``POST /vr/targets/{target_id}/masvs-report`` queues the MASVS PDF task.
 
-End-to-end smoke coverage for the report download endpoint that R-3
-wires up on top of the R-1 aggregator + R-2a/R-2b PDF renderer. Each
-test inserts the minimal DB shape the endpoint requires (one
-``VRTargetRecord`` + one parent ``VRInvestigationRecord`` with
-``kind='masvs_audit'`` and zero children) and exercises the HTTP
-contract:
+End-to-end coverage for the enqueue endpoint. Each test inserts the
+minimal DB shape the endpoint requires (one ``VRTargetRecord`` + one
+parent ``VRInvestigationRecord`` with ``kind='masvs_audit'`` and zero
+children) and exercises the HTTP contract:
 
-1. **Happy path** -- 200, ``application/pdf`` content-type, valid PDF
-   byte stream (``%PDF-`` header), and a ``Content-Disposition`` header
-   whose filename embeds the APK package + audit generation date.
+1. **Happy path** -- 202 ``{task_id, status: "queued"}``; the reporting
+   task is submitted with ``bypass_dedup=True`` and the audit id.
 2. **404 unknown target** -- missing target id never returns 500.
 3. **404 unknown audit** -- valid target + missing audit id returns 404.
 4. **409 wrong parent kind** -- the parent exists but is not a MASVS
@@ -28,14 +25,10 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
-import pypdf
 import pytest
 from httpx import AsyncClient
 
-from aila.modules.vr.api_router import (
-    _masvs_report_filename,
-    _sanitize_filename_part,
-)
+import aila.modules.vr.api_router as router_module
 from aila.modules.vr.contracts.investigation import (
     InvestigationKind,
     InvestigationStatus,
@@ -52,6 +45,11 @@ from aila.modules.vr.db_models import (
     VRWorkspaceRecord,
 )
 from aila.modules.vr.masvs import CATALOG_VERSION
+from aila.modules.vr.reporting.tasks import (
+    _masvs_report_filename,
+    _sanitize_filename_part,
+    run_vr_masvs_report,
+)
 from aila.platform.uow import UnitOfWork
 
 
@@ -139,10 +137,10 @@ async def _insert_masvs_parent(
             kind=kind,
             title=f"MASVS audit: {_APK_PACKAGE}",
             initial_question="MASVS audit batch parent (test fixture).",
-            status=InvestigationStatus.CREATED.value,
+            status=InvestigationStatus.RUNNING.value,
             auto_pilot=False,
             strategy_family="vulnerability_research.masvs_audit",
-            cost_budget_usd=2300.0,
+            cost_budget_usd=100.0,
         )
         uow.session.add(parent)
         await uow.session.commit()
@@ -151,47 +149,49 @@ async def _insert_masvs_parent(
 
 
 @pytest.mark.asyncio
-async def test_report_happy_path_returns_pdf(
+async def test_report_happy_path_queues_reporting_task(
     async_client: AsyncClient,
     admin_token: str,
     test_db: None,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Valid target + valid MASVS parent → 200 + application/pdf body."""
+    """Valid target + valid MASVS parent → 202 + queued reporting task."""
     del test_db
+
+    submit_calls: list[dict[str, Any]] = []
+
+    class _Handle:
+        task_id = "task-masvs-1"
+
+    class _StubQueue:
+        async def submit(self, **kwargs: Any) -> _Handle:
+            submit_calls.append(kwargs)
+            return _Handle()
+
+    monkeypatch.setattr(
+        router_module,
+        "get_task_queue",
+        lambda module_id, request: _StubQueue(),
+    )
+
     target_id = await _insert_target(slug="happy")
     audit_id = await _insert_masvs_parent(target_id=target_id)
 
-    resp = await async_client.get(
+    resp = await async_client.post(
         f"/vr/targets/{target_id}/masvs-report",
         params={"audit_id": audit_id},
         headers=_auth(admin_token),
     )
 
-    assert resp.status_code == 200, resp.text
-    assert resp.headers["content-type"].startswith("application/pdf")
+    assert resp.status_code == 202, resp.text
+    assert resp.json() == {"task_id": "task-masvs-1", "status": "queued"}
 
-    disposition = resp.headers["content-disposition"]
-    assert disposition.startswith("attachment; filename="), disposition
-    assert _APK_PACKAGE in disposition, (
-        "R-3: the filename should embed the APK package label so the "
-        f"operator can identify the report in their downloads folder; "
-        f"got {disposition!r}."
-    )
-    assert disposition.endswith('.pdf"'), disposition
-    assert resp.headers.get("cache-control") == "no-store", (
-        "R-3: the report stream is per-request -- operators downloading "
-        "twice must hit the renderer twice, not a stale CDN copy."
-    )
-
-    body = resp.content
-    assert body.startswith(b"%PDF-"), (
-        "R-3: response body must begin with the PDF magic. The renderer "
-        "produced something else -- typically a stray write that broke "
-        "the byte stream."
-    )
-    # Parse with pypdf to confirm the structure survived the wire.
-    reader = pypdf.PdfReader(__import__("io").BytesIO(body))
-    assert len(reader.pages) >= 1
+    assert len(submit_calls) == 1
+    call = submit_calls[0]
+    assert call["track"] == "reporting"
+    assert call["fn"] is run_vr_masvs_report
+    assert call["kwargs"] == {"target_id": target_id, "audit_id": audit_id}
+    assert call["bypass_dedup"] is True
 
 
 @pytest.mark.asyncio
@@ -203,7 +203,7 @@ async def test_report_returns_404_for_unknown_target(
     """Unknown target id surfaces as 404, not 500."""
     del test_db
 
-    resp = await async_client.get(
+    resp = await async_client.post(
         "/vr/targets/does-not-exist/masvs-report",
         params={"audit_id": "anything"},
         headers=_auth(admin_token),
@@ -222,9 +222,9 @@ async def test_report_returns_404_for_unknown_audit(
     del test_db
     target_id = await _insert_target(slug="missing-audit")
 
-    resp = await async_client.get(
+    resp = await async_client.post(
         f"/vr/targets/{target_id}/masvs-report",
-        params={"audit_id": "audit-does-not-exist"},
+        params={"audit_id": "does-not-exist"},
         headers=_auth(admin_token),
     )
 
@@ -250,7 +250,7 @@ async def test_report_returns_409_when_parent_kind_not_masvs_audit(
         kind=InvestigationKind.AUDIT.value,
     )
 
-    resp = await async_client.get(
+    resp = await async_client.post(
         f"/vr/targets/{target_id}/masvs-report",
         params={"audit_id": audit_id},
         headers=_auth(admin_token),
@@ -280,7 +280,7 @@ async def test_report_returns_404_when_parent_belongs_to_different_target(
     target_b = await _insert_target(slug="cross-target-b")
     audit_id = await _insert_masvs_parent(target_id=target_a)
 
-    resp = await async_client.get(
+    resp = await async_client.post(
         f"/vr/targets/{target_b}/masvs-report",
         params={"audit_id": audit_id},
         headers=_auth(admin_token),
@@ -301,7 +301,7 @@ async def test_report_requires_audit_id_query_param(
     del test_db
     target_id = await _insert_target(slug="missing-param")
 
-    resp = await async_client.get(
+    resp = await async_client.post(
         f"/vr/targets/{target_id}/masvs-report",
         headers=_auth(admin_token),
     )

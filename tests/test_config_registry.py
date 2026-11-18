@@ -194,6 +194,37 @@ class TestGet:
         # Should still return the schema default
         assert await registry.get("sample", "timeout") == 30
 
+    async def test_get_explicit_env_name_reads_only_that_variable(self, registry, monkeypatch):
+        """An explicit env_name is read verbatim, ignoring the synthesized AILA_ name."""
+        await registry.register("sample", _SampleSchema)
+
+        monkeypatch.setenv("AILA_SAMPLE_TIMEOUT", "50")
+        monkeypatch.setenv("CUSTOM_SAMPLE_TIMEOUT", "99")
+        assert await registry.get("sample", "timeout", env_name="CUSTOM_SAMPLE_TIMEOUT") == 99
+
+    async def test_get_explicit_env_name_unset_does_not_use_synthesized_name(
+        self, registry, monkeypatch
+    ):
+        """With env_name unset in the environment, the synthesized AILA_ var is ignored."""
+        await registry.register("sample", _SampleSchema)
+
+        monkeypatch.setenv("AILA_SAMPLE_TIMEOUT", "50")
+        monkeypatch.delenv("CUSTOM_SAMPLE_TIMEOUT", raising=False)
+        assert await registry.get("sample", "timeout", env_name="CUSTOM_SAMPLE_TIMEOUT") == 30
+
+    async def test_get_default_name_unaffected_by_explicit_env_name_var(
+        self, registry, monkeypatch
+    ):
+        """Without env_name, resolution still uses AILA_{NAMESPACE}_{KEY}, not other names."""
+        await registry.register("sample", _SampleSchema)
+
+        monkeypatch.delenv("AILA_SAMPLE_TIMEOUT", raising=False)
+        monkeypatch.setenv("CUSTOM_SAMPLE_TIMEOUT", "99")
+        assert await registry.get("sample", "timeout") == 30
+
+        monkeypatch.setenv("AILA_SAMPLE_TIMEOUT", "77")
+        assert await registry.get("sample", "timeout") == 77
+
 
 # ---------------------------------------------------------------------------
 # ConfigRegistry.set()

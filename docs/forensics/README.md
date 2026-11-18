@@ -365,6 +365,26 @@ Automatically checked and installed via SSH when a project is created.
 
 Both Linux (`apt`, `pip3`) and Windows (`winget`, `pip`) install paths are defined.
 
+### Asynchronous readiness checks
+
+`POST /forensics/projects/{project_id}/readiness-check` does not run the SSH
+check inline. It returns `202 Accepted` with `{task_id, status: "queued"}` and
+runs the check on the `forensics_readiness` worker. Start that worker with
+`python -m aila worker -q forensics_readiness`; a queued check stays queued
+until it runs.
+
+To read the outcome:
+
+1. Poll `GET /tasks/{task_id}` until the task is terminal.
+2. Read `GET /tasks/{task_id}/result`. Its `data` is a `MachineReadinessResult`:
+   `ready`, `system_id`, `system_name`, `analyzer_os`, `tools`, `message`,
+   `already_queued`, and `existing_task_id`.
+3. Each entry in `tools` has `tool_name`, `required`, `status`, `version`,
+   `message`, and `install_method`.
+
+A readiness check produces no file artifact, so there is no
+`/tasks/{task_id}/artifact` download for it.
+
 ### CAPA integration
 
 The `strings_runner` tool exposes a `capa` action (`src/aila/modules/forensics/tools/strings_runner.py`) for capability detection on binaries. It runs `capa <file>` on the analyzer (`capa.exe "<file>"` on Windows analyzers) using the rule and signature set bundled with the capa install. The module has no configuration keys for capa; the rules and signatures are not passed as arguments.
@@ -513,7 +533,7 @@ All endpoints use `DataEnvelope[T]`, platform auth, and rate limiting.
 | `GET`  | `/forensics/projects/:id`                                             | Get project details with counts                                  |
 | `DELETE` | `/forensics/projects/:id`                                           | Delete project + all its data                                    |
 | `POST` | `/forensics/projects/:id/full-analysis`                               | Trigger the full-analysis pipeline                               |
-| `POST` | `/forensics/projects/:id/readiness-check`                             | Check analyzer-machine tool readiness                            |
+| `POST` | `/forensics/projects/:id/readiness-check`                             | Queue an analyzer-machine readiness check on the `forensics_readiness` worker. Returns 202 `{task_id, status}`; read the result from `GET /tasks/{task_id}/result`                            |
 | `GET`  | `/forensics/projects/:id/evidence`                                    | List evidence files (paginated, with total)                      |
 | `GET`  | `/forensics/projects/:id/findings`                                    | Confident findings extracted from artifacts                      |
 | `GET`  | `/forensics/projects/:id/artifacts`                                   | Query artifacts (family / type filter, paginated)                |

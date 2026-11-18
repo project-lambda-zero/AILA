@@ -63,7 +63,26 @@ Source: `src/aila/cli.py:269-358`. The CLI also accepts `--redis-url` to overrid
 
 ### ARQ queue tracks
 
-`default` (PlatformModule and cross-cutting tasks), `vulnerability`, `forensics`, `vr`. One ARQ queue per track. Workers subscribe to exactly one queue.
+`default` (PlatformModule and cross-cutting tasks), `vulnerability`, `forensics`, `forensics_readiness` (analyzer-machine readiness checks and offline tool preparation), `reporting` (VR investigation, VR MASVS, and vulnerability PDF rendering), `vr`, `malware`, `pentest`, `pentest_runtime`. One ARQ queue per track. Workers subscribe to exactly one queue.
+
+### Asynchronous report and readiness tasks
+
+Report rendering and forensics readiness never run inside the API process. Submit actions return `202 Accepted` with `{task_id, status: "queued"}`. The client then:
+
+1. Polls `GET /tasks/{task_id}` until the status is terminal.
+2. On success, calls `GET /tasks/{task_id}/result`, which returns a `DataEnvelope`. For PDFs, `data` is `{filename, artifact_id}`.
+3. For PDFs, calls `GET /tasks/{task_id}/artifact`, which streams `application/pdf` as an attachment.
+
+Rendering failures surface as a failed task status, not as an inline error response. Binary PDF bytes never go into Redis or the task result. PDFs are stored as files and referenced through `ReportArtifactRecord`; JSON results are stored through `ArtifactRecord`. No migration is required for these queues.
+
+Run the workers that serve these tracks:
+
+```bash
+python -m aila worker -q reporting
+python -m aila worker -q forensics_readiness
+```
+
+Submitted tasks stay queued until a worker for their track is running.
 
 ### Direct ARQ (legacy callers)
 
@@ -101,6 +120,10 @@ Per-queue worker count is set by `WORKER_COUNT_<UPPER_QUEUE>` env vars. Defaults
 | `default` | `1` |
 | `vulnerability` | `1` |
 | `forensics` | `1` |
+| `pentest` | `1` |
+| `pentest_runtime` | `1` |
+| `forensics_readiness` | `1` |
+| `reporting` | `1` |
 
 `bash start.sh restart-worker <queue>` (`start.sh:513-558`) calls `restart_pool`, which kills the legacy single pidfile `worker-<q>.pid` AND every indexed pidfile `worker-<q>-*.pid`, then spawns `WORKER_COUNT_<q>` fresh workers via `spawn worker-<q>-<i> -m aila worker -q <q>`.
 

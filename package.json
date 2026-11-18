@@ -1,6 +1,6 @@
 {
   "name": "aila",
-  "version": "0.6.121",
+  "version": "0.6.123",
   "private": true,
   "packageManager": "pnpm@10.30.3",
   "description": "Modular AI security platform with pluggable analysis modules: a Python core exposing a Typer CLI and a FastAPI REST API, backed by PostgreSQL with pgvector and an ARQ/Redis task queue, paired with a React + Vite + TypeScript frontend.",
@@ -16,8 +16,11 @@
     "clean": "pnpm -r run clean && rm -rf node_modules"
   },
   "engines": {
-    "node": ">=20.0.0",
+    "node": ">=22.22.0",
     "pnpm": ">=10.30.0"
+  },
+  "dependencies": {
+    "promptfoo": "catalog:pentest"
   },
   "repository": {
     "type": "git",

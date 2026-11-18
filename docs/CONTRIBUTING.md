@@ -344,7 +344,7 @@ See `docs/FRONTEND_MODULE_STANDARD.md` for the page, wizard, and widget model.
 | `make dev` | Any (prints instructions) | `make backend`, `make frontend`, `make worker` in separate terminals |
 
 The startup scripts load `.env`, start audit-mcp, the FastAPI backend, 4 ARQ
-workers (default, vr, vulnerability, forensics), and the Vite frontend.
+workers (default, vr, vulnerability, forensics, forensics_readiness, reporting), and the Vite frontend.
 Logs go to `.run/<slug>.log` (e.g. `.run/backend.log`, `.run/worker-vr.log`).
 
 ---

@@ -497,9 +497,12 @@ class ConfigRegistry:
                     )
             await session.commit()
 
-    async def get(self, namespace: str, key: str) -> Any:
+    async def get(
+        self, namespace: str, key: str, *, env_name: str | None = None
+    ) -> Any:
         """Resolve: env var > cache > DB value > schema default.
-        Env var format: AILA_{NAMESPACE}_{KEY} uppercased.
+        Env var format: AILA_{NAMESPACE}_{KEY} uppercased, unless an explicit
+        ``env_name`` is supplied.
         Returns the value cast to the schema field's type, or raw string if
         no schema is registered for namespace.
 
@@ -507,7 +510,8 @@ class ConfigRegistry:
         happens BEFORE the cache read; a fresher version drops the entry
         (treated as a cache miss) forcing a DB refetch.
         """
-        env_name = f"AILA_{namespace.upper()}_{key.upper()}"
+        if env_name is None:
+            env_name = f"AILA_{namespace.upper()}_{key.upper()}"
         env_val = os.environ.get(env_name)
 
         field_info = self._resolve_field(namespace, key)

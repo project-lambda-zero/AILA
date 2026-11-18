@@ -135,8 +135,12 @@ reports are valid -- children still in flight render as `INCONCLUSIVE`
 rows so an operator can hand the CISO a checkpoint copy without
 waiting for the full batch.
 
-The button fires `GET /vr/targets/{id}/masvs-report?audit_id=<parent>`
-which returns:
+The button fires `POST /vr/targets/{id}/masvs-report?audit_id=<parent>`,
+which returns `202 Accepted` with `{task_id, status: "queued"}`. The render
+runs on the `reporting` worker. The client polls `GET /tasks/{task_id}` until
+the task is terminal, reads `GET /tasks/{task_id}/result` (`data` is
+`{filename, artifact_id}`), and downloads the PDF from
+`GET /tasks/{task_id}/artifact`, which returns:
 
 - `Content-Type: application/pdf`
 - `Content-Disposition: attachment; filename="masvs_<package>_<YYYYMMDD>.pdf"`
@@ -147,9 +151,9 @@ sentinel `android-apk`. Non-`[A-Za-z0-9._-]` bytes fold to `_`,
 leading/trailing punctuation strips, and the package label caps at
 64 chars.
 
-The PDF is rendered synchronously via ReportLab on a worker thread
-(`asyncio.to_thread`) so the event loop stays responsive while
-ReportLab walks the ~53-control aggregate.
+The PDF is rendered by ReportLab on the `reporting` worker while it walks the
+~53-control aggregate. The API process does not render it. A render failure
+surfaces as a failed task status, not as an inline error response.
 
 ---
 
@@ -208,7 +212,7 @@ verifier persona wrote.
 | Method | Path | Purpose |
 |---|---|---|
 | `POST` | `/vr/targets/{target_id}/masvs-audit` | Dispatch a MASVS audit. Returns `MasvsAuditDispatchResponse` (parent id, child ids, total controls, spec version, total budget, per-child enqueue errors). HTTP 201 on fresh dispatch, HTTP 200 on idempotent reuse. |
-| `GET` | `/vr/targets/{target_id}/masvs-report?audit_id=<parent>` | Stream the PDF. Refuses with HTTP 404 (target/parent missing or cross-target audit id) or HTTP 409 (parent kind is not `masvs_audit`). |
+| `POST` | `/vr/targets/{target_id}/masvs-report?audit_id=<parent>` | Queue the PDF render on the `reporting` worker. Returns HTTP 202 with `{task_id, status}`; download via `GET /tasks/{task_id}/artifact`. Refuses with HTTP 404 (target/parent missing or cross-target audit id) or HTTP 409 (parent kind is not `masvs_audit`). |
 | `GET` | `/vr/targets/{target_id}/masvs-audit-aggregate?audit_id=<parent>` | Return the structured aggregate as JSON (`DataEnvelope[MasvsAuditAggregate]`). Same auth + target + parent + kind + cross-target validation as the PDF endpoint so the two surfaces stay symmetric. |
 
 Each endpoint enforces team scoping through `_team_filter`. Cross-team
@@ -218,7 +222,7 @@ id pasted under the wrong target) return 404 as a defensive guard.
 Rate limits:
 
 - `POST .../masvs-audit`: 6/minute per IP.
-- `GET .../masvs-report`: 10/minute per IP.
+- `POST .../masvs-report`: 10/minute per IP.
 - `GET .../masvs-audit-aggregate`: 30/minute per IP.
 
 ---
@@ -228,8 +232,9 @@ Rate limits:
 - **No infrastructure changes are required to run a MASVS audit.**
   The dispatcher reuses the existing `vr` ARQ queue, the existing
   `run_vr_investigate` task, the existing `audit_mcp` index, and the
-  existing scout / critic / verifier persona chain. No new worker
-  queue, no new persona, no new strategy family beyond the parent's
+  existing scout / critic / verifier persona chain. The PDF render needs a
+  running `reporting` worker (`python -m aila worker -q reporting`); the audit
+  dispatch adds no queue. No new persona, no new strategy family beyond the parent's
   descriptive `vulnerability_research.masvs_audit` sentinel.
 - **MOBSF_SCAN may be skipped.** When MobSF is unreachable or
   `MOBSF_API_KEY` is unset, the ingestion pipeline writes

@@ -7,12 +7,22 @@ import type { JSX } from "react";
 
 import type { ApiError } from "../../api/client";
 import { apiFetch } from "../../api/client";
+import { fetchWorkerResult } from "../../api/workerJobs";
+import type { TaskActionResponse } from "../../api/workerJobs";
 import type { IntakeWizardProps } from "../contract";
 import { css } from "../css";
 import { WizardShell } from "../wizards";
 import type { WizardFieldIssue, WizardStepDef } from "../wizards";
 import type { ForensicsCfg } from "./config";
 import { INTAKE } from "./config";
+
+interface FxReadiness {
+  ready: boolean;
+  system_name: string;
+  analyzer_os: string;
+  tools: Array<{ tool_name: string; required: boolean; status: string; version: string | null; message: string | null }>;
+  message: string;
+}
 
 export function ForensicsWizard({ onBind }: { onBind: IntakeWizardProps["onBind"] }): JSX.Element {
   const cfg: ForensicsCfg = INTAKE.forensics;
@@ -31,13 +41,7 @@ export function ForensicsWizard({ onBind }: { onBind: IntakeWizardProps["onBind"
   // readiness check does not leave an abandoned project per attempt.
   const [fxProject, setFxProject] = useState<{ id: string; createBody: string } | null>(null);
   const fxProjectId = fxProject?.id ?? null;
-  const [fxResult, setFxResult] = useState<{
-    ready: boolean;
-    system_name: string;
-    analyzer_os: string;
-    tools: Array<{ tool_name: string; required: boolean; status: string; version: string | null; message: string | null }>;
-    message: string;
-  } | null>(null);
+  const [fxResult, setFxResult] = useState<FxReadiness | null>(null);
   const [fxError, setFxError] = useState<string | null>(null);
 
   // The analyzer select needs real registered systems (the backend requires a
@@ -108,13 +112,8 @@ export function ForensicsWizard({ onBind }: { onBind: IntakeWizardProps["onBind"
 
     projectReady
       .then(async (projectId) => {
-        const res = await apiFetch<{
-          ready: boolean;
-          system_name: string;
-          analyzer_os: string;
-          tools: Array<{ tool_name: string; required: boolean; status: string; version: string | null; message: string | null }>;
-          message: string;
-        }>(`/forensics/projects/${projectId}/readiness-check`, { method: "POST" });
+        const task = await apiFetch<TaskActionResponse>(`/forensics/projects/${projectId}/readiness-check`, { method: "POST" });
+        const res = await fetchWorkerResult<FxReadiness>(task.task_id);
         setFxResult(res);
         // AC6: advance to confirm ONLY when the backend confirms the
         // analyzer is ready. A not-ready result keeps the operator on the

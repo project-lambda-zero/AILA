@@ -152,8 +152,16 @@ class PocWriter:
     def __init__(self, services: ServiceFactory | None = None) -> None:
         self._services = services or ServiceFactory()
 
-    async def write(self, facts: dict[str, Any]) -> PocDraft:
+    async def write(
+        self,
+        facts: dict[str, Any],
+        *,
+        run_id: str | None = None,
+    ) -> PocDraft:
         """Generate a PocDraft from a structured facts dict.
+
+        ``run_id`` attributes the LLM cost to the owning task instead of
+        the ``_no_run`` sentinel.
 
         ``facts`` shape mirrors what ReportWriter accepts so the same
         collector can feed both writers, plus a few PoC-specific
@@ -190,6 +198,7 @@ class PocWriter:
                     {"role": "user", "content": self._render_facts(facts)},
                 ],
                 model_class=PocDraft,
+                run_id=run_id,
             )
         if response.disabled:
             raise RuntimeError("LLM kill-switch active -- cannot draft PoC")

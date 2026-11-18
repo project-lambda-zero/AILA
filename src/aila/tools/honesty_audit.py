@@ -1,6 +1,6 @@
 """honesty_audit -- AST-based structural honesty checker for Python code.
 
-Detects seventy-four categories of structural dishonesty:
+Detects eighty categories of structural dishonesty:
 
 1. unused_parameter    -- function parameter accepted but never referenced in body.
 2. misleading_name     -- function name implies intelligence but body only forwards.
@@ -82,6 +82,7 @@ Detects seventy-four categories of structural dishonesty:
 77. static_server_catalog -- an agent dispatcher under ``**/agents/**`` assigns a static ``self._bridges`` dict-literal mapping server ids to bridge instances. RFC-11 Tier C builds bridges on demand via the catalog-driven ``_bridge_for()``; a frozen name->bridge map means an operator-added catalog server cannot dispatch without a code change. Test / DI injection uses ``_bridge_overrides`` instead.
 78. hardcoded_server_dispatch -- an agent dispatcher under ``**/agents/**`` reads a bridge from a static ``self._bridges`` map by server id (``self._bridges.get(...)`` / ``self._bridges[...]``). Sibling of rule 77 (77 flags the map definition, 78 flags the dispatch lookup). Route MCP dispatch through the catalog-aware + approval-gated ``_bridge_for()``.
 79. unsanitized_server_ingest -- a function under ``platform/mcp/**`` projects an MCP tool ``"description"`` into a truncated (``[:N]``) prompt-facing value without any ``sanitize*`` call in the same function. RFC-11 zero-trust: an MCP server controls its own tool descriptions, so the compact projection (``McpClient.compact_tool_spec``) strips prompt-injection patterns via ``sanitize_input`` before the text reaches an agent prompt (tool-poisoning defense).
+80. module_subprocess_offload -- a ``run_blocking_io(...)`` call inside ``aila/modules/<module>/services/**`` delegates to a module-local function or method whose same-file call graph reaches subprocess creation (``subprocess.*`` / ``asyncio.create_subprocess_*``). Rule 18 catches direct asyncio use in a module, but not a module-defined probe handed to the platform thread bridge. Subprocess work belongs in a ``@platform_task`` worker.
 
 Usage (CLI):
     python -m aila.tools.honesty_audit src/
@@ -116,7 +117,7 @@ Cross-file report (``--orphans``):
     lines to stderr; the exit code is 0.  The pass is deliberately advisory
     (the recommended first slice of #198): false positives go into
     HONESTY_ORPHAN_ALLOWLIST rather than blocking CI, and the existing
-    per-file 79-rule gate is byte-identical to the pre-flag invocation.
+    per-file 80-rule gate is byte-identical to the pre-flag invocation.
 
 Design constraints (D-04):
     AST analysis only -- no runtime inspection.
@@ -315,6 +316,20 @@ _CONFIG_SCHEMA_PATH_PATTERN = _re.compile(
 def _is_module_file(filepath: str) -> bool:
     """Return True if *filepath* is inside the aila/modules/ package."""
     return bool(_MODULE_FILE_PATTERN.search(filepath.replace("\\", "/")))
+
+
+_MODULE_SERVICE_FILE_PATTERN = _re.compile(
+    r"[/\\]aila[/\\]modules[/\\][^/\\]+[/\\]services[/\\]"
+)
+
+
+def _is_module_service_file(filepath: str) -> bool:
+    """Return True if *filepath* is inside ``aila/modules/<module>/services/``.
+
+    Rule 80 scope: the module service execution boundary, where
+    ``run_blocking_io`` offloads of module-local probe work occur.
+    """
+    return bool(_MODULE_SERVICE_FILE_PATTERN.search(filepath.replace("\\", "/")))
 
 
 # Rule 45 -- module_prefix_in_platform_tool_name. Platform MCP bridge tool
@@ -2554,6 +2569,246 @@ def _constant_slice_upper(node: ast.expr) -> int | None:
             and not isinstance(upper.value, bool):
         return upper.value
     return None
+
+
+# Rule 80 -- module_subprocess_offload. A module may hand ordinary blocking
+# work to the platform thread bridge, but subprocess ownership stays in a
+# @platform_task worker. Resolving the delegated local call graph closes the
+# two-hop blind spot left by rule 18's direct asyncio/threading checks.
+_MODULE_SUBPROCESS_CREATORS: frozenset[str] = frozenset({
+    "subprocess.run",
+    "subprocess.Popen",
+    "subprocess.call",
+    "subprocess.check_call",
+    "subprocess.check_output",
+    "asyncio.create_subprocess_exec",
+    "asyncio.create_subprocess_shell",
+})
+_RUN_BLOCKING_IO_NAME = "run_blocking_io"
+
+
+def _walk_module_scope_nodes(body: list[ast.stmt]):
+    """Yield one lexical scope's nodes without entering nested definitions."""
+    stack: list[ast.AST] = list(body)
+    while stack:
+        node = stack.pop()
+        yield node
+        if isinstance(node, _NESTED_DEF_TYPES):
+            continue
+        stack.extend(ast.iter_child_nodes(node))
+
+
+def _module_import_aliases(
+    imports: list[ast.Import | ast.ImportFrom],
+) -> dict[str, str]:
+    """Map locally bound import names to their canonical dotted forms."""
+    aliases: dict[str, str] = {}
+    for node in imports:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname is not None:
+                    aliases[alias.asname] = alias.name
+            continue
+        if node.module is None:
+            continue
+        for alias in node.names:
+            if alias.name != "*":
+                bound_name = alias.asname or alias.name
+                aliases[bound_name] = f"{node.module}.{alias.name}"
+    return aliases
+
+
+def _module_dotted_name(node: ast.expr) -> str | None:
+    """Return a Name/Attribute chain's dotted spelling, if it has one."""
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        prefix = _module_dotted_name(node.value)
+        if prefix is not None:
+            return f"{prefix}.{node.attr}"
+    return None
+
+
+def _canonical_module_name(
+    node: ast.expr, aliases: dict[str, str],
+) -> str | None:
+    """Expand the root import alias in a dotted expression."""
+    dotted = _module_dotted_name(node)
+    if dotted is None:
+        return None
+    root, separator, remainder = dotted.partition(".")
+    imported = aliases.get(root)
+    if imported is None:
+        return dotted
+    return f"{imported}{separator}{remainder}"
+
+
+class _ModuleSubprocessOffloadGraph:
+    """Same-file local call graph used only by Rule 80."""
+
+    def __init__(self, tree: ast.Module) -> None:
+        self._parents = _build_parent_map(tree)
+        self._module_functions: dict[
+            str, ast.FunctionDef | ast.AsyncFunctionDef,
+        ] = {}
+        self._class_methods: dict[
+            tuple[str, str], ast.FunctionDef | ast.AsyncFunctionDef,
+        ] = {}
+        self._nested_functions: dict[
+            tuple[int, str], ast.FunctionDef | ast.AsyncFunctionDef,
+        ] = {}
+        self._function_parents: dict[
+            int, ast.FunctionDef | ast.AsyncFunctionDef,
+        ] = {}
+        self._function_classes: dict[int, str | None] = {}
+        self._body_facts: dict[
+            int,
+            tuple[
+                list[ast.Call],
+                list[ast.Import | ast.ImportFrom],
+            ],
+        ] = {}
+        self._scope_aliases: dict[int, dict[str, str]] = {}
+
+        module_imports: list[ast.Import | ast.ImportFrom] = []
+        for node in _walk_module_scope_nodes(tree.body):
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                module_imports.append(node)
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                self._module_functions[node.name] = node
+                self._index_function(node, class_name=None, parent=None)
+            elif isinstance(node, ast.ClassDef):
+                self._index_class(node)
+        self._module_aliases = _module_import_aliases(module_imports)
+
+    def _index_class(self, node: ast.ClassDef) -> None:
+        for inner in _walk_module_scope_nodes(node.body):
+            if isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                self._class_methods[(node.name, inner.name)] = inner
+                self._index_function(inner, class_name=node.name, parent=None)
+
+    def _index_function(
+        self,
+        node: ast.FunctionDef | ast.AsyncFunctionDef,
+        class_name: str | None,
+        parent: ast.FunctionDef | ast.AsyncFunctionDef | None,
+    ) -> None:
+        self._function_classes[id(node)] = class_name
+        if parent is not None:
+            self._function_parents[id(node)] = parent
+        for inner in _walk_module_scope_nodes(node.body):
+            if isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                self._nested_functions[(id(node), inner.name)] = inner
+                self._index_function(inner, class_name=class_name, parent=node)
+
+    def _facts(
+        self, func: ast.FunctionDef | ast.AsyncFunctionDef,
+    ) -> tuple[list[ast.Call], list[ast.Import | ast.ImportFrom]]:
+        cached = self._body_facts.get(id(func))
+        if cached is not None:
+            return cached
+        calls: list[ast.Call] = []
+        imports: list[ast.Import | ast.ImportFrom] = []
+        for node in _walk_module_scope_nodes(func.body):
+            if isinstance(node, ast.Call):
+                calls.append(node)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                imports.append(node)
+        facts = (calls, imports)
+        self._body_facts[id(func)] = facts
+        return facts
+
+    def _aliases(
+        self, func: ast.FunctionDef | ast.AsyncFunctionDef | None,
+    ) -> dict[str, str]:
+        if func is None:
+            return self._module_aliases
+        cached = self._scope_aliases.get(id(func))
+        if cached is not None:
+            return cached
+        scopes: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+        scope: ast.FunctionDef | ast.AsyncFunctionDef | None = func
+        while scope is not None:
+            scopes.append(scope)
+            scope = self._function_parents.get(id(scope))
+        aliases = dict(self._module_aliases)
+        for scope in reversed(scopes):
+            _, imports = self._facts(scope)
+            aliases.update(_module_import_aliases(imports))
+        self._scope_aliases[id(func)] = aliases
+        return aliases
+
+    def _resolve_local(
+        self,
+        node: ast.expr,
+        enclosing: ast.FunctionDef | ast.AsyncFunctionDef | None,
+    ) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+        if isinstance(node, ast.Name):
+            scope = enclosing
+            while scope is not None:
+                nested = self._nested_functions.get((id(scope), node.id))
+                if nested is not None:
+                    return nested
+                scope = self._function_parents.get(id(scope))
+            return self._module_functions.get(node.id)
+        if not isinstance(node, ast.Attribute) or not isinstance(
+            node.value, ast.Name,
+        ):
+            return None
+        owner = node.value.id
+        if owner in {"self", "cls"}:
+            if enclosing is None:
+                return None
+            class_name = self._function_classes.get(id(enclosing))
+            if class_name is None:
+                return None
+            return self._class_methods.get((class_name, node.attr))
+        return self._class_methods.get((owner, node.attr))
+
+    def _is_platform_offload(
+        self,
+        call: ast.Call,
+        enclosing: ast.FunctionDef | ast.AsyncFunctionDef | None,
+    ) -> bool:
+        callee = _canonical_module_name(call.func, self._aliases(enclosing))
+        return bool(
+            callee is not None
+            and callee.startswith("aila.platform.")
+            and callee.endswith(f".{_RUN_BLOCKING_IO_NAME}")
+        )
+
+    def _reaches_subprocess(
+        self, start: ast.FunctionDef | ast.AsyncFunctionDef,
+    ) -> bool:
+        pending: list[ast.FunctionDef | ast.AsyncFunctionDef] = [start]
+        visited: set[int] = set()
+        while pending:
+            func = pending.pop()
+            if id(func) in visited:
+                continue
+            visited.add(id(func))
+            calls, _ = self._facts(func)
+            aliases = self._aliases(func)
+            for call in calls:
+                local = self._resolve_local(call.func, func)
+                if local is not None:
+                    if id(local) not in visited:
+                        pending.append(local)
+                    continue
+                callee = _canonical_module_name(call.func, aliases)
+                if callee in _MODULE_SUBPROCESS_CREATORS:
+                    return True
+        return False
+
+    def offloads_subprocess(self, call: ast.Call) -> bool:
+        """Return True when this platform offload reaches local subprocess work."""
+        if not call.args:
+            return False
+        enclosing = _enclosing_function(call, self._parents)
+        if not self._is_platform_offload(call, enclosing):
+            return False
+        delegated = self._resolve_local(call.args[0], enclosing)
+        return delegated is not None and self._reaches_subprocess(delegated)
 
 
 class _HonestyVisitor(ast.NodeVisitor):
@@ -6451,6 +6706,36 @@ class _HonestyVisitor(ast.NodeVisitor):
                     ),
                 )
 
+    def _check_module_subprocess_offload(self, tree: ast.Module) -> None:
+        """Rule 80: module_subprocess_offload -- ``run_blocking_io(...)``
+        delegates to a module-local callable whose same-file call graph
+        reaches subprocess creation.
+
+        Scope is limited to ``aila/modules/<module>/services/**`` (gated in
+        ``audit_file`` via ``_is_module_service_file``). Other module
+        directories, such as ``reporting/``, are outside this rule.
+
+        Rule 18 catches direct asyncio/threading use inside a module. A
+        module-defined probe that calls ``subprocess.run`` behind a
+        local helper, then gets handed to the platform thread bridge, is
+        not visible to that direct check. Subprocess work belongs in a
+        ``@platform_task`` worker, so the offload call site is flagged.
+        """
+        graph = _ModuleSubprocessOffloadGraph(tree)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and graph.offloads_subprocess(node):
+                self._emit(
+                    node.lineno,
+                    "module_subprocess_offload",
+                    (
+                        "module_subprocess_offload: run_blocking_io(...) "
+                        "delegates to a module-local call graph that reaches "
+                        "subprocess creation -- subprocess work belongs in a "
+                        "@platform_task worker, not a caller/platform thread"
+                    ),
+                )
+
+
 class HonestyAuditor:
     """Audit one or more Python source files for structural dishonesty.
 
@@ -6517,6 +6802,8 @@ class HonestyAuditor:
             visitor._check_direct_db_in_module(tree)
             visitor._check_private_platform_import(tree)
             visitor._check_raw_sql_platform_tables(tree)
+        if _is_module_service_file(str(path)):
+            visitor._check_module_subprocess_offload(tree)
         # Rules 19 and 20 apply to all router files (api/ and module routers alike)
         visitor._check_response_model_dict(tree)
         visitor._check_bare_dict_return_endpoint(tree)
@@ -6685,7 +6972,7 @@ def _main(argv: list[str]) -> int:
     graph over every ``*.py`` file under the target root and prints every
     name in a module's ``__all__`` with no importer elsewhere.  It is
     advisory: the exit code is always 0 when ``--orphans`` is set (unless
-    the target itself is unreadable).  The per-file 79-rule gate is
+    the target itself is unreadable).  The per-file 80-rule gate is
     skipped in this mode; run the default invocation for CI.
 
     Args:

@@ -11,7 +11,6 @@ D-26; total counts go in ``meta`` via ``PaginatedMeta``.
 from __future__ import annotations
 
 import asyncio
-import json
 import json as _json
 import logging
 from collections.abc import AsyncGenerator
@@ -32,7 +31,9 @@ from sqlmodel import select
 from aila.api.deps import get_task_queue
 from aila.api.limiter import limiter
 from aila.api.schemas.envelope import DataEnvelope, PaginatedMeta
+from aila.api.schemas.tasks import TaskActionResponse
 from aila.modules.vr.services.outcome_polarity import derive_outcome_polarity
+from aila.modules.vr.services.target_summary import build_target_summary
 from aila.platform.config_base import ModuleConfigReader, _shared_registry
 from aila.platform.contracts import utc_now
 from aila.platform.contracts.auth import AuthContext, require_auth
@@ -93,7 +94,6 @@ from .contracts import (
     SenderKind,
     StrategyBranchSpawn,
     TargetKind,
-    TargetStatus,
     VRBranchSummary,
     VRCVERecordCreate,
     VRDisclosureSubmissionCreate,
@@ -616,148 +616,6 @@ async def _workspace_counts(
     return target_counts, active_inv_counts
 
 
-def _target_summary(record: Any) -> VRTargetSummary:
-    """Project a VRTargetRecord row to the public VRTargetSummary."""
-    import json as _json
-
-    from .contracts.target import TargetTag, TargetTagSource
-
-    raw_tags = _json.loads(record.tags_json or "[]")
-    tags: list[TargetTag] = []
-    for entry in raw_tags:
-        if isinstance(entry, dict) and "tag" in entry:
-            try:
-                tags.append(TargetTag(
-                    tag=str(entry["tag"]),
-                    source=TargetTagSource(entry.get("source", "operator")),
-                ))
-            except ValueError:
-                continue
-        elif isinstance(entry, str):
-            tags.append(TargetTag(tag=entry, source=TargetTagSource.OPERATOR))
-
-    handles = _json.loads(record.mcp_handles_json or "{}")
-    uploaded_filename = handles.get("uploaded_filename")
-    if not isinstance(uploaded_filename, str):
-        uploaded_filename = None
-    # PRD §C-21: surface the discovered package name so the
-    # TargetsPage row label can fall back to it once STATIC_SUMMARY
-    # finishes. Storage shape set by services/target_analysis._android_static_summary.
-    android_package_name = handles.get("android_mcp_package_name")
-    if not isinstance(android_package_name, str) or not android_package_name:
-        android_package_name = None
-
-    # APK-specific projection. Per VRTargetSummary.apk_overview: rolls up
-    # every key the 5-stage android pipeline writes into mcp_handles_json
-    # so the TargetDetailPage Android section has a single dict to render.
-    # Kept None when the target isn't android_apk OR no handle yet -- the
-    # frontend treats None as "section not applicable / not ready".
-    apk_overview: dict[str, Any] | None = None
-    if record.kind == TargetKind.ANDROID_APK.value:
-        # Pull each handle if present. Order mirrors the pipeline so an
-        # operator can see how far the chain has progressed.
-        overview: dict[str, Any] = {}
-        # Per-key projection. android_mcp_static_summary is projected as
-        # a digest (see below) rather than the full static-summary dump so
-        # the payload stays small enough for the prompt context.
-        for handle_key, out_key in (
-            ("android_mcp_apk_sha256", "sha256"),
-            ("android_mcp_decoded_dir", "decoded_dir"),
-            ("android_mcp_manifest_path", "manifest_path"),
-            ("android_mcp_decompiled_dir", "decompiled_dir"),
-            ("android_mcp_jadx_root", "jadx_root"),
-            ("android_mcp_jadx_class_count", "jadx_class_count"),
-            ("audit_mcp_decompiled_index_id", "audit_mcp_index_id"),
-            ("audit_mcp_decompiled_indexed_at", "audit_mcp_indexed_at"),
-        ):
-            value = handles.get(handle_key)
-            if value is not None:
-                overview[out_key] = value
-
-        # static_summary digest: keep only the load-bearing fields. The full
-        # static summary (large per-package metadata) is excessive to
-        # include in every LLM turn.
-        #
-        # fix §268 -- `android_mcp_static_summary` now stores a pointer
-        # to a JSON artifact (`_artifact_path`) plus pre-computed
-        # digest fields (counts already as `*_count` keys). The
-        # legacy inline form (full payload as a dict) is still
-        # accepted; we compute `len()` on the lists when we encounter
-        # it so rows ingested before the cutover still project
-        # correctly.
-        static_full = handles.get("android_mcp_static_summary") or {}
-        if isinstance(static_full, dict) and static_full:
-            digest: dict[str, Any] = {}
-            for k in (
-                "package", "version_name", "version_code",
-                "min_sdk", "target_sdk", "signing_scheme",
-            ):
-                if static_full.get(k) is not None:
-                    digest[k] = static_full[k]
-            # Counts only -- don't dump 38 permission strings + 29 exported
-            # component class names into every LLM turn.
-            for k in (
-                "permissions", "dangerous_permissions", "exported_activities",
-                "exported_services", "exported_receivers", "exported_providers",
-                "native_libs", "certificates",
-            ):
-                count_key = f"{k}_count"
-                v = static_full.get(k)
-                if isinstance(v, list):
-                    digest[count_key] = len(v)
-                elif isinstance(static_full.get(count_key), int):
-                    digest[count_key] = static_full[count_key]
-            # Forward the in-repo native-analysis + SBOM sub-summaries so
-            # the apk_static seed builder can render them for NATIVE /
-            # SBOM checks. Both are bounded upstream (native_analysis.py
-            # caps, digest trims the SBOM component list).
-            for sub_key in ("native_analysis", "sbom"):
-                sub = static_full.get(sub_key)
-                if isinstance(sub, dict):
-                    digest[sub_key] = sub
-            overview["static_summary"] = digest
-
-        if overview:
-            apk_overview = overview
-
-    # Project per-stage analysis status (migration 060) so UI shows
-    # a stage breakdown alongside the rolled-up analysis_state.
-    stages_payload: dict[str, Any] | None = None
-    try:
-        if record.analysis_stages_json and record.analysis_stages_json != "{}":
-            stages_payload = _json.loads(record.analysis_stages_json)
-    except (ValueError, TypeError):
-        stages_payload = None
-
-    return VRTargetSummary(
-        id=record.id,
-        workspace_id=record.workspace_id,
-        display_name=record.display_name,
-        kind=TargetKind(record.kind),
-        descriptor=_json.loads(record.descriptor_json or "{}"),
-        uploaded_filename=uploaded_filename,
-        android_package_name=android_package_name,
-        apk_overview=apk_overview,
-        primary_language=record.primary_language,
-        secondary_languages=_json.loads(record.secondary_languages_json or "[]"),
-        status=TargetStatus(record.status),
-        analysis_state=AnalysisState(record.analysis_state),
-        analysis_state_message=record.analysis_state_message,
-        analysis_started_at=(
-            record.analysis_started_at.isoformat()
-            if record.analysis_started_at else None
-        ),
-        analysis_completed_at=(
-            record.analysis_completed_at.isoformat()
-            if record.analysis_completed_at else None
-        ),
-        analysis_stages=stages_payload,
-        tags=tags,
-        created_at=record.created_at.isoformat() if record.created_at else None,
-        updated_at=record.updated_at.isoformat() if record.updated_at else None,
-    )
-
-
 # Private-alias re-export of the polarity helper.
 #
 # The reducer moved to ``vr/services/outcome_polarity.py`` so the
@@ -939,57 +797,6 @@ _KIND_DEFAULT_STRATEGY: dict[InvestigationKind, str] = {
     InvestigationKind.N_DAY:        "vulnerability_research.nday",
     InvestigationKind.AUDIT:        "vulnerability_research.audit",
 }
-
-
-def _sanitize_filename_part(text: str, *, fallback: str) -> str:
-    """Fold a free-form label into a Content-Disposition-safe slug.
-
-    Keeps ASCII alnum plus ``.``, ``_``, ``-`` (the package-id alphabet
-    plus the two delimiters operators expect in filenames); every other
-    byte folds to ``_``. Strips leading / trailing punctuation so a
-    package like ``..weird.`` doesn't generate a hidden file on
-    Unix, and caps the slug at 64 chars so the header stays small.
-    Returns ``fallback`` when the input is empty or sanitises to the
-    empty string.
-    """
-    if not text:
-        return fallback
-    out_chars = [
-        ch if (ch.isascii() and (ch.isalnum() or ch in "._-")) else "_"
-        for ch in text
-    ]
-    cleaned = "".join(out_chars).strip("._-")
-    if not cleaned:
-        return fallback
-    return cleaned[:64]
-
-
-def _masvs_report_filename(
-    target_summary: VRTargetSummary,
-    generated_at_yyyymmdd: str,
-) -> str:
-    """Build the MASVS report download filename per PRD R-3.
-
-    Format: ``masvs_<package>_<YYYYMMDD>.pdf``. The package label falls
-    back through ``apk_overview.static_summary.package`` →
-    ``android_package_name`` → the sentinel ``android-apk`` so a target
-    that somehow lost its package label still gets a stable filename
-    rather than a header the browser refuses to parse.
-    """
-    package_label: str = ""
-    overview = target_summary.apk_overview
-    if isinstance(overview, dict):
-        static_summary = overview.get("static_summary")
-        if isinstance(static_summary, dict):
-            maybe_pkg = static_summary.get("package")
-            if isinstance(maybe_pkg, str):
-                package_label = maybe_pkg.strip()
-    if not package_label and target_summary.android_package_name:
-        package_label = target_summary.android_package_name.strip()
-    sanitized = _sanitize_filename_part(
-        package_label, fallback="android-apk",
-    )
-    return f"masvs_{sanitized}_{generated_at_yyyymmdd}.pdf"
 
 
 def create_vr_router() -> APIRouter:
@@ -2268,6 +2075,7 @@ def create_vr_router() -> APIRouter:
             await uow.session.refresh(record)
             target_id = record.id
 
+
         # Auto-enqueue backend ingestion (v0.4.5). Operator does not
         # have to click anything -- the dispatch starts immediately.
         try:
@@ -2298,7 +2106,7 @@ def create_vr_router() -> APIRouter:
                     uow.session.add(row)
                     await uow.session.commit()
 
-        return DataEnvelope(data=_target_summary(record))
+        return DataEnvelope(data=build_target_summary(record))
 
     @router.get(
         "/targets",
@@ -2339,7 +2147,7 @@ def create_vr_router() -> APIRouter:
                 base.order_by(VRTargetRecord.created_at.desc()).offset(offset).limit(limit)
             )).all()
 
-        items = [_target_summary(r) for r in rows]
+        items = [build_target_summary(r) for r in rows]
         return DataEnvelope(
             data=items,
             meta=PaginatedMeta(total=int(total), offset=offset, limit=limit).model_dump(),
@@ -2374,7 +2182,7 @@ def create_vr_router() -> APIRouter:
                     detail=f"Target {target_id} not found.",
                 )
 
-        summary = _target_summary(row)
+        summary = build_target_summary(row)
         return DataEnvelope(data={
             **summary.model_dump(mode="json"),
             "capability_profile": _json.loads(row.capability_profile_json or "{}"),
@@ -2445,7 +2253,7 @@ def create_vr_router() -> APIRouter:
                 await uow.session.commit()
                 await uow.session.refresh(row)
 
-        return DataEnvelope(data=_target_summary(row))
+        return DataEnvelope(data=build_target_summary(row))
 
     @router.delete(
         "/targets/{target_id}",
@@ -3426,7 +3234,7 @@ def create_vr_router() -> APIRouter:
                     ),
                 )
 
-            target_summary = _target_summary(target)
+            target_summary = build_target_summary(target)
             apk_overview = target_summary.apk_overview
             static_summary: dict[str, Any] = {}
             if isinstance(apk_overview, dict):
@@ -3782,7 +3590,7 @@ def create_vr_router() -> APIRouter:
                     ),
                 )
 
-            target_summary = _target_summary(target)
+            target_summary = build_target_summary(target)
             apk_overview = target_summary.apk_overview
             static_summary: dict[str, Any] = {}
             if isinstance(apk_overview, dict):
@@ -4026,33 +3834,23 @@ def create_vr_router() -> APIRouter:
             ),
         )
 
-    @router.get(
+    @router.post(
         "/targets/{target_id}/masvs-report",
+        response_model=TaskActionResponse,
+        status_code=status.HTTP_202_ACCEPTED,
         summary=(
-            "Download the MASVS audit report PDF for one parent "
-            "investigation. Aggregates every child outcome through the "
-            "S-4 verdict mapper, renders the per-group ReportLab PDF "
-            "(cover + executive summary + per-control subsections), "
-            "and streams it back with Content-Type application/pdf and "
-            "Content-Disposition attachment. Partial reports are "
-            "valid -- children still in flight render as INCONCLUSIVE "
-            "rows so an operator can hand the CISO a checkpoint copy "
-            "without waiting for the full ~60min batch."
+            "Queue the MASVS audit report PDF for one parent "
+            "investigation. Returns 202 with a task id. The reporting "
+            "worker aggregates every child outcome through the S-4 "
+            "verdict mapper and renders the per-group ReportLab PDF. "
+            "Fetch GET /tasks/{task_id}/result for the filename and "
+            "artifact id, then GET /tasks/{task_id}/artifact for the "
+            "PDF. Partial reports are valid -- children still in flight "
+            "render as INCONCLUSIVE rows."
         ),
-        response_class=Response,
-        responses={
-            200: {
-                "description": "PDF report ready for download.",
-                "content": {
-                    "application/pdf": {
-                        "schema": {"type": "string", "format": "binary"},
-                    },
-                },
-            },
-        },
     )
     @limiter.limit("10/minute")
-    async def export_masvs_report(
+    async def request_masvs_report(
         request: Request,
         target_id: str,
         audit_id: str = Query(
@@ -4063,33 +3861,23 @@ def create_vr_router() -> APIRouter:
             ),
         ),
         auth: AuthContext = Depends(require_auth),
-    ) -> Response:
-        """Stream the MASVS audit PDF for ``audit_id`` under ``target_id``.
+    ) -> TaskActionResponse:
+        """Validate the target / audit pair and enqueue the MASVS report task.
 
         Refuses with:
 
         * **404** when the target is not visible to the caller's team,
           when the parent investigation does not exist, or when it
-          exists but points at a different target (a defensive guard so
-          an operator with cross-target audit ids can't accidentally
-          download a report under the wrong target context).
+          exists but points at a different target.
         * **409** when the parent exists but its ``kind`` is not
           ``masvs_audit``. The renderer is specific to MASVS batches --
           a one-off audit investigation has its own
-          ``GET /investigations/{id}/report.pdf`` route.
+          ``POST /investigations/{id}/report.pdf`` route.
 
-        The PDF is rendered synchronously via ReportLab; the render is
-        pushed onto a platform worker thread via :func:`run_blocking_io`
-        so a large aggregate (~46 L1 controls plus subsections) doesn't
-        block the event loop while reportlab walks the flow.
+        The render itself runs on the ``reporting`` track; the worker
+        re-validates the same pair before rendering.
         """
-        del request
-
-        from aila.modules.vr.reporting.masvs_report import (
-            build_pdf,
-            collect_findings,
-        )
-        from aila.platform.services.runtime import run_blocking_io
+        from aila.modules.vr.reporting.tasks import run_vr_masvs_report
 
         from .db_models import VRInvestigationRecord, VRTargetRecord
 
@@ -4143,55 +3931,17 @@ def create_vr_router() -> APIRouter:
                         f"target {target_id}."
                     ),
                 )
-            target_summary = _target_summary(target)
-
-        try:
-            aggregate = await collect_findings(audit_id)
-        except ValueError as exc:
-            # collect_findings re-validates parent kind / existence; a
-            # race between the lookup above and the aggregate query
-            # (parent deleted mid-request) surfaces as 404 so the
-            # caller gets the same shape as the up-front guard.
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=str(exc),
-            ) from exc
-
-        handles_dict: dict[str, Any] = {}
-        try:
-            if target.mcp_handles_json:
-                handles_dict = json.loads(target.mcp_handles_json)
-        except (ValueError, TypeError):
-            handles_dict = {}
-
-        # PDF renders cached _report_section if present on the outcome
-        # payload (populated by the report-writer agent as part of
-        # the workflow lifecycle, NOT inline here). When no cached
-        # section is present, the renderer falls back to the raw
-        # agent_summary. The PDF endpoint never makes LLM calls.
-        # build_pdf is sync (CPU-bound ReportLab render); offload it to
-        # the platform worker pool via run_blocking_io so a large
-        # aggregate does not stall the event loop for other requests on
-        # this worker. Matches the investigation-report endpoint, which
-        # offloads its render inside render_investigation_pdf.
-        pdf_bytes = await run_blocking_io(
-            build_pdf, aggregate, target_summary, handles=handles_dict,
+        task_queue = get_task_queue("vr", request)
+        handle = await task_queue.submit(
+            track="reporting",
+            fn=run_vr_masvs_report,
+            kwargs={"target_id": target_id, "audit_id": audit_id},
+            user_id=auth.user_id,
+            group_id=auth.role,
+            team_id=auth.team_id,
+            bypass_dedup=True,
         )
-
-        filename = _masvs_report_filename(
-            target_summary,
-            aggregate.generated_at.strftime("%Y%m%d"),
-        )
-        return Response(
-            content=pdf_bytes,
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition": (
-                    f'attachment; filename="{filename}"'
-                ),
-                "Cache-Control": "no-store",
-            },
-        )
+        return TaskActionResponse(task_id=handle.task_id, status="queued")
 
     @router.get(
         "/targets/{target_id}/masvs-audit-aggregate",
@@ -6103,31 +5853,25 @@ def create_vr_router() -> APIRouter:
             meta=PaginatedMeta(total=int(total), offset=offset, limit=limit).model_dump(),
         )
 
-    @router.get(
+    @router.post(
         "/investigations/{investigation_id}/report.pdf",
+        response_model=TaskActionResponse,
+        status_code=status.HTTP_202_ACCEPTED,
         summary=(
-            "Enterprise-grade PDF report for a completed (or in-flight) "
-            "investigation. Calls the writer agent for prose synthesis "
-            "then renders via ReportLab. Returns application/pdf with "
-            "Content-Disposition: attachment."
+            "Queue the PDF report for an investigation. Returns 202 with "
+            "a task id. The reporting worker calls the writer agent for "
+            "prose synthesis and renders via ReportLab. Fetch "
+            "GET /tasks/{task_id}/result for the filename and artifact id, "
+            "then GET /tasks/{task_id}/artifact for the PDF."
         ),
-        response_class=Response,
-        responses={
-            200: {
-                "description": "PDF report ready for download.",
-                "content": {"application/pdf": {"schema": {"type": "string", "format": "binary"}}},
-            },
-        },
     )
     @limiter.limit("10/minute")
-    async def export_investigation_report(
+    async def request_investigation_report(
         request: Request,
         investigation_id: str,
         auth: AuthContext = Depends(require_auth),
-    ) -> Response:
-        del request
-
-        from aila.modules.vr.reporting.pdf_report import render_investigation_pdf
+    ) -> TaskActionResponse:
+        from aila.modules.vr.reporting.tasks import run_vr_investigation_report
 
         inv = await _load_investigation(investigation_id, auth)
         if inv is None:
@@ -6135,29 +5879,17 @@ def create_vr_router() -> APIRouter:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Investigation {investigation_id} not found.",
             )
-        try:
-            pdf_bytes = await render_investigation_pdf(investigation_id)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=str(exc),
-            ) from exc
-        except RuntimeError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=f"Report writer unavailable: {exc}",
-            ) from exc
-
-        safe_title = (inv.title or "investigation").replace(" ", "_")[:80]
-        filename = f"AILA_VR_{safe_title}_{investigation_id[:8]}.pdf"
-        return Response(
-            content=pdf_bytes,
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition": f'attachment; filename="{filename}"',
-                "Cache-Control": "no-store",
-            },
+        task_queue = get_task_queue("vr", request)
+        handle = await task_queue.submit(
+            track="reporting",
+            fn=run_vr_investigation_report,
+            kwargs={"investigation_id": investigation_id},
+            user_id=auth.user_id,
+            group_id=auth.role,
+            team_id=auth.team_id,
+            bypass_dedup=True,
         )
+        return TaskActionResponse(task_id=handle.task_id, status="queued")
 
     @router.post(
         "/findings/{finding_id}/draft-poc",
