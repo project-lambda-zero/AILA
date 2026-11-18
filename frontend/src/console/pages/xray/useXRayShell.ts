@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 
-import { pad2 } from "./parsers";
 import { KEY_TO_VIEW, isOverviewDrawer, isViewKey, type LayoutPanes, type PaneView, type XRayView } from "./layout";
 import { PV_HIDE, PV_ZOOM } from "./theme";
 
@@ -177,19 +176,4 @@ export function useXRayShell({
   };
 
   return { focus, setFocus, zoom, setZoom, pinned, setPinned, help, setHelp, palette, setPalette, palQuery, setPalQuery, palSel, setPalSel, pv };
-}
-
-// Local HH:MM:SS wall clock, ticking once a second.
-export function useWallClock(): string {
-  const [clock, setClock] = useState("");
-  useEffect(() => {
-    const tick = () => {
-      const d = new Date();
-      setClock(`${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`);
-    };
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, []);
-  return clock;
 }

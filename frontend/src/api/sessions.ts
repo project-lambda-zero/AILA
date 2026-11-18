@@ -70,13 +70,34 @@ export function useSessions() {
   });
 }
 
+/** Messages per page; matches the backend default. */
+const SESSION_MESSAGE_PAGE_SIZE = 50;
+
+function fetchSessionMessagePage(sessionId: string | null, page: number) {
+  return apiFetch<SessionMessagesResponse>(
+    `/sessions/${sessionId}/messages?page=${page}&page_size=${SESSION_MESSAGE_PAGE_SIZE}`,
+  );
+}
+
+/** Latest-page message query. The previous response's `pages` (cached under the
+ *  same key) selects the page requested first; one follow-up request corrects it
+ *  when the thread grew or shrank across a page boundary. Steady state is one
+ *  request per poll; a cold start is two (discovery, then latest page). */
 export function useSessionMessages(sessionId: string | null) {
+  const qc = useQueryClient();
   return useQuery<SessionMessagesResponse>({
     queryKey: ["sessions", sessionId, "messages"],
-    queryFn: () => apiFetch<SessionMessagesResponse>(`/sessions/${sessionId}/messages`),
+    queryFn: async () => {
+      const cached = qc.getQueryData<SessionMessagesResponse>(["sessions", sessionId, "messages"]);
+      const guess = Math.max(cached?.pages ?? 1, 1);
+      const first = await fetchSessionMessagePage(sessionId, guess);
+      if (first.pages === guess || first.pages === 0) return first;
+      return fetchSessionMessagePage(sessionId, first.pages);
+    },
     enabled: Boolean(sessionId),
     staleTime: 5_000,
     refetchInterval: 10_000,
+    notifyOnChangeProps: ["data", "error"],
   });
 }
 

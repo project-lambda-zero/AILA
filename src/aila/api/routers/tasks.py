@@ -263,6 +263,26 @@ async def requeue_failed_tasks(
 # ---- Per-task endpoints (must be after static paths to avoid route conflicts) ----
 
 
+def _pentest_cancel_detail(task_id: str, record: TaskRecord) -> str:
+    """Point at the assessment cancel route, reading only the task's kwargs payload."""
+    assessment_id: object = None
+    try:
+        kwargs = json.loads(record.kwargs_json)
+    except (TypeError, ValueError):
+        kwargs = None
+    if isinstance(kwargs, dict):
+        assessment_id = kwargs.get("assessment_id")
+    if isinstance(assessment_id, str) and assessment_id:
+        return (
+            f"Pentest task {task_id!r} must be cancelled via "
+            f"POST /pentest/assessments/{assessment_id}/cancel"
+        )
+    return (
+        f"Pentest task {task_id!r} must be cancelled via "
+        "POST /pentest/assessments/{assessment_id}/cancel"
+    )
+
+
 @router.get(
     "/{task_id}",
     response_model=TaskResponse,
@@ -306,6 +326,19 @@ async def cancel_task(
     Returns 409 Conflict if the task is already in a terminal state
     (done, failed, cancelled) or 404 if not found / not accessible.
     """
+
+    async def _fetch() -> TaskRecord | None:
+        async with async_session_scope() as session:
+            return await TaskRepository.get_for_user(session, task_id, auth)
+
+    # Pentest tasks own an assessment row; cancelling the TaskRecord alone would
+    # leave the assessment queued or running. The assessment endpoint owns that path.
+    record = await _fetch()
+    if record is not None and record.track == "pentest":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_pentest_cancel_detail(task_id, record),
+        )
 
     async def _cancel() -> bool:
         # #63: set_cancelled no longer commits its own session -- the caller

@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQueries, useQuery } from "@tanstack/react-query";
 
 import { apiFetch, apiFetchEnvelope } from "../../../api/client";
 import { fetchFieldOptions } from "../../../api/mutations";
@@ -176,6 +176,7 @@ export function useDataRows(config: PageListConfig): DataRows {
     enabled: Boolean(endpoint),
     retry: false,
     refetchInterval: 15000,
+    placeholderData: keepPreviousData,
   });
   const allRows = useMemo(() => toRows(q.data, config.itemsKey), [q.data, config.itemsKey]);
 
