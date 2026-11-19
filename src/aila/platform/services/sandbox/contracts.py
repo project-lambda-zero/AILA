@@ -76,6 +76,13 @@ def _reject_unsafe_relative(path: str, *, field: str) -> str:
 # braces, ~, !) must never reach it.
 _OUTPUT_GLOB_RE = re.compile(r"[A-Za-z0-9._/*?\[\]-]+")
 
+# Immutable OCI image reference: repository path components (no tag, no port,
+# no leading/trailing separators, so ``..`` cannot match) pinned to a sha256
+# digest. Anything else would let the runtime resolve or pull a different image.
+_OCI_IMAGE_DIGEST_RE = re.compile(
+    r"[a-z0-9]+(?:[._-][a-z0-9]+)*(?:/[a-z0-9]+(?:[._-][a-z0-9]+)*)*@sha256:[0-9a-f]{64}"
+)
+
 
 def validate_output_glob(pattern: str) -> str:
     """Return ``pattern`` if it is a plain workspace-relative glob, else raise ``ValueError``.
@@ -146,6 +153,26 @@ class SandboxSpec(BaseModel):
         ),
     )
 
+    image: str | None = Field(
+        default=None,
+        description=(
+            "Immutable OCI image reference, ``name@sha256:<digest>``. Required by the oci "
+            "backend and rejected by every other backend. Tags are never accepted."
+        ),
+    )
+
+    @field_validator("image")
+    @classmethod
+    def _image_immutable(cls, image: str | None) -> str | None:
+        if image is None:
+            return None
+        if _OCI_IMAGE_DIGEST_RE.fullmatch(image) is None:
+            raise ValueError(
+                f"image {image!r} must be an immutable reference 'name@sha256:<64 hex>'; "
+                "tags (including 'latest') and whitespace are not accepted."
+            )
+        return image
+
     @field_validator("argv")
     @classmethod
     def _argv_entries_non_empty(cls, argv: list[str]) -> list[str]:
@@ -199,7 +226,7 @@ class SandboxResult(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    backend: str = Field(description="Concrete backend that ran the spec (nsjail | firecracker).")
+    backend: str = Field(description="Concrete backend that ran the spec (nsjail | firecracker | oci).")
     exit_code: int | None = Field(
         default=None,
         description="Program exit code, or None if the program was killed before reporting one.",

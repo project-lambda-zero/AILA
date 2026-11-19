@@ -587,6 +587,11 @@ class PlatformConfigSchema(BaseModel):
     #   Binary names or absolute paths on the sandbox host. Resolved via
     #   ``command -v`` before every run; a missing binary raises
     #   ``SandboxExecutionError`` with an actionable message.
+    # sandbox_oci_bin / sandbox_oci_network:
+    #   Container runtime (``docker`` or ``podman``) and the network the
+    #   oci backend attaches to when ``SandboxSpec.network`` is granted.
+    #   ``host`` and ``container:<name>`` are refused; ``none`` is the
+    #   network used when the spec does not grant network.
     # sandbox_rootfs_path / _kernel_path:
     #   Required for the Firecracker backend. Point at the ext4 rootfs
     #   image + Firecracker-compatible vmlinux on the sandbox host. The
@@ -656,7 +661,10 @@ class PlatformConfigSchema(BaseModel):
             "fallback by design.\n\n"
             "``none`` -- no backend; every ``run`` raises Unavailable.\n"
             "``nsjail`` -- namespace + seccomp sandbox on the host.\n"
-            "``firecracker`` -- microVM (KVM required); needs rootfs + kernel."
+            "``firecracker`` -- microVM (KVM required); needs rootfs + kernel.\n"
+            "``oci`` -- hardened docker/podman container; every run needs an "
+            "immutable ``name@sha256:<digest>`` image already present on the host "
+            "(aila never pulls)."
         ),
     )
     sandbox_system_id: str = ""
@@ -671,6 +679,8 @@ class PlatformConfigSchema(BaseModel):
     sandbox_mem_mb: int = 512
     sandbox_output_max_bytes: int = 1_048_576
     sandbox_nsjail_bin: str = "nsjail"
+    sandbox_oci_bin: str = "docker"
+    sandbox_oci_network: str = "bridge"
     sandbox_firecracker_bin: str = "firecracker"
     sandbox_jailer_bin: str = "jailer"
     sandbox_rootfs_path: str = ""

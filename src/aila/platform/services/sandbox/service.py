@@ -36,7 +36,7 @@ from ...config import PlatformSettings
 from ...contracts.platform import SSHIntegrationInput
 from ...exceptions import AILATimeoutError, AuthenticationError, UpstreamError, ValidationError
 from ..ssh import SSHService
-from .backends import FirecrackerBackend, NsjailBackend
+from .backends import FirecrackerBackend, NsjailBackend, OciBackend
 from .contracts import (
     CancelCheck,
     SandboxBackend,
@@ -86,6 +86,8 @@ class SandboxConfig:
     kernel_path: str
     system_name: str = ""
     system_id: int | None = None
+    oci_bin: str = "docker"
+    oci_network: str = "bridge"
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,10 +133,11 @@ class SandboxService:
         self._ssh = ssh_service or SSHService(settings)
         self._registry = config_registry or ConfigRegistry()
         # Tests may inject a fake backend map; production uses the real
-        # nsjail + firecracker backends.
+        # nsjail, firecracker, and oci backends.
         self._backends: dict[str, SandboxBackend] = backends or {
             NsjailBackend.name: NsjailBackend(),
             FirecrackerBackend.name: FirecrackerBackend(),
+            OciBackend.name: OciBackend(),
         }
 
     async def run_streaming(
@@ -183,7 +186,7 @@ class SandboxService:
         if cfg.backend == "none" or not cfg.backend.strip():
             raise SandboxUnavailableError(
                 "platform sandbox backend not configured; set "
-                "platform.sandbox_backend to 'nsjail' or 'firecracker' "
+                "platform.sandbox_backend to 'nsjail', 'firecracker' or 'oci' "
                 "and platform.sandbox_ssh_host to a Linux host."
             )
         if not cfg.ssh_host.strip():
@@ -200,6 +203,18 @@ class SandboxService:
             raise SandboxUnavailableError(
                 f"platform.sandbox_backend={cfg.backend!r} is not a known "
                 f"backend (supported: {sorted(self._backends)})."
+            )
+
+        # The image is a backend-specific contract: the oci backend must get
+        # one, and no other backend may silently ignore one.
+        if backend.name == OciBackend.name and spec.image is None:
+            raise SandboxExecutionError(
+                "oci backend requires SandboxSpec.image set to an immutable 'name@sha256:<digest>' reference."
+            )
+        if backend.name != OciBackend.name and spec.image is not None:
+            raise SandboxExecutionError(
+                f"SandboxSpec.image is only supported by the oci backend; "
+                f"platform.sandbox_backend={cfg.backend!r} would ignore it."
             )
 
         normalized = self._apply_policy(spec, cfg)
@@ -393,8 +408,8 @@ class SandboxService:
             return SandboxProbe(
                 ok=False,
                 detail=(
-                    "sandbox_backend is 'none'; set it to 'nsjail' or "
-                    "'firecracker' and select a registered system or set sandbox_ssh_host."
+                    "sandbox_backend is 'none'; set it to 'nsjail', 'firecracker' or "
+                    "'oci' and select a registered system or set sandbox_ssh_host."
                 ),
                 duration_ms=0,
                 tool_installed=False,
@@ -445,8 +460,13 @@ class SandboxService:
             )
 
         # 2. Test if the configured sandboxing tool is installed on the host
-        target_bin = cfg.nsjail_bin if cfg.backend == "nsjail" else cfg.firecracker_bin
-        target_bin = target_bin.strip() or ("nsjail" if cfg.backend == "nsjail" else "firecracker")
+        if cfg.backend == OciBackend.name:
+            target_bin, default_bin = cfg.oci_bin, "docker"
+        elif cfg.backend == NsjailBackend.name:
+            target_bin, default_bin = cfg.nsjail_bin, "nsjail"
+        else:
+            target_bin, default_bin = cfg.firecracker_bin, "firecracker"
+        target_bin = target_bin.strip() or default_bin
         check_cmd = (
             f"command -v {target_bin} || which {target_bin} || "
             f"ls -1 /usr/local/bin/{target_bin} /usr/bin/{target_bin} ~/.local/bin/{target_bin} 2>/dev/null | head -n 1"
@@ -683,6 +703,8 @@ class SandboxService:
         nsjail_bin = str(await _get("sandbox_nsjail_bin", "nsjail")).strip() or "nsjail"
         firecracker_bin = str(await _get("sandbox_firecracker_bin", "firecracker")).strip() or "firecracker"
         jailer_bin = str(await _get("sandbox_jailer_bin", "jailer")).strip() or "jailer"
+        oci_bin = str(await _get("sandbox_oci_bin", "docker")).strip() or "docker"
+        oci_network = str(await _get("sandbox_oci_network", "bridge")).strip() or "bridge"
         rootfs_path = str(await _get("sandbox_rootfs_path", "")).strip()
         kernel_path = str(await _get("sandbox_kernel_path", "")).strip()
 
@@ -718,4 +740,6 @@ class SandboxService:
             kernel_path=kernel_path,
             system_name=system_name,
             system_id=system_id,
+            oci_bin=oci_bin,
+            oci_network=oci_network,
         )

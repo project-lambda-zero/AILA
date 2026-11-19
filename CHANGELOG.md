@@ -5,6 +5,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.127] - 2026-11-19 -- Image-agnostic remote OCI sandbox execution
+
+### Added
+
+- `SandboxService` now supports `sandbox_backend=oci` for remote Docker or Podman execution through the existing SSH transport. Callers provide an immutable `image@sha256:<digest>` in `SandboxSpec`; the backend never pulls an image during action execution.
+- OCI runs use the remote unprivileged SSH identity as the container UID/GID, an owner-only per-run workspace, a read-only root filesystem, bounded temporary storage, no capabilities, no-new-privileges, CPU, memory, PID, wall-clock, and output limits. Network access remains disabled unless platform policy permits it.
+- Existing non-streaming and streaming sandbox APIs share OCI dispatch. Awaited output callbacks preserve backpressure, and completion, cancellation, callback failure, or transport failure trigger best-effort force removal of the named container.
+- `AILA_PLATFORM_SANDBOX_OCI_BIN` selects the remote runtime binary and `AILA_PLATFORM_SANDBOX_OCI_NETWORK` selects the network used by explicitly network-enabled runs.
+
+### Upgrade notes
+
+- No database schema or Alembic migration change is required. This release extends execution behavior only.
+- OCI support adds a backend primitive; it does not select, bundle, or authorize any penetration-testing image. Configure a remote Linux host, pre-pull approved immutable image digests, and select `oci` only after the runtime probe succeeds.
+- The configured OCI network is a connectivity control, not target-scope enforcement. Deploy the appropriate remote firewall or egress proxy before running scope-limited tools.
+- No local Docker fallback is provided. Live OCI execution requires a reachable remote Linux host with Docker or Podman available to an unprivileged SSH identity.
+
 ## [0.6.126] - 2026-11-19 -- Live dynamic campaign execution and monitoring
 
 ### Added

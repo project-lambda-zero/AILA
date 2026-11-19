@@ -215,6 +215,24 @@ export AILA_JSON_LOGS=1
 The full env reference -- including the platform `ConfigRegistry` namespace and the
 VR / audit-mcp dev knobs -- lives in [`docs/ENV_VARS.md`](ENV_VARS.md).
 
+### Optional remote OCI sandbox
+
+The OCI backend executes an immutable caller-supplied image on a remote Linux host through the existing `SandboxService` and SSH transport. It does not select or bundle tool images.
+
+```bash
+export AILA_PLATFORM_SANDBOX_BACKEND=oci
+export AILA_PLATFORM_SANDBOX_SSH_HOST=sandbox.internal
+export AILA_PLATFORM_SANDBOX_SSH_USER=aila-sandbox
+export AILA_PLATFORM_SANDBOX_OCI_BIN=docker
+export AILA_PLATFORM_SANDBOX_OCI_NETWORK=bridge
+```
+
+The SSH identity must be unprivileged and allowed to run the selected Docker or Podman binary. Pre-pull every approved `image@sha256:<digest>` on that host; execution never pulls an image automatically. Runs use that identity's numeric UID/GID inside the container, an owner-only workspace, a read-only root filesystem, dropped capabilities, no-new-privileges, and explicit CPU, memory, PID, timeout, and output ceilings.
+
+Network-disabled runs use `--network none`. Network-enabled runs use `AILA_PLATFORM_SANDBOX_OCI_NETWORK` only when `AILA_PLATFORM_SANDBOX_ALLOW_NETWORK` also permits networking. The configured network supplies connectivity, not target authorization: enforce campaign scope with remote firewall or egress-proxy rules before deploying tools.
+
+There is no local Docker fallback and no Docker socket mount. The runtime force-removes its named container after completion, cancellation, callback failure, or transport failure.
+
 ---
 
 ## 5. Start the FastAPI Server
