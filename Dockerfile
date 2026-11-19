@@ -74,18 +74,24 @@ COPY --from=deps /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Source tree -- needed because alembic migrations + module entry
-# points are loaded by path at startup. Keep ownership simple
-# (root) since the container should run as a non-root user via the
-# orchestrator's UID/GID mapping in production, not baked into the
-# image (different orchestrators want different UIDs).
+# points are loaded by path at startup. Application code remains read-only;
+# only the data/report/backup directories and the service user's home are writable.
 WORKDIR /app
 COPY src/ ./src/
 COPY pyproject.toml README.md ./
 COPY scripts/ ./scripts/
 COPY infra/ ./infra/
 
+RUN groupadd --gid 10001 aila \
+    && useradd --uid 10001 --gid aila --create-home --home-dir /home/aila \
+        --shell /usr/sbin/nologin aila \
+    && mkdir -p /app/data/secrets /app/reports /app/backups \
+    && chown -R aila:aila /app/data /app/reports /app/backups
+
 # AILA reads PYTHONPATH-aware imports from /app/src.
 ENV PYTHONPATH=/app/src
+
+USER aila
 
 # Default port for the FastAPI app. Override via -p / -P at run time.
 EXPOSE 8000

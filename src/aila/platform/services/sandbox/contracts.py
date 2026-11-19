@@ -21,6 +21,7 @@ surface without translation.
 """
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -35,6 +36,7 @@ __all__ = [
     "SandboxBackend",
     "SandboxUnavailableError",
     "SandboxExecutionError",
+    "validate_output_glob",
 ]
 
 
@@ -58,6 +60,28 @@ def _reject_unsafe_relative(path: str, *, field: str) -> str:
     if any(segment == ".." for segment in segments):
         raise ValueError(f"{field}: path {path!r} contains a '..' traversal segment.")
     return path
+
+
+# Allowed characters in an output glob: path characters and glob syntax only.
+# The pattern is spliced into a remote shell command at collection time, so
+# shell metacharacters ($, backtick, ;, |, &, quotes, whitespace, redirections,
+# braces, ~, !) must never reach it.
+_OUTPUT_GLOB_RE = re.compile(r"[A-Za-z0-9._/*?\[\]-]+")
+
+
+def validate_output_glob(pattern: str) -> str:
+    """Return ``pattern`` if it is a plain workspace-relative glob, else raise ``ValueError``.
+
+    Used by :class:`SandboxSpec` at construction and again by the backend's
+    output collection before any remote command is built.
+    """
+    _reject_unsafe_relative(pattern, field="output_globs")
+    if not _OUTPUT_GLOB_RE.fullmatch(pattern):
+        raise ValueError(
+            f"output_globs: {pattern!r} must be a workspace-relative path using only "
+            "letters, digits, '.', '_', '-', '/', and the glob characters '*', '?', '[', ']'."
+        )
+    return pattern
 
 
 class SandboxSpec(BaseModel):
@@ -138,7 +162,7 @@ class SandboxSpec(BaseModel):
     @classmethod
     def _output_globs_paths(cls, globs: list[str]) -> list[str]:
         for pattern in globs:
-            _reject_unsafe_relative(pattern, field="output_globs")
+            validate_output_glob(pattern)
         return globs
 
     @field_validator("workdir")

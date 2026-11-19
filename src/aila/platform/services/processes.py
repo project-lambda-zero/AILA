@@ -1,4 +1,4 @@
-"""Bounded subprocess protocol for native pentest framework runners."""
+"""Bounded subprocess protocol for native framework runners."""
 from __future__ import annotations
 
 import asyncio
@@ -10,7 +10,7 @@ import os
 import signal
 import threading
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -19,6 +19,7 @@ __all__ = [
     "FrameworkCancelledError",
     "FrameworkExecutionError",
     "FrameworkRunResult",
+    "framework_child_environment",
     "run_framework_process",
 ]
 
@@ -55,8 +56,13 @@ class FrameworkRunResult:
     summary: dict[str, Any]
 
 
-def framework_child_environment(work_dir: Path) -> dict[str, str]:
-    """Pass runtime locations only; never inherit provider or target secrets."""
+def framework_child_environment(
+    work_dir: Path, extra_env: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Pass runtime locations only; never inherit provider or target secrets.
+
+    ``extra_env`` is a caller-owned explicit override layer applied last.
+    """
     allowed = ("PATH", "SYSTEMROOT", "COMSPEC", "PATHEXT", "LD_LIBRARY_PATH")
     environment = {
         key: value for key in allowed if (value := os.environ.get(key)) is not None
@@ -72,14 +78,14 @@ def framework_child_environment(work_dir: Path) -> dict[str, str]:
         "TEMP": str(work_dir),
         "TMP": str(work_dir),
         "TMPDIR": str(work_dir),
-        "PYTHONPATH": str(Path(__file__).resolve().parents[4]),
+        "PYTHONPATH": str(Path(__file__).resolve().parents[3]),
         "PYTHONIOENCODING": "utf-8",
         "PYTHONUTF8": "1",
-        "PROMPTFOO_DISABLE_TELEMETRY": "1",
-        "PROMPTFOO_DISABLE_UPDATE": "1",
         "CI": "1",
         "NO_COLOR": "1",
     })
+    if extra_env is not None:
+        environment.update(extra_env)
     return environment
 
 
@@ -299,6 +305,7 @@ async def _spawn_framework_process(
     argv: list[str],
     work_dir: Path,
     job: _WindowsJob | None,
+    extra_env: Mapping[str, str] | None,
 ) -> asyncio.subprocess.Process:
     """Start the leader; on Windows it stays suspended until it is inside the job."""
     creationflags = (_CREATE_NEW_PROCESS_GROUP | _CREATE_SUSPENDED) if os.name == "nt" else 0
@@ -308,7 +315,7 @@ async def _spawn_framework_process(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         cwd=work_dir,
-        env=framework_child_environment(work_dir),
+        env=framework_child_environment(work_dir, extra_env),
         creationflags=creationflags,
         start_new_session=os.name != "nt",
         limit=_MAX_PROTOCOL_LINE,
@@ -331,11 +338,14 @@ async def _run_framework_process(
     timeout_seconds: float,
     on_outcome: Callable[[dict[str, Any]], Awaitable[None]],
     cancel_requested: Callable[[], Awaitable[bool]] | None,
+    extra_env: Mapping[str, str] | None,
 ) -> FrameworkRunResult:
     """Execute one fixed runner; the job outlives the leader so no descendant survives."""
     job = _WindowsJob.create() if os.name == "nt" else None
     try:
-        process = await _spawn_framework_process(argv=argv, work_dir=work_dir, job=job)
+        process = await _spawn_framework_process(
+            argv=argv, work_dir=work_dir, job=job, extra_env=extra_env,
+        )
         return await _supervise_framework_process(
             process=process,
             job=job,
@@ -548,6 +558,7 @@ def _run_process_on_proactor(
     timeout_seconds: float,
     on_outcome: Callable[[dict[str, Any]], Awaitable[None]],
     cancel_requested: Callable[[], Awaitable[bool]] | None,
+    extra_env: Mapping[str, str] | None,
     caller_loop: asyncio.AbstractEventLoop,
     cancellation: _ProactorCancellation,
 ) -> FrameworkRunResult:
@@ -581,6 +592,7 @@ def _run_process_on_proactor(
             timeout_seconds=timeout_seconds,
             on_outcome=forward,
             cancel_requested=forward_cancellation,
+            extra_env=extra_env,
         ))
         cancellation.attach(loop, execution)
         return loop.run_until_complete(execution)
@@ -608,6 +620,7 @@ async def _run_on_proactor_thread(
     timeout_seconds: float,
     on_outcome: Callable[[dict[str, Any]], Awaitable[None]],
     cancel_requested: Callable[[], Awaitable[bool]] | None,
+    extra_env: Mapping[str, str] | None,
 ) -> FrameworkRunResult:
     """Run on a private Proactor thread; caller cancellation returns only after tree cleanup."""
     cancellation = _ProactorCancellation()
@@ -619,6 +632,7 @@ async def _run_on_proactor_thread(
         timeout_seconds=timeout_seconds,
         on_outcome=on_outcome,
         cancel_requested=cancel_requested,
+        extra_env=extra_env,
         caller_loop=asyncio.get_running_loop(),
         cancellation=cancellation,
     ))
@@ -639,8 +653,13 @@ async def run_framework_process(
     timeout_seconds: float,
     on_outcome: Callable[[dict[str, Any]], Awaitable[None]],
     cancel_requested: Callable[[], Awaitable[bool]] | None = None,
+    extra_env: Mapping[str, str] | None = None,
 ) -> FrameworkRunResult:
-    """Execute one fixed runner on a subprocess-capable loop."""
+    """Execute one fixed runner on a subprocess-capable loop.
+
+    ``extra_env`` is applied on top of the generic child environment; it is the only way
+    provider-specific variables reach a runner.
+    """
     if os.name == "nt" and not isinstance(asyncio.get_running_loop(), asyncio.ProactorEventLoop):
         return await _run_on_proactor_thread(
             argv=argv,
@@ -649,6 +668,7 @@ async def run_framework_process(
             timeout_seconds=timeout_seconds,
             on_outcome=on_outcome,
             cancel_requested=cancel_requested,
+            extra_env=extra_env,
         )
     return await _run_framework_process(
         argv=argv,
@@ -657,4 +677,5 @@ async def run_framework_process(
         timeout_seconds=timeout_seconds,
         on_outcome=on_outcome,
         cancel_requested=cancel_requested,
+        extra_env=extra_env,
     )

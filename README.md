@@ -550,8 +550,8 @@ Common targets in the root `Makefile`:
 | `make worker-vuln`      | `python -m aila worker -q vulnerability`                                  |
 | `make worker-forensics` | `python -m aila worker -q forensics`                                      |
 | `make dev-all`          | Bring up all services in one terminal (Ctrl+C stops everything)           |
-| `bash start.sh`         | Spawn audit-mcp + backend + 4 workers + frontend in one shot (Windows: Git Bash + PowerShell) |
-| `docker compose -f infra/utilities/docker-compose.full.yml up --build` | Full-stack containers: postgres + redis + api + 4 workers + frontend. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). |
+| `bash start.sh`         | Spawn audit-mcp + backend + nine queue workers + frontend in one shot (Windows: Git Bash + PowerShell) |
+| `docker compose --env-file .env -f infra/utilities/docker-compose.full.yml -f infra/utilities/docker-compose.full.dev.yml up --build` | Full-stack development containers with localhost ports: postgres + redis + api + nine queue workers + frontend. Omit the dev override for the replica-safe base behind a load balancer. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). |
 | `make test`             | `pytest`, excluding `tests/test_e2e*.py`                                  |
 | `make test-e2e`         | `pytest tests/test_e2e.py -v` (requires live infrastructure)              |
 | `make lint`             | `ruff check src/aila/`                                                    |
@@ -598,7 +598,7 @@ Command groups expose related subcommands:
 
 ## REST API
 
-- **Base URL (dev):** `http://localhost:8000`
+- **Base URL (dev):** `http://localhost:8000` (host backend or full Compose with `docker-compose.full.dev.yml`)
 - **OpenAPI / Swagger UI:** `http://localhost:8000/docs`
 - **OpenAPI JSON:** `http://localhost:8000/openapi.json`
 - **Authentication:** `POST /auth/login` with `{"username", "password"}` returns a JWT (`data.access_token`) used as `Authorization: Bearer <token>` for all subsequent calls; `POST /auth/token` exchanges an API key for the same envelope. RBAC roles

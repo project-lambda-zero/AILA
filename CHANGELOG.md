@@ -5,6 +5,37 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.125] - 2026-11-19 -- Execution isolation and worker scaling foundations
+
+### Added
+
+- Module-registered task-control policies let entity-specific lifecycle APIs handle or reject generic task cancellation without module-specific API router branches. Policies resolve through the persisted owning module, including modules with multiple worker tracks.
+- `AILA_PLATFORM_WORKER_HEALTH_TRACKS` configures the ARQ tracks expected by worker health probes. Health details report live and missing tracks, and partial deployments can declare their intended queue set.
+- Sandbox artifact patterns have one shared validation contract covering relative confinement and shell syntax before execution and again during collection. Artifact downloads are workspace-confined and transfer only the configured cap plus one byte.
+
+### Changed
+
+- Generic external-process supervision, cancellation, environment construction, concurrent pipe draining, and process-tree cleanup now live in `aila.platform.services.processes`. Existing pentest callers use the platform service; provider-specific environment overrides remain at their module call sites.
+- nsjail payloads run as an unprivileged user and group, and sandbox run directories use owner-only permissions.
+- Full Compose services no longer have fixed container names, the shared database environment key matches application configuration, and PostgreSQL defaults to 200 connections. Runtime containers use an unprivileged `aila` user with writable data and report directories.
+- Deployment and task-queue documentation now describes replica scaling, configured worker health, module task-control ownership, and sandbox artifact confinement.
+
+### Fixed
+
+- `python -m aila worker` now propagates the complete ARQ worker lifecycle and configuration, including `max_jobs=1`, abort support, health checks, startup/shutdown hooks, and job hooks.
+- Worker health probes evaluate every configured queue instead of checking only the vulnerability queue. Replica-unique heartbeat keys prevent one graceful worker shutdown from hiding surviving capacity, and schema defaults work before database seeding.
+- Full Compose shares durable secret, report, and backup storage across API and worker containers. Database and Redis URLs honor operator environment overrides; scalable base services leave host publication to the development override or a production load balancer.
+- Generic task cancellation remains available for pentest runtime discovery and preflight tasks. Only assessment execution tasks redirect to the assessment lifecycle endpoint.
+- Worker Redis DSN parsing preserves authentication, database selection, TLS, and connection options instead of retaining only host and port.
+- Sandbox artifact collection rejects unsafe patterns before execution, prevents workspace escapes, and avoids downloading whole oversized files before applying caps.
+
+### Upgrade notes
+
+- No database schema or Alembic migration change is required.
+- Partial worker deployments should set `AILA_PLATFORM_WORKER_HEALTH_TRACKS` to their intended tracks. Full-stack defaults cover all nine released queues.
+- Scale Compose workers with `docker compose -f infra/utilities/docker-compose.full.yml up --scale worker-vr=5`. Fixed container names are no longer available for direct `docker rm` workflows.
+- The container runtime user is uid/gid 10001. Operators with bind-mounted data or report directories must grant that identity the required write access.
+
 ## [0.6.124] - 2026-11-18 -- Pentest engine packaging and operations
 
 ### Added

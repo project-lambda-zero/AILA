@@ -252,6 +252,34 @@ class TestWorkerCommand:
         assert settings_cls.queue_name == "arq:queue:test_queue"
 
     @patch("aila.cli.get_settings")
+    def test_worker_propagates_base_lifecycle_settings(self, mock_settings):
+        """ARQ's __dict__-based settings loader receives every base lifecycle field."""
+        from aila.platform.tasks.worker import WorkerSettings
+
+        mock_settings.return_value = MagicMock()
+        with (
+            patch("arq.run_worker") as mock_run,
+            patch("aila.platform.tasks.get_task_tuning", side_effect=lambda k, d: d),
+        ):
+            result = runner.invoke(app, ["worker", "--queue", "test_queue"])
+
+        assert result.exit_code == 0
+        settings_cls = mock_run.call_args[0][0]
+        for field_name in (
+            "functions",
+            "max_jobs",
+            "retry_jobs",
+            "allow_abort_jobs",
+            "health_check_interval",
+            "on_startup",
+            "on_shutdown",
+            "on_job_start",
+            "on_job_end",
+        ):
+            assert field_name in settings_cls.__dict__
+            assert settings_cls.__dict__[field_name] == getattr(WorkerSettings, field_name)
+
+    @patch("aila.cli.get_settings")
     def test_worker_default_queue(self, mock_settings):
         """worker command defaults to queue='default'."""
         mock_settings.return_value = MagicMock()
@@ -276,6 +304,42 @@ class TestWorkerCommand:
 
         assert result.exit_code == 0
         assert "10.0.0.1:6380" in result.output
+
+    @patch("aila.cli.get_settings")
+    def test_worker_redis_settings_keep_full_dsn(self, mock_settings):
+        """Credentials, database, and TLS from --redis-url reach the ARQ worker settings."""
+        from arq.connections import RedisSettings
+
+        mock_settings.return_value = MagicMock()
+        url = "rediss://user:pw@cache.example:6380/3"
+
+        with patch("arq.run_worker") as mock_run:
+            with patch("aila.platform.tasks.get_task_tuning", side_effect=lambda k, d: d):
+                result = runner.invoke(app, ["worker", "--redis-url", url])
+
+        assert result.exit_code == 0
+        redis_settings = mock_run.call_args[0][0].redis_settings
+        expected = RedisSettings.from_dsn(url)
+        assert redis_settings.host == expected.host == "cache.example"
+        assert redis_settings.port == expected.port == 6380
+        assert redis_settings.username == "user"
+        assert redis_settings.password == "pw"
+        assert redis_settings.database == 3
+        assert redis_settings.ssl is True
+
+    @patch("aila.cli.get_settings")
+    def test_worker_health_check_key_is_scoped_to_queue_and_replica(self, mock_settings):
+        """Each worker process heartbeats under its own key within its queue's family."""
+        mock_settings.return_value = MagicMock()
+
+        with patch("arq.run_worker") as mock_run:
+            with patch("aila.platform.tasks.get_task_tuning", side_effect=lambda k, d: d):
+                result = runner.invoke(app, ["worker", "--queue", "vr"])
+
+        assert result.exit_code == 0
+        health_key = mock_run.call_args[0][0].health_check_key
+        assert health_key.startswith("arq:queue:vr:health-check:")
+        assert health_key != "arq:queue:vr:health-check"
 
 
 # ---------------------------------------------------------------------------

@@ -66,6 +66,8 @@ if [[ "$COMMAND" == "stop" ]]; then
 fi
 
 load_env
+# Health probe tracks must match the queues started below; set after load_env so .env cannot override it.
+export AILA_PLATFORM_WORKER_HEALTH_TRACKS="default,vulnerability,forensics,pentest,pentest_runtime,forensics_readiness,reporting"
 kill_aila_processes
 rm -f "$PID_FILE"
 

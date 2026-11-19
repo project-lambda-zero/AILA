@@ -13,6 +13,9 @@ from .protocol import (
     ModuleRouteSpec,
     ModuleRuntime,
     SearchEntity,
+    TaskControlContext,
+    TaskControlPolicy,
+    TaskControlResult,
     action_id_for,
 )
 from .registry import ModuleRegistry
@@ -30,6 +33,9 @@ __all__ = [
     "ModuleRuntime",
     "PlatformModule",
     "SearchEntity",
+    "TaskControlContext",
+    "TaskControlPolicy",
+    "TaskControlResult",
     "UNROUTABLE_ACTION_ID",
     "action_id_for",
     "build_module_factory",
