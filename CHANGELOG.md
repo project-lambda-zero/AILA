@@ -23,7 +23,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - `python -m aila worker` now propagates the complete ARQ worker lifecycle and configuration, including `max_jobs=1`, abort support, health checks, startup/shutdown hooks, and job hooks.
-- Worker health probes evaluate every configured queue instead of checking only the vulnerability queue.
+- Worker health probes evaluate every configured queue instead of checking only the vulnerability queue. Replica-unique heartbeat keys prevent one graceful worker shutdown from hiding surviving capacity, and schema defaults work before database seeding.
+- Full Compose shares durable secret, report, and backup storage across API and worker containers. Database and Redis URLs honor operator environment overrides; scalable base services leave host publication to the development override or a production load balancer.
+- Generic task cancellation remains available for pentest runtime discovery and preflight tasks. Only assessment execution tasks redirect to the assessment lifecycle endpoint.
+- Worker Redis DSN parsing preserves authentication, database selection, TLS, and connection options instead of retaining only host and port.
 - Sandbox artifact collection rejects unsafe patterns before execution, prevents workspace escapes, and avoids downloading whole oversized files before applying caps.
 
 ### Upgrade notes

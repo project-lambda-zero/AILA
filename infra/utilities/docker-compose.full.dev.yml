@@ -1,0 +1,28 @@
+# Development localhost publications for docker-compose.full.yml.
+#
+# Use together with the base file so Compose interpolates the same
+# repo-root .env and layers these host ports on the base services:
+#   docker compose --env-file ../../.env \
+#     -f docker-compose.full.yml -f docker-compose.full.dev.yml up --build
+#
+# Do not use this override for production; the base file is the
+# reverse-proxy/load-balancer shape.
+
+name: aila-full
+
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  redis:
+    ports:
+      - "127.0.0.1:6379:6379"
+
+  api:
+    ports:
+      - "8000:8000"
+
+  frontend:
+    ports:
+      - "3000:3000"

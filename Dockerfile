@@ -75,7 +75,7 @@ ENV PATH="/opt/venv/bin:$PATH"
 
 # Source tree -- needed because alembic migrations + module entry
 # points are loaded by path at startup. Application code remains read-only;
-# only the data/report directories and the service user's home are writable.
+# only the data/report/backup directories and the service user's home are writable.
 WORKDIR /app
 COPY src/ ./src/
 COPY pyproject.toml README.md ./
@@ -85,8 +85,8 @@ COPY infra/ ./infra/
 RUN groupadd --gid 10001 aila \
     && useradd --uid 10001 --gid aila --create-home --home-dir /home/aila \
         --shell /usr/sbin/nologin aila \
-    && mkdir -p /app/data/secrets /app/reports \
-    && chown -R aila:aila /app/data /app/reports
+    && mkdir -p /app/data/secrets /app/reports /app/backups \
+    && chown -R aila:aila /app/data /app/reports /app/backups
 
 # AILA reads PYTHONPATH-aware imports from /app/src.
 ENV PYTHONPATH=/app/src

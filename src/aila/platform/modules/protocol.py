@@ -138,15 +138,26 @@ class TaskControlResult:
 
 
 @dataclass(frozen=True, slots=True)
+class TaskControlContext:
+    """Generic task identity and decoded kwargs supplied to module policies."""
+
+    task_id: str
+    fn_path: str
+    fn_module: str
+    track: str
+    kwargs: JsonObject
+
+
+@dataclass(frozen=True, slots=True)
 class TaskControlPolicy:
     """Module-owned decisions for generic platform task actions.
 
-    ``resolve_cancellation`` receives the task id and decoded JSON kwargs. A
-    result means cancellation is externally handled; ``None`` retains the
-    platform's default cancellation behavior.
+    ``resolve_cancellation`` receives the generic task context. A result means
+    cancellation is externally handled; ``None`` retains the platform's default
+    cancellation behavior.
     """
 
-    resolve_cancellation: Callable[[str, JsonObject], TaskControlResult | None]
+    resolve_cancellation: Callable[[TaskControlContext], TaskControlResult | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -396,12 +407,13 @@ class ModuleProtocol(Protocol):
     def task_control_policy(self) -> TaskControlPolicy | None:
         """Return the policy that governs generic platform actions on this module's tasks.
 
-        The task API resolves a task's module through the registry by its
-        track and asks the policy whether cancellation is handled outside the
-        generic path. A ``TaskControlResult`` from the policy refuses the
-        generic cancel with that operator detail; ``None`` keeps the platform
-        default. Modules whose tasks are cancelled only through their own
-        surface override this; the default is no policy.
+        The task API resolves a task's owning module through the registry by
+        ``TaskRecord.fn_module`` (never by track) and passes the policy a
+        ``TaskControlContext`` carrying the task identity and kwargs. A
+        ``TaskControlResult`` from the policy refuses the generic cancel with
+        that operator detail; ``None`` keeps the platform default. Modules
+        whose tasks are cancelled only through their own surface override
+        this; the default is no policy.
         """
         return None
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlparse
@@ -44,7 +45,7 @@ from aila.platform.workflows.log import purge_old_transitions
 from aila.storage.database import async_session_scope
 from aila.storage.report_store import purge_expired_report_files
 
-__all__ = ["WorkerSettings", "reaper"]
+__all__ = ["WorkerSettings", "reaper", "replica_health_check_key"]
 
 # fix §62 -- every datetime comparison in this module routes through
 # ``utc_now()`` (timezone-aware) instead of ``datetime.now(tz=UTC)`` /
@@ -677,8 +678,6 @@ _bootstrap_platform_tasks()
 
 # --- ARQ WorkerSettings ----------------------------------------------------
 _redis_url = os.environ.get("AILA_PLATFORM_REDIS_URL", "redis://127.0.0.1:6379")
-_parsed = urlparse(_redis_url)
-_db = int(_parsed.path.lstrip("/")) if _parsed.path and _parsed.path != "/" else 0
 
 
 async def _on_startup(ctx: dict[str, Any]) -> None:
@@ -1125,16 +1124,23 @@ async def _on_shutdown(ctx: dict[str, Any]) -> None:
         _log.warning("ARQ on_shutdown: LLM client aclose skipped: %s", exc)
 
 
+def replica_health_check_key(queue_name: str) -> str:
+    """Return this process's ARQ health-check key under the queue's heartbeat prefix.
+
+    ARQ's default key is shared by every replica of a queue and ``Worker.close``
+    deletes it, so one replica stopping would drop a live track. Hostname and PID
+    make the key unique per process; the health probe matches the whole
+    ``<queue>:health-check*`` family.
+    """
+    return f"{queue_name}:health-check:{socket.gethostname()}:{os.getpid()}"
+
+
 class WorkerSettings:
     """ARQ worker entry point (D-07..D-14)."""
 
-    redis_settings = RedisSettings(
-        host=_parsed.hostname or "127.0.0.1",
-        port=_parsed.port or 6379,
-        database=_db,
-        password=_parsed.password,
-    )
+    redis_settings = RedisSettings.from_dsn(_redis_url)
     queue_name = "arq:queue:vulnerability"
+    health_check_key = replica_health_check_key(queue_name)
     # Legacy ARQ functions preserved for non-@platform_task callers
     # (scheduled reports + network discovery). Phase 182 re-homes them.
     functions: list[Any] = _REGISTRY.all_functions()

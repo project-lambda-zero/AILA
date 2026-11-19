@@ -58,6 +58,7 @@ from aila.api.schemas.tasks import (
 from aila.api.schemas.transitions import TransitionView
 from aila.config import get_settings
 from aila.platform.contracts import JsonObject
+from aila.platform.modules.protocol import TaskControlContext
 from aila.platform.services.audit import record_audit_event
 from aila.platform.services.redis_pool import pool_available
 from aila.platform.services.runtime import run_blocking_io
@@ -293,7 +294,14 @@ def _external_cancel_detail(request: Request, task_id: str, record: TaskRecord) 
     policy = platform.runtime.module_registry.task_control_policy_for(record.fn_module)
     if policy is None:
         return None
-    result = policy.resolve_cancellation(task_id, _task_kwargs(record))
+    context = TaskControlContext(
+        task_id=task_id,
+        fn_path=record.fn_path,
+        fn_module=record.fn_module,
+        track=record.track,
+        kwargs=_task_kwargs(record),
+    )
+    result = policy.resolve_cancellation(context)
     return None if result is None else result.detail
 
 

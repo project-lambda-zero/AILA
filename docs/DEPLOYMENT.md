@@ -37,11 +37,25 @@ Three process classes:
 2. **ARQ workers** -- execute background tasks (`platform.handle`, scans, VR investigations). One worker per queue; concurrency scales by spawning N workers per queue (see `WORKER_COUNT_<QUEUE>`).
 3. **Redis / Memurai** -- ARQ broker, idempotency cache, SSE progress streams. Redis 6+ on Linux; Memurai 3+ on Windows.
 
-The two compose files in `infra/utilities/` cover the deployment shapes:
+The compose files in `infra/utilities/` cover the deployment shapes:
 - `docker-compose.yml` -- dev infra only: PostgreSQL (with pgvector) + Redis. Used by `make dev-up` for local development where the operator runs the API, workers, and frontend on the host.
-- `docker-compose.full.yml` -- full stack: PostgreSQL + Redis + API + one worker container per queue + frontend (Vite dev server). The production-like shape used by `docker compose -f infra/utilities/docker-compose.full.yml up --build`. Credentials and tuning come from the repo-root `.env`.
+- `docker-compose.full.yml` -- base full stack: PostgreSQL + Redis + API + one worker container per queue + frontend (Vite dev server). It publishes no host ports; the API and frontend are `expose`d for a reverse proxy or load balancer.
+- `docker-compose.full.dev.yml` -- development override that adds localhost publications (API `8000`, frontend `3000`, PostgreSQL `127.0.0.1:5432`, Redis `127.0.0.1:6379`) to the base file.
 
-The `x-aila-env` block in `docker-compose.full.yml` uses the names read by the application: `AILA_DATABASE_URL`, `AILA_API_HOST`, and `AILA_API_PORT`. Service commands and replica counts are overridable without fixed container names, so each worker service can be scaled with `docker compose up --scale worker-<queue>=N`.
+Run Compose from `infra/utilities/` and pass the repo-root `.env` with `--env-file`. That file supplies both container environment and Compose `${...}` interpolation:
+
+```bash
+# Production-shaped base (behind a reverse proxy / LB; no host ports)
+docker compose --env-file ../../.env -f docker-compose.full.yml up --build -d
+
+# Development (adds localhost ports)
+docker compose --env-file ../../.env \
+  -f docker-compose.full.yml -f docker-compose.full.dev.yml up --build
+```
+
+`AILA_DATABASE_URL` and `AILA_PLATFORM_REDIS_URL` default to the in-cluster endpoints (`postgres:5432` and `redis:6379`) when unset. Set either in `.env` to point the API and every worker at an external PostgreSQL or Redis instead. `AILA_API_HOST` and `AILA_API_PORT` are fixed container settings.
+
+Service commands and replica counts are overridable without fixed container names, so each worker service can be scaled with `docker compose up --scale worker-<queue>=N`.
 
 ---
 
@@ -287,7 +301,18 @@ WORKER_COUNT_VR=5 bash start.sh        # 5 vr workers, plus 1 each on every othe
 `start.sh` reads `WORKER_COUNT_<QUEUE>` for every entry in `WORKERS` and spawns
 that many workers, recording each under `.run/worker-<queue>-<i>.pid` so `stop`
 can tree-kill them. The `docker-compose.full.yml` deployment scales by
-replicating the per-queue worker service via `docker compose up --scale worker-vr=5`.
+replicating the per-queue worker service:
+
+```bash
+cd infra/utilities
+docker compose --env-file ../../.env -f docker-compose.full.yml up -d --scale worker-vr=5
+```
+
+### Compose shared storage
+
+`api` and every `worker-<queue>` service mount the same named volumes: `aila_data` at `/app/data`, `aila_reports` at `/app/reports`, and `aila_backups` at `/app/backups`. The image creates those paths owned by uid/gid `10001` (`aila`).
+
+Named volumes are single-host storage. Within one Docker host, all replicas share the volumes. A multi-host cell requires shared storage mounted at the same three paths on every host, plus shared key management (KMS or a common keyring) for the secret material in `/app/data/secrets` and `AILA_SECRET_KEYRING_PATH`. Per-host named volumes give each host separate data, reports, and backups.
 
 ### Without Redis
 

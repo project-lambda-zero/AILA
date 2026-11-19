@@ -25,7 +25,7 @@ import os
 import socket
 import time
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -35,6 +35,9 @@ from aila.api.schemas.comprehensive_health import (
     SubsystemHealth,
 )
 from aila.platform.services.ssrf import SSRFValidatingAsyncTransport
+
+if TYPE_CHECKING:
+    from aila.storage.registry import ConfigRegistry
 
 __all__ = [
     "HTTP_PROBE_TIMEOUT_S",
@@ -503,12 +506,50 @@ def _parse_worker_health_tracks(raw: object) -> list[str]:
     return sorted({track.strip() for track in str(raw or "").split(",") if track.strip()})
 
 
-async def probe_arq_worker(redis_url: str | None = None) -> SubsystemHealth:
-    """Inspect ARQ worker liveness via its native health-check key (D-23).
+async def _worker_health_tracks(config_registry: ConfigRegistry | None) -> list[str]:
+    """Resolve the configured worker health tracks.
 
-    Phase 179 rewrite: we read ``arq:<queue>:health-check`` TTL and treat
-    ``TTL > 0`` as running, ``TTL <= 0`` or missing as offline. The legacy
-    per-worker liveness scan path is DELETED. ``queue_depth``,
+    With a runtime registry the value resolves env -> DB -> schema default. A
+    standalone caller (no registry) resolves env -> ``PlatformConfigSchema``
+    default: an unregistered ``ConfigRegistry`` has no schema, so its ``get``
+    would return None instead of the default.
+    """
+    if config_registry is not None:
+        raw = await config_registry.get("platform", "worker_health_tracks")
+    else:
+        from aila.platform.config import PlatformConfigSchema
+
+        raw = os.getenv(
+            "AILA_PLATFORM_WORKER_HEALTH_TRACKS",
+            PlatformConfigSchema.model_fields["worker_health_tracks"].default,
+        )
+    return _parse_worker_health_tracks(raw)
+
+
+async def _freshest_heartbeat_ttl_ms(client: Any, track: str) -> int:
+    """Largest remaining TTL across a track's replica health keys (-2 if none).
+
+    Each replica writes its own ``arq:queue:<track>:health-check:<host>:<pid>``
+    key, so a track stays live while any replica's key is fresh. Keys are read
+    only; a replica must never delete a sibling's key.
+    """
+    from aila.platform.tasks.constants import ARQ_QUEUE_KEY_TEMPLATE
+
+    pattern = f"{ARQ_QUEUE_KEY_TEMPLATE.format(track=track)}:health-check*"
+    ttls_ms: list[int] = []
+    async for key in client.scan_iter(match=pattern, count=100):
+        ttls_ms.append(await client.pttl(key))
+    return max(ttls_ms, default=-2)
+
+
+async def probe_arq_worker(
+    redis_url: str | None = None,
+    config_registry: ConfigRegistry | None = None,
+) -> SubsystemHealth:
+    """Inspect ARQ worker liveness via the per-replica health-check keys (D-23).
+
+    Each track is live while any replica's ``arq:queue:<track>:health-check*``
+    key has a positive TTL; a missing or expired key is offline. ``queue_depth``,
     ``in_progress_count``, and ``dead_letter_count`` are still reported in
     ``details`` so the 176d grid keeps its operational summary.
     """
@@ -528,21 +569,18 @@ async def probe_arq_worker(redis_url: str | None = None) -> SubsystemHealth:
         ARQ_IN_PROGRESS_PREFIX,
         ARQ_QUEUE_KEY_TEMPLATE,
     )
-    from aila.storage.registry import ConfigRegistry
 
     # Every configured track needs its own worker; a track without a live
     # heartbeat cannot run its tasks, so each one is probed individually.
     try:
-        tracks = _parse_worker_health_tracks(
-            await ConfigRegistry().get("platform", "worker_health_tracks")
-        )
+        tracks = await _worker_health_tracks(config_registry)
     except Exception as exc:
-        _log.debug("arq worker probe failed: %s", exc)
+        _log.warning("arq worker probe: worker health configuration unavailable: %s", exc)
         return SubsystemHealth(
             name="arq_worker",
-            status="unreachable",
+            status="error",
             last_checked_at=_utcnow(),
-            message=f"redis error: {type(exc).__name__}",
+            message=f"worker health configuration unavailable: {type(exc).__name__}",
         )
     if not tracks:
         return SubsystemHealth(
@@ -556,8 +594,7 @@ async def probe_arq_worker(redis_url: str | None = None) -> SubsystemHealth:
     try:
         track_ttls_ms: dict[str, int] = {}
         for track in tracks:
-            health_check_key = f"{ARQ_QUEUE_KEY_TEMPLATE.format(track=track)}:health-check"
-            track_ttls_ms[track] = await client.pttl(health_check_key)
+            track_ttls_ms[track] = await _freshest_heartbeat_ttl_ms(client, track)
 
         queue_depth = 0
         async for key in client.scan_iter(
@@ -589,10 +626,7 @@ async def probe_arq_worker(redis_url: str | None = None) -> SubsystemHealth:
             "dead_letter_count": dead_letter_count,
         }
 
-        live_tracks = [
-            track for track in tracks
-            if isinstance(track_ttls_ms[track], int) and track_ttls_ms[track] > 0
-        ]
+        live_tracks = [track for track in tracks if track_ttls_ms[track] > 0]
         missing_tracks = [track for track in tracks if track not in live_tracks]
         details["tracks_total"] = len(tracks)
         details["tracks_live"] = live_tracks

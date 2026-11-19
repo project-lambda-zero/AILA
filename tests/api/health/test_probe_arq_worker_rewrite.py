@@ -34,7 +34,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def _health_key(track: str) -> str:
-    return f"{ARQ_QUEUE_KEY_TEMPLATE.format(track=track)}:health-check"
+    return f"{ARQ_QUEUE_KEY_TEMPLATE.format(track=track)}:health-check:rewrite-test"
 
 
 @pytest.fixture(autouse=True)
