@@ -24,17 +24,18 @@ name: aila-full
 x-aila-env: &aila-env
   # Shared env block -- each backend service pulls .env from the
   # repo root + these overrides for in-cluster service discovery.
-  AILA_PLATFORM_DATABASE_URL: postgresql://postgres:changeme@postgres:5432/aila
+  AILA_DATABASE_URL: postgresql+asyncpg://postgres:changeme@postgres:5432/aila
   AILA_PLATFORM_REDIS_URL: redis://redis:6379/0
-  AILA_PLATFORM_BIND_HOST: 0.0.0.0
-  AILA_PLATFORM_BIND_PORT: "8000"
+  AILA_API_HOST: 0.0.0.0
+  AILA_API_PORT: "8000"
   AILA_PLATFORM_FRONTEND_URL: http://localhost:3000
 
 services:
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: aila-postgres
     restart: unless-stopped
+    # Same connection ceiling as docker-compose.yml (see the note there).
+    command: ["postgres", "-c", "max_connections=200"]
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: changeme
@@ -53,7 +54,6 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: aila-redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     ports:
@@ -70,7 +70,6 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: aila-api
     restart: unless-stopped
     env_file:
       - ../../.env
@@ -93,7 +92,6 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: aila-worker-default
     restart: unless-stopped
     env_file:
       - ../../.env
@@ -110,7 +108,6 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: aila-worker-vr
     restart: unless-stopped
     env_file:
       - ../../.env
@@ -127,7 +124,6 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: aila-worker-vulnerability
     restart: unless-stopped
     env_file:
       - ../../.env
@@ -144,7 +140,6 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: aila-worker-forensics
     restart: unless-stopped
     env_file:
       - ../../.env
@@ -161,7 +156,6 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: aila-worker-malware
     restart: unless-stopped
     env_file:
       - ../../.env
@@ -178,7 +172,6 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: aila-worker-pentest
     restart: unless-stopped
     env_file:
       - ../../.env
@@ -195,7 +188,6 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: aila-worker-pentest-runtime
     restart: unless-stopped
     env_file:
       - ../../.env
@@ -212,7 +204,6 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: aila-worker-forensics-readiness
     restart: unless-stopped
     env_file:
       - ../../.env
@@ -229,7 +220,6 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: aila-worker-reporting
     restart: unless-stopped
     env_file:
       - ../../.env
@@ -244,7 +234,6 @@ services:
 
   frontend:
     image: node:20-bookworm-slim
-    container_name: aila-frontend
     restart: unless-stopped
     working_dir: /app
     volumes:

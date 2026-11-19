@@ -498,6 +498,11 @@ async def _probe_single_ssh(system: dict[str, Any]) -> SshReachabilityResult:
 # ---------------------------------------------------------------------------
 
 
+def _parse_worker_health_tracks(raw: object) -> list[str]:
+    """Split the comma-separated ``worker_health_tracks`` value into sorted unique names."""
+    return sorted({track.strip() for track in str(raw or "").split(",") if track.strip()})
+
+
 async def probe_arq_worker(redis_url: str | None = None) -> SubsystemHealth:
     """Inspect ARQ worker liveness via its native health-check key (D-23).
 
@@ -523,13 +528,36 @@ async def probe_arq_worker(redis_url: str | None = None) -> SubsystemHealth:
         ARQ_IN_PROGRESS_PREFIX,
         ARQ_QUEUE_KEY_TEMPLATE,
     )
+    from aila.storage.registry import ConfigRegistry
 
-    queue_name = "arq:queue:vulnerability"  # single track for Phase 179
-    health_check_key = f"{queue_name}:health-check"
+    # Every configured track needs its own worker; a track without a live
+    # heartbeat cannot run its tasks, so each one is probed individually.
+    try:
+        tracks = _parse_worker_health_tracks(
+            await ConfigRegistry().get("platform", "worker_health_tracks")
+        )
+    except Exception as exc:
+        _log.debug("arq worker probe failed: %s", exc)
+        return SubsystemHealth(
+            name="arq_worker",
+            status="unreachable",
+            last_checked_at=_utcnow(),
+            message=f"redis error: {type(exc).__name__}",
+        )
+    if not tracks:
+        return SubsystemHealth(
+            name="arq_worker",
+            status="unknown",
+            last_checked_at=_utcnow(),
+            message="no worker health tracks configured",
+        )
 
     client = aioredis.Redis.from_url(url, socket_connect_timeout=REDIS_PROBE_TIMEOUT_S)
     try:
-        ttl_ms = await client.pttl(health_check_key)
+        track_ttls_ms: dict[str, int] = {}
+        for track in tracks:
+            health_check_key = f"{ARQ_QUEUE_KEY_TEMPLATE.format(track=track)}:health-check"
+            track_ttls_ms[track] = await client.pttl(health_check_key)
 
         queue_depth = 0
         async for key in client.scan_iter(
@@ -561,26 +589,44 @@ async def probe_arq_worker(redis_url: str | None = None) -> SubsystemHealth:
             "dead_letter_count": dead_letter_count,
         }
 
-        if not isinstance(ttl_ms, int) or ttl_ms <= 0:
+        live_tracks = [
+            track for track in tracks
+            if isinstance(track_ttls_ms[track], int) and track_ttls_ms[track] > 0
+        ]
+        missing_tracks = [track for track in tracks if track not in live_tracks]
+        details["tracks_total"] = len(tracks)
+        details["tracks_live"] = live_tracks
+        details["tracks_missing"] = missing_tracks
+
+        if not live_tracks:
             return SubsystemHealth(
                 name="arq_worker",
                 status="offline",
                 last_checked_at=_utcnow(),
-                message="health-check key missing or expired",
+                message="no worker heartbeat on any track",
                 details=details,
             )
 
-        age_s = max(0.0, 60.0 - (ttl_ms / 1000.0))
-        details["last_heartbeat_age_s"] = round(age_s, 2)
+        # The oldest live heartbeat bounds how stale the fleet's signal is.
+        oldest_age_s = max(60.0 - (track_ttls_ms[track] / 1000.0) for track in live_tracks)
+        details["last_heartbeat_age_s"] = round(max(0.0, oldest_age_s), 2)
+        summary = (
+            f"queue={queue_depth}, in_progress={in_progress_count}, "
+            f"dead_letter={dead_letter_count}"
+        )
+        if missing_tracks:
+            return SubsystemHealth(
+                name="arq_worker",
+                status="degraded",
+                last_checked_at=_utcnow(),
+                message=f"no worker heartbeat for tracks: {', '.join(missing_tracks)}; {summary}",
+                details=details,
+            )
         return SubsystemHealth(
             name="arq_worker",
             status="running",
             last_checked_at=_utcnow(),
-            message=(
-                f"healthy, last beat ~{int(age_s)}s ago, "
-                f"queue={queue_depth}, in_progress={in_progress_count}, "
-                f"dead_letter={dead_letter_count}"
-            ),
+            message=f"healthy on {len(tracks)} tracks, last beat ~{int(oldest_age_s)}s ago, {summary}",
             details=details,
         )
     except Exception as exc:

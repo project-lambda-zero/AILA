@@ -41,13 +41,7 @@ The two compose files in `infra/utilities/` cover the deployment shapes:
 - `docker-compose.yml` -- dev infra only: PostgreSQL (with pgvector) + Redis. Used by `make dev-up` for local development where the operator runs the API, workers, and frontend on the host.
 - `docker-compose.full.yml` -- full stack: PostgreSQL + Redis + API + one worker container per queue + frontend (Vite dev server). The production-like shape used by `docker compose -f infra/utilities/docker-compose.full.yml up --build`. Credentials and tuning come from the repo-root `.env`.
 
-Note: the `x-aila-env` block in `docker-compose.full.yml` defines
-`AILA_PLATFORM_DATABASE_URL`, `AILA_PLATFORM_BIND_HOST`, and
-`AILA_PLATFORM_BIND_PORT`. The Python `Settings` class does NOT read these
-names; it reads `AILA_DATABASE_URL`, `AILA_API_HOST`, `AILA_API_PORT`. Actual
-DB and bind config comes from the `env_file: ../../.env` directive on each
-service. The `x-aila-env` overrides are dead -- leave them for now (they
-document intent) but do not rely on them taking effect.
+The `x-aila-env` block in `docker-compose.full.yml` uses the names read by the application: `AILA_DATABASE_URL`, `AILA_API_HOST`, and `AILA_API_PORT`. Service commands and replica counts are overridable without fixed container names, so each worker service can be scaled with `docker compose up --scale worker-<queue>=N`.
 
 ---
 
@@ -195,6 +189,10 @@ export WORKER_COUNT_VULNERABILITY=1
 export WORKER_COUNT_FORENSICS=1
 export WORKER_COUNT_FORENSICS_READINESS=1
 export WORKER_COUNT_REPORTING=1
+
+# Expected worker heartbeats for health checks. The default covers all nine
+# full-stack queues; partial deployments must list only the queues they run.
+export AILA_PLATFORM_WORKER_HEALTH_TRACKS=default,vr,vulnerability,forensics,malware,pentest,pentest_runtime,forensics_readiness,reporting
 
 # Structured JSON logs (ELK / Datadog / CloudWatch)
 export AILA_JSON_LOGS=1

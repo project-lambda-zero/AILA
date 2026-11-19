@@ -89,6 +89,9 @@ def build_nsjail_argv(
         "--mode", "o",  # once: run one command and exit
         "--quiet",
         "--hostname", "sandbox",
+        # Never run the payload as root, even if nsjail's build defaults change.
+        "--user", "65534",
+        "--group", "65534",
         # Isolate system runtime: mount standard OS binary and library trees read-only.
         # /home, /root, /var, and private user directories are completely unmounted and invisible.
         "--bindmount_ro", "/usr",

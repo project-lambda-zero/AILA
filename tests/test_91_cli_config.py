@@ -252,6 +252,34 @@ class TestWorkerCommand:
         assert settings_cls.queue_name == "arq:queue:test_queue"
 
     @patch("aila.cli.get_settings")
+    def test_worker_propagates_base_lifecycle_settings(self, mock_settings):
+        """ARQ's __dict__-based settings loader receives every base lifecycle field."""
+        from aila.platform.tasks.worker import WorkerSettings
+
+        mock_settings.return_value = MagicMock()
+        with (
+            patch("arq.run_worker") as mock_run,
+            patch("aila.platform.tasks.get_task_tuning", side_effect=lambda k, d: d),
+        ):
+            result = runner.invoke(app, ["worker", "--queue", "test_queue"])
+
+        assert result.exit_code == 0
+        settings_cls = mock_run.call_args[0][0]
+        for field_name in (
+            "functions",
+            "max_jobs",
+            "retry_jobs",
+            "allow_abort_jobs",
+            "health_check_interval",
+            "on_startup",
+            "on_shutdown",
+            "on_job_start",
+            "on_job_end",
+        ):
+            assert field_name in settings_cls.__dict__
+            assert settings_cls.__dict__[field_name] == getattr(WorkerSettings, field_name)
+
+    @patch("aila.cli.get_settings")
     def test_worker_default_queue(self, mock_settings):
         """worker command defaults to queue='default'."""
         mock_settings.return_value = MagicMock()

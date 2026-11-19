@@ -353,7 +353,12 @@ def worker_start(
         # are invisible to it. Without these lines WorkerSettings attributes never
         # reach arq.Worker. Explicitly shadowing them forces them into __dict__.
         functions = WorkerSettings.functions
+        max_jobs = WorkerSettings.max_jobs
+        retry_jobs = WorkerSettings.retry_jobs
+        allow_abort_jobs = WorkerSettings.allow_abort_jobs
+        health_check_interval = WorkerSettings.health_check_interval
         on_startup = WorkerSettings.on_startup
+        on_shutdown = WorkerSettings.on_shutdown
         on_job_start = WorkerSettings.on_job_start
         on_job_end = WorkerSettings.on_job_end
 

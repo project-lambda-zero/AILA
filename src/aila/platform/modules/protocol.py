@@ -127,6 +127,29 @@ class ModuleHealthResult:
 
 
 @dataclass(frozen=True, slots=True)
+class TaskControlResult:
+    """External handling decision returned by a module task-control policy.
+
+    A result tells the platform not to apply its generic task action and gives
+    the operator the module-owned action to use instead.
+    """
+
+    detail: str
+
+
+@dataclass(frozen=True, slots=True)
+class TaskControlPolicy:
+    """Module-owned decisions for generic platform task actions.
+
+    ``resolve_cancellation`` receives the task id and decoded JSON kwargs. A
+    result means cancellation is externally handled; ``None`` retains the
+    platform's default cancellation behavior.
+    """
+
+    resolve_cancellation: Callable[[str, JsonObject], TaskControlResult | None]
+
+
+@dataclass(frozen=True, slots=True)
 class SearchEntity:
     """One module-owned hit returned by ``ModuleProtocol.search_entities``.
 
@@ -369,6 +392,18 @@ class ModuleProtocol(Protocol):
         """
         del session, team_id
         raise NotImplementedError
+
+    def task_control_policy(self) -> TaskControlPolicy | None:
+        """Return the policy that governs generic platform actions on this module's tasks.
+
+        The task API resolves a task's module through the registry by its
+        track and asks the policy whether cancellation is handled outside the
+        generic path. A ``TaskControlResult`` from the policy refuses the
+        generic cancel with that operator detail; ``None`` keeps the platform
+        default. Modules whose tasks are cancelled only through their own
+        surface override this; the default is no policy.
+        """
+        return None
 
     def route_specs(self) -> list[ModuleRouteSpec]:
         """Declare HTTP routes this module handles.

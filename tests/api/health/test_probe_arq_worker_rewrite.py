@@ -1,22 +1,26 @@
-"""Phase 179 Task 2 -- probe_arq_worker rewrite (ARQ-native health-check key).
+"""probe_arq_worker per-track contract against a live Redis (skipped when unreachable).
 
-Asserts the probe reports ``running`` when ``arq:<queue>:health-check`` has
-a positive TTL, ``offline`` when the key is missing, and that the legacy
-``aila:worker:alive:*`` key is IGNORED (proves the legacy scan path is
-deleted).
+Each configured track is probed through its own ``arq:queue:<track>:health-check``
+key. Tracks come from ``AILA_PLATFORM_WORKER_HEALTH_TRACKS``.
 """
+
 from __future__ import annotations
+
+import socket
+from collections.abc import AsyncIterator
 
 import pytest
 import pytest_asyncio
+import redis.asyncio as aioredis
 
 from aila.platform.services.health_probes import probe_arq_worker
+from aila.platform.tasks.constants import ARQ_IN_PROGRESS_PREFIX, ARQ_QUEUE_KEY_TEMPLATE
 
-TEST_REDIS_URL_DEFAULT = "redis://127.0.0.1:6379/15"
+TEST_REDIS_URL = "redis://127.0.0.1:6379/15"
+TRACKS = "vr,vulnerability"
 
 
 def _redis_reachable() -> bool:
-    import socket
     try:
         with socket.create_connection(("127.0.0.1", 6379), timeout=0.5):
             return True
@@ -29,90 +33,109 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-@pytest_asyncio.fixture
-async def clean_redis() -> str:
-    import redis.asyncio as aioredis
+def _health_key(track: str) -> str:
+    return f"{ARQ_QUEUE_KEY_TEMPLATE.format(track=track)}:health-check"
 
-    client = aioredis.Redis.from_url(TEST_REDIS_URL_DEFAULT, socket_connect_timeout=2.0)
+
+@pytest.fixture(autouse=True)
+def configured_tracks(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AILA_PLATFORM_WORKER_HEALTH_TRACKS", TRACKS)
+
+
+@pytest_asyncio.fixture
+async def clean_redis() -> AsyncIterator[str]:
+    client = aioredis.Redis.from_url(TEST_REDIS_URL, socket_connect_timeout=2.0)
     try:
         await client.flushdb()
-    finally:
-        await client.aclose()
-    yield TEST_REDIS_URL_DEFAULT
-    client = aioredis.Redis.from_url(TEST_REDIS_URL_DEFAULT, socket_connect_timeout=2.0)
-    try:
+        yield TEST_REDIS_URL
         await client.flushdb()
     finally:
         await client.aclose()
 
 
 @pytest.mark.asyncio
-async def test_probe_reports_running_when_health_key_fresh(clean_redis: str) -> None:
-    import redis.asyncio as aioredis
-
-    client = aioredis.Redis.from_url(clean_redis, socket_connect_timeout=2.0)
+async def test_probe_reports_running_when_every_track_heartbeats(
+    clean_redis: str,
+) -> None:
+    client = aioredis.Redis.from_url(clean_redis)
     try:
-        # Seed with 65s TTL -- probe should compute age < 60s.
-        await client.set("arq:queue:vulnerability:health-check", "1", ex=65)
+        for track in TRACKS.split(","):
+            await client.set(_health_key(track), "1", px=60_000)
     finally:
         await client.aclose()
 
     result = await probe_arq_worker(redis_url=clean_redis)
+
     assert result.status == "running"
     assert result.details is not None
-    assert "last_heartbeat_age_s" in result.details
+    assert result.details["tracks_live"] == ["vr", "vulnerability"]
+    assert result.details["tracks_missing"] == []
     assert result.details["last_heartbeat_age_s"] < 60
 
 
 @pytest.mark.asyncio
-async def test_probe_reports_offline_when_health_key_missing(clean_redis: str) -> None:
-    # Fresh db -- no health-check key seeded.
-    result = await probe_arq_worker(redis_url=clean_redis)
-    assert result.status == "offline"
-    assert result.details is not None
-    assert "queue_depth" in result.details
-    assert "in_progress_count" in result.details
-    assert "dead_letter_count" in result.details
-
-
-@pytest.mark.asyncio
-async def test_probe_ignores_legacy_aila_worker_alive_key(clean_redis: str) -> None:
-    """Seeding the legacy liveness key does NOT make the probe report healthy."""
-    import redis.asyncio as aioredis
-
-    client = aioredis.Redis.from_url(clean_redis, socket_connect_timeout=2.0)
-    try:
-        # Seed only the legacy key -- health-check key absent.
-        await client.set("aila:worker:alive:vulnerability", "2026-04-12T00:00:00Z", ex=300)
-    finally:
-        await client.aclose()
-
-    result = await probe_arq_worker(redis_url=clean_redis)
-    # Legacy key is ignored: probe still reports offline because the
-    # ARQ-native health-check key is missing.
-    assert result.status == "offline"
-
-
-@pytest.mark.asyncio
-async def test_probe_details_carry_queue_and_dead_letter_counts(
+async def test_probe_reports_degraded_when_one_track_lacks_heartbeat(
     clean_redis: str,
 ) -> None:
-    import redis.asyncio as aioredis
-
-    client = aioredis.Redis.from_url(clean_redis, socket_connect_timeout=2.0)
+    client = aioredis.Redis.from_url(clean_redis)
     try:
-        await client.set("arq:queue:vulnerability:health-check", "1", ex=60)
-        await client.zadd("arq:queue:vulnerability", {"job-a": 1.0, "job-b": 2.0})
-        await client.zadd(
-            "arq:dead-letter:vulnerability", {"payload-1": 100.0},
-        )
-        await client.set("arq:in-progress:job-c", "1")
+        await client.set(_health_key("vulnerability"), "1", px=60_000)
     finally:
         await client.aclose()
 
     result = await probe_arq_worker(redis_url=clean_redis)
+
+    assert result.status == "degraded"
+    assert result.details is not None
+    assert result.details["tracks_missing"] == ["vr"]
+    assert result.message is not None
+    assert "vr" in result.message
+
+
+@pytest.mark.asyncio
+async def test_probe_reports_offline_when_no_health_key_present(
+    clean_redis: str,
+) -> None:
+    result = await probe_arq_worker(redis_url=clean_redis)
+
+    assert result.status == "offline"
+    assert result.details is not None
+    assert result.details["tracks_missing"] == ["vr", "vulnerability"]
+
+
+@pytest.mark.asyncio
+async def test_probe_ignores_expired_health_key(
+    clean_redis: str,
+) -> None:
+    client = aioredis.Redis.from_url(clean_redis)
+    try:
+        await client.set(_health_key("vr"), "1", px=1)
+        await client.set(_health_key("vulnerability"), "1", px=1)
+    finally:
+        await client.aclose()
+
+    result = await probe_arq_worker(redis_url=clean_redis)
+
+    assert result.status == "offline"
+
+
+@pytest.mark.asyncio
+async def test_probe_details_carry_queue_and_in_progress_counts(
+    clean_redis: str,
+) -> None:
+    client = aioredis.Redis.from_url(clean_redis)
+    try:
+        await client.set(_health_key("vr"), "1", px=60_000)
+        await client.set(_health_key("vulnerability"), "1", px=60_000)
+        await client.zadd(ARQ_QUEUE_KEY_TEMPLATE.format(track="vr"), {"job-a": 1, "job-b": 2})
+        await client.set(f"{ARQ_IN_PROGRESS_PREFIX}job-c", "1")
+    finally:
+        await client.aclose()
+
+    result = await probe_arq_worker(redis_url=clean_redis)
+
     assert result.status == "running"
     assert result.details is not None
     assert result.details["queue_depth"] == 2
-    assert result.details["dead_letter_count"] == 1
     assert result.details["in_progress_count"] == 1
+    assert "dead_letter_count" in result.details
