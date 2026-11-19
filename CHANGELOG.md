@@ -10,7 +10,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - The existing `pentest` module now provides both AI assessments and target-specific live campaigns. Live execution, APIs, workers, and console pages use `pentest`, `/pentest/live`, and the `pentest` and `pentest_runtime` queues without a separate dynamic module.
-- Live campaigns support curated Nmap, Naabu, Httpx, Katana, Nuclei, ZAP, Schemathesis, DNS, and TCP-connect manifests, bounded deterministic planning, aggregate team and per-asset budgets, durable exploration state, approvals, cancellation, and lease fencing.
+- Live campaigns support curated Nmap, BBOT, Httpx, Katana, Nuclei, ZAP, Schemathesis, Playwright, mitmproxy, and TCP-connect manifests, bounded deterministic planning, aggregate team and per-asset budgets, durable exploration state, approvals, cancellation, and lease fencing.
 - Normalized assets, services, observations, coverage, exploration graphs, redacted HTTP traffic, and evidence-lineage findings are exposed through operator APIs and the campaign workspace. JSON, HTML, and SARIF reports use the same tenant-scoped records.
 - Authenticated HTTP, API, and browser workflows stage secret values only at execution. Durable manifests and audit records retain secret handles, and secret-use events are visible in campaign budgets.
 - Findings require explicit parser rules and independent corroboration or safe reproduction. Operators can schedule exact-manifest retests, linked traffic replay, and reproduction, or mark a finding false-positive with a recorded rationale.
@@ -29,6 +29,9 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Report generation uses the visible campaign tenant for administrator and all-team access. Reader roles cannot mutate live findings or traffic, and cross-team projections remain denied.
 - Retests rerun the exact persisted source manifest. Positive, negative, malformed, and inconclusive results update finding state without treating a reproduction mismatch as a false-positive.
 - Live budget APIs expose the campaign's effective immutable policy. The console renders actual exploration payload, rationale, active-action, and ledger-delta fields returned by the API.
+- The campaign setup console now submits complete target-specific scope, exclusions, capabilities, credential handles, approval policy, and aggregate budgets while preserving the empty harmless-connectivity workflow and retry idempotency.
+- Initial Nuclei campaigns use the same five explicitly curated safe template defaults as planner follow-ups; direct custom or missing template selection remains rejected.
+- JSON and HTML campaign reports include bounded redacted traffic metadata, evidence hashes, artifact lineage, replay ancestry, and secret-header canary protection without embedding captured bodies.
 
 ### Upgrade notes
 
