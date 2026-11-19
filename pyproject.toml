@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aila"
-version = "0.6.127"
+version = "0.6.128"
 description = "Modular AI security platform with pluggable analysis modules."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -163,6 +163,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
+"aila.modules.pentest.live.runners" = ["*.cjs"]
 "aila.modules.pentest.services" = ["*.mjs"]
 "aila.modules.forensics.workflow.states.collectors" = ["*.tpl"]
 "aila.platform.re_analytics" = ["data/*.txt"]

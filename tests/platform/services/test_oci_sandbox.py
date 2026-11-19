@@ -20,6 +20,8 @@ import pytest
 from pydantic import ValidationError as PydanticValidationError
 
 from aila.platform.services.sandbox import (
+    SandboxEgressDestination,
+    SandboxEgressPolicy,
     SandboxExecutionError,
     SandboxResult,
     SandboxService,
@@ -145,7 +147,6 @@ def _cfg(**overrides: Any) -> SandboxConfig:
         rootfs_path="",
         kernel_path="",
         oci_bin="docker",
-        oci_network="bridge",
     )
     return replace(base, **overrides)
 
@@ -315,21 +316,31 @@ def test_interactive_only_with_stdin() -> None:
 
 def test_network_none_when_not_granted() -> None:
     ssh = _OciSSH()
-    _backend_run(_spec(network=False), ssh, _cfg(oci_network="bridge"))
+    _backend_run(_spec(network=False), ssh, _cfg())
     assert _flag_value(shlex.split(_run_command(ssh)), "--network") == "none"
 
 
-def test_configured_network_when_granted() -> None:
-    ssh = _OciSSH()
-    _backend_run(_spec(network=True), ssh, _cfg(oci_network="bridge"))
-    assert _flag_value(shlex.split(_run_command(ssh)), "--network") == "bridge"
+def _egress() -> SandboxEgressPolicy:
+    return SandboxEgressPolicy(
+        destinations=[SandboxEgressDestination(address="192.0.2.10", port=443, protocol="tcp")]
+    )
 
 
-@pytest.mark.parametrize("bad_network", ["host", "container:web", "bad name"])
-def test_host_or_container_namespace_refused(bad_network: str) -> None:
+def test_scoped_network_when_granted() -> None:
     ssh = _OciSSH()
-    with pytest.raises(SandboxExecutionError):
-        _backend_run(_spec(network=True), ssh, _cfg(oci_network=bad_network))
+    _backend_run(_spec(network=True, egress=_egress()), ssh)
+    network = _flag_value(shlex.split(_run_command(ssh)), "--network")
+    assert network.startswith("aila-egress-")
+    assert any("network create" in command for command in ssh.commands)
+    assert any("nft -f -" in command for command in ssh.commands)
+    assert any("delete table inet" in command for command in ssh.commands)
+    assert any("network rm" in command for command in ssh.commands)
+
+
+def test_network_without_egress_is_refused_before_ssh() -> None:
+    ssh = _OciSSH()
+    with pytest.raises(SandboxExecutionError, match="requires SandboxSpec.egress"):
+        _backend_run(_spec(network=True), ssh)
     assert ssh.commands == []
 
 
@@ -497,3 +508,12 @@ def test_callback_failure_propagates_and_still_removes_container() -> None:
     with pytest.raises(RuntimeError, match="evidence callback failed"):
         _backend_run(_spec(), ssh, on_stdout=fail_callback)
     assert any(c.startswith(f"{_DOCKER} rm -f aila-sandbox-") for c in ssh.commands)
+
+
+def test_private_browser_shm_does_not_weaken_container_isolation() -> None:
+    argv = _argv(_spec(shm_mb=256))
+    assert _flag_value(argv, "--shm-size") == "256m"
+    assert _flag_value(argv, "--user") == "1000:1000"
+    assert _flag_value(argv, "--cap-drop") == "ALL"
+    assert "--ipc=host" not in argv and "SYS_ADMIN" not in argv
+    assert "seccomp=unconfined" not in argv

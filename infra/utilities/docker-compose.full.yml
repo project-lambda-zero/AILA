@@ -212,40 +212,6 @@ services:
     volumes: *aila-backend-volumes
     command: ["worker", "-q", "pentest_runtime"]
 
-  worker-dynamic-pentest:
-    build:
-      context: ../..
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    env_file:
-      - ../../.env
-    environment:
-      <<: *aila-env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    volumes: *aila-backend-volumes
-    command: ["worker", "-q", "dynamic_pentest"]
-
-  worker-dynamic-pentest-runtime:
-    build:
-      context: ../..
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    env_file:
-      - ../../.env
-    environment:
-      <<: *aila-env
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    volumes: *aila-backend-volumes
-    command: ["worker", "-q", "dynamic_pentest_runtime"]
-
   worker-forensics-readiness:
     build:
       context: ../..

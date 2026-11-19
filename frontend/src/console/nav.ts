@@ -79,15 +79,9 @@ export const MODULES: ModuleDef[] = [
   },
   {
     id: "pentest",
-    label: "AI pentest",
+    label: "pentest",
     noun: "assessments",
-    pages: [page("assessments")],
-  },
-  {
-    id: "dynamic_pentest",
-    label: "dynamic pentest",
-    noun: "campaigns",
-    pages: [page("campaigns")],
+    pages: [page("assessments"), page("campaigns")],
   },
   {
     id: "malware",

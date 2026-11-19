@@ -245,8 +245,10 @@ function Console() {
 
   // LeftRail's "+" is module-aware: for vulnerability it raises the
   // platform-owned admin systems registry (there is no duplicate
-  // IntakeWizard variant for that module). Every other module opens its
-  // IntakeWizard as an overlay window.
+  // IntakeWizard variant for that module); pentest raises its assessments
+  // page, where target and assessment creation live, because IntakeWizard has
+  // no pentest variant and would fall through to the VR wizard. Every other
+  // module opens its IntakeWizard as an overlay window.
   const requestIntake = (opts?: { moduleId?: string; targetId?: string }): void => {
     const effectiveModule = opts?.moduleId ?? moduleId;
     const targetId = opts?.targetId ?? null;
@@ -255,6 +257,10 @@ function Console() {
       // req 11): the vulnerability module's "+" jumps to the admin systems
       // page, where "+ register system" inside opens the create form.
       openNamedPage("admin", "systems", "admin \u00b7 systems");
+      return;
+    }
+    if (effectiveModule === "pentest") {
+      openNamedPage("pentest", "assessments", "assessments");
       return;
     }
     openIntakeWindow(effectiveModule, targetId);

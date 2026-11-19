@@ -5,6 +5,38 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.128] - 2026-11-20 -- Unified AI assessments and evidence-backed live pentest campaigns
+
+### Added
+
+- The existing `pentest` module now provides both AI assessments and target-specific live campaigns. Live execution, APIs, workers, and console pages use `pentest`, `/pentest/live`, and the `pentest` and `pentest_runtime` queues without a separate dynamic module.
+- Live campaigns support curated Nmap, Naabu, Httpx, Katana, Nuclei, ZAP, Schemathesis, DNS, and TCP-connect manifests, bounded deterministic planning, aggregate team and per-asset budgets, durable exploration state, approvals, cancellation, and lease fencing.
+- Normalized assets, services, observations, coverage, exploration graphs, redacted HTTP traffic, and evidence-lineage findings are exposed through operator APIs and the campaign workspace. JSON, HTML, and SARIF reports use the same tenant-scoped records.
+- Authenticated HTTP, API, and browser workflows stage secret values only at execution. Durable manifests and audit records retain secret handles, and secret-use events are visible in campaign budgets.
+- Findings require explicit parser rules and independent corroboration or safe reproduction. Operators can schedule exact-manifest retests, linked traffic replay, and reproduction, or mark a finding false-positive with a recorded rationale.
+- An opt-in `tools/pentest/smoke_live_oci.py` lane verifies real remote SSH and DinD execution, immutable image pre-pulls, curated parsers, output hashes, and denied-port egress on an authorized disposable host.
+
+### Changed
+
+- Networked OCI execution requires a per-run egress policy and a dedicated remote bridge with exact destination and port rules. Static OCI network selection was removed; bridge connectivity alone is not scope enforcement.
+- Tool output is sealed as raw evidence before parsing. Candidate scanner results do not become confirmed findings from tool or LLM text alone, and successful action completion is atomic with normalized write-back.
+- Campaign settlement wakes the planner after terminal actions. Replay and retest operations reopen completed campaigns, use idempotency keys, and preserve source action and evidence lineage.
+- Durable budget, finding, and report metadata fails closed on malformed JSON. Platform services own asynchronous system DNS resolution, and scoped URL validation replaces production assertions with explicit errors.
+
+### Fixed
+
+- Paused and completed campaigns can resume planner or operator-requested work without losing immutable manifests, action lineage, budget counters, or evidence history.
+- Report generation uses the visible campaign tenant for administrator and all-team access. Reader roles cannot mutate live findings or traffic, and cross-team projections remain denied.
+- Retests rerun the exact persisted source manifest. Positive, negative, malformed, and inconclusive results update finding state without treating a reproduction mismatch as a false-positive.
+- Live budget APIs expose the campaign's effective immutable policy. The console renders actual exploration payload, rationale, active-action, and ledger-delta fields returned by the API.
+
+### Upgrade notes
+
+- Apply Alembic migrations `160_pentest_live_merge` and `161_pentest_live_domain`; the required head is `161_pentest_live_domain`. Migration 160 renames live runtime tables and 161 adds normalized domain, evidence, traffic, report, and 64-bit aggregate-budget records.
+- Replace former dynamic worker tracks with `pentest` and `pentest_runtime`. Update `AILA_PLATFORM_WORKER_HEALTH_TRACKS` for partial deployments and restart API and worker processes.
+- Remove `AILA_PLATFORM_SANDBOX_OCI_NETWORK`. Configure a remote Linux Docker or Podman host through `SSHService`, pre-pull every approved immutable `name@sha256:<digest>` image, and provide remote `ip`, `nft`, and passwordless `sudo -n` for per-run egress.
+- Real remote SSH/OCI execution is not implied by unit or API tests. Run the opt-in smoke lane and a real PostgreSQL, Redis, API, worker, and browser smoke against authorized infrastructure before enabling production campaigns.
+
 ## [0.6.127] - 2026-11-19 -- Image-agnostic remote OCI sandbox execution
 
 ### Added

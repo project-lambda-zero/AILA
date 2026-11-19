@@ -204,9 +204,9 @@ export WORKER_COUNT_FORENSICS=1
 export WORKER_COUNT_FORENSICS_READINESS=1
 export WORKER_COUNT_REPORTING=1
 
-# Expected worker heartbeats for health checks. The default covers all eleven
+# Expected worker heartbeats for health checks. The default covers all nine
 # full-stack queues; partial deployments must list only the queues they run.
-export AILA_PLATFORM_WORKER_HEALTH_TRACKS=default,vr,vulnerability,forensics,malware,pentest,pentest_runtime,dynamic_pentest,dynamic_pentest_runtime,forensics_readiness,reporting
+export AILA_PLATFORM_WORKER_HEALTH_TRACKS=default,vr,vulnerability,forensics,malware,pentest,pentest_runtime,forensics_readiness,reporting
 
 # Structured JSON logs (ELK / Datadog / CloudWatch)
 export AILA_JSON_LOGS=1
@@ -224,14 +224,13 @@ export AILA_PLATFORM_SANDBOX_BACKEND=oci
 export AILA_PLATFORM_SANDBOX_SSH_HOST=sandbox.internal
 export AILA_PLATFORM_SANDBOX_SSH_USER=aila-sandbox
 export AILA_PLATFORM_SANDBOX_OCI_BIN=docker
-export AILA_PLATFORM_SANDBOX_OCI_NETWORK=bridge
 ```
 
 The SSH identity must be unprivileged and allowed to run the selected Docker or Podman binary. Pre-pull every approved `image@sha256:<digest>` on that host; execution never pulls an image automatically. Runs use that identity's numeric UID/GID inside the container, an owner-only workspace, a read-only root filesystem, dropped capabilities, no-new-privileges, and explicit CPU, memory, PID, timeout, and output ceilings.
 
-Network-disabled runs use `--network none`. Network-enabled runs use `AILA_PLATFORM_SANDBOX_OCI_NETWORK` only when `AILA_PLATFORM_SANDBOX_ALLOW_NETWORK` also permits networking. The configured network supplies connectivity, not target authorization: enforce campaign scope with remote firewall or egress-proxy rules before deploying tools.
+Network-disabled runs use `--network none`. Every networked OCI run requires an exact `SandboxEgressPolicy`; there is no shared unrestricted bridge setting. The remote host must provide Docker or Podman bridge networking, `ip`, `nft`, and a narrowly pre-provisioned passwordless `sudo -n` rule allowing the sandbox identity to install and delete AILA's per-run nftables table. AILA creates one bridge per run, verifies its expected interface, allows only the policy's resolved IP/CIDR and port/protocol destinations, drops other forwarding and bridge-to-host input, and removes the table and bridge afterward. Missing tools, privilege, bridge verification, or firewall installation fails closed. Exact resolved hostname-to-IP mappings also become container `--add-host` entries, so name resolution and firewall identity share the same bindings.
 
-There is no local Docker fallback and no Docker socket mount. The runtime force-removes its named container after completion, cancellation, callback failure, or transport failure.
+Live pentest actions use module-curated immutable images and argv; planners cannot supply images, commands, targets, or firewall policy. OCI connectivity is never treated as campaign authorization. There is no local Docker fallback and no Docker socket mount. The runtime force-removes its named container after completion, cancellation, callback failure, or transport failure.
 
 ---
 
@@ -287,12 +286,10 @@ python -m aila worker -q forensics_readiness
 python -m aila worker -q reporting
 python -m aila worker -q pentest
 python -m aila worker -q pentest_runtime
-python -m aila worker -q dynamic_pentest
-python -m aila worker -q dynamic_pentest_runtime
 ```
 
-The Make targets (`make worker`, `make worker-vr`, `make worker-vuln`,
-`make worker-forensics`, `make worker-dynamic`, and `make worker-dynamic-runtime`) wrap the same calls and also bring
+The Make targets (`make worker`, `make worker-vr`, `make worker-vuln`, and
+`make worker-forensics`) wrap the same calls and also bring
 up the dev infra (`make dev-up`) + run `make db-init` if needed.
 
 Workers process:
@@ -301,8 +298,7 @@ Workers process:
 - VR investigations dispatched from the VR module
 - VR investigation PDF, VR MASVS PDF, and vulnerability PDF rendering on the `reporting` queue (the POST submit returns 202 with `task_id`)
 - Analyzer-machine readiness checks and offline tool preparation on the `forensics_readiness` queue (202 with `task_id`)
-- Native pentest campaigns on `pentest`; runtime probes on `pentest_runtime`
-- Dynamic campaign workflows on `dynamic_pentest`; fenced, real sandbox actions on `dynamic_pentest_runtime`
+- AI pentest assessments and live campaign admission on `pentest`; assessment runtime and fenced live actions on `pentest_runtime`
 - Cross-cutting platform tasks on the `default` queue (cron automation, report explanations, etc.)
 
 Worker behavior:

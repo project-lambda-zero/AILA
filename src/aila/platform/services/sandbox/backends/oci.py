@@ -12,9 +12,10 @@ Backend contract:
     * Containers run as the SSH user's numeric uid:gid, which must not be
       root. The per-run workspace is the only host path mounted, read-write,
       at ``spec.workdir``. The root filesystem is read-only.
-    * Network is ``none`` unless ``spec.network`` is granted, in which case
-      the configured ``platform.sandbox_oci_network`` is used. The host
-      network namespace is never joined.
+    * Network is ``none`` unless ``spec.network`` is granted. Every
+      networked run also requires ``spec.egress``; the backend creates a
+      per-run bridge and nftables policy and never joins a shared bridge or
+      the host network namespace.
     * The wall clock is enforced by coreutils ``timeout`` wrapped around the
       runtime client; exit 124 maps to ``timed_out``. The named container is
       force-removed in ``finally`` on every path.
@@ -28,6 +29,7 @@ import math
 import re
 import shlex
 import time
+from contextlib import nullcontext
 from typing import Any
 
 import paramiko
@@ -48,6 +50,7 @@ from .base import (
     probe_binary,
     stage_inputs,
 )
+from .oci_egress import scoped_oci_egress
 
 __all__ = ["OciBackend", "build_oci_run_argv"]
 
@@ -75,20 +78,6 @@ _TRANSPORT_ERRORS: tuple[type[BaseException], ...] = (
 # equals signs) would reshape the ``--mount`` option string.
 _MOUNT_PATH_RE = re.compile(r"[A-Za-z0-9._/-]+")
 _ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-_NETWORK_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
-
-
-def _network_mode(spec: SandboxSpec, cfg: Any) -> str:
-    """Return the runtime ``--network`` value; refuse host-namespace joins."""
-    configured = str(cfg.oci_network).strip()
-    if not _NETWORK_NAME_RE.fullmatch(configured) or configured == "host":
-        raise SandboxExecutionError(
-            f"platform.sandbox_oci_network={configured!r} is not allowed; use 'bridge', "
-            "'none' or a named runtime network (never 'host' or 'container:<name>')."
-        )
-    return configured if spec.network else "none"
-
-
 def _check_guest_layout(spec: SandboxSpec) -> None:
     """Reject workdir and env values that would corrupt the runtime argv."""
     if spec.workdir == "/" or not _MOUNT_PATH_RE.fullmatch(spec.workdir):
@@ -142,6 +131,12 @@ def build_oci_run_argv(
         "--workdir", spec.workdir,
         "--network", network_mode,
     ]
+    if spec.shm_mb:
+        argv.extend(["--shm-size", f"{int(spec.shm_mb)}m"])
+    if spec.egress is not None:
+        for destination in spec.egress.destinations:
+            if destination.host is not None:
+                argv.extend(["--add-host", f"{destination.host}:{destination.address}"])
     if spec.stdin is not None:
         argv.append("--interactive")
     for name, value in sorted(spec.env.items()):
@@ -171,34 +166,56 @@ class OciBackend:
             raise SandboxExecutionError(
                 "oci backend requires SandboxSpec.image set to an immutable 'name@sha256:<digest>' reference."
             )
-        # Pure validation first: a bad request never reaches the sandbox host.
-        network_mode = _network_mode(spec, cfg)
+        if spec.network and spec.egress is None:
+            raise SandboxExecutionError(
+                "networked OCI execution requires SandboxSpec.egress; an unrestricted bridge is never used"
+            )
         _check_guest_layout(spec)
 
         runtime = await probe_binary(ssh, host_payload, cfg.oci_bin)
         timeout_bin = await probe_binary(ssh, host_payload, "timeout")
+        egress_tools: dict[str, str] = {}
+        if spec.network:
+            for binary in ("nft", "sudo", "ip"):
+                egress_tools[binary] = await probe_binary(ssh, host_payload, binary)
         uid, gid = await _resolve_identity(ssh, host_payload)
         await _require_local_image(ssh, host_payload, runtime, spec.image)
 
         async with host_workspace(ssh, host_payload) as workspace:
-            await stage_inputs(ssh, host_payload, workspace, spec.input_files)
-            result = await self._run_in_workspace(
-                spec, ssh, host_payload, cfg,
-                runtime=runtime,
-                timeout_bin=timeout_bin,
-                image=spec.image,
-                uid=uid,
-                gid=gid,
-                network_mode=network_mode,
-                workspace=workspace,
-                on_stdout=on_stdout,
-                on_stderr=on_stderr,
-                cancel_requested=cancel_requested,
-            )
-            files, files_truncated = await collect_outputs(
-                ssh, host_payload, workspace, spec.output_globs,
-                per_file_cap=cfg.output_max_bytes,
-            )
+            if spec.network:
+                if spec.egress is None:
+                    raise SandboxExecutionError("networked OCI execution requires an exact egress policy")
+                egress_context = scoped_oci_egress(
+                    ssh,
+                    host_payload,
+                    runtime=runtime,
+                    nft=egress_tools["nft"],
+                    sudo=egress_tools["sudo"],
+                    ip=egress_tools["ip"],
+                    run_id=workspace.run_id,
+                    policy=spec.egress,
+                )
+            else:
+                egress_context = nullcontext("none")
+            async with egress_context as network_mode:
+                await stage_inputs(ssh, host_payload, workspace, spec.input_files)
+                result = await self._run_in_workspace(
+                    spec, ssh, host_payload, cfg,
+                    runtime=runtime,
+                    timeout_bin=timeout_bin,
+                    image=spec.image,
+                    uid=uid,
+                    gid=gid,
+                    network_mode=network_mode,
+                    workspace=workspace,
+                    on_stdout=on_stdout,
+                    on_stderr=on_stderr,
+                    cancel_requested=cancel_requested,
+                )
+                files, files_truncated = await collect_outputs(
+                    ssh, host_payload, workspace, spec.output_globs,
+                    per_file_cap=cfg.output_max_bytes,
+                )
         result.output_files = files
         if files_truncated:
             result.truncated = True

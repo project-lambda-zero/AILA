@@ -200,7 +200,7 @@ def _iter_migration_table_lifecycle() -> tuple[set[str], set[str]]:
                 if not isinstance(call, ast.Call):
                     continue
                 attr_name = getattr(call.func, "attr", None)
-                if attr_name not in {"create_table", "drop_table"}:
+                if attr_name not in {"create_table", "drop_table", "rename_table"}:
                     continue
                 if not call.args:
                     continue
@@ -212,6 +212,14 @@ def _iter_migration_table_lifecycle() -> tuple[set[str], set[str]]:
                     continue
                 if attr_name == "create_table":
                     created.add(first.value)
+                elif attr_name == "rename_table":
+                    dropped.add(first.value)
+                    if (
+                        len(call.args) > 1
+                        and isinstance(call.args[1], ast.Constant)
+                        and isinstance(call.args[1].value, str)
+                    ):
+                        created.add(call.args[1].value)
                 else:
                     dropped.add(first.value)
     return created, dropped

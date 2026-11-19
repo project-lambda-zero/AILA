@@ -67,7 +67,7 @@ fi
 
 load_env
 # Health probe tracks must match the queues started below; set after load_env so .env cannot override it.
-export AILA_PLATFORM_WORKER_HEALTH_TRACKS="default,vulnerability,forensics,pentest,pentest_runtime,dynamic_pentest,dynamic_pentest_runtime,forensics_readiness,reporting"
+export AILA_PLATFORM_WORKER_HEALTH_TRACKS="default,vulnerability,forensics,pentest,pentest_runtime,forensics_readiness,reporting"
 kill_aila_processes
 rm -f "$PID_FILE"
 
@@ -108,16 +108,6 @@ python -m aila worker -q pentest_runtime \
   > "$LOG_DIR/aila_worker_pentest_runtime.log" 2>&1 &
 record_pid "$!"
 echo "[aila]   worker:pentest_runtime PID=$!"
-
-python -m aila worker -q dynamic_pentest \
-  > "$LOG_DIR/aila_worker_dynamic_pentest.log" 2>&1 &
-record_pid "$!"
-echo "[aila]   worker:dynamic_pentest PID=$!"
-
-python -m aila worker -q dynamic_pentest_runtime \
-  > "$LOG_DIR/aila_worker_dynamic_pentest_runtime.log" 2>&1 &
-record_pid "$!"
-echo "[aila]   worker:dynamic_pentest_runtime PID=$!"
 
 python -m aila worker -q forensics_readiness \
   > "$LOG_DIR/aila_worker_forensics_readiness.log" 2>&1 &

@@ -549,11 +549,9 @@ Common targets in the root `Makefile`:
 | `make worker-vr`        | `python -m aila worker -q vr`                                             |
 | `make worker-vuln`      | `python -m aila worker -q vulnerability`                                  |
 | `make worker-forensics` | `python -m aila worker -q forensics`                                      |
-| `make worker-dynamic`   | `python -m aila worker -q dynamic_pentest`                                |
-| `make worker-dynamic-runtime` | `python -m aila worker -q dynamic_pentest_runtime`                    |
 | `make dev-all`          | Bring up all services in one terminal (Ctrl+C stops everything)           |
-| `bash start.sh`         | Spawn audit-mcp + backend + eleven queue workers + frontend in one shot (Windows: Git Bash + PowerShell) |
-| `docker compose --env-file .env -f infra/utilities/docker-compose.full.yml -f infra/utilities/docker-compose.full.dev.yml up --build` | Full-stack development containers with localhost ports: postgres + redis + api + eleven queue workers + frontend. Omit the dev override for the replica-safe base behind a load balancer. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). |
+| `bash start.sh`         | Spawn audit-mcp + backend + nine queue workers + frontend in one shot (Windows: Git Bash + PowerShell) |
+| `docker compose --env-file .env -f infra/utilities/docker-compose.full.yml -f infra/utilities/docker-compose.full.dev.yml up --build` | Full-stack development containers with localhost ports: postgres + redis + api + nine queue workers + frontend. Omit the dev override for the replica-safe base behind a load balancer. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). |
 | `make test`             | `pytest`, excluding `tests/test_e2e*.py`                                  |
 | `make test-e2e`         | `pytest tests/test_e2e.py -v` (requires live infrastructure)              |
 | `make lint`             | `ruff check src/aila/`                                                    |

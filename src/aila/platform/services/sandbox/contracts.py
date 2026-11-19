@@ -10,6 +10,7 @@ un-isolated local fallback (that would defeat the point of the primitive).
 Types exported here:
 
 * :class:`SandboxSpec`       -- declarative one-shot execution request.
+* :class:`SandboxEgressPolicy` -- immutable destination allowlist for a networked run.
 * :class:`SandboxResult`     -- typed result the caller receives back.
 * :class:`SandboxBackend`    -- Protocol every concrete backend satisfies.
 * :class:`SandboxUnavailableError`
@@ -21,11 +22,12 @@ surface without translation.
 """
 from __future__ import annotations
 
+import ipaddress
 import re
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 if TYPE_CHECKING:  # pragma: no cover -- import guard, avoid platform-cycle
     from ...contracts.platform import SSHIntegrationInput
@@ -33,6 +35,8 @@ if TYPE_CHECKING:  # pragma: no cover -- import guard, avoid platform-cycle
 
 __all__ = [
     "SandboxSpec",
+    "SandboxEgressPolicy",
+    "SandboxEgressDestination",
     "SandboxResult",
     "SandboxBackend",
     "SandboxUnavailableError",
@@ -99,6 +103,58 @@ def validate_output_glob(pattern: str) -> str:
     return pattern
 
 
+class SandboxEgressDestination(BaseModel):
+    """One numeric destination and exact transport port; hostnames are never accepted."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    address: str
+    host: str | None = Field(default=None, pattern=r"^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$")
+    port: int = Field(ge=1, le=65535)
+    protocol: str = Field(pattern="^(tcp|udp)$")
+
+    @field_validator("address")
+    @classmethod
+    def numeric_address(cls, value: str) -> str:
+        try:
+            if "/" in value:
+                network = ipaddress.ip_network(value, strict=True)
+                if network.is_multicast or network.is_unspecified:
+                    raise ValueError("Multicast and unspecified egress networks are not allowed")
+                return network.with_prefixlen
+            address = ipaddress.ip_address(value)
+        except ValueError as exc:
+            raise ValueError(f"Invalid numeric egress destination {value!r}") from exc
+        if address.is_multicast or address.is_unspecified:
+            raise ValueError("Multicast and unspecified egress addresses are not allowed")
+        return address.compressed
+
+
+    @model_validator(mode="after")
+    def host_requires_single_address(self) -> SandboxEgressDestination:
+        if self.host is not None and "/" in self.address:
+            raise ValueError("A hostname egress binding requires one IP address, not a CIDR")
+        return self
+
+
+class SandboxEgressPolicy(BaseModel):
+    """Immutable fail-closed destination allowlist for one networked run."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    destinations: list[SandboxEgressDestination] = Field(min_length=1, max_length=4096)
+
+    @field_validator("destinations")
+    @classmethod
+    def unique_destinations(
+        cls, values: list[SandboxEgressDestination]
+    ) -> list[SandboxEgressDestination]:
+        keys = {(item.address, item.host, item.port, item.protocol) for item in values}
+        if len(keys) != len(values):
+            raise ValueError("Egress destinations must be unique")
+        return sorted(values, key=lambda item: (item.address, item.host or "", item.port, item.protocol))
+
+
 class SandboxSpec(BaseModel):
     """One sandboxed command execution request.
 
@@ -139,8 +195,16 @@ class SandboxSpec(BaseModel):
         default=False,
         description="Grant network access inside the sandbox. Forced False unless the service policy allows it.",
     )
+    egress: SandboxEgressPolicy | None = Field(
+        default=None,
+        description=(
+            "Exact numeric destination/port/protocol allowlist. Required by the OCI backend "
+            "when network=True; rejected for network=False."
+        ),
+    )
     vcpu: int = Field(default=1, ge=1, description="Virtual CPUs assigned to the sandbox (Firecracker only).")
     mem_mb: int = Field(default=512, ge=1, description="Memory ceiling in MiB.")
+    shm_mb: int = Field(default=0, ge=0, le=512, description="Private /dev/shm size in MiB; zero uses the runtime default.")
     workdir: str = Field(
         default="/work",
         description="Absolute path inside the sandbox where input_files are staged and output_globs are resolved.",
@@ -160,6 +224,12 @@ class SandboxSpec(BaseModel):
             "backend and rejected by every other backend. Tags are never accepted."
         ),
     )
+
+    @model_validator(mode="after")
+    def egress_requires_network(self) -> SandboxSpec:
+        if self.egress is not None and not self.network:
+            raise ValueError("egress policy requires network=True")
+        return self
 
     @field_validator("image")
     @classmethod

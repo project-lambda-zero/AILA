@@ -232,8 +232,7 @@ All fields from `PlatformConfigSchema` (registered under namespace `platform`):
 | `AILA_PLATFORM_EVIDENCE_MAX_ARTIFACT_BYTES` | `268435456` | int | Maximum plaintext bytes in one evidence artifact |
 | `AILA_PLATFORM_SANDBOX_BACKEND` | `none` | str | Sandbox backend: `none`, `nsjail`, `firecracker`, or `oci` |
 | `AILA_PLATFORM_SANDBOX_OCI_BIN` | `docker` | str | Remote Docker or Podman binary for the OCI backend |
-| `AILA_PLATFORM_SANDBOX_OCI_NETWORK` | `bridge` | str | Remote OCI network for policy-approved network-enabled runs |
-| `AILA_PLATFORM_WORKER_HEALTH_TRACKS` | `default,vr,vulnerability,forensics,malware,pentest,pentest_runtime,dynamic_pentest,dynamic_pentest_runtime,forensics_readiness,reporting` | str CSV | ARQ tracks expected to have live worker heartbeats |
+| `AILA_PLATFORM_WORKER_HEALTH_TRACKS` | `default,vr,vulnerability,forensics,malware,pentest,pentest_runtime,forensics_readiness,reporting` | str CSV | ARQ tracks expected to have live worker heartbeats |
 | `AILA_PLATFORM_LLM_PIPELINE_CLASSIFY_DEFAULT` | `true` | bool | LLM pipeline classify stage default-on |
 | `AILA_PLATFORM_LLM_PIPELINE_VALIDATE_DEFAULT` | `true` | bool | LLM pipeline validate stage default-on |
 | `AILA_PLATFORM_LLM_PIPELINE_GATE_DEFAULT` | `true` | bool | LLM pipeline gate stage default-on |

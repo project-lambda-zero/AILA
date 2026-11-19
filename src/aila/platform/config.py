@@ -185,10 +185,10 @@ class PlatformConfigSchema(BaseModel):
     arq_keep_result_s: int = 3600
     # Comma-separated ARQ worker tracks that each need a live heartbeat for the
     # arq_worker health probe to report running. Env: AILA_PLATFORM_WORKER_HEALTH_TRACKS.
-    # Default is the eleven tracks the full-stack compose deployment starts.
+    # Default is the nine tracks the full-stack compose deployment starts.
     worker_health_tracks: str = (
         "default,vr,vulnerability,forensics,malware,pentest,pentest_runtime,"
-        "dynamic_pentest,dynamic_pentest_runtime,forensics_readiness,reporting"
+        "forensics_readiness,reporting"
     )
     progress_stream_maxlen: int = 1000
 
@@ -587,11 +587,10 @@ class PlatformConfigSchema(BaseModel):
     #   Binary names or absolute paths on the sandbox host. Resolved via
     #   ``command -v`` before every run; a missing binary raises
     #   ``SandboxExecutionError`` with an actionable message.
-    # sandbox_oci_bin / sandbox_oci_network:
-    #   Container runtime (``docker`` or ``podman``) and the network the
-    #   oci backend attaches to when ``SandboxSpec.network`` is granted.
-    #   ``host`` and ``container:<name>`` are refused; ``none`` is the
-    #   network used when the spec does not grant network.
+    # sandbox_oci_bin:
+    #   Container runtime (``docker`` or ``podman``). Networked execution
+    #   additionally requires an exact per-run SandboxEgressPolicy; there
+    #   is no shared unrestricted bridge configuration.
     # sandbox_rootfs_path / _kernel_path:
     #   Required for the Firecracker backend. Point at the ext4 rootfs
     #   image + Firecracker-compatible vmlinux on the sandbox host. The
@@ -680,7 +679,6 @@ class PlatformConfigSchema(BaseModel):
     sandbox_output_max_bytes: int = 1_048_576
     sandbox_nsjail_bin: str = "nsjail"
     sandbox_oci_bin: str = "docker"
-    sandbox_oci_network: str = "bridge"
     sandbox_firecracker_bin: str = "firecracker"
     sandbox_jailer_bin: str = "jailer"
     sandbox_rootfs_path: str = ""

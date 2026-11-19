@@ -18,9 +18,9 @@ _load_project_env()
 
 # --- Import ALL models so SQLModel.metadata is complete (per D-07) ---
 # Platform models
-from aila.modules.dynamic_pentest import db_models as _dynamic_models  # noqa: F401
 from aila.modules.forensics import db_models as _forensics_models  # noqa: F401
 from aila.modules.malware import db_models as _malware_models  # noqa: F401
+from aila.modules.pentest import db_models as _pentest_models  # noqa: F401
 from aila.modules.vr import db_models as _vr_models  # noqa: F401
 
 # Module models \u2014 add new modules here as they are created.

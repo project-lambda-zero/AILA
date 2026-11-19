@@ -87,7 +87,6 @@ class SandboxConfig:
     system_name: str = ""
     system_id: int | None = None
     oci_bin: str = "docker"
-    oci_network: str = "bridge"
 
 
 @dataclass(frozen=True, slots=True)
@@ -704,7 +703,6 @@ class SandboxService:
         firecracker_bin = str(await _get("sandbox_firecracker_bin", "firecracker")).strip() or "firecracker"
         jailer_bin = str(await _get("sandbox_jailer_bin", "jailer")).strip() or "jailer"
         oci_bin = str(await _get("sandbox_oci_bin", "docker")).strip() or "docker"
-        oci_network = str(await _get("sandbox_oci_network", "bridge")).strip() or "bridge"
         rootfs_path = str(await _get("sandbox_rootfs_path", "")).strip()
         kernel_path = str(await _get("sandbox_kernel_path", "")).strip()
 
@@ -741,5 +739,4 @@ class SandboxService:
             system_name=system_name,
             system_id=system_id,
             oci_bin=oci_bin,
-            oci_network=oci_network,
         )

@@ -26,7 +26,7 @@ const CveReproduceDetail = lazy(() => import("./NdayProjectForm").then((m) => ({
 const VrPatternsPage = lazy(() => import("./VrPatternsPage"));
 const ForensicsProjectPage = lazy(() => import("./forensics/ForensicsProjectPage"));
 const PentestPage = lazy(() => import("./pentest/PentestPage"));
-const DynamicPentestPage = lazy(() => import("./dynamic-pentest/DynamicPentestPage"));
+const CampaignsPage = lazy(() => import("./pentest/campaigns/CampaignsPage"));
 const VulnerabilityPage = lazy(() => import("./VulnerabilityPage"));
 const AdminDashboardPage = lazy(() => import("./AdminDashboardPage"));
 const OpsWarRoom = lazy(() => import("./OpsWarRoom"));
@@ -114,8 +114,8 @@ const BESPOKE = {
   "vr:patterns": { title: PAGE_CONFIGS["vr:patterns"].title, render: (p) => <VrPatternsPage {...p} /> },
   "malware:new-target": { title: "malware \u00b7 upload target", render: (p) => <UploadForm module="malware" {...p} /> },
   "forensics:project": { title: "forensics \u00b7 project", render: (p) => <ForensicsProjectPage {...p} /> },
-  "pentest:assessments": { title: "AI pentest \u00b7 assessments", render: (p) => <PentestPage {...p} /> },
-  "dynamic_pentest:campaigns": { title: "dynamic pentest \u00b7 campaigns", render: (p) => <DynamicPentestPage {...p} /> },
+  "pentest:assessments": { title: "pentest \u00b7 assessments", render: (p) => <PentestPage {...p} /> },
+  "pentest:campaigns": { title: "pentest \u00b7 campaigns", render: (p) => <CampaignsPage {...p} /> },
   "vulnerability:scan": { title: "vulnerability \u00b7 launch scan", render: (p) => <VulnerabilityPage {...p} /> },
   "vulnerability:findings": { title: "vulnerability \u00b7 findings", render: (p) => <VulnerabilityPage {...p} /> },
   "vulnerability:cves": { title: "vulnerability \u00b7 cve intelligence", render: (p) => <VulnerabilityPage {...p} section="cves" /> },
