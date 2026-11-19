@@ -1,4 +1,4 @@
-.PHONY: install dev dev-all dev-up dev-down dev-reset dev-logs dev-status teardown teardown-force backend frontend frontend-build worker worker-vuln worker-forensics worker-vr db-init migrate test test-e2e coverage lint typecheck honesty liveness liveness-guard build compile check security-scan audit bandit clean
+.PHONY: install dev dev-all dev-up dev-down dev-reset dev-logs dev-status teardown teardown-force backend frontend frontend-build worker worker-vuln worker-forensics worker-vr worker-dynamic worker-dynamic-runtime db-init migrate test test-e2e coverage lint typecheck honesty liveness liveness-guard build compile check security-scan audit bandit clean
 
 # Cross-platform: use python for port-freeing and cleanup instead of
 # fuser/find/bash which are Linux-only.
@@ -51,7 +51,8 @@ dev:
 	@echo "       make worker        # default queue"
 	@echo "       make worker-vuln   # vulnerability queue"
 	@echo "       make worker-forensics"
-	@echo "       make worker-sbd"
+	@echo "       make worker-dynamic  # dynamic campaign queue"
+	@echo "       make worker-dynamic-runtime  # sandbox action queue"
 	@echo "       make worker-vr        # vulnerability research queue"
 	@echo ""
 	@echo "  4. Tear down infra when done:"
@@ -84,6 +85,12 @@ worker-forensics: dev-up db-init
 
 worker-vr: dev-up db-init
 	python -m aila worker -q vr
+
+worker-dynamic: dev-up db-init
+	python -m aila worker -q dynamic_pentest
+
+worker-dynamic-runtime: dev-up db-init
+	python -m aila worker -q dynamic_pentest_runtime
 
 db-init:
 	python scripts/db_init.py

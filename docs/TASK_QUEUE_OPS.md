@@ -63,7 +63,7 @@ Source: `src/aila/cli.py:269-358`. The CLI also accepts `--redis-url` to overrid
 
 ### ARQ queue tracks
 
-`default` (PlatformModule and cross-cutting tasks), `vulnerability`, `forensics`, `forensics_readiness` (analyzer-machine readiness checks and offline tool preparation), `reporting` (VR investigation, VR MASVS, and vulnerability PDF rendering), `vr`, `malware`, `pentest`, `pentest_runtime`. One ARQ queue per track. Workers subscribe to exactly one queue.
+`default` (PlatformModule and cross-cutting tasks), `vulnerability`, `forensics`, `forensics_readiness` (analyzer-machine readiness checks and offline tool preparation), `reporting` (VR investigation, VR MASVS, and vulnerability PDF rendering), `vr`, `malware`, `pentest`, `pentest_runtime`, `dynamic_pentest` (campaign workflows), and `dynamic_pentest_runtime` (fenced sandbox actions). One ARQ queue per track. Workers subscribe to exactly one queue.
 
 ### Asynchronous report and readiness tasks
 
@@ -123,6 +123,8 @@ Per-queue worker count is set by `WORKER_COUNT_<UPPER_QUEUE>` env vars. Defaults
 | `forensics` | `1` |
 | `pentest` | `1` |
 | `pentest_runtime` | `1` |
+| `dynamic_pentest` | `1` |
+| `dynamic_pentest_runtime` | `1` |
 | `forensics_readiness` | `1` |
 | `reporting` | `1` |
 

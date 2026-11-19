@@ -66,6 +66,7 @@ _BOOTSTRAPPED_URLS: set[str] = set()
 # ``make db-init`` produces once those modules are actually loaded.
 _MODEL_MODULES: tuple[str, ...] = (
     "aila.modules.forensics.db_models",
+    "aila.modules.dynamic_pentest.db_models",
     "aila.modules.malware.db_models",
     "aila.modules.pentest.db_models",
     "aila.modules.vr.db_models",
@@ -88,6 +89,8 @@ _MODEL_MODULES: tuple[str, ...] = (
     "aila.platform.services.specialist_registry",
     "aila.platform.tasks.models",
     "aila.storage.db_models",
+    "aila.storage.event_models",
+    "aila.storage.evidence_models",
 )
 
 

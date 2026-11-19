@@ -5,6 +5,33 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.126] - 2026-11-19 -- Live dynamic campaign execution and monitoring
+
+### Added
+
+- `dynamic_pentest` introduces team-scoped, idempotent campaigns with immutable scope, an allowlisted harmless Python action, explicit approval, pause, resume, kill, and lease-fenced execution state. Campaign orchestration and sandbox actions use independent `dynamic_pentest` and `dynamic_pentest_runtime` worker queues.
+- PostgreSQL-backed event streams and a transactional outbox provide ordered, at-least-once delivery. Redis supplies live wake-up notifications while SSE replay reads authoritative event payloads from PostgreSQL and resumes from `Last-Event-ID`.
+- The platform evidence store encrypts bounded output in AES-256-GCM frames, authenticates artifact and stream metadata, verifies plaintext SHA-256 on authorized reads, and stores only ciphertext and metadata descriptors.
+- `SandboxService.run_streaming` and SSH command streaming await output callbacks for backpressure, redact stderr before emission, close channels on callback failure, and support cooperative cancellation. Production dynamic actions require the configured Linux sandbox and have no local execution fallback.
+- The console provides live campaign state, reconnection and gap resynchronization, action inspection, bounded output previews with explicit eviction notices, artifact downloads, approvals, and campaign or action kill controls.
+
+### Changed
+
+- Full-stack launchers and Compose now start eleven queue workers. Worker health defaults include both dynamic campaign and runtime tracks, and Make targets and operations documentation expose the new queues.
+- Dynamic action manifests bind the command, network policy, timeout, and cumulative 4 KiB output ceiling to their integrity hash. Output overflow fails the action before persisting the offending chunk.
+
+### Fixed
+
+- Same-key campaign requests can retry after a broker outage without duplicating an active queued task. Queue refusal marks the action and campaign failed instead of recording an operator cancellation.
+- Terminal actions emit explicit exit events, kill acknowledgements remain distinct, and degraded campaigns expose a console resume path after health recovery.
+
+### Upgrade notes
+
+- Apply Alembic migration `159_dynamic_pentest_live` before starting the API or dynamic workers. Fresh database initialization registers the event, evidence, campaign, and action models.
+- Start both `dynamic_pentest` and `dynamic_pentest_runtime` workers. Partial deployments must include the tracks they run in `AILA_PLATFORM_WORKER_HEALTH_TRACKS`.
+- Configure a real supported Linux sandbox host before launching dynamic actions. Missing or unhealthy sandbox or evidence infrastructure leaves campaigns degraded or failed; execution never falls back to the local API or worker host.
+- Optional evidence settings are documented under `AILA_PLATFORM_EVIDENCE_ROOT_DIR`, `AILA_PLATFORM_EVIDENCE_CHUNK_BYTES`, and `AILA_PLATFORM_EVIDENCE_MAX_ARTIFACT_BYTES`.
+
 ## [0.6.125] - 2026-11-19 -- Execution isolation and worker scaling foundations
 
 ### Added

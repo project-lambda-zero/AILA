@@ -27,11 +27,13 @@ from typing import Any
 import paramiko
 
 from ....exceptions import AILATimeoutError, AuthenticationError, UpstreamError, ValidationError
-from ...ssh import SSHService
+from ...ssh import CommandCancelledError, SSHService
 from ..contracts import (
+    CancelCheck,
     SandboxExecutionError,
     SandboxResult,
     SandboxSpec,
+    StreamCallback,
 )
 from .base import (
     HostWorkspace,
@@ -164,6 +166,9 @@ class NsjailBackend:
         ssh: SSHService,
         host_payload,
         cfg: Any,
+        on_stdout: StreamCallback | None = None,
+        on_stderr: StreamCallback | None = None,
+        cancel_requested: CancelCheck | None = None,
     ) -> SandboxResult:
         # Probe first so a missing binary fails cleanly with an
         # actionable message instead of a "127 not found" from bash.
@@ -172,6 +177,7 @@ class NsjailBackend:
             await stage_inputs(ssh, host_payload, workspace, spec.input_files)
             result = await self._run_in_workspace(
                 spec, ssh, host_payload, cfg, nsjail_path, workspace,
+                on_stdout=on_stdout, on_stderr=on_stderr, cancel_requested=cancel_requested,
             )
             files, files_truncated = await collect_outputs(
                 ssh, host_payload, workspace, spec.output_globs,
@@ -193,6 +199,10 @@ class NsjailBackend:
         cfg: Any,
         nsjail_path: str,
         workspace: HostWorkspace,
+        *,
+        on_stdout: StreamCallback | None = None,
+        on_stderr: StreamCallback | None = None,
+        cancel_requested: CancelCheck | None = None,
     ) -> SandboxResult:
         argv = build_nsjail_argv(
             spec, nsjail_bin=nsjail_path, workspace_remote_root=workspace.remote_root,
@@ -220,11 +230,30 @@ class NsjailBackend:
         # timeout inside the guest can still emit its diagnostic to
         # stderr before we tear the SSH channel down.
         ssh_idle_timeout = float(spec.timeout_s) + 30.0
+        streaming = on_stdout is not None or on_stderr is not None or cancel_requested is not None
+        cancel_command: str | None = None
+        if streaming:
+            # The wrapper records its process-group id before exec'ing nsjail,
+            # so cancel can kill the whole guest tree with one signal.
+            pgid_path = f"{workspace.remote_root}/.pgid"
+            quoted_pgid = shlex.quote(pgid_path)
+            record = f"awk '{{print $5}}' /proc/$$/stat > {quoted_pgid}"
+            wrapped = f"{record}\nexec {wrapped}"
+            cancel_command = f'kill -KILL -- -"$(cat {quoted_pgid})" 2>/dev/null; true'
         start = time.monotonic()
         try:
-            stdout, stderr, exit_code = await ssh.run_command_full(
-                host_payload, wrapped, timeout_seconds=ssh_idle_timeout,
-            )
+            if streaming:
+                stdout, stderr, exit_code = await ssh.run_command_streaming(
+                    host_payload, wrapped, timeout_seconds=ssh_idle_timeout,
+                    on_stdout=on_stdout, on_stderr=on_stderr,
+                    cancel_requested=cancel_requested, cancel_command=cancel_command,
+                )
+            else:
+                stdout, stderr, exit_code = await ssh.run_command_full(
+                    host_payload, wrapped, timeout_seconds=ssh_idle_timeout,
+                )
+        except CommandCancelledError as exc:
+            raise SandboxExecutionError(f"nsjail run {workspace.run_id} cancelled") from exc
         except (
             paramiko.SSHException,
             AuthenticationError,

@@ -18,6 +18,7 @@ _load_project_env()
 
 # --- Import ALL models so SQLModel.metadata is complete (per D-07) ---
 # Platform models
+from aila.modules.dynamic_pentest import db_models as _dynamic_models  # noqa: F401
 from aila.modules.forensics import db_models as _forensics_models  # noqa: F401
 from aila.modules.malware import db_models as _malware_models  # noqa: F401
 from aila.modules.vr import db_models as _vr_models  # noqa: F401
@@ -27,6 +28,8 @@ from aila.modules.vr import db_models as _vr_models  # noqa: F401
 # otherwise create_all/autogenerate won't see those tables.
 from aila.modules.vulnerability import db_models as _vuln_models  # noqa: F401
 from aila.storage import db_models as _platform_models  # noqa: F401
+from aila.storage import event_models as _event_models  # noqa: F401
+from aila.storage import evidence_models as _evidence_models  # noqa: F401
 
 target_metadata = SQLModel.metadata
 

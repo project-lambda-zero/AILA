@@ -22,6 +22,7 @@ surface without translation.
 from __future__ import annotations
 
 import re
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -36,8 +37,15 @@ __all__ = [
     "SandboxBackend",
     "SandboxUnavailableError",
     "SandboxExecutionError",
+    "StreamCallback",
+    "CancelCheck",
     "validate_output_glob",
 ]
+
+# Awaited once per decoded text chunk, in arrival order, on the event loop.
+StreamCallback = Callable[[str], Awaitable[None]]
+# Polled between chunks; returning True closes the channel and kills the guest.
+CancelCheck = Callable[[], Awaitable[bool]]
 
 
 def _reject_unsafe_relative(path: str, *, field: str) -> str:
@@ -237,6 +245,9 @@ class SandboxBackend(Protocol):
         ssh: SSHService,
         host_payload: SSHIntegrationInput,
         cfg: Any,
+        on_stdout: StreamCallback | None = None,
+        on_stderr: StreamCallback | None = None,
+        cancel_requested: CancelCheck | None = None,
     ) -> SandboxResult: ...
 
 

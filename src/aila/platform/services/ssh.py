@@ -3,10 +3,15 @@ from __future__ import annotations
 import asyncio
 import base64
 import builtins
+import codecs
 import hashlib
 import io
+import logging
+import threading
+import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
-from threading import Lock
 
 import paramiko
 
@@ -16,6 +21,19 @@ from ..config import PlatformSettings
 from ..contracts.platform import RegisteredSystem, SSHIntegrationInput
 from ..exceptions import AILATimeoutError, AuthenticationError, UpstreamError, ValidationError
 from .log_redact import redact_command_line
+
+_log = logging.getLogger(__name__)
+
+_READ_CHUNK_BYTES = 32_768
+_CANCEL_POLL_S = 0.1
+_KILL_TIMEOUT_S = 10.0
+
+StreamCallback = Callable[[str], Awaitable[None]]
+CancelCheck = Callable[[], Awaitable[bool]]
+
+
+class CommandCancelledError(RuntimeError):
+    """The remote command was cancelled before it produced an exit status."""
 
 
 def _apply_host_key_policy(
@@ -93,7 +111,7 @@ class _ChannelCloser:
     """
 
     def __init__(self) -> None:
-        self._lock = Lock()
+        self._lock = threading.Lock()
         self._channel: paramiko.Channel | None = None
         self.closed = False
 
@@ -119,11 +137,123 @@ class _ChannelCloser:
             pass
 
 
+@dataclass(slots=True)
+class _ReadOutcome:
+    """Full text and failure captured by one stream reader thread."""
+
+    text: str = ""
+    error: BaseException | None = None
+
+
+class _StreamSink:
+    """Decode one remote stream incrementally and hand text to an awaited callback.
+
+    Each chunk is delivered with ``run_coroutine_threadsafe(...).result()``, so
+    the reader thread blocks until the callback finishes; a slow consumer
+    therefore backpressures the remote process instead of buffering unbounded
+    output. When ``redact_lines`` is set, text is buffered to line boundaries
+    and each complete line is passed through :func:`redact_command_line` before
+    it is streamed.
+    """
+
+    def __init__(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        callback: StreamCallback | None,
+        *,
+        redact_lines: bool,
+    ) -> None:
+        self._loop = loop
+        self._callback = callback
+        self._redact_lines = redact_lines
+        self._decoder = codecs.getincrementaldecoder("utf-8")(errors="ignore")
+        self._parts: list[str] = []
+        self._line_buf = ""
+
+    def feed(self, data: bytes) -> None:
+        text = self._decoder.decode(data)
+        self._parts.append(text)
+        self._forward(text)
+
+    def finish(self) -> str:
+        tail = self._decoder.decode(b"", final=True)
+        if tail:
+            self._parts.append(tail)
+            self._forward(tail)
+        if self._redact_lines and self._line_buf:
+            self._emit(redact_command_line(self._line_buf))
+            self._line_buf = ""
+        return "".join(self._parts)
+
+    def _forward(self, text: str) -> None:
+        if self._callback is None or not text:
+            return
+        if not self._redact_lines:
+            self._emit(text)
+            return
+        self._line_buf += text
+        *complete, self._line_buf = self._line_buf.split("\n")
+        if complete:
+            self._emit("".join(redact_command_line(line) + "\n" for line in complete))
+
+    def _emit(self, text: str) -> None:
+        if self._callback is None or not text:
+            return
+        asyncio.run_coroutine_threadsafe(self._callback(text), self._loop).result()
+
+
+def _drain(
+    read: Callable[[int], bytes],
+    sink: _StreamSink,
+    outcome: _ReadOutcome,
+    closer: _ChannelCloser,
+) -> None:
+    """Read one channel stream to EOF on a worker thread.
+
+    Any failure, including one raised by a streaming callback, is stored on
+    ``outcome`` and the channel is closed so the sibling reader and the exit
+    poll unblock. The caller thread re-raises it after both readers join.
+    """
+    try:
+        while data := read(_READ_CHUNK_BYTES):
+            sink.feed(data)
+        outcome.text = sink.finish()
+    except BaseException as exc:  # noqa: BLE001 -- re-raised on the caller thread
+        outcome.error = exc
+        closer.close()
+
+
+def _kill_remote(client: paramiko.SSHClient, command: str) -> None:
+    """Run a cleanup command on a fresh exec channel; failures are logged only."""
+    try:
+        _, stdout, _ = client.exec_command(command)
+        stdout.channel.settimeout(_KILL_TIMEOUT_S)
+        stdout.channel.recv_exit_status()
+    except (paramiko.SSHException, OSError, EOFError) as exc:
+        _log.warning("remote cancel command failed: %s", exc)
+
+
+async def _watch_for_cancel(cancel_requested: CancelCheck, closer: _ChannelCloser) -> None:
+    while not await cancel_requested():
+        await asyncio.sleep(_CANCEL_POLL_S)
+    closer.close()
+
+
+def _on_watcher_done(task: asyncio.Task[None], closer: _ChannelCloser) -> None:
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        # Fail closed: a broken cancel probe must not leave the remote run unbounded.
+        _log.error("cancel_requested failed; closing SSH channel", exc_info=exc)
+        closer.close()
+
+
 class SSHConnectionPool:
     """Reusable SSH connections keyed by (host, port, username) for one scan's lifetime."""
 
     def __init__(self) -> None:
-        self._lock = Lock()
+        self._lock = threading.Lock()
         self._pool: dict[tuple[str, int, str], paramiko.SSHClient] = {}
 
     def get_or_connect(self, payload: SSHIntegrationInput, connect_kwargs: dict) -> paramiko.SSHClient:
@@ -309,6 +439,71 @@ class SSHService:
         boundary that :meth:`_exec_command` applies inline in its
         error message.
         """
+        return await self._run_full(
+            integration,
+            command,
+            timeout_seconds=timeout_seconds,
+            pool=pool,
+            connect_timeout=connect_timeout,
+            on_stdout=None,
+            on_stderr=None,
+            cancel_requested=None,
+            cancel_command=None,
+        )
+
+    async def run_command_streaming(
+        self,
+        integration: dict | SSHIntegrationInput | RegisteredSystem,
+        command: str,
+        *,
+        timeout_seconds: float | None,
+        on_stdout: StreamCallback | None = None,
+        on_stderr: StreamCallback | None = None,
+        cancel_requested: CancelCheck | None = None,
+        cancel_command: str | None = None,
+        pool: SSHConnectionPool | None = None,
+        connect_timeout: float = 15.0,
+    ) -> tuple[str, str, int]:
+        """Execute ``command`` like :meth:`run_command_full`, streaming output live.
+
+        ``on_stdout`` receives raw decoded stdout chunks; ``on_stderr`` receives
+        stderr split on line boundaries and redacted with
+        :func:`redact_command_line`. Each callback is awaited before the next
+        read, so a slow consumer applies backpressure to the remote process.
+
+        ``cancel_requested`` is polled (zero-argument, returns bool). When it
+        returns True the channel is closed and, if ``cancel_command`` is given,
+        that command is run on a fresh exec channel to kill the remote process
+        group. The result is then :class:`CommandCancelledError`.
+
+        Returned stdout/stderr are the complete texts, as with
+        :meth:`run_command_full`.
+        """
+        return await self._run_full(
+            integration,
+            command,
+            timeout_seconds=timeout_seconds,
+            pool=pool,
+            connect_timeout=connect_timeout,
+            on_stdout=on_stdout,
+            on_stderr=on_stderr,
+            cancel_requested=cancel_requested,
+            cancel_command=cancel_command,
+        )
+
+    async def _run_full(
+        self,
+        integration: dict | SSHIntegrationInput | RegisteredSystem,
+        command: str,
+        *,
+        timeout_seconds: float | None,
+        pool: SSHConnectionPool | None,
+        connect_timeout: float,
+        on_stdout: StreamCallback | None,
+        on_stderr: StreamCallback | None,
+        cancel_requested: CancelCheck | None,
+        cancel_command: str | None,
+    ) -> tuple[str, str, int]:
         if isinstance(integration, dict):
             payload = self._to_ssh_integration(RegisteredSystem.model_validate(integration))
         elif isinstance(integration, RegisteredSystem):
@@ -324,14 +519,34 @@ class SSHService:
         # `timeout_seconds` remains an IDLE timeout enforced inside
         # _run_command_full_blocking via channel.settimeout + exit-status
         # polling, mirroring run_command exactly. No wall-clock wrapper.
+        loop = asyncio.get_running_loop()
         closer = _ChannelCloser()
+        sinks = (
+            _StreamSink(loop, on_stdout, redact_lines=False),
+            _StreamSink(loop, on_stderr, redact_lines=True),
+        )
+        watcher: asyncio.Task[None] | None = None
+        if cancel_requested is not None:
+            watcher = asyncio.create_task(_watch_for_cancel(cancel_requested, closer))
+            watcher.add_done_callback(lambda task: _on_watcher_done(task, closer))
         try:
             return await asyncio.to_thread(
-                self._run_command_full_blocking, payload, command, timeout_seconds, pool, connect_kwargs, closer,
+                self._run_command_full_blocking,
+                payload,
+                command,
+                timeout_seconds,
+                pool,
+                connect_kwargs,
+                closer,
+                sinks,
+                cancel_command,
             )
         except asyncio.CancelledError:
             closer.close()
             raise
+        finally:
+            if watcher is not None:
+                watcher.cancel()
 
     def _run_command_full_blocking(
         self,
@@ -341,17 +556,21 @@ class SSHService:
         pool: SSHConnectionPool | None,
         connect_kwargs: dict,
         closer: _ChannelCloser,
+        sinks: tuple[_StreamSink, _StreamSink],
+        cancel_command: str | None,
     ) -> tuple[str, str, int]:
         """Blocking SSH execution returning the full triple.
 
         Mirrors :meth:`_run_command_blocking` but calls
-        :meth:`_exec_command_full`, which does not raise on non-zero
+        :meth:`_exec_command_pump`, which does not raise on non-zero
         exit. Runs inside :func:`asyncio.to_thread`.
         """
         if pool is not None:
             client = pool.get_or_connect(payload, connect_kwargs)
             SSHService._verify_fingerprint(client, payload)
-            return SSHService._exec_command_full(client, command, timeout_seconds, payload, closer)
+            return SSHService._exec_command_pump(
+                client, command, timeout_seconds, payload, closer, sinks, cancel_command,
+            )
 
         client = paramiko.SSHClient()
         client.load_system_host_keys()
@@ -370,7 +589,9 @@ class SSHService:
             if transport is not None:
                 transport.set_keepalive(60)
             SSHService._verify_fingerprint(client, payload)
-            return SSHService._exec_command_full(client, command, timeout_seconds, payload, closer)
+            return SSHService._exec_command_pump(
+                client, command, timeout_seconds, payload, closer, sinks, cancel_command,
+            )
         except paramiko.AuthenticationException as exc:
             raise AuthenticationError(
                 f"SSH authentication failed for {payload.name} ({payload.username}@{payload.host}:{payload.port}). "
@@ -393,63 +614,91 @@ class SSHService:
             client.close()
 
     @staticmethod
-    def _exec_command_full(
+    def _exec_command_pump(
         client: paramiko.SSHClient,
         command: str,
         timeout_seconds: float | None,
         payload: SSHIntegrationInput,
         closer: _ChannelCloser,
+        sinks: tuple[_StreamSink, _StreamSink],
+        cancel_command: str | None,
     ) -> tuple[str, str, int]:
-        """Variant of :meth:`_exec_command` that returns (stdout, stderr, exit_code).
+        """Run ``command`` and return (stdout, stderr, exit_code), pumping both streams.
 
-        Non-zero remote exit codes are surfaced through the tuple instead
-        of being converted to :class:`UpstreamError`. Authentication,
-        host-key, and transport-level failures still raise. Stderr is
-        passed through :func:`redact_command_line` before being returned
-        so inline secrets remain masked at the C6 boundary.
+        stdout and stderr are drained concurrently on two daemon threads so a
+        full window on one stream cannot stall the other. Each chunk is handed
+        to its sink, which awaits the streaming callback. Non-zero remote exit
+        codes are surfaced through the tuple instead of being converted to
+        :class:`UpstreamError`. Authentication, host-key, and transport-level
+        failures still raise. Stderr is passed through
+        :func:`redact_command_line` before being returned so inline secrets
+        remain masked at the C6 boundary.
+
+        If the command started and did not complete (cancel, timeout, callback
+        failure), the channel is closed and ``cancel_command`` is run on a fresh
+        exec channel to stop the remote process group.
         """
+        started = False
+        completed = False
         try:
-            _, stdout, stderr = client.exec_command(command)
-            closer.register(stdout.channel)
+            _, stdout, _ = client.exec_command(command)
+            chan = stdout.channel
+            started = True
+            closer.register(chan)
             # IDLE timeout: paramiko resets the timer on every recv() so a
             # slow-but-steady stream (dissect on a huge disk) never trips it.
             # A genuine hang (zero bytes for N seconds) raises
             # builtins.TimeoutError which we translate into the platform
             # AILATimeoutError. Identical semantics to _exec_command.
             if timeout_seconds is not None:
-                stdout.channel.settimeout(timeout_seconds)
+                chan.settimeout(timeout_seconds)
             try:
-                # Read first, exit-status second -- reversing this order
-                # can deadlock: a remote that fills its stdout buffer will
-                # block waiting for a reader to drain the pipe before it
-                # can exit and emit an exit status.
-                output = stdout.read().decode("utf-8", errors="ignore")
-                error_output = stderr.read().decode("utf-8", errors="ignore")
+                stdout_outcome = _ReadOutcome()
+                stderr_outcome = _ReadOutcome()
+                readers = (
+                    threading.Thread(
+                        target=_drain,
+                        args=(chan.recv, sinks[0], stdout_outcome, closer),
+                        daemon=True,
+                    ),
+                    threading.Thread(
+                        target=_drain,
+                        args=(chan.recv_stderr, sinks[1], stderr_outcome, closer),
+                        daemon=True,
+                    ),
+                )
+                for reader in readers:
+                    reader.start()
+                for reader in readers:
+                    reader.join()
+                for outcome in (stdout_outcome, stderr_outcome):
+                    if outcome.error is not None:
+                        raise outcome.error
                 # Streams have closed. Poll for exit status with a tight
                 # 30s grace so a detached child that closed stdout without
                 # exiting cannot hang the caller indefinitely.
-                import time as _time
-                grace_deadline = _time.monotonic() + 30.0
-                while not stdout.channel.exit_status_ready():
+                grace_deadline = time.monotonic() + 30.0
+                while not chan.exit_status_ready():
                     if closer.closed:
-                        raise UpstreamError(
+                        raise CommandCancelledError(
                             f"SSH command for {payload.name} ({payload.host}) was cancelled; "
                             "its channel was closed before an exit status arrived."
                         )
-                    if _time.monotonic() > grace_deadline:
+                    if time.monotonic() > grace_deadline:
                         raise AILATimeoutError(
                             f"SSH command for {payload.name} ({payload.host}) closed "
                             f"its streams but did not emit an exit status within 30s "
                             f"(command likely detached a child). Command: {redact_command_line(command)[:200]}"
                         )
-                    _time.sleep(0.1)
-                exit_code = stdout.channel.recv_exit_status()
+                    time.sleep(0.1)
+                exit_code = chan.recv_exit_status()
             except builtins.TimeoutError as exc:
                 raise AILATimeoutError(
                     f"SSH command for {payload.name} ({payload.host}) idle "
                     f">{timeout_seconds}s with no output. Command: {redact_command_line(command)[:200]}"
                 ) from exc
-            return output, redact_command_line(error_output), exit_code
+            completed = True
+            return stdout_outcome.text, redact_command_line(stderr_outcome.text), exit_code
         except paramiko.AuthenticationException as exc:
             raise AuthenticationError(
                 f"SSH authentication failed for {payload.name} ({payload.username}@{payload.host}:{payload.port}). "
@@ -468,6 +717,12 @@ class SSHService:
                     "Add the host key to a trusted known_hosts file or configure known_hosts_path."
                 ) from exc
             raise UpstreamError(f"SSH transport error for {payload.name} ({payload.host}): {message}") from exc
+        finally:
+            if started and not completed:
+                if not closer.closed:
+                    closer.close()
+                if cancel_command is not None:
+                    _kill_remote(client, cancel_command)
 
     @staticmethod
     def _exec_command(

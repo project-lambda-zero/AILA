@@ -53,7 +53,7 @@ COMMAND="${1:-start}"
 : "${BACKEND_PORT:=8000}"
 : "${FRONTEND_PORT:=3000}"
 : "${AUDIT_MCP_PORT:=18822}"
-: "${WORKERS:=default vr vulnerability forensics malware pentest pentest_runtime forensics_readiness reporting}"
+: "${WORKERS:=default vr vulnerability forensics malware pentest pentest_runtime dynamic_pentest dynamic_pentest_runtime forensics_readiness reporting}"
 # Per-queue worker concurrency. The vr queue runs LLM-heavy investigations
 # with multi-minute LLM retries; one worker per queue serializes them
 # behind whichever investigation is mid-call. Default vr=5 so the queue
@@ -65,6 +65,8 @@ COMMAND="${1:-start}"
 : "${WORKER_COUNT_FORENSICS:=1}"
 : "${WORKER_COUNT_PENTEST:=1}"
 : "${WORKER_COUNT_PENTEST_RUNTIME:=1}"
+: "${WORKER_COUNT_DYNAMIC_PENTEST:=1}"
+: "${WORKER_COUNT_DYNAMIC_PENTEST_RUNTIME:=1}"
 : "${WORKER_COUNT_FORENSICS_READINESS:=1}"
 : "${WORKER_COUNT_REPORTING:=1}"
 : "${AUDIT_MCP_DIR:=../audit-mcp}"

@@ -51,9 +51,11 @@ import paramiko
 from ....exceptions import AILATimeoutError, AuthenticationError, UpstreamError, ValidationError
 from ...ssh import SSHService
 from ..contracts import (
+    CancelCheck,
     SandboxExecutionError,
     SandboxResult,
     SandboxSpec,
+    StreamCallback,
 )
 from .base import (
     HostWorkspace,
@@ -147,7 +149,15 @@ class FirecrackerBackend:
         ssh: SSHService,
         host_payload,
         cfg: Any,
+        on_stdout: StreamCallback | None = None,
+        on_stderr: StreamCallback | None = None,
+        cancel_requested: CancelCheck | None = None,
     ) -> SandboxResult:
+        if on_stdout is not None or on_stderr is not None or cancel_requested is not None:
+            raise SandboxExecutionError(
+                "firecracker backend does not support live output or cancel-requested streaming; "
+                "it reports only /work/result.json"
+            )
         if not cfg.rootfs_path:
             raise SandboxExecutionError(
                 "firecracker backend requires platform.sandbox_rootfs_path "

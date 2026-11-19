@@ -38,11 +38,13 @@ from ...exceptions import AILATimeoutError, AuthenticationError, UpstreamError, 
 from ..ssh import SSHService
 from .backends import FirecrackerBackend, NsjailBackend
 from .contracts import (
+    CancelCheck,
     SandboxBackend,
     SandboxExecutionError,
     SandboxResult,
     SandboxSpec,
     SandboxUnavailableError,
+    StreamCallback,
 )
 
 __all__ = ["SandboxBootstrapResult", "SandboxConfig", "SandboxProbe", "SandboxService"]
@@ -135,6 +137,28 @@ class SandboxService:
             FirecrackerBackend.name: FirecrackerBackend(),
         }
 
+    async def run_streaming(
+        self,
+        spec: SandboxSpec,
+        *,
+        on_stdout: StreamCallback | None = None,
+        on_stderr: StreamCallback | None = None,
+        cancel_requested: CancelCheck | None = None,
+    ) -> SandboxResult:
+        """Execute ``spec`` and push decoded stdout/stderr chunks to the callbacks as they arrive.
+
+        Same contract as :meth:`run`. ``cancel_requested`` is polled between
+        chunks; a True answer kills the guest and raises
+        :class:`SandboxExecutionError`. Backends that cannot stream (firecracker)
+        reject the call instead of silently dropping the callbacks.
+        """
+        return await self._run_dispatch(
+            spec,
+            on_stdout=on_stdout,
+            on_stderr=on_stderr,
+            cancel_requested=cancel_requested,
+        )
+
     async def run(self, spec: SandboxSpec) -> SandboxResult:
         """Execute ``spec`` in a sandbox and return the result.
 
@@ -144,6 +168,16 @@ class SandboxService:
         un-isolated on the local host: the sandbox is the primitive,
         not a nice-to-have.
         """
+        return await self._run_dispatch(spec)
+
+    async def _run_dispatch(
+        self,
+        spec: SandboxSpec,
+        *,
+        on_stdout: StreamCallback | None = None,
+        on_stderr: StreamCallback | None = None,
+        cancel_requested: CancelCheck | None = None,
+    ) -> SandboxResult:
         cfg = await self._load_config()
 
         if cfg.backend == "none" or not cfg.backend.strip():
@@ -183,9 +217,21 @@ class SandboxService:
             normalized.timeout_s,
             normalized.network,
         )
+        # Streaming kwargs are forwarded only when supplied, so backends that
+        # never stream keep their plain signature.
+        stream_kwargs: dict[str, Any] = {
+            name: value
+            for name, value in (
+                ("on_stdout", on_stdout),
+                ("on_stderr", on_stderr),
+                ("cancel_requested", cancel_requested),
+            )
+            if value is not None
+        }
         try:
             result = await backend.run(
                 normalized, ssh=self._ssh, host_payload=host_payload, cfg=cfg,
+                **stream_kwargs,
             )
         except SandboxExecutionError:
             # Backend already produced the right taxonomy; do not

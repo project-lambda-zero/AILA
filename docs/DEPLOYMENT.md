@@ -204,9 +204,9 @@ export WORKER_COUNT_FORENSICS=1
 export WORKER_COUNT_FORENSICS_READINESS=1
 export WORKER_COUNT_REPORTING=1
 
-# Expected worker heartbeats for health checks. The default covers all nine
+# Expected worker heartbeats for health checks. The default covers all eleven
 # full-stack queues; partial deployments must list only the queues they run.
-export AILA_PLATFORM_WORKER_HEALTH_TRACKS=default,vr,vulnerability,forensics,malware,pentest,pentest_runtime,forensics_readiness,reporting
+export AILA_PLATFORM_WORKER_HEALTH_TRACKS=default,vr,vulnerability,forensics,malware,pentest,pentest_runtime,dynamic_pentest,dynamic_pentest_runtime,forensics_readiness,reporting
 
 # Structured JSON logs (ELK / Datadog / CloudWatch)
 export AILA_JSON_LOGS=1
@@ -269,10 +269,12 @@ python -m aila worker -q forensics_readiness
 python -m aila worker -q reporting
 python -m aila worker -q pentest
 python -m aila worker -q pentest_runtime
+python -m aila worker -q dynamic_pentest
+python -m aila worker -q dynamic_pentest_runtime
 ```
 
 The Make targets (`make worker`, `make worker-vr`, `make worker-vuln`,
-`make worker-forensics`) wrap the same calls and also bring
+`make worker-forensics`, `make worker-dynamic`, and `make worker-dynamic-runtime`) wrap the same calls and also bring
 up the dev infra (`make dev-up`) + run `make db-init` if needed.
 
 Workers process:
@@ -282,6 +284,7 @@ Workers process:
 - VR investigation PDF, VR MASVS PDF, and vulnerability PDF rendering on the `reporting` queue (the POST submit returns 202 with `task_id`)
 - Analyzer-machine readiness checks and offline tool preparation on the `forensics_readiness` queue (202 with `task_id`)
 - Native pentest campaigns on `pentest`; runtime probes on `pentest_runtime`
+- Dynamic campaign workflows on `dynamic_pentest`; fenced, real sandbox actions on `dynamic_pentest_runtime`
 - Cross-cutting platform tasks on the `default` queue (cron automation, report explanations, etc.)
 
 Worker behavior:

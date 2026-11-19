@@ -797,6 +797,25 @@ HONESTY_WHITELIST = [
     ("pentest/services/process.py", "except_return_default", "except returns empty default"),
     ("pentest/services/process.py", "asyncio_in_module", "threading belongs"),
     ("pentest/services/pyrit_child.py", "asyncio_in_module", "threading belongs"),
+
+    # dynamic_pentest keeps the same named TaskQueue factory as every other
+    # module so ConfigRegistry + module_id binding is not scattered across API
+    # and workflow call sites. Its simple fingerprint/canonicalization helpers
+    # define stable persistence formats; the record loaders centralize the
+    # populate_existing read semantics required by lease/state transitions.
+    ("dynamic_pentest/_task_queue.py", "dynamic_task_queue", "consider inlining"),
+    ("dynamic_pentest/contracts/__init__.py", "canonical_scope_json", "consider inlining"),
+    ("dynamic_pentest/services/campaigns.py", "campaign_fingerprint", "consider inlining"),
+    ("dynamic_pentest/services/campaigns.py", "load_campaign", "consider inlining"),
+    ("dynamic_pentest/services/campaigns.py", "load_action", "consider inlining"),
+    # ModuleProtocol mandates this one-line override. Route and task-control
+    # imports stay deferred to preserve the module-standard import boundary and
+    # avoid workflow registration cycles during module discovery.
+    ("dynamic_pentest/module.py", "required_tools", "inlining"),
+    ("dynamic_pentest/module.py", "noqa_inline", "documented justification"),
+    # SSH reader threads capture every BaseException, close the channel, and
+    # re-raise it on the caller thread; this is not a silent broad catch.
+    ("platform/services/ssh.py", "noqa_inline", "documented justification"),
 ]
 
 

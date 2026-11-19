@@ -185,10 +185,10 @@ class PlatformConfigSchema(BaseModel):
     arq_keep_result_s: int = 3600
     # Comma-separated ARQ worker tracks that each need a live heartbeat for the
     # arq_worker health probe to report running. Env: AILA_PLATFORM_WORKER_HEALTH_TRACKS.
-    # Default is the nine tracks the full-stack compose deployment starts.
+    # Default is the eleven tracks the full-stack compose deployment starts.
     worker_health_tracks: str = (
         "default,vr,vulnerability,forensics,malware,pentest,pentest_runtime,"
-        "forensics_readiness,reporting"
+        "dynamic_pentest,dynamic_pentest_runtime,forensics_readiness,reporting"
     )
     progress_stream_maxlen: int = 1000
 
@@ -675,6 +675,16 @@ class PlatformConfigSchema(BaseModel):
     sandbox_jailer_bin: str = "jailer"
     sandbox_rootfs_path: str = ""
     sandbox_kernel_path: str = ""
+
+    # Encrypted evidence store (platform.evidence_store). Chunks are sealed with
+    # the master key from the secret keyring; only artifact metadata is in the DB.
+    # evidence_root_dir: directory holding ciphertext files. Empty resolves to
+    #   ``<secret_keyring_path parent>/evidence``.
+    # evidence_chunk_bytes: plaintext bytes per AES-GCM frame.
+    # evidence_max_artifact_bytes: hard cap on one appended evidence artifact.
+    evidence_root_dir: str = ""
+    evidence_chunk_bytes: int = 262_144
+    evidence_max_artifact_bytes: int = 268_435_456
 
     # Issue #161 consumer -- ``platform.routing_negative_retune``
     # automation action drains new ``router_negative_example`` rows
