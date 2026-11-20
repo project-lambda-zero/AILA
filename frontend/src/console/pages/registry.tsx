@@ -27,6 +27,7 @@ const VrPatternsPage = lazy(() => import("./VrPatternsPage"));
 const ForensicsProjectPage = lazy(() => import("./forensics/ForensicsProjectPage"));
 const PentestPage = lazy(() => import("./pentest/PentestPage"));
 const CampaignsPage = lazy(() => import("./pentest/campaigns/CampaignsPage"));
+const PentestLiveSettingsPage = lazy(() => import("./pentest/PentestLiveSettingsPage"));
 const VulnerabilityPage = lazy(() => import("./VulnerabilityPage"));
 const AdminDashboardPage = lazy(() => import("./AdminDashboardPage"));
 const OpsWarRoom = lazy(() => import("./OpsWarRoom"));
@@ -116,6 +117,7 @@ const BESPOKE = {
   "forensics:project": { title: "forensics \u00b7 project", render: (p) => <ForensicsProjectPage {...p} /> },
   "pentest:assessments": { title: "pentest \u00b7 assessments", render: (p) => <PentestPage {...p} /> },
   "pentest:campaigns": { title: "pentest \u00b7 campaigns", render: (p) => <CampaignsPage {...p} /> },
+  "pentest:live-settings": { title: "pentest \u00b7 live settings", render: (p) => <PentestLiveSettingsPage {...p} /> },
   "vulnerability:scan": { title: "vulnerability \u00b7 launch scan", render: (p) => <VulnerabilityPage {...p} /> },
   "vulnerability:findings": { title: "vulnerability \u00b7 findings", render: (p) => <VulnerabilityPage {...p} /> },
   "vulnerability:cves": { title: "vulnerability \u00b7 cve intelligence", render: (p) => <VulnerabilityPage {...p} section="cves" /> },
