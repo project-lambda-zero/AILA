@@ -19,7 +19,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- All live actions and harmless connectivity checks use one module-owned immutable Kali-based toolchain image. The image extends the maintained `pentest-kit` runtime with pinned BBOT and Schemathesis packages and fixed non-root Nuclei template and Playwright browser paths; action execution performs no installs, template updates, or image pulls.
+- All live actions and harmless connectivity checks use `ghcr.io/project-lambda-zero/aila-pentest@sha256:32beabb84be7c32e65fe523f9538b2ed2fffd0758cf38686b97c55bd6d8b6cde`, one module-owned immutable Kali-based toolchain image. The image extends the maintained `pentest-kit` runtime with pinned BBOT and Schemathesis packages and fixed non-root Nuclei template and Playwright browser paths; action execution performs no installs, template updates, or image pulls.
 - Networked OCI execution requires a per-run egress policy and a dedicated remote bridge with exact destination and port rules. Static OCI network selection was removed; bridge connectivity alone is not scope enforcement.
 - Tool output is sealed as raw evidence before parsing. Candidate scanner results do not become confirmed findings from tool or LLM text alone, and successful action completion is atomic with normalized write-back.
 - Campaign settlement wakes the planner after terminal actions. Replay and retest operations reopen completed campaigns, use idempotency keys, and preserve source action and evidence lineage.
