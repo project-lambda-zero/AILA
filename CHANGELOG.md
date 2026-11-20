@@ -14,7 +14,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Normalized assets, services, observations, coverage, exploration graphs, redacted HTTP traffic, and evidence-lineage findings are exposed through operator APIs and the campaign workspace. JSON, HTML, and SARIF reports use the same tenant-scoped records.
 - Authenticated HTTP, API, and browser workflows stage secret values only at execution. Durable manifests and audit records retain secret handles, and secret-use events are visible in campaign budgets.
 - Findings require explicit parser rules and independent corroboration or safe reproduction. Operators can schedule exact-manifest retests, linked traffic replay, and reproduction, or mark a finding false-positive with a recorded rationale.
-- An opt-in `tools/pentest/smoke_live_oci.py` lane verifies real remote SSH and DinD execution, immutable image pre-pulls, curated parsers, output hashes, and denied-port egress on an authorized disposable host.
+- An opt-in `tools/pentest/smoke_live_oci.py` lane verifies real remote SSH and DinD execution, immutable image pre-pulls, curated parsers, output hashes, and denied-port egress on an authorized disposable host. The dispatch-only `pentest-live-oci` workflow provides an ephemeral Ubuntu 24.04 loopback-SSH lab with explicit positive and denied-connection evidence.
 - `tools/pentest/smoke_local_image.py` and the `pentest-live-image` workflow build the unified image and execute representative real manifests against a disposable HTTP container without agentic workflow logic. The workflow publishes only after local smoke, attaches SBOM/provenance, and re-smokes the immutable published digest.
 
 ### Changed
