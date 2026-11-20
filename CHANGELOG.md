@@ -16,6 +16,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Findings require explicit parser rules and independent corroboration or safe reproduction. Operators can schedule exact-manifest retests, linked traffic replay, and reproduction, or mark a finding false-positive with a recorded rationale.
 - An opt-in `tools/pentest/smoke_live_oci.py` lane verifies real remote SSH and DinD execution, immutable image pre-pulls, curated parsers, output hashes, and denied-port egress on an authorized disposable host.
 - `tools/pentest/smoke_local_image.py` and the `pentest-live-image` workflow build the unified image and execute representative real manifests against a disposable HTTP container without agentic workflow logic. The workflow publishes only after local smoke, attaches SBOM/provenance, and re-smokes the immutable published digest.
+- Operators can rerun failed, timed-out, or cancelled live actions as new actions with exact manifest and lineage preservation. Reruns repeat approval, aggregate-budget, and queue admission instead of bypassing them.
+- Notification channels support validated editing and real bounded test deliveries. Failed and permanently failed deliveries support manual retry through the configured transport with the existing five-attempt ceiling and delivery audit records.
 
 ### Changed
 
