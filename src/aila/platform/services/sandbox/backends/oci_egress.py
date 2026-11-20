@@ -94,6 +94,41 @@ async def _checked(
         raise SandboxExecutionError(f"OCI egress {what} exited {exit_code}: {stderr.strip()[:300]}")
 
 
+async def _allow_docker_bridge_forward(
+    ssh: SSHService,
+    host_payload: Any,
+    *,
+    runtime: str,
+    nft: str,
+    sudo: str,
+    bridge: str,
+) -> int | None:
+    """Let Docker forward only traffic already filtered by this run's inet table.
+
+    Docker's inter-bridge isolation runs after the per-run inet base chain and
+    otherwise drops approved traffic to targets on another bridge. The returned
+    handle makes the global-chain addition exactly removable. Podman/netavark
+    does not have Docker's DOCKER-USER chain and needs no such rule.
+    """
+    if runtime.rsplit("/", 1)[-1] != "docker":
+        return None
+    command = (
+        f"{shlex.quote(sudo)} -n {shlex.quote(nft)} --echo --handle "
+        f"add rule ip filter DOCKER-USER iifname {shlex.quote(bridge)} accept"
+    )
+    stdout, stderr, exit_code = await _remote(
+        ssh, host_payload, command, what="Docker forward rule install",
+    )
+    if exit_code != 0:
+        raise SandboxExecutionError(
+            f"OCI egress Docker forward rule install exited {exit_code}: {stderr.strip()[:300]}"
+        )
+    match = re.search(r"# handle ([0-9]+)", stdout)
+    if match is None:
+        raise SandboxExecutionError("OCI egress Docker forward rule install returned no rule handle")
+    return int(match.group(1))
+
+
 @asynccontextmanager
 async def scoped_oci_egress(
     ssh: SSHService,
@@ -112,6 +147,7 @@ async def scoped_oci_egress(
     qsudo, qnft, qip = shlex.quote(sudo), shlex.quote(nft), shlex.quote(ip)
     network_attempted = False
     network_created = False
+    docker_forward_handle: int | None = None
     cleanup_errors: list[str] = []
     try:
         network_attempted = True
@@ -133,9 +169,25 @@ async def scoped_oci_egress(
             f"{qsudo} -n {qnft} -f - <<'{marker}'\n{script}{marker}",
             what="firewall install",
         )
+        docker_forward_handle = await _allow_docker_bridge_forward(
+            ssh, host_payload, runtime=runtime, nft=nft, sudo=sudo, bridge=bridge,
+        )
         yield network
     finally:
         failed_before_cleanup = sys.exc_info()[0] is not None
+        if docker_forward_handle is not None:
+            try:
+                _, stderr, exit_code = await _remote(
+                    ssh,
+                    host_payload,
+                    f"{qsudo} -n {qnft} delete rule ip filter DOCKER-USER "
+                    f"handle {docker_forward_handle}",
+                    what="Docker forward rule cleanup",
+                )
+                if exit_code != 0:
+                    cleanup_errors.append(f"Docker forward rule cleanup: {stderr.strip()[:200]}")
+            except SandboxExecutionError as exc:
+                cleanup_errors.append(str(exc))
         if network_created:
             try:
                 _, stderr, exit_code = await _remote(
