@@ -53,6 +53,14 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         if request.method != "POST":
             return await call_next(request)
 
+        # Live campaign creation owns team-scoped fingerprint checks in Postgres. A generic
+        # response cache would hide changed-body conflicts and freeze the initial 202 status.
+        path = request.url.path
+        if path == "/pentest/live/campaigns" or (
+            path.startswith("/pentest/live/templates/") and path.endswith("/campaigns")
+        ):
+            return await call_next(request)
+
         idem_key = request.headers.get("Idempotency-Key")
         if not idem_key:
             return await call_next(request)

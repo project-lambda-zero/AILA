@@ -3,7 +3,15 @@ credential so a replayed Idempotency-Key cannot read another tenant's
 cached response (issue #57)."""
 from __future__ import annotations
 
-from aila.api.middleware.idempotency import _IDEMPOTENCY_PREFIX, _derive_cache_key
+from types import SimpleNamespace
+
+import pytest
+
+from aila.api.middleware.idempotency import (
+    _IDEMPOTENCY_PREFIX,
+    IdempotencyMiddleware,
+    _derive_cache_key,
+)
 
 
 def test_cross_credential_keys_differ() -> None:
@@ -29,3 +37,20 @@ def test_raw_credential_not_embedded() -> None:
 def test_cookie_credential_also_scopes() -> None:
     # Cookie-based auth is scoped the same way as bearer auth.
     assert _derive_cache_key("k1", "session=aaa") != _derive_cache_key("k1", "session=bbb")
+
+
+@pytest.mark.asyncio
+async def test_live_campaign_create_uses_route_fingerprint_not_response_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    middleware = IdempotencyMiddleware(app=None)
+    request = SimpleNamespace(method="POST", url=SimpleNamespace(path="/pentest/live/campaigns"))
+    expected = object()
+
+    def fail_if_redis_is_checked() -> None:
+        raise AssertionError("Live route idempotency must run before the generic Redis cache")
+
+    async def call_next(received: object) -> object:
+        assert received is request
+        return expected
+
+    monkeypatch.setattr("aila.api.middleware.idempotency.pool_available", fail_if_redis_is_checked)
+    assert await middleware.dispatch(request, call_next) is expected
