@@ -102,19 +102,23 @@ async def _allow_docker_bridge_forward(
     nft: str,
     sudo: str,
     bridge: str,
-) -> int | None:
+) -> tuple[int, int] | None:
     """Let Docker forward only traffic already filtered by this run's inet table.
 
     Docker's inter-bridge isolation runs after the per-run inet base chain and
-    otherwise drops approved traffic to targets on another bridge. The returned
-    handle makes the global-chain addition exactly removable. Podman/netavark
-    does not have Docker's DOCKER-USER chain and needs no such rule.
+    otherwise drops approved traffic to targets on another bridge, including
+    the established response. The returned handles make the two global-chain
+    additions exactly removable. Podman/netavark has no DOCKER-USER chain.
     """
     if runtime.rsplit("/", 1)[-1] != "docker":
         return None
+    marker = f"AILA_DOCKER_{bridge}"
+    quoted_bridge = shlex.quote(bridge)
     command = (
-        f"{shlex.quote(sudo)} -n {shlex.quote(nft)} --echo --handle "
-        f"insert rule ip filter DOCKER-USER iifname {shlex.quote(bridge)} accept"
+        f"{shlex.quote(sudo)} -n {shlex.quote(nft)} --echo --handle -f - <<'{marker}'\n"
+        f"insert rule ip filter DOCKER-USER iifname {quoted_bridge} accept\n"
+        f"insert rule ip filter DOCKER-USER oifname {quoted_bridge} "
+        f"ct state established,related accept\n{marker}"
     )
     stdout, stderr, exit_code = await _remote(
         ssh, host_payload, command, what="Docker forward rule install",
@@ -123,10 +127,10 @@ async def _allow_docker_bridge_forward(
         raise SandboxExecutionError(
             f"OCI egress Docker forward rule install exited {exit_code}: {stderr.strip()[:300]}"
         )
-    match = re.search(r"# handle ([0-9]+)", stdout)
-    if match is None:
-        raise SandboxExecutionError("OCI egress Docker forward rule install returned no rule handle")
-    return int(match.group(1))
+    handles = re.findall(r"# handle ([0-9]+)", stdout)
+    if len(handles) != 2:
+        raise SandboxExecutionError("OCI egress Docker forward rule install did not return two rule handles")
+    return int(handles[0]), int(handles[1])
 
 
 @asynccontextmanager
@@ -147,7 +151,7 @@ async def scoped_oci_egress(
     qsudo, qnft, qip = shlex.quote(sudo), shlex.quote(nft), shlex.quote(ip)
     network_attempted = False
     network_created = False
-    docker_forward_handle: int | None = None
+    docker_forward_handles: tuple[int, int] | None = None
     cleanup_errors: list[str] = []
     try:
         network_attempted = True
@@ -169,25 +173,25 @@ async def scoped_oci_egress(
             f"{qsudo} -n {qnft} -f - <<'{marker}'\n{script}{marker}",
             what="firewall install",
         )
-        docker_forward_handle = await _allow_docker_bridge_forward(
+        docker_forward_handles = await _allow_docker_bridge_forward(
             ssh, host_payload, runtime=runtime, nft=nft, sudo=sudo, bridge=bridge,
         )
         yield network
     finally:
         failed_before_cleanup = sys.exc_info()[0] is not None
-        if docker_forward_handle is not None:
-            try:
-                _, stderr, exit_code = await _remote(
-                    ssh,
-                    host_payload,
-                    f"{qsudo} -n {qnft} delete rule ip filter DOCKER-USER "
-                    f"handle {docker_forward_handle}",
-                    what="Docker forward rule cleanup",
-                )
-                if exit_code != 0:
-                    cleanup_errors.append(f"Docker forward rule cleanup: {stderr.strip()[:200]}")
-            except SandboxExecutionError as exc:
-                cleanup_errors.append(str(exc))
+        if docker_forward_handles is not None:
+            for handle in docker_forward_handles:
+                try:
+                    _, stderr, exit_code = await _remote(
+                        ssh,
+                        host_payload,
+                        f"{qsudo} -n {qnft} delete rule ip filter DOCKER-USER handle {handle}",
+                        what="Docker forward rule cleanup",
+                    )
+                    if exit_code != 0:
+                        cleanup_errors.append(f"Docker forward rule cleanup: {stderr.strip()[:200]}")
+                except SandboxExecutionError as exc:
+                    cleanup_errors.append(str(exc))
         if network_created:
             try:
                 _, stderr, exit_code = await _remote(

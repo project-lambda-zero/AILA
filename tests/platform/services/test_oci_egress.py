@@ -42,8 +42,11 @@ class _SSH:
                 if needle == self.transport_fail:
                     raise OSError("ssh transport lost")
                 return "", f"forced {needle}", 1
-        if "--echo --handle insert rule ip filter DOCKER-USER" in command:
-            return "add rule ip filter DOCKER-USER accept # handle 77\n", "", 0
+        if "--echo --handle -f -" in command and "insert rule ip filter DOCKER-USER" in command:
+            return (
+                "insert rule ip filter DOCKER-USER accept # handle 77\n"
+                "insert rule ip filter DOCKER-USER accept # handle 78\n"
+            ), "", 0
         return "", "", 0
 
 
@@ -94,10 +97,13 @@ async def test_success_installs_before_body_and_cleans_in_reverse_order() -> Non
     assert "network create" in ssh.commands[0]
     assert "ip link show" in ssh.commands[1]
     assert "nft -f -" in ssh.commands[2]
-    assert "--echo --handle insert rule ip filter DOCKER-USER" in ssh.commands[3]
+    assert "--echo --handle -f -" in ssh.commands[3]
+    assert "insert rule ip filter DOCKER-USER" in ssh.commands[3]
+    assert "oifname" in ssh.commands[3] and "established,related" in ssh.commands[3]
     assert "delete rule ip filter DOCKER-USER handle 77" in ssh.commands[4]
-    assert "delete table inet" in ssh.commands[5]
-    assert "network rm" in ssh.commands[6]
+    assert "delete rule ip filter DOCKER-USER handle 78" in ssh.commands[5]
+    assert "delete table inet" in ssh.commands[6]
+    assert "network rm" in ssh.commands[7]
 
 
 @pytest.mark.asyncio
