@@ -34,6 +34,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The campaign setup console now submits complete target-specific scope, exclusions, capabilities, credential handles, approval policy, and aggregate budgets while preserving the empty harmless-connectivity workflow and retry idempotency.
 - Initial Nuclei campaigns use the same five explicitly curated safe template defaults as planner follow-ups; direct custom or missing template selection remains rejected.
 - Live ZAP manifests use the supported `-dir /work` option, allowing arbitrary non-root execution without writing to the packaged ZAP directory.
+- Generated TCP-connect manifests contain valid Python loop syntax instead of an invalid semicolon-prefixed compound statement.
 - JSON and HTML campaign reports include bounded redacted traffic metadata, evidence hashes, artifact lineage, replay ancestry, and secret-header canary protection without embedding captured bodies.
 
 ### Upgrade notes
