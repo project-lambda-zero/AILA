@@ -35,7 +35,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Initial Nuclei campaigns use the same five explicitly curated safe template defaults as planner follow-ups; direct custom or missing template selection remains rejected.
 - Live ZAP manifests use the supported `-dir /work` option, allowing arbitrary non-root execution without writing to the packaged ZAP directory.
 - Generated TCP-connect manifests contain valid Python loop syntax instead of an invalid semicolon-prefixed compound statement.
-- Nmap parsing accepts only the standard Nmap 1.04/1.05 public DTD declaration while continuing to reject custom DTDs and entities.
+- Nmap parsing accepts only the exact current `nmaprun` DOCTYPE or legacy Nmap 1.04/1.05 public DTD declaration while continuing to reject custom DTDs and entities.
 - JSON and HTML campaign reports include bounded redacted traffic metadata, evidence hashes, artifact lineage, replay ancestry, and secret-header canary protection without embedding captured bodies.
 
 ### Upgrade notes
