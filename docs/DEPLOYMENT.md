@@ -217,7 +217,7 @@ VR / audit-mcp dev knobs -- lives in [`docs/ENV_VARS.md`](ENV_VARS.md).
 
 ### Optional remote OCI sandbox
 
-The OCI backend executes an immutable caller-supplied image on a remote Linux host through the existing `SandboxService` and SSH transport. It does not select or bundle tool images.
+The OCI backend executes an immutable caller-supplied image on a remote Linux host through the existing `SandboxService` and SSH transport. The generic backend does not select tool images; the live pentest module owns its fixed runtime reference.
 
 ```bash
 export AILA_PLATFORM_SANDBOX_BACKEND=oci
@@ -226,11 +226,11 @@ export AILA_PLATFORM_SANDBOX_SSH_USER=aila-sandbox
 export AILA_PLATFORM_SANDBOX_OCI_BIN=docker
 ```
 
-The SSH identity must be unprivileged and allowed to run the selected Docker or Podman binary. Pre-pull every approved `image@sha256:<digest>` on that host; execution never pulls an image automatically. Runs use that identity's numeric UID/GID inside the container, an owner-only workspace, a read-only root filesystem, dropped capabilities, no-new-privileges, and explicit CPU, memory, PID, timeout, and output ceilings.
+The SSH identity must be unprivileged and allowed to run the selected Docker or Podman binary. Pre-pull the module's approved live `image@sha256:<digest>` on that host; execution never pulls an image automatically. Runs use that identity's numeric UID/GID inside the container, an owner-only workspace, a read-only root filesystem, dropped capabilities, no-new-privileges, and explicit CPU, memory, PID, timeout, and output ceilings.
 
 Network-disabled runs use `--network none`. Every networked OCI run requires an exact `SandboxEgressPolicy`; there is no shared unrestricted bridge setting. The remote host must provide Docker or Podman bridge networking, `ip`, `nft`, and a narrowly pre-provisioned passwordless `sudo -n` rule allowing the sandbox identity to install and delete AILA's per-run nftables table. AILA creates one bridge per run, verifies its expected interface, allows only the policy's resolved IP/CIDR and port/protocol destinations, drops other forwarding and bridge-to-host input, and removes the table and bridge afterward. Missing tools, privilege, bridge verification, or firewall installation fails closed. Exact resolved hostname-to-IP mappings also become container `--add-host` entries, so name resolution and firewall identity share the same bindings.
 
-Live pentest actions use module-curated immutable images and argv; planners cannot supply images, commands, targets, or firewall policy. OCI connectivity is never treated as campaign authorization. There is no local Docker fallback and no Docker socket mount. The runtime force-removes its named container after completion, cancellation, callback failure, or transport failure.
+Live pentest actions use one module-curated immutable image and fixed argv; planners cannot supply images, commands, targets, or firewall policy. OCI connectivity is never treated as campaign authorization. There is no local Docker fallback and no Docker socket mount. The runtime force-removes its named container after completion, cancellation, callback failure, or transport failure.
 
 ---
 

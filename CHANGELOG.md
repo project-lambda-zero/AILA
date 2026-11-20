@@ -18,6 +18,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- All live actions and harmless connectivity checks use one module-owned immutable Kali-based toolchain image. The image extends the maintained `pentest-kit` runtime with pinned BBOT and Schemathesis packages and fixed non-root Nuclei template and Playwright browser paths; action execution performs no installs, template updates, or image pulls.
 - Networked OCI execution requires a per-run egress policy and a dedicated remote bridge with exact destination and port rules. Static OCI network selection was removed; bridge connectivity alone is not scope enforcement.
 - Tool output is sealed as raw evidence before parsing. Candidate scanner results do not become confirmed findings from tool or LLM text alone, and successful action completion is atomic with normalized write-back.
 - Campaign settlement wakes the planner after terminal actions. Replay and retest operations reopen completed campaigns, use idempotency keys, and preserve source action and evidence lineage.
@@ -37,7 +38,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Apply Alembic migrations `160_pentest_live_merge` and `161_pentest_live_domain`; the required head is `161_pentest_live_domain`. Migration 160 renames live runtime tables and 161 adds normalized domain, evidence, traffic, report, and 64-bit aggregate-budget records.
 - Replace former dynamic worker tracks with `pentest` and `pentest_runtime`. Update `AILA_PLATFORM_WORKER_HEALTH_TRACKS` for partial deployments and restart API and worker processes.
-- Remove `AILA_PLATFORM_SANDBOX_OCI_NETWORK`. Configure a remote Linux Docker or Podman host through `SSHService`, pre-pull every approved immutable `name@sha256:<digest>` image, and provide remote `ip`, `nft`, and passwordless `sudo -n` for per-run egress.
+- Remove `AILA_PLATFORM_SANDBOX_OCI_NETWORK`. Configure a remote Linux Docker or Podman host through `SSHService`, pre-pull the module-owned immutable live `name@sha256:<digest>` image, and provide remote `ip`, `nft`, and passwordless `sudo -n` for per-run egress.
 - Real remote SSH/OCI execution is not implied by unit or API tests. Run the opt-in smoke lane and a real PostgreSQL, Redis, API, worker, and browser smoke against authorized infrastructure before enabling production campaigns.
 
 ## [0.6.127] - 2026-11-19 -- Image-agnostic remote OCI sandbox execution
