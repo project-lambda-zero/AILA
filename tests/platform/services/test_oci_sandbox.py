@@ -71,7 +71,7 @@ class _OciSSH:
             return self.id_result
         if " image inspect " in command:
             return self.image_result
-        if "--echo --handle add rule ip filter DOCKER-USER" in command:
+        if "--echo --handle insert rule ip filter DOCKER-USER" in command:
             return "add rule ip filter DOCKER-USER accept # handle 77\n", "", 0
         if "--kill-after=" in command:
             return self.run_result

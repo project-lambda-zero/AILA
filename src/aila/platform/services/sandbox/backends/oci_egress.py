@@ -114,7 +114,7 @@ async def _allow_docker_bridge_forward(
         return None
     command = (
         f"{shlex.quote(sudo)} -n {shlex.quote(nft)} --echo --handle "
-        f"add rule ip filter DOCKER-USER iifname {shlex.quote(bridge)} accept"
+        f"insert rule ip filter DOCKER-USER iifname {shlex.quote(bridge)} accept"
     )
     stdout, stderr, exit_code = await _remote(
         ssh, host_payload, command, what="Docker forward rule install",
