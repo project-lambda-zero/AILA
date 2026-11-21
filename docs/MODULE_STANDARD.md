@@ -581,6 +581,8 @@ class ModuleRouteSpec:
     tool_keys: tuple[str, ...] = ()            # tool keys this module registers
     config_namespace: str | None = None         # config namespace owned by module
     payload_type: str | None = None             # discriminated-union payload type name
+    auth_required: bool = True                  # require platform authentication
+    idempotency_exempt_post_paths: tuple[str, ...] = ()  # non-replayable POST templates
 ```
 
 ### Field Reference
@@ -593,6 +595,16 @@ class ModuleRouteSpec:
 | `config_namespace` | `str \| None` | No | Config namespace this module owns, surfaced via `GET/PUT /config`. `None` if the module has no config. |
 | `payload_type` | `str \| None` | No | Name of the discriminated-union payload type (optional). |
 | `auth_required` | `bool` | No | When False, skip the global `require_user_or_api_key` dependency. Default `True`. |
+| `idempotency_exempt_post_paths` | `tuple[str, ...]` | No | POST templates, relative to `prefix`, whose responses must not be replayed from the idempotency cache. `{name}` matches one path segment. |
+
+### Worker tracks
+
+Modules that enqueue background work declare every ARQ track through
+`ModuleProtocol.worker_tracks`. The platform health probe resolves the
+`platform.worker_health_tracks` value `auto` from these declarations. Platform
+configuration and middleware must not enumerate module-specific track or route
+names. Deployments can override `worker_health_tracks` with an explicit
+comma-separated list when deliberately running a subset.
 
 ### Example: Vulnerability Module
 

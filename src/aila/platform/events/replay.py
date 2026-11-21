@@ -5,6 +5,8 @@ missed or trimmed wake-up delays delivery until the poll interval and never
 drops an event. Each connection buffers at most ``queue_maxsize`` frames. A
 consumer that falls that far behind receives an explicit ``resync`` frame and the
 stream ends, so the client reconnects with Last-Event-ID and resumes without a gap.
+A cursor whose successor has been pruned from the outbox receives a terminal
+``resync`` frame with reason ``cursor_expired``; the client must restart from the beginning.
 """
 
 from __future__ import annotations
@@ -17,12 +19,14 @@ from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 
 from redis.exceptions import RedisError
+from sqlalchemy import func
 from sqlalchemy.exc import SQLAlchemyError
+from sqlmodel import select
 
 from aila.platform.events.outbox import MAX_READ_LIMIT, campaign_event_redis_key, read_events
 from aila.platform.services.redis_pool import get_redis, pool_available
 from aila.storage.database import async_session_scope
-from aila.storage.event_models import EventEnvelope
+from aila.storage.event_models import EventEnvelope, EventOutboxRecord
 
 __all__ = [
     "HEARTBEAT_FRAME",
@@ -36,6 +40,7 @@ _log = logging.getLogger(__name__)
 
 HEARTBEAT_FRAME = ": heartbeat\n\n"
 RESYNC_FRAME = 'event: resync\ndata: {"reason": "slow_consumer"}\n\n'
+RESYNC_CURSOR_EXPIRED_FRAME = 'event: resync\ndata: {"reason": "cursor_expired"}\n\n'
 REPLAY_UNAVAILABLE_FRAME = 'event: error\ndata: {"reason": "replay_unavailable"}\n\n'
 
 MAX_CURSOR_DIGITS = 19
@@ -97,6 +102,24 @@ async def _read_page(stream_id: str, after_sequence: int, page_size: int) -> lis
         )
 
 
+async def _retention_floor(stream_id: str) -> int | None:
+    """Lowest sequence still retained for the stream, or None when no rows remain."""
+    async with async_session_scope() as session:
+        statement = select(func.min(EventOutboxRecord.sequence)).where(EventOutboxRecord.stream_id == stream_id)
+        return (await session.exec(statement)).one()
+
+
+def _cursor_expired(cursor: int, floor: int | None) -> bool:
+    """A cursor resumes only if the event after it is still retained.
+
+    Cursor 0 means "from the start" and never expires. Otherwise the cursor is valid
+    when ``cursor >= floor - 1``, because the event at ``floor`` is the first retained one.
+    """
+    if cursor == 0:
+        return False
+    return floor is None or cursor < floor - 1
+
+
 def _as_text(value: str | bytes) -> str:
     return value.decode() if isinstance(value, bytes) else value
 
@@ -131,6 +154,19 @@ def _drain(queue: asyncio.Queue[_Frame]) -> None:
         queue.get_nowait()
 
 
+def _put_cursor_expired(queue: asyncio.Queue[_Frame]) -> None:
+    """Queue the terminal cursor-expired frame after frames already buffered.
+
+    Buffered frames are kept whenever there is room. Only a full queue is drained,
+    as with the slow-consumer path, so the terminal frame always lands.
+    """
+    try:
+        queue.put_nowait(_Frame(RESYNC_CURSOR_EXPIRED_FRAME, terminal=True))
+    except asyncio.QueueFull:
+        _drain(queue)
+        queue.put_nowait(_Frame(RESYNC_CURSOR_EXPIRED_FRAME, terminal=True))
+
+
 async def _produce(
     stream_id: str,
     after_sequence: int,
@@ -143,6 +179,12 @@ async def _produce(
     try:
         while True:
             envelopes = await _read_page(stream_id, cursor, page_size)
+            # Read before the floor: pruning only removes the lowest sequences, so a gap
+            # visible to the read is still visible to the later floor query.
+            floor = await _retention_floor(stream_id)
+            if _cursor_expired(cursor, floor):
+                _put_cursor_expired(queue)
+                return
             for envelope in envelopes:
                 try:
                     queue.put_nowait(_Frame(format_event_frame(envelope), terminal=False))

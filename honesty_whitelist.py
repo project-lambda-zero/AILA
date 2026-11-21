@@ -481,6 +481,11 @@ HONESTY_WHITELIST = [
     # pentest uses the same canonical ConfigRegistry + module_id factory;
     # keeping it named also lets API tests inject a recording queue.
     ("pentest/_task_queue.py", "default_task_queue", "consider inlining"),
+    # Module declaration helpers centralize discovery and aggregation for worker
+    # health and idempotency middleware; duplicating the comprehensions at each
+    # caller would create two copies of the declaration contract.
+    ("platform/modules/builtin.py", "declared_worker_tracks", "consider inlining"),
+    ("platform/modules/builtin.py", "declared_idempotency_exempt_post_paths", "consider inlining"),
     # _template/_task_queue.default_task_queue: same public factory shape
     # as vr / malware / forensics; the scaffold ships it so a copier's
     # ``from aila.modules.<mod>._task_queue import default_task_queue``

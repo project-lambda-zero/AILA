@@ -10,18 +10,20 @@ from typing import Any
 
 import pytest
 from redis.exceptions import RedisError
+from sqlalchemy import delete
 
 import aila.platform.events.replay as replay_module
 from aila.platform.events.outbox import append_event, create_stream
 from aila.platform.events.replay import (
     HEARTBEAT_FRAME,
+    RESYNC_CURSOR_EXPIRED_FRAME,
     InvalidEventCursorError,
     format_event_frame,
     parse_last_event_id,
     stream_campaign_events,
 )
 from aila.storage.database import async_session_scope
-from aila.storage.event_models import EventEnvelope
+from aila.storage.event_models import EventEnvelope, EventOutboxRecord
 
 STREAM = "replay-stream"
 TEAM = "team-r"
@@ -46,6 +48,18 @@ async def _append(count: int) -> None:
                 event_type="step.recorded",
                 payload={"index": index},
             )
+        await session.commit()
+
+
+async def _prune_below(sequence: int) -> None:
+    """Simulate retention: drop outbox rows below ``sequence``."""
+    async with async_session_scope() as session:
+        await session.exec(
+            delete(EventOutboxRecord).where(
+                EventOutboxRecord.stream_id == STREAM,
+                EventOutboxRecord.sequence < sequence,
+            )
+        )
         await session.commit()
 
 
@@ -228,3 +242,63 @@ async def test_idle_stream_emits_heartbeat(test_db: None, no_wakeup: None) -> No
         assert await anext(stream) == HEARTBEAT_FRAME
     finally:
         await stream.aclose()
+
+
+async def test_cursor_just_before_retained_floor_resumes_without_expiry(
+    test_db: None, no_wakeup: None
+) -> None:
+    await _new_stream()
+    await _append(5)
+    await _prune_below(3)
+
+    stream = stream_campaign_events(
+        stream_id=STREAM,
+        after_sequence=2,
+        page_size=10,
+        queue_maxsize=20,
+        poll_interval_s=0.01,
+        heartbeat_interval_s=0.05,
+    )
+    try:
+        frames = await _collect_events(stream, 3)
+    finally:
+        await stream.aclose()
+
+    assert [_sequence_of(frame) for frame in frames] == [3, 4, 5]
+    assert all(RESYNC_MARKER not in frame for frame in frames)
+
+
+async def test_cursor_before_retained_floor_is_expired(test_db: None, no_wakeup: None) -> None:
+    await _new_stream()
+    await _append(5)
+    await _prune_below(3)
+
+    stream = stream_campaign_events(
+        stream_id=STREAM,
+        after_sequence=1,
+        page_size=10,
+        queue_maxsize=20,
+        poll_interval_s=0.01,
+        heartbeat_interval_s=5.0,
+    )
+    frames = [frame async for frame in stream]
+
+    assert frames == [RESYNC_CURSOR_EXPIRED_FRAME]
+
+
+async def test_cursor_on_stream_without_retained_rows_is_expired(
+    test_db: None, no_wakeup: None
+) -> None:
+    await _new_stream()
+
+    stream = stream_campaign_events(
+        stream_id=STREAM,
+        after_sequence=3,
+        page_size=10,
+        queue_maxsize=20,
+        poll_interval_s=0.01,
+        heartbeat_interval_s=5.0,
+    )
+    frames = [frame async for frame in stream]
+
+    assert frames == [RESYNC_CURSOR_EXPIRED_FRAME]
