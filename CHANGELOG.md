@@ -5,6 +5,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.129] - 2026-11-21 -- Free-form autonomous live pentest missions
+
+### Added
+
+- Live campaign creation now centers on a free-form mission brief, authorization, targets, exclusions, credentials, approval policy, model routes, and aggregate safeguards. The planner selects tools and orders work without an operator-selected action or setup wizard.
+- Campaigns use platform reasoning graph snapshots, branch-pool fan-out and fan-in, and the shared investigation ledger. Worker results become bounded sibling context for subsequent planning rounds, and independent follow-up actions continue from shared evidence.
+- Alembic migration `170_pentest_platform_swarm` adds durable platform branch records and coordinator/action branch links.
+
+### Changed
+
+- Campaign creation seeds authorized root assets without creating a fixed first action. Autonomous planning is mandatory, root proposals can run without a parent action, and each admitted action receives a platform worker branch before runtime dispatch.
+- Campaign cancellation now covers every nonterminal action. Campaigns with no actions can be resumed into planning or cancelled cleanly.
+
+### Upgrade notes
+
+- Apply Alembic migration `170_pentest_platform_swarm` and restart the API, frontend, and pentest workers. Existing `action` fields in campaign-create requests are rejected; clients must submit `scope.objective` and leave tool selection to the planner.
+
 ## [0.6.128] - 2026-11-20 -- Unified AI assessments and evidence-backed live pentest campaigns
 
 ### Added
