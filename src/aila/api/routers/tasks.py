@@ -41,7 +41,6 @@ from aila.api.constants import (
     AUDIT_ACTION_TASK_CANCEL,
     AUDIT_ACTION_TASK_RESUME,
     AUDIT_STAGE_TASK,
-    AUDIT_STATUS_COMPLETED,
     MEDIA_TYPE_SSE,
     MODULE_ID_PLATFORM,
     ROLE_ADMIN,
@@ -57,6 +56,9 @@ from aila.api.schemas.tasks import (
 )
 from aila.api.schemas.transitions import TransitionView
 from aila.config import get_settings
+from aila.platform.contracts import JsonObject
+from aila.platform.contracts.audit import AUDIT_STATUS_COMPLETED
+from aila.platform.modules.protocol import TaskControlContext
 from aila.platform.services.audit import record_audit_event
 from aila.platform.services.redis_pool import pool_available
 from aila.platform.services.runtime import run_blocking_io
@@ -263,24 +265,44 @@ async def requeue_failed_tasks(
 # ---- Per-task endpoints (must be after static paths to avoid route conflicts) ----
 
 
-def _pentest_cancel_detail(task_id: str, record: TaskRecord) -> str:
-    """Point at the assessment cancel route, reading only the task's kwargs payload."""
-    assessment_id: object = None
+def _task_kwargs(record: TaskRecord) -> JsonObject:
+    """Decode task kwargs for module policies without exposing payload contents."""
     try:
         kwargs = json.loads(record.kwargs_json)
-    except (TypeError, ValueError):
-        kwargs = None
-    if isinstance(kwargs, dict):
-        assessment_id = kwargs.get("assessment_id")
-    if isinstance(assessment_id, str) and assessment_id:
-        return (
-            f"Pentest task {task_id!r} must be cancelled via "
-            f"POST /pentest/assessments/{assessment_id}/cancel"
+    except (TypeError, ValueError) as exc:
+        _log.warning(
+            "Ignoring malformed task kwargs during cancellation; task_id=%s error=%s",
+            record.id,
+            type(exc).__name__,
         )
-    return (
-        f"Pentest task {task_id!r} must be cancelled via "
-        "POST /pentest/assessments/{assessment_id}/cancel"
+        return {}
+    if isinstance(kwargs, dict):
+        return kwargs
+    _log.warning(
+        "Ignoring non-object task kwargs during cancellation; task_id=%s payload_type=%s",
+        record.id,
+        type(kwargs).__name__,
     )
+    return {}
+
+
+def _external_cancel_detail(request: Request, task_id: str, record: TaskRecord) -> str | None:
+    """Return the operator detail when the task's module handles cancellation outside the generic path."""
+    platform = getattr(request.app.state, "platform", None)
+    if platform is None:
+        return None
+    policy = platform.runtime.module_registry.task_control_policy_for(record.fn_module)
+    if policy is None:
+        return None
+    context = TaskControlContext(
+        task_id=task_id,
+        fn_path=record.fn_path,
+        fn_module=record.fn_module,
+        track=record.track,
+        kwargs=_task_kwargs(record),
+    )
+    result = policy.resolve_cancellation(context)
+    return None if result is None else result.detail
 
 
 @router.get(
@@ -331,14 +353,16 @@ async def cancel_task(
         async with async_session_scope() as session:
             return await TaskRepository.get_for_user(session, task_id, auth)
 
-    # Pentest tasks own an assessment row; cancelling the TaskRecord alone would
-    # leave the assessment queued or running. The assessment endpoint owns that path.
+    # A module may declare its tasks cancellable only through its own surface; the
+    # registered policy decides. Tasks of unregistered modules keep default cancellation.
     record = await _fetch()
-    if record is not None and record.track == "pentest":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=_pentest_cancel_detail(task_id, record),
-        )
+    if record is not None:
+        external_detail = _external_cancel_detail(request, task_id, record)
+        if external_detail is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=external_detail,
+            )
 
     async def _cancel() -> bool:
         # #63: set_cancelled no longer commits its own session -- the caller

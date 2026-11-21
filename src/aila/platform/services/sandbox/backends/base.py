@@ -34,6 +34,7 @@ from ..contracts import (
     SandboxResult,
     SandboxSpec,
     SandboxUnavailableError,
+    validate_output_glob,
 )
 
 __all__ = [
@@ -51,8 +52,8 @@ __all__ = [
 
 _log = logging.getLogger(__name__)
 
-# Where per-run host workspaces live. ``/tmp/aila-sandbox`` is world-accessible
-# with standard 1777 sticky bit so non-root users can write without permissions errors.
+# Where per-run host workspaces live. The shared root is created with the
+# host's default mode; each run directory beneath it is created owner-only (0700).
 _HOST_WORKSPACE_ROOT = "/tmp/aila-sandbox"
 
 
@@ -114,10 +115,11 @@ async def host_workspace(ssh: SSHService, host_payload):
     run_id = uuid.uuid4().hex
     remote_root = f"{_HOST_WORKSPACE_ROOT}/run-{run_id}"
     # Two-step mkdir so the top-level root is created lazily (idempotent
-    # for concurrent runs) without needing root privileges.
+    # for concurrent runs) without needing root privileges. The run dir is
+    # created owner-only (0700) so other host users cannot read its contents.
     cmd = (
         f"mkdir -p {shlex.quote(_HOST_WORKSPACE_ROOT)} && "
-        f"mkdir {shlex.quote(remote_root)}"
+        f"mkdir -m 700 {shlex.quote(remote_root)}"
     )
     try:
         stdout, stderr, exit_code = await ssh.run_command_full(
@@ -206,32 +208,48 @@ async def collect_outputs(
     workspace: HostWorkspace,
     globs: list[str],
     per_file_cap: int,
+    aggregate_cap: int | None = None,
 ) -> tuple[dict[str, str], bool]:
-    """Materialise ``globs`` matches back onto the caller as a dict.
+    """Materialise a bounded set of ``globs`` matches as UTF-8 text.
 
-    Returns ``(files, truncated)`` where ``truncated`` is True iff any
-    single collected file was clipped to ``per_file_cap`` bytes. Cap
-    is applied per-file (not aggregate) so a large ``result.json``
-    cannot silently starve smaller siblings.
+    Returns ``(files, truncated)``. Each file is capped independently and
+    the complete collection is capped at ``aggregate_cap`` transferred
+    bytes and 256 files. Collection stops before downloading an entry
+    that cannot fit in the remaining aggregate budget.
     """
     if not globs:
         return {}, False
 
-    # Enumerate matches host-side so the caller sees exactly the files
-    # the sandbox produced -- no ordering surprises from doing this
-    # locally after downloading. ``find`` is a POSIX baseline.
+    # SandboxSpec already validated these; re-check before any remote command is built.
+    for pattern in globs:
+        try:
+            validate_output_glob(pattern)
+        except ValueError as exc:
+            raise ValidationError(str(exc)) from exc
+
+    root = workspace.remote_root
     truncated = False
     files: dict[str, str] = {}
+    remaining = aggregate_cap
+    stop = False
+    max_files = 256
     for pattern in globs:
-        # Use a shell glob under a subshell restricted to the workspace
-        # so an accidental absolute-looking pattern still resolves under
-        # the workspace root (SandboxSpec already rejects '/'-prefixed
-        # patterns; this is defense in depth).
+        if stop:
+            break
+        # The pattern is already restricted to glob syntax, so the unquoted
+        # splice below expands only as a filename glob. Matches are printed
+        # NUL-delimited (names may contain newlines) and only those whose
+        # realpath stays under the workspace are emitted, which also rejects
+        # symlinks that point out of the workspace. One extra name reveals
+        # truncation without materialising an unbounded match list.
         cmd = (
-            f"cd {shlex.quote(workspace.remote_root)} && "
+            f"cd {shlex.quote(root)} && root=$(pwd -P) && n=0 && "
             f"for f in {pattern}; do "
-            f"  [ -f \"$f\" ] && printf '%s\\n' \"$f\"; "
-            f"done"
+            '[ -f "$f" ] || continue; '
+            'real=$(realpath -- "$f") || continue; '
+            'case "$real" in "$root"/*) n=$((n + 1)); '
+            f'[ "$n" -le {max_files + 1} ] || break; printf \'%s\\0\' "$f";; esac; '
+            "done"
         )
         stdout, _stderr, exit_code = await ssh.run_command_full(
             host_payload, cmd, timeout_seconds=30.0,
@@ -240,28 +258,71 @@ async def collect_outputs(
             # A missing match is not an error; a shell fault is. We
             # cannot distinguish reliably, so we log and skip -- the
             # caller sees an empty ``output_files`` for this pattern.
-            _log.warning(
-                "sandbox output glob %r on %s exit=%d",
-                pattern, workspace.remote_root, exit_code,
-            )
+            _log.warning("sandbox output glob %r on %s exit=%d", pattern, root, exit_code)
             continue
-        for rel_line in stdout.splitlines():
-            rel = rel_line.strip()
-            if not rel or rel in files:
+        for rel in filter(None, stdout.split("\0")):
+            if rel in files:
                 continue
-            remote_path = f"{workspace.remote_root}/{rel}"
-            with tempfile.NamedTemporaryFile(delete=False) as fh:
-                local_path = fh.name
-            try:
-                await ssh.download_file(host_payload, remote_path, local_path)
-                raw = Path(local_path).read_bytes()
-            finally:
-                try:
-                    Path(local_path).unlink()
-                except OSError:
-                    pass
-            if per_file_cap > 0 and len(raw) > per_file_cap:
-                raw = raw[:per_file_cap]
+            if not _is_confined_relative(rel):
+                _log.warning("sandbox output %r rejected: escapes the workspace", rel)
+                continue
+            if len(files) >= max_files or remaining is not None and remaining <= 0:
                 truncated = True
+                stop = True
+                break
+            file_cap = per_file_cap
+            if remaining is not None:
+                file_cap = min(file_cap, remaining) if file_cap > 0 else remaining
+            raw, clipped = await _fetch_output(ssh, host_payload, workspace, rel, file_cap)
+            truncated = truncated or clipped
+            if remaining is not None:
+                remaining -= len(raw)
             files[rel] = raw.decode("utf-8", errors="replace")
     return files, truncated
+
+
+def _is_confined_relative(rel: str) -> bool:
+    """True when ``rel`` is relative and has no ``..`` segment."""
+    return bool(rel) and not rel.startswith("/") and ".." not in rel.split("/")
+
+
+async def _fetch_output(
+    ssh: SSHService,
+    host_payload,
+    workspace: HostWorkspace,
+    rel: str,
+    per_file_cap: int,
+) -> tuple[bytes, bool]:
+    """Download one confined output, transferring at most ``per_file_cap`` bytes.
+
+    With a cap, the host writes ``cap + 1`` bytes to a staging file in the
+    workspace so the excess is known without transferring it. The staging
+    file is removed with the workspace.
+    """
+    remote_path = f"{workspace.remote_root}/{rel}"
+    if per_file_cap > 0:
+        staged = f"{workspace.remote_root}/.collect-{uuid.uuid4().hex}"
+        _stdout, stderr, exit_code = await ssh.run_command_full(
+            host_payload,
+            f"head -c {per_file_cap + 1} -- {shlex.quote(remote_path)} > {shlex.quote(staged)}",
+            timeout_seconds=30.0,
+        )
+        if exit_code != 0:
+            raise SandboxExecutionError(
+                f"sandbox output {rel!r} could not be staged (exit={exit_code}): {stderr.strip()[:200]}"
+            )
+        remote_path = staged
+
+    with tempfile.NamedTemporaryFile(delete=False) as fh:
+        local_path = fh.name
+    try:
+        await ssh.download_file(host_payload, remote_path, local_path)
+        raw = Path(local_path).read_bytes()
+    finally:
+        try:
+            Path(local_path).unlink()
+        except OSError:
+            pass
+    if per_file_cap > 0 and len(raw) > per_file_cap:
+        return raw[:per_file_cap], True
+    return raw, False

@@ -51,7 +51,6 @@ dev:
 	@echo "       make worker        # default queue"
 	@echo "       make worker-vuln   # vulnerability queue"
 	@echo "       make worker-forensics"
-	@echo "       make worker-sbd"
 	@echo "       make worker-vr        # vulnerability research queue"
 	@echo ""
 	@echo "  4. Tear down infra when done:"

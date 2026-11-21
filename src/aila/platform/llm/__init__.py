@@ -38,7 +38,7 @@ from .pipeline import PipelineRunner
 from .run_memory import RunMemory
 from .sanitize import register_injection_pattern, sanitize_input, sanitize_output
 from .seal import compute_seal, make_seal_step
-from .untrusted import BEGIN_FENCE_PREFIX, END_FENCE, sanitize_untrusted
+from .untrusted import BEGIN_FENCE_PREFIX, END_FENCE_PREFIX, sanitize_untrusted
 from .validate import (
     CitationResult,
     EvidenceValidationReport,
@@ -56,7 +56,7 @@ __all__ = [
     "AilaLLMClient",
     "BEGIN_FENCE_PREFIX",
     "BudgetExceededError",
-    "END_FENCE",
+    "END_FENCE_PREFIX",
     "CitationResult",
     "ClassificationBlockedError",
     "CostTracker",

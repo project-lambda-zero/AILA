@@ -126,6 +126,29 @@ async def test_on_startup_windows_dispose_failure_still_registers_and_sweeps(
     mocks["sweep"].assert_awaited_once_with()
 
 
+def test_replica_health_check_key_is_unique_per_host_and_pid(monkeypatch: pytest.MonkeyPatch) -> None:
+    queue = "arq:queue:vulnerability"
+    monkeypatch.setattr(worker_mod.socket, "gethostname", lambda: "hostA")
+    monkeypatch.setattr(worker_mod.os, "getpid", lambda: 111)
+    key_a = worker_mod.replica_health_check_key(queue)
+
+    monkeypatch.setattr(worker_mod.os, "getpid", lambda: 222)
+    key_same_host_other_pid = worker_mod.replica_health_check_key(queue)
+
+    monkeypatch.setattr(worker_mod.socket, "gethostname", lambda: "hostB")
+    key_other_host = worker_mod.replica_health_check_key(queue)
+
+    assert key_a == "arq:queue:vulnerability:health-check:hostA:111"
+    assert len({key_a, key_same_host_other_pid, key_other_host}) == 3
+
+
+def test_worker_settings_health_key_is_replica_scoped() -> None:
+    assert worker_mod.WorkerSettings.health_check_key.startswith(
+        "arq:queue:vulnerability:health-check:"
+    )
+    assert worker_mod.WorkerSettings.health_check_key != "arq:queue:vulnerability:health-check"
+
+
 def test_worker_settings_shape() -> None:
     from aila.platform.tasks.template import _REGISTRY
     from aila.platform.tasks.worker import WorkerSettings

@@ -54,6 +54,13 @@ def _module_registry_from(request: Request) -> Any | None:
         return None
     return getattr(runtime, "module_registry", None)
 
+
+def _config_registry_from(request: Request) -> Any | None:
+    """Pull the platform's config registry off the FastAPI app state (see above)."""
+    platform = getattr(request.app.state, "platform", None)
+    runtime = getattr(platform, "runtime", None)
+    return getattr(runtime, "config_registry", None)
+
 _AILA_VERSION: str = _importlib_metadata.version("aila")
 
 # Unprotected router -- NO dependencies=[Depends(require_api_key)] here
@@ -108,26 +115,28 @@ async def _check_redis() -> HealthCheckResult:
     return HealthCheckResult(status="down", message=result.message)
 
 
-async def _check_workers() -> HealthCheckResult:
+async def _check_workers(platform: AILAPlatform) -> HealthCheckResult:
     """Probe ARQ worker liveness and map result to HealthCheckResult.
 
     Maps SubsystemHealth status to HealthCheckResult:
       - running            -> up
       - offline/unreachable -> down (zero workers = no scan capacity)
+      - error              -> down (worker health config could not be read)
       - all others         -> degraded
     """
     import redis.exceptions
 
     from aila.platform.services.health_probes import probe_arq_worker
 
+    config_registry = getattr(getattr(platform, "runtime", None), "config_registry", None)
     try:
-        result = await probe_arq_worker()
+        result = await probe_arq_worker(config_registry=config_registry)
     except redis.exceptions.RedisError as exc:
         _log.warning("ARQ worker health probe raised RedisError: %s", exc)
         return HealthCheckResult(status="down", message="redis error")
     if result.status == "running":
         return HealthCheckResult(status="up")
-    if result.status in {"offline", "unreachable", "unknown"}:
+    if result.status in {"offline", "unreachable", "unknown", "error"}:
         return HealthCheckResult(status="down", message=result.message)
     return HealthCheckResult(status="degraded", message=result.message)
 
@@ -163,7 +172,7 @@ async def get_health(
     redis_result = await _check_redis()
     checks["redis"] = redis_result
 
-    workers_result = await _check_workers()
+    workers_result = await _check_workers(platform)
     checks["workers"] = workers_result
 
     # D-13: Module health checks -- optional, no error if module lacks the method
@@ -327,7 +336,7 @@ async def get_comprehensive_health(
         probe_arch_security(),
         probe_nvd(),
         probe_ssh_reachability(systems),
-        probe_arq_worker(),
+        probe_arq_worker(config_registry=_config_registry_from(request)),
         probe_modules(team_id=auth_ctx.team_id, module_registry=_module_registry_from(request)),
     ]
 

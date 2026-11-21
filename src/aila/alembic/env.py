@@ -20,6 +20,7 @@ _load_project_env()
 # Platform models
 from aila.modules.forensics import db_models as _forensics_models  # noqa: F401
 from aila.modules.malware import db_models as _malware_models  # noqa: F401
+from aila.modules.pentest import db_models as _pentest_models  # noqa: F401
 from aila.modules.vr import db_models as _vr_models  # noqa: F401
 
 # Module models \u2014 add new modules here as they are created.
@@ -27,6 +28,8 @@ from aila.modules.vr import db_models as _vr_models  # noqa: F401
 # otherwise create_all/autogenerate won't see those tables.
 from aila.modules.vulnerability import db_models as _vuln_models  # noqa: F401
 from aila.storage import db_models as _platform_models  # noqa: F401
+from aila.storage import event_models as _event_models  # noqa: F401
+from aila.storage import evidence_models as _evidence_models  # noqa: F401
 
 target_metadata = SQLModel.metadata
 

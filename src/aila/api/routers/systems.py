@@ -30,7 +30,6 @@ from aila.api.constants import (
     AUDIT_ACTION_SYSTEM_DELETE,
     AUDIT_ACTION_SYSTEM_UPDATE,
     AUDIT_STAGE_SYSTEM,
-    AUDIT_STATUS_COMPLETED,
     ROLE_OPERATOR,
 )
 from aila.api.limiter import limiter
@@ -48,6 +47,7 @@ from aila.api.schemas.systems import (
     SystemUpdateRequest,
 )
 from aila.platform.contracts import utc_now
+from aila.platform.contracts.audit import AUDIT_STATUS_COMPLETED
 from aila.platform.services.audit import record_audit_event
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import ManagedSystemRecord, SystemPortRecord, WorkflowRunRecord
@@ -819,7 +819,7 @@ async def import_systems_csv(
 
                 private_key_secret_id: str | None = None
                 if item.private_key:
-                    secret_rec = await secret_store.upsert_secret(
+                    secret_rec = await secret_store.stage_secret(
                         session, scope="ssh",
                         secret_key=f"system.{item.name}.private_key",
                         plaintext=item.private_key,
@@ -834,7 +834,7 @@ async def import_systems_csv(
                 # single-system POST/PUT paths below.
                 private_key_passphrase_secret_id: str | None = None
                 if item.private_key_passphrase:
-                    secret_rec = await secret_store.upsert_secret(
+                    secret_rec = await secret_store.stage_secret(
                         session, scope="ssh",
                         secret_key=f"system.{item.name}.private_key_passphrase",
                         plaintext=item.private_key_passphrase,
@@ -843,7 +843,7 @@ async def import_systems_csv(
 
                 password_secret_id: str | None = None
                 if item.password:
-                    secret_rec = await secret_store.upsert_secret(
+                    secret_rec = await secret_store.stage_secret(
                         session, scope="ssh",
                         secret_key=f"system.{item.name}.password",
                         plaintext=item.password,
@@ -933,7 +933,7 @@ async def create_system(
             # Encrypt private key content if provided
             private_key_secret_id: str | None = None
             if req.private_key:
-                secret_rec = await secret_store.upsert_secret(
+                secret_rec = await secret_store.stage_secret(
                     session,
                     scope="ssh",
                     secret_key=f"system.{req.name}.private_key",
@@ -948,7 +948,7 @@ async def create_system(
             # against such a system failed at auth time.
             private_key_passphrase_secret_id: str | None = None
             if req.private_key_passphrase:
-                secret_rec = await secret_store.upsert_secret(
+                secret_rec = await secret_store.stage_secret(
                     session,
                     scope="ssh",
                     secret_key=f"system.{req.name}.private_key_passphrase",
@@ -959,7 +959,7 @@ async def create_system(
             # Encrypt password if provided
             password_secret_id: str | None = None
             if req.password:
-                secret_rec = await secret_store.upsert_secret(
+                secret_rec = await secret_store.stage_secret(
                     session,
                     scope="ssh",
                     secret_key=f"system.{req.name}.password",
@@ -1082,9 +1082,9 @@ async def update_system(
                 update_data.pop(field_name, None)
                 if value is None or value == "":
                     if current_id:
-                        await secret_store.delete_secret(session, secret_id=current_id)
+                        await secret_store.stage_delete_secret(session, secret_id=current_id)
                     return True, None
-                secret_rec = await secret_store.upsert_secret(
+                secret_rec = await secret_store.stage_secret(
                     session,
                     scope="ssh",
                     secret_key=f"system.{record.name}.{secret_key_suffix}",

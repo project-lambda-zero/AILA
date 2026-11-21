@@ -49,6 +49,8 @@ from aila.modules.vulnerability import db_models as _vuln_models  # noqa: F401, 
 # won't see those tables and queries against them will fail at runtime with
 # "relation 'X' does not exist".
 from aila.storage import db_models as _platform_models  # noqa: F401, E402
+from aila.storage import event_models as _event_models  # noqa: F401, E402
+from aila.storage import evidence_models as _evidence_models  # noqa: F401, E402
 
 
 def _alembic_head_revision() -> str:

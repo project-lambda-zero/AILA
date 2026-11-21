@@ -74,6 +74,7 @@ class ForensicsModule(ModuleProtocol):
     """
 
     module_id = MODULE_ID
+    worker_tracks = ("forensics", "forensics_readiness")
     analyze_action_id = ANALYZE_ACTION_ID
     investigate_action_id = INVESTIGATE_ACTION_ID
 

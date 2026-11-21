@@ -63,7 +63,7 @@ Source: `src/aila/cli.py:269-358`. The CLI also accepts `--redis-url` to overrid
 
 ### ARQ queue tracks
 
-`default` (PlatformModule and cross-cutting tasks), `vulnerability`, `forensics`, `forensics_readiness` (analyzer-machine readiness checks and offline tool preparation), `reporting` (VR investigation, VR MASVS, and vulnerability PDF rendering), `vr`, `malware`, `pentest`, `pentest_runtime`. One ARQ queue per track. Workers subscribe to exactly one queue.
+`default` (PlatformModule and cross-cutting tasks), `vulnerability`, `forensics`, `forensics_readiness` (analyzer-machine readiness checks and offline tool preparation), `reporting` (VR investigation, VR MASVS, and vulnerability PDF rendering), `vr`, `malware`, `pentest` (AI assessments and live campaign admission), and `pentest_runtime` (assessment runtime and fenced live actions). One ARQ queue per track. Workers subscribe to exactly one queue.
 
 ### Asynchronous report and readiness tasks
 
@@ -101,10 +101,11 @@ arq aila.platform.tasks.worker.WorkerSettings
 | `max_tries` | `3` | Max retry attempts on failure |
 | `retry_jobs` | `True` | Enable ARQ retry machinery |
 | `allow_abort_jobs` | `True` | Cooperative abort via `TaskCancelled` |
+| `max_jobs` | `1` | One ARQ job in flight per worker process |
 | `health_check_interval` | `60` | ARQ health-key refresh interval (seconds) |
 | `cron_jobs` | `[cron(reaper, second=0)]` | Zombie detection runs every minute |
 
-`max_jobs` is not hard-coded; the ARQ default applies. INFRA-03 (one in-flight scan per system) is enforced at the service layer, not by worker count.
+`max_jobs=1` applies to both direct ARQ and `python -m aila worker` launchers. Scale throughput with independent worker processes or Compose replicas; per-system scan admission remains enforced at the service layer.
 
 ---
 
@@ -120,8 +121,8 @@ Per-queue worker count is set by `WORKER_COUNT_<UPPER_QUEUE>` env vars. Defaults
 | `default` | `1` |
 | `vulnerability` | `1` |
 | `forensics` | `1` |
-| `pentest` | `1` |
-| `pentest_runtime` | `1` |
+| `pentest` | `2` |
+| `pentest_runtime` | `2` |
 | `forensics_readiness` | `1` |
 | `reporting` | `1` |
 
@@ -172,6 +173,8 @@ FAILED  -> QUEUED (reaper crash recovery with checkpoint)
 | `CANCELLED` | Cooperative cancellation via `TaskCancelled`, or a workflow-engine run that ended `__cancelled__` | Module code or the `on_job_end` hook |
 
 A workflow-engine task reads its outcome from the `WorkflowRunRecord.status` the engine wrote when it closed the run, so the task record and the run record agree. A failed or cancelled workflow run does not release its `WAITING` dependents.
+
+Generic task cancellation consults the control policy registered by the task's module. Modules with entity-specific lifecycle APIs can reject the generic transition and direct the operator to that API; unregistered modules retain the standard queue cancellation behavior. The task router contains no module-specific cancellation branches.
 
 ---
 

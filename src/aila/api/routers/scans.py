@@ -22,8 +22,6 @@ from sqlmodel import select
 from aila.api.auth import AuthContext, require_role, require_user_or_api_key
 from aila.api.constants import (
     AUDIT_ACTION_SCAN_SUBMIT,
-    AUDIT_STAGE_SCAN,
-    AUDIT_STATUS_COMPLETED,
     MEDIA_TYPE_SSE,
     MODULE_ID_PLATFORM,
     ROLE_OPERATOR,
@@ -32,6 +30,7 @@ from aila.api.limiter import limiter
 from aila.api.metrics import ACTIVE_SSE
 from aila.api.schemas.scans import ScanCancelResponse
 from aila.api.schemas.tasks import ScanStatusResponse, ScanSubmissionRequest, TaskSubmitResponse
+from aila.platform.contracts.audit import AUDIT_STAGE_SCAN, AUDIT_STATUS_COMPLETED
 from aila.platform.services.audit import record_audit_event
 from aila.platform.services.redis_pool import pool_available
 from aila.platform.tasks.entrypoints import run_platform_handle

@@ -79,9 +79,9 @@ export const MODULES: ModuleDef[] = [
   },
   {
     id: "pentest",
-    label: "AI pentest",
+    label: "pentest",
     noun: "assessments",
-    pages: [page("assessments")],
+    pages: [page("assessments"), page("campaigns"), page("live settings")],
   },
   {
     id: "malware",

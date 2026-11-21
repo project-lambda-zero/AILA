@@ -2,7 +2,6 @@ import { useQuery } from "@tanstack/react-query";
 import { type CSSProperties, type FormEvent, useState } from "react";
 
 import { listOidcProviders, startOidcSignIn, useAuth } from "../api/auth";
-import { FaultyTerminal } from "../desktop/FaultyTerminal";
 
 const inputStyle: CSSProperties = {
   display: "block",
@@ -76,7 +75,6 @@ export default function Login() {
         fontFamily: "var(--font-mono)",
       }}
     >
-      <FaultyTerminal />
       <form
         onSubmit={submit}
         style={{

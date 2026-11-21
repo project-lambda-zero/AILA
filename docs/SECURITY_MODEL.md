@@ -464,6 +464,14 @@ in `src/aila/api/app.py`):
 
 ---
 
+## Sandbox execution
+
+`SandboxSpec.output_globs` accepts only confined relative patterns. Shell metacharacters, substitution, quoting, whitespace, absolute paths, and parent traversal are rejected before a payload starts; collection validates the patterns again and resolves enumerated paths beneath the per-run workspace before downloading them.
+
+Sandbox run directories are created with owner-only permissions. nsjail payloads run as an unprivileged uid/gid with the existing read-only system binds, writable run workspace, and resource limits. Artifact downloads transfer at most the configured per-file cap plus one byte, allowing truncation to be reported without first downloading an unbounded file.
+
+---
+
 ## Audit Trail
 
 `AuditEventRecord` rows are immutable; query them via `GET /audit/events`

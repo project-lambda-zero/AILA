@@ -77,6 +77,9 @@ class ModuleRouteSpec:
         config_namespace: Config namespace this module owns; surfaced via
             GET/PUT /config. None if the module has no config.
         payload_type: Name of the discriminated-union payload type (optional).
+        idempotency_exempt_post_paths: POST route templates relative to ``prefix``
+            whose responses must never be replayed from the Idempotency-Key cache.
+            ``{name}`` matches exactly one path segment.
     """
 
     prefix: str
@@ -85,6 +88,7 @@ class ModuleRouteSpec:
     config_namespace: str | None = None
     payload_type: str | None = None
     auth_required: bool = True  # When False, skip global require_user_or_api_key dependency
+    idempotency_exempt_post_paths: tuple[str, ...] = field(default_factory=tuple)
 
 
 UNROUTABLE_ACTION_ID: ActionId = action_id_for("platform", "unknown_request")
@@ -124,6 +128,40 @@ class ModuleHealthResult:
     status: str  # "up" | "degraded" | "down"
     latency_ms: float | None = None
     message: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class TaskControlResult:
+    """External handling decision returned by a module task-control policy.
+
+    A result tells the platform not to apply its generic task action and gives
+    the operator the module-owned action to use instead.
+    """
+
+    detail: str
+
+
+@dataclass(frozen=True, slots=True)
+class TaskControlContext:
+    """Generic task identity and decoded kwargs supplied to module policies."""
+
+    task_id: str
+    fn_path: str
+    fn_module: str
+    track: str
+    kwargs: JsonObject
+
+
+@dataclass(frozen=True, slots=True)
+class TaskControlPolicy:
+    """Module-owned decisions for generic platform task actions.
+
+    ``resolve_cancellation`` receives the generic task context. A result means
+    cancellation is externally handled; ``None`` retains the platform's default
+    cancellation behavior.
+    """
+
+    resolve_cancellation: Callable[[TaskControlContext], TaskControlResult | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -251,6 +289,8 @@ class ModuleProtocol(Protocol):
     """
 
     module_id: str
+    worker_tracks: tuple[str, ...] = ()
+    """ARQ tracks owned by this module and expected to have live workers."""
 
     def capability_profiles(self) -> list[ModuleCapabilityProfile]:
         """Return all action capability profiles this module can handle.
@@ -369,6 +409,19 @@ class ModuleProtocol(Protocol):
         """
         del session, team_id
         raise NotImplementedError
+
+    def task_control_policy(self) -> TaskControlPolicy | None:
+        """Return the policy that governs generic platform actions on this module's tasks.
+
+        The task API resolves a task's owning module through the registry by
+        ``TaskRecord.fn_module`` (never by track) and passes the policy a
+        ``TaskControlContext`` carrying the task identity and kwargs. A
+        ``TaskControlResult`` from the policy refuses the generic cancel with
+        that operator detail; ``None`` keeps the platform default. Modules
+        whose tasks are cancelled only through their own surface override
+        this; the default is no policy.
+        """
+        return None
 
     def route_specs(self) -> list[ModuleRouteSpec]:
         """Declare HTTP routes this module handles.

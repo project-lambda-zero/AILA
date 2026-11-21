@@ -28,7 +28,24 @@ from aila.platform.llm.cost_record import LLMCostRecord
 
 _log = logging.getLogger(__name__)
 
-__all__ = ["accrue_investigation_cost", "compute_live_investigation_cost"]
+__all__ = ["accrue_investigation_cost", "compute_live_investigation_cost", "sum_run_cost_usd"]
+
+
+async def sum_run_cost_usd(
+    session: Any, *, run_id: str, team_id: str | None = None,
+) -> float:
+    """Strict sum of recorded LLM cost for ``run_id``, optionally team-scoped.
+
+    Propagates every query error: budget enforcement must not treat a failed
+    read as zero spend. Pass ``team_id`` wherever the caller owns a team so
+    rows written under another tenant never count against this run.
+    """
+    stmt = select(
+        sa_func.coalesce(sa_func.sum(LLMCostRecord.cost_usd), 0.0),
+    ).where(LLMCostRecord.run_id == run_id)
+    if team_id is not None:
+        stmt = stmt.where(LLMCostRecord.team_id == team_id)
+    return float((await session.exec(stmt)).one())
 
 
 async def compute_live_investigation_cost(
@@ -45,11 +62,7 @@ async def compute_live_investigation_cost(
     absorbed here or the investigation detail read path 500s (#101).
     """
     try:
-        sum_q = select(
-            sa_func.coalesce(sa_func.sum(LLMCostRecord.cost_usd), 0.0),
-        ).where(LLMCostRecord.run_id == investigation_id)
-        total = (await uow.session.exec(sum_q)).one()
-        return float(total)
+        return await sum_run_cost_usd(uow.session, run_id=investigation_id)
     except (
         SQLAlchemyError,
         OSError,

@@ -62,7 +62,7 @@ class SystemRegistryTool(Tool):
                 )).first()
                 password_secret_id = payload.password_secret_id or (existing.password_secret_id if existing else None)
                 if payload.password:
-                    secret_record = await self.secret_store.upsert_secret(
+                    secret_record = await self.secret_store.stage_secret(
                         session,
                         scope="system-password",
                         secret_key=payload.name,
@@ -124,7 +124,7 @@ class SystemRegistryTool(Tool):
                 deleted_names = sorted(record.name for record in records)
                 for record in records:
                     if record.password_secret_id:
-                        await self.secret_store.delete_secret(session, secret_id=record.password_secret_id)
+                        await self.secret_store.stage_delete_secret(session, secret_id=record.password_secret_id)
                     await session.delete(record)
                 await session.commit()
                 return {

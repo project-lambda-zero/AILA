@@ -5,6 +5,142 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.129] - 2026-11-21 -- Free-form autonomous live pentest missions
+
+### Added
+
+- Live campaign creation now centers on a free-form mission brief, authorization, targets, exclusions, credentials, approval policy, model routes, and aggregate safeguards. The planner selects tools and orders work without an operator-selected action or setup wizard.
+- Campaigns use platform reasoning graph snapshots, branch-pool fan-out and fan-in, and the shared investigation ledger. Worker results become bounded sibling context for subsequent planning rounds, and independent follow-up actions continue from shared evidence.
+- Alembic migration `170_pentest_platform_swarm` adds durable platform branch records and coordinator/action branch links.
+
+### Changed
+
+- Campaign creation seeds authorized root assets without creating a fixed first action. Autonomous planning is mandatory, root proposals can run without a parent action, and each admitted action receives a platform worker branch before runtime dispatch.
+- Campaign cancellation now covers every nonterminal action. Campaigns with no actions can be resumed into planning or cancelled cleanly.
+
+### Upgrade notes
+
+- Apply Alembic migration `170_pentest_platform_swarm` and restart the API, frontend, and pentest workers. Existing `action` fields in campaign-create requests are rejected; clients must submit `scope.objective` and leave tool selection to the planner.
+
+## [0.6.128] - 2026-11-20 -- Unified AI assessments and evidence-backed live pentest campaigns
+
+### Added
+
+- The existing `pentest` module now provides both AI assessments and target-specific live campaigns. Live execution, APIs, workers, and console pages use `pentest`, `/pentest/live`, and the `pentest` and `pentest_runtime` queues without a separate dynamic module.
+- Live campaigns support curated Nmap, BBOT, Httpx, Katana, Nuclei, ZAP, Schemathesis, Playwright, mitmproxy, and TCP-connect manifests, bounded deterministic planning, aggregate team and per-asset budgets, durable exploration state, approvals, cancellation, and lease fencing.
+- Normalized assets, services, observations, coverage, exploration graphs, redacted HTTP traffic, and evidence-lineage findings are exposed through operator APIs and the campaign workspace. JSON, HTML, and SARIF reports use the same tenant-scoped records.
+- Authenticated HTTP, API, and browser workflows stage secret values only at execution. Durable manifests and audit records retain secret handles, and secret-use events are visible in campaign budgets.
+- Findings require explicit parser rules and independent corroboration or safe reproduction. Operators can schedule exact-manifest retests, linked traffic replay, and reproduction, or mark a finding false-positive with a recorded rationale.
+- An opt-in `tools/pentest/smoke_live_oci.py` lane verifies real remote SSH and DinD execution, immutable image pre-pulls, curated parsers, output hashes, and denied-port egress on an authorized disposable host.
+- `tools/pentest/smoke_local_image.py` and the `pentest-live-image` workflow build the unified image and execute representative real manifests against a disposable HTTP container without agentic workflow logic. The workflow publishes only after local smoke, attaches SBOM/provenance, and re-smokes the immutable published digest.
+- Operators can rerun failed, timed-out, or cancelled live actions as new actions with exact manifest and lineage preservation. Reruns repeat approval, aggregate-budget, and queue admission instead of bypassing them.
+- Notification channels support validated editing and real bounded test deliveries. Failed and permanently failed deliveries support manual retry through the configured transport with the existing five-attempt ceiling and delivery audit records.
+
+### Changed
+
+- Live campaign setup is now a guided mission, scope, safeguards, and review flow. The campaign launchpad adds loaded-campaign metrics, search, and status filters; the workspace prioritizes live status, approvals, actions, findings, attack-surface coverage, and recent activity while grouping advanced tools under secondary navigation. Finding review now connects filtering, evidence selection, verification, reproduction, and retesting in one workflow.
+- All live actions and harmless connectivity checks use `ghcr.io/project-lambda-zero/aila-pentest@sha256:32beabb84be7c32e65fe523f9538b2ed2fffd0758cf38686b97c55bd6d8b6cde`, one module-owned immutable Kali-based toolchain image. The image extends the maintained `pentest-kit` runtime with pinned BBOT and Schemathesis packages and fixed non-root Nuclei template and Playwright browser paths; action execution performs no installs, template updates, or image pulls.
+- Networked OCI execution requires a per-run egress policy and a dedicated remote bridge with exact destination and port rules. Static OCI network selection was removed; bridge connectivity alone is not scope enforcement.
+- Tool output is sealed as raw evidence before parsing. Candidate scanner results do not become confirmed findings from tool or LLM text alone, and successful action completion is atomic with normalized write-back.
+- Campaign settlement wakes the planner after terminal actions. Replay and retest operations reopen completed campaigns, use idempotency keys, and preserve source action and evidence lineage.
+- Durable budget, finding, and report metadata fails closed on malformed JSON. Platform services own asynchronous system DNS resolution, and scoped URL validation replaces production assertions with explicit errors.
+
+### Fixed
+
+- Paused and completed campaigns can resume planner or operator-requested work without losing immutable manifests, action lineage, budget counters, or evidence history.
+- Report generation uses the visible campaign tenant for administrator and all-team access. Reader roles cannot mutate live findings or traffic, and cross-team projections remain denied.
+- Retests rerun the exact persisted source manifest. Positive, negative, malformed, and inconclusive results update finding state without treating a reproduction mismatch as a false-positive.
+- Live budget APIs expose the campaign's effective immutable policy. The console renders actual exploration payload, rationale, active-action, and ledger-delta fields returned by the API.
+- The campaign setup console now submits complete target-specific scope, exclusions, capabilities, credential handles, approval policy, and aggregate budgets while preserving the empty harmless-connectivity workflow and retry idempotency.
+- Initial Nuclei campaigns use the same five explicitly curated safe template defaults as planner follow-ups; direct custom or missing template selection remains rejected.
+- Live ZAP manifests use the supported `-dir /work` option, allowing arbitrary non-root execution without writing to the packaged ZAP directory.
+- Removed the persistent full-screen WebGL terminal backdrop from the sign-in and console shells, eliminating its continuous GPU drawing and full-viewport compositing while preserving the existing theme.
+- Generated TCP-connect manifests contain valid Python loop syntax instead of an invalid semicolon-prefixed compound statement.
+- Nmap parsing accepts only the exact current `nmaprun` DOCTYPE or legacy Nmap 1.04/1.05 public DTD declaration while continuing to reject custom DTDs and entities.
+- Httpx manifests use stable CLI flags supported by the selected older toolchain; file input remains explicit through `-l /work/targets.txt`.
+- JSON and HTML campaign reports include bounded redacted traffic metadata, evidence hashes, artifact lineage, replay ancestry, and secret-header canary protection without embedding captured bodies.
+
+### Upgrade notes
+
+- Apply Alembic migrations `160_pentest_live_merge` and `161_pentest_live_domain`; the required head is `161_pentest_live_domain`. Migration 160 renames live runtime tables and 161 adds normalized domain, evidence, traffic, report, and 64-bit aggregate-budget records.
+- Replace former dynamic worker tracks with `pentest` and `pentest_runtime`. Update `AILA_PLATFORM_WORKER_HEALTH_TRACKS` for partial deployments and restart API and worker processes.
+- Remove `AILA_PLATFORM_SANDBOX_OCI_NETWORK`. Configure a remote Linux Docker or Podman host through `SSHService`, pre-pull the module-owned immutable live `name@sha256:<digest>` image, and provide remote `ip`, `nft`, and passwordless `sudo -n` for per-run egress.
+- Real remote SSH/OCI execution is not implied by unit or API tests. Run the opt-in smoke lane and a real PostgreSQL, Redis, API, worker, and browser smoke against authorized infrastructure before enabling production campaigns.
+
+## [0.6.127] - 2026-11-19 -- Image-agnostic remote OCI sandbox execution
+
+### Added
+
+- `SandboxService` now supports `sandbox_backend=oci` for remote Docker or Podman execution through the existing SSH transport. Callers provide an immutable `image@sha256:<digest>` in `SandboxSpec`; the backend never pulls an image during action execution.
+- OCI runs use the remote unprivileged SSH identity as the container UID/GID, an owner-only per-run workspace, a read-only root filesystem, bounded temporary storage, no capabilities, no-new-privileges, CPU, memory, PID, wall-clock, and output limits. Network access remains disabled unless platform policy permits it.
+- Existing non-streaming and streaming sandbox APIs share OCI dispatch. Awaited output callbacks preserve backpressure, and completion, cancellation, callback failure, or transport failure trigger best-effort force removal of the named container.
+- `AILA_PLATFORM_SANDBOX_OCI_BIN` selects the remote runtime binary and `AILA_PLATFORM_SANDBOX_OCI_NETWORK` selects the network used by explicitly network-enabled runs.
+
+### Upgrade notes
+
+- No database schema or Alembic migration change is required. This release extends execution behavior only.
+- OCI support adds a backend primitive; it does not select, bundle, or authorize any penetration-testing image. Configure a remote Linux host, pre-pull approved immutable image digests, and select `oci` only after the runtime probe succeeds.
+- The configured OCI network is a connectivity control, not target-scope enforcement. Deploy the appropriate remote firewall or egress proxy before running scope-limited tools.
+- No local Docker fallback is provided. Live OCI execution requires a reachable remote Linux host with Docker or Podman available to an unprivileged SSH identity.
+
+## [0.6.126] - 2026-11-19 -- Live dynamic campaign execution and monitoring
+
+### Added
+
+- `dynamic_pentest` introduces team-scoped, idempotent campaigns with immutable scope, an allowlisted harmless Python action, explicit approval, pause, resume, kill, and lease-fenced execution state. Campaign orchestration and sandbox actions use independent `dynamic_pentest` and `dynamic_pentest_runtime` worker queues.
+- PostgreSQL-backed event streams and a transactional outbox provide ordered, at-least-once delivery. Redis supplies live wake-up notifications while SSE replay reads authoritative event payloads from PostgreSQL and resumes from `Last-Event-ID`.
+- The platform evidence store encrypts bounded output in AES-256-GCM frames, authenticates artifact and stream metadata, verifies plaintext SHA-256 on authorized reads, and stores only ciphertext and metadata descriptors.
+- `SandboxService.run_streaming` and SSH command streaming await output callbacks for backpressure, redact stderr before emission, close channels on callback failure, and support cooperative cancellation. Production dynamic actions require the configured Linux sandbox and have no local execution fallback.
+- The console provides live campaign state, reconnection and gap resynchronization, action inspection, bounded output previews with explicit eviction notices, artifact downloads, approvals, and campaign or action kill controls.
+
+### Changed
+
+- Full-stack launchers and Compose now start eleven queue workers. Worker health defaults include both dynamic campaign and runtime tracks, and Make targets and operations documentation expose the new queues.
+- Dynamic action manifests bind the command, network policy, timeout, and cumulative 4 KiB output ceiling to their integrity hash. Output overflow fails the action before persisting the offending chunk.
+
+### Fixed
+
+- Same-key campaign requests can retry after a broker outage without duplicating an active queued task. Queue refusal marks the action and campaign failed instead of recording an operator cancellation.
+- Terminal actions emit explicit exit events, kill acknowledgements remain distinct, and degraded campaigns expose a console resume path after health recovery.
+
+### Upgrade notes
+
+- Apply Alembic migration `159_dynamic_pentest_live` before starting the API or dynamic workers. Fresh database initialization registers the event, evidence, campaign, and action models.
+- Start both `dynamic_pentest` and `dynamic_pentest_runtime` workers. Partial deployments must include the tracks they run in `AILA_PLATFORM_WORKER_HEALTH_TRACKS`.
+- Configure a real supported Linux sandbox host before launching dynamic actions. Missing or unhealthy sandbox or evidence infrastructure leaves campaigns degraded or failed; execution never falls back to the local API or worker host.
+- Optional evidence settings are documented under `AILA_PLATFORM_EVIDENCE_ROOT_DIR`, `AILA_PLATFORM_EVIDENCE_CHUNK_BYTES`, and `AILA_PLATFORM_EVIDENCE_MAX_ARTIFACT_BYTES`.
+
+## [0.6.125] - 2026-11-19 -- Execution isolation and worker scaling foundations
+
+### Added
+
+- Module-registered task-control policies let entity-specific lifecycle APIs handle or reject generic task cancellation without module-specific API router branches. Policies resolve through the persisted owning module, including modules with multiple worker tracks.
+- `AILA_PLATFORM_WORKER_HEALTH_TRACKS` configures the ARQ tracks expected by worker health probes. Health details report live and missing tracks, and partial deployments can declare their intended queue set.
+- Sandbox artifact patterns have one shared validation contract covering relative confinement and shell syntax before execution and again during collection. Artifact downloads are workspace-confined and transfer only the configured cap plus one byte.
+
+### Changed
+
+- Generic external-process supervision, cancellation, environment construction, concurrent pipe draining, and process-tree cleanup now live in `aila.platform.services.processes`. Existing pentest callers use the platform service; provider-specific environment overrides remain at their module call sites.
+- nsjail payloads run as an unprivileged user and group, and sandbox run directories use owner-only permissions.
+- Full Compose services no longer have fixed container names, the shared database environment key matches application configuration, and PostgreSQL defaults to 200 connections. Runtime containers use an unprivileged `aila` user with writable data and report directories.
+- Deployment and task-queue documentation now describes replica scaling, configured worker health, module task-control ownership, and sandbox artifact confinement.
+
+### Fixed
+
+- `python -m aila worker` now propagates the complete ARQ worker lifecycle and configuration, including `max_jobs=1`, abort support, health checks, startup/shutdown hooks, and job hooks.
+- Worker health probes evaluate every configured queue instead of checking only the vulnerability queue. Replica-unique heartbeat keys prevent one graceful worker shutdown from hiding surviving capacity, and schema defaults work before database seeding.
+- Full Compose shares durable secret, report, and backup storage across API and worker containers. Database and Redis URLs honor operator environment overrides; scalable base services leave host publication to the development override or a production load balancer.
+- Generic task cancellation remains available for pentest runtime discovery and preflight tasks. Only assessment execution tasks redirect to the assessment lifecycle endpoint.
+- Worker Redis DSN parsing preserves authentication, database selection, TLS, and connection options instead of retaining only host and port.
+- Sandbox artifact collection rejects unsafe patterns before execution, prevents workspace escapes, and avoids downloading whole oversized files before applying caps.
+
+### Upgrade notes
+
+- No database schema or Alembic migration change is required.
+- Partial worker deployments should set `AILA_PLATFORM_WORKER_HEALTH_TRACKS` to their intended tracks. Full-stack defaults cover all nine released queues.
+- Scale Compose workers with `docker compose -f infra/utilities/docker-compose.full.yml up --scale worker-vr=5`. Fixed container names are no longer available for direct `docker rm` workflows.
+- The container runtime user is uid/gid 10001. Operators with bind-mounted data or report directories must grant that identity the required write access.
+
 ## [0.6.124] - 2026-11-18 -- Pentest engine packaging and operations
 
 ### Added

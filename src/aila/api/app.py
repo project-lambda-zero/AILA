@@ -379,6 +379,13 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     install_investigation_status_forwarder()
 
+    # Campaign event outbox relay. It idles while the Redis pool is unavailable
+    # and publishes committed outbox rows once Redis is reachable.
+    from aila.platform.events.outbox import EventOutboxRelay
+
+    event_relay = EventOutboxRelay()
+    event_relay.start()
+
     yield
 
     uninstall_investigation_status_forwarder()
@@ -392,6 +399,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             await _automation_tick_task
         except asyncio.CancelledError:
             pass
+
+    # Stop the campaign event relay before the shared Redis pool closes.
+    try:
+        await event_relay.stop()
+    except (OSError, RuntimeError):
+        _log.warning("Campaign event relay stop failed", exc_info=True)
 
     # #106 -- stop the DomainEvent Redis bridge consumer before we
     # close the shared Redis pool below. Silent when never started.
