@@ -23,6 +23,7 @@ from aila.platform.services.sandbox import (
     SandboxEgressDestination,
     SandboxEgressPolicy,
     SandboxExecutionError,
+    SandboxPolicyError,
     SandboxResult,
     SandboxService,
     SandboxSpec,
@@ -275,6 +276,22 @@ def test_service_dispatches_oci_end_to_end() -> None:
     assert result.backend == "oci"
     assert result.exit_code == 0
     assert any("--kill-after=" in c for c in ssh.commands)
+
+
+def test_service_dispatches_networked_oci_with_egress_when_allowed() -> None:
+    ssh = _OciSSH()
+    service = _service(_cfg(allow_network=True), OciBackend(), ssh)
+    result = asyncio.run(service.run(_spec(network=True, egress=_egress())))
+    assert result.backend == "oci"
+    assert "--network aila-egress-" in _run_command(ssh)
+
+
+def test_service_rejects_networked_oci_when_platform_network_disabled() -> None:
+    ssh = _OciSSH()
+    service = _service(_cfg(allow_network=False), OciBackend(), ssh)
+    with pytest.raises(SandboxPolicyError, match="sandbox_allow_network is disabled"):
+        asyncio.run(service.run(_spec(network=True, egress=_egress())))
+    assert ssh.commands == []
 
 
 # ---------------------------------------------------------------------------

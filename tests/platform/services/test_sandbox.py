@@ -20,6 +20,7 @@ from pydantic import ValidationError as PydanticValidationError
 from aila.platform.exceptions import ValidationError as AILAValidationError
 from aila.platform.services.sandbox import (
     SandboxExecutionError,
+    SandboxPolicyError,
     SandboxResult,
     SandboxService,
     SandboxSpec,
@@ -84,6 +85,8 @@ class _StubBackend:
     """Predictable backend used to assert the service policy pipeline."""
 
     name = "stub"
+    supports_network = True
+    enforces_egress = True
 
     def __init__(self, response: SandboxResult) -> None:
         self.response = response
@@ -130,6 +133,11 @@ def _make_service(cfg: SandboxConfig, backend: _StubBackend, *, ssh: _FakeSSH | 
     async def _load() -> SandboxConfig:
         return cfg
     service._load_config = _load  # type: ignore[attr-defined]
+
+    async def _no_managed_system(**kwargs: Any) -> None:
+        return None
+
+    service._resolve_managed_system = _no_managed_system  # type: ignore[attr-defined]
     return service
 
 
@@ -220,11 +228,40 @@ def test_policy_clamps_timeout_to_max() -> None:
     assert backend.received.timeout_s == pytest.approx(60.0)
 
 
-def test_policy_forces_network_off_when_not_allowed() -> None:
+def test_policy_rejects_networked_spec_when_not_allowed() -> None:
     cfg = _cfg(allow_network=False)
     backend = _StubBackend(response=SandboxResult(backend="stub", exit_code=0))
     service = _make_service(cfg, backend)
-    asyncio.run(service.run(SandboxSpec(argv=["/bin/true"], network=True)))
+    with pytest.raises(SandboxPolicyError, match="sandbox_allow_network is disabled"):
+        asyncio.run(service.run(SandboxSpec(argv=["/bin/true"], network=True)))
+    assert backend.received is None
+
+
+def test_policy_rejects_networked_spec_when_backend_cannot_enforce_egress() -> None:
+    cfg = _cfg(allow_network=True)
+    backend = _StubBackend(response=SandboxResult(backend="stub", exit_code=0))
+    backend.enforces_egress = False
+    service = _make_service(cfg, backend)
+    with pytest.raises(SandboxPolicyError, match="cannot enforce per-run egress"):
+        asyncio.run(service.run(SandboxSpec(argv=["/bin/true"], network=True)))
+    assert backend.received is None
+
+
+def test_policy_rejects_networked_spec_when_backend_lacks_network_support() -> None:
+    cfg = _cfg(allow_network=True)
+    backend = _StubBackend(response=SandboxResult(backend="stub", exit_code=0))
+    backend.supports_network = False
+    service = _make_service(cfg, backend)
+    with pytest.raises(SandboxPolicyError, match="does not support network access"):
+        asyncio.run(service.run(SandboxSpec(argv=["/bin/true"], network=True)))
+    assert backend.received is None
+
+
+def test_policy_accepts_offline_spec_when_network_not_allowed() -> None:
+    cfg = _cfg(allow_network=False)
+    backend = _StubBackend(response=SandboxResult(backend="stub", exit_code=0))
+    service = _make_service(cfg, backend)
+    asyncio.run(service.run(SandboxSpec(argv=["/bin/true"], network=False)))
     assert backend.received is not None
     assert backend.received.network is False
 
@@ -313,6 +350,11 @@ def test_service_rewraps_infra_failure_as_execution_error() -> None:
     async def _load() -> SandboxConfig:
         return cfg
     service._load_config = _load  # type: ignore[attr-defined]
+
+    async def _no_managed_system(**kwargs: Any) -> None:
+        return None
+
+    service._resolve_managed_system = _no_managed_system  # type: ignore[attr-defined]
     with pytest.raises(SandboxExecutionError, match="infra failure"):
         asyncio.run(service.run(SandboxSpec(argv=["/bin/true"])))
 
