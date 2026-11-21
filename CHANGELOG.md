@@ -5,6 +5,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.130] - 2026-11-22 -- Evidence-backed agent endpoint tests
+
+### Added
+
+- Agent Endpoint Test now supports versioned, planner-proposed V2 profiles with sanitized public projections, SecretStore references, deterministic readiness probes, durable validation evidence, and explicit operator activation.
+- Declarative HTTP, WebSocket, Socket.IO, polling, and composite transports provide leased sessions, correlation and freshness checks, engagement classification, cancellation propagation, and accepted-at-most-once retry behavior.
+- Endpoint results and reports now expose valid, engaged, scoreable, and coverage denominators. Attempt details explain invalid or non-engaged turns without exposing unscoreable response text.
+
+### Changed
+
+- Agent application tests require an active ready profile and the native probe engine. Only valid, engaged responses reach detectors; ASR remains detector hits divided by scoreable attempts.
+- Raw model testing remains available as Model Endpoint Benchmark with the existing engine choices. Agent onboarding accepts structured non-secret hints while secret bindings remain string-valued SecretStore references.
+
+### Upgrade notes
+
+- Apply Alembic migration `171_agent_endpoint_profiles`, install the updated backend dependencies, and restart the API, frontend, and pentest workers. Existing raw model targets need no migration beyond the schema upgrade; agent applications require onboarding and validation before launch.
+
 ## [0.6.129] - 2026-11-21 -- Free-form autonomous live pentest missions
 
 ### Added

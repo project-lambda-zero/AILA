@@ -8,11 +8,15 @@ from .ssrf import SSRFValidatingAsyncTransport, SSRFValidatingTransport
 
 __all__ = [
     "HTTPClientSettings",
+    "AsyncHTTPClient",
+    "HTTPConnectError",
     "HTTPError",
     "build_async_http_client",
     "build_http_client",
 ]
 
+AsyncHTTPClient = httpx.AsyncClient
+HTTPConnectError = httpx.ConnectError
 HTTPError = httpx.HTTPError
 
 

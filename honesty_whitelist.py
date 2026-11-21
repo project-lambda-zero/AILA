@@ -637,6 +637,8 @@ HONESTY_WHITELIST = [
      "promotion_without_gate"),
     ("platform/prompts/seeds.py", "seed_platform_prompts",
      "promotion_without_gate"),
+    ("pentest/services/endpoint_planner.py", "seed_prompt_version",
+     "promotion_without_gate"),
 
     # Category (b): rule 68 content_slice_truncation. These cap the query
     # string written to an AUDIT-LOG detail field (record_audit_event
@@ -691,6 +693,13 @@ HONESTY_WHITELIST = [
     # on every services bundle; VRWorkflowServices.build is that contract's
     # implementation, not a forwarding wrapper.
     ("vr/workflow/services.py", "build", "consider inlining"),
+
+    # Category (g): these constructors centralize scoreability invariants and
+    # sanitized public projections; inlining would duplicate those rules.
+    ("pentest/services/endpoint_onboarding.py", "profile_summary", "consider inlining"),
+    ("pentest/services/endpoint_onboarding.py", "validation_summary", "consider inlining"),
+    ("pentest/services/transports/common.py", "failure", "consider inlining"),
+    ("pentest/services/transports/common.py", "success", "consider inlining"),
 
     # Category: rule 68 content_slice_truncation. RFC #149 auto-patch.
     # These two caps bound LLM-SYNTHESIS PROMPT INPUT, not stored or

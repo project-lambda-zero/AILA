@@ -115,7 +115,7 @@ const BESPOKE = {
   "vr:patterns": { title: PAGE_CONFIGS["vr:patterns"].title, render: (p) => <VrPatternsPage {...p} /> },
   "malware:new-target": { title: "malware \u00b7 upload target", render: (p) => <UploadForm module="malware" {...p} /> },
   "forensics:project": { title: "forensics \u00b7 project", render: (p) => <ForensicsProjectPage {...p} /> },
-  "pentest:assessments": { title: "pentest \u00b7 assessments", render: (p) => <PentestPage {...p} /> },
+  "pentest:assessments": { title: "Agent Endpoint Tests", render: (p) => <PentestPage {...p} /> },
   "pentest:campaigns": { title: "pentest \u00b7 campaigns", render: (p) => <CampaignsPage {...p} /> },
   "pentest:live-settings": { title: "pentest \u00b7 live settings", render: (p) => <PentestLiveSettingsPage {...p} /> },
   "vulnerability:scan": { title: "vulnerability \u00b7 launch scan", render: (p) => <VulnerabilityPage {...p} /> },
