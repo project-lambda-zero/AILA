@@ -6,7 +6,12 @@ import httpx
 
 from .ssrf import SSRFValidatingAsyncTransport, SSRFValidatingTransport
 
-__all__ = ["HTTPClientSettings", "HTTPError", "build_async_http_client", "build_http_client"]
+__all__ = [
+    "HTTPClientSettings",
+    "HTTPError",
+    "build_async_http_client",
+    "build_http_client",
+]
 
 HTTPError = httpx.HTTPError
 
@@ -28,6 +33,7 @@ def build_http_client(
     verify: bool | str | None = None,
     proxies: str | None = None,
     allow_endpoints: frozenset[tuple[str, int]] = frozenset(),
+    follow_redirects: bool = True,
 ) -> httpx.Client:
     """Construct an httpx.Client configured with platform defaults.
 
@@ -53,7 +59,7 @@ def build_http_client(
         transport=transport,
         timeout=settings.request_timeout_seconds,
         headers={"User-Agent": settings.user_agent},
-        follow_redirects=True,
+        follow_redirects=follow_redirects,
     )
 
 
@@ -64,6 +70,7 @@ def build_async_http_client(
     proxies: str | None = None,
     timeout: float | None = None,
     allow_endpoints: frozenset[tuple[str, int]] = frozenset(),
+    follow_redirects: bool = True,
 ) -> httpx.AsyncClient:
     """Async counterpart of :func:`build_http_client`.
 
@@ -91,5 +98,5 @@ def build_async_http_client(
         transport=transport,
         timeout=settings.request_timeout_seconds if timeout is None else timeout,
         headers={"User-Agent": settings.user_agent},
-        follow_redirects=True,
+        follow_redirects=follow_redirects,
     )

@@ -14,11 +14,11 @@ Usage::
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 import redis.asyncio as aioredis
+from sqlalchemy.exc import SQLAlchemyError
 
 __all__ = [
     "close_redis_pool",
@@ -32,18 +32,37 @@ _pool: aioredis.ConnectionPool | None = None
 _url: str | None = None
 
 
+async def _configured_redis_url() -> str | None:
+    """Resolve the platform Redis URL through the config registry.
+
+    ``ConfigRegistry.get`` already applies ``AILA_PLATFORM_REDIS_URL`` before the
+    stored value, so the env var is not read here. The registry import is
+    function-local: ``aila.storage.registry`` imports this module lazily, so a
+    top-level import would form a cycle.
+    """
+    try:
+        from aila.platform.tasks.constants import CONFIG_KEY_REDIS_URL, CONFIG_NS_PLATFORM
+        from aila.storage.registry import ConfigRegistry
+
+        return await ConfigRegistry().get(CONFIG_NS_PLATFORM, CONFIG_KEY_REDIS_URL) or None
+    except (OSError, RuntimeError, ValueError, SQLAlchemyError) as exc:
+        _log.warning("Platform Redis URL unavailable from config registry: %s", type(exc).__name__)
+        return None
+
+
 async def init_redis_pool(url: str | None = None, max_connections: int = 20) -> None:
     """Initialize the shared Redis connection pool.
 
     Args:
-        url: Redis URL.  Falls back to ``AILA_PLATFORM_REDIS_URL`` env var.
+        url: Redis URL.  Falls back to ``AILA_PLATFORM_REDIS_URL``, then the
+            platform ``redis_url`` config registry entry.
         max_connections: Maximum number of connections in the pool.
 
     Raises:
         redis.exceptions.ConnectionError: If Redis is unreachable.
     """
     global _pool, _url
-    resolved_url = url or os.getenv("AILA_PLATFORM_REDIS_URL")
+    resolved_url = url or await _configured_redis_url()
     if not resolved_url:
         _log.warning("No Redis URL configured; Redis features will be unavailable")
         return
@@ -87,12 +106,12 @@ async def get_redis() -> AsyncGenerator[aioredis.Redis, None]:
         RuntimeError: If pool was not initialized via init_redis_pool().
     """
     if _pool is None:
-        # Auto-init from env var if pool wasn't explicitly initialized (e.g. ARQ worker)
-        _auto_url = os.getenv("AILA_PLATFORM_REDIS_URL")
+        # Auto-init when the pool wasn't explicitly initialized (e.g. ARQ worker, reaper cron).
+        _auto_url = await _configured_redis_url()
         if _auto_url:
             await init_redis_pool(_auto_url)
         if _pool is None:
-            raise RuntimeError("Redis pool not initialized and AILA_PLATFORM_REDIS_URL not set.")
+            raise RuntimeError("Redis pool not initialized and no Redis URL configured.")
     client = aioredis.Redis(connection_pool=_pool)
     try:
         yield client

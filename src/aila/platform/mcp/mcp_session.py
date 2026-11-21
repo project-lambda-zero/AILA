@@ -55,6 +55,8 @@ from typing import Any
 
 import httpx
 
+from aila.platform.http_body import BodyTooLargeError, read_bounded_body
+
 __all__ = [
     "MCP_PROTOCOL_VERSION",
     "McpHttpError",
@@ -274,11 +276,10 @@ class McpHttpSession(McpSession):
                 content_length = resp.headers.get("content-length")
                 if content_length and int(content_length) > 2 * 1024 * 1024:
                     raise McpHttpError("MCP response exceeds 2 MiB", status_code=resp.status_code)
-                content = bytearray()
-                async for chunk in resp.aiter_bytes():
-                    if len(content) + len(chunk) > 2 * 1024 * 1024:
-                        raise McpHttpError("MCP response exceeds 2 MiB", status_code=resp.status_code)
-                    content.extend(chunk)
+                try:
+                    content = await read_bounded_body(resp.aiter_bytes(), max_bytes=2 * 1024 * 1024)
+                except BodyTooLargeError as exc:
+                    raise McpHttpError("MCP response exceeds 2 MiB", status_code=resp.status_code) from exc
                 response_text = bytes(content).decode("utf-8", errors="replace")
                 content_type = resp.headers.get("content-type", "")
                 response_headers = resp.headers
