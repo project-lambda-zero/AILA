@@ -49,10 +49,12 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
+from uuid import uuid4
 
 from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from filelock import FileLock
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlmodel import select
 
 _log = logging.getLogger(__name__)
@@ -502,7 +504,7 @@ class SecretStore:
         )
         self.master_protector = MasterKeySecretProtector(self.key_provider)
 
-    async def upsert_secret(
+    async def stage_secret(
         self,
         session,
         *,
@@ -511,28 +513,10 @@ class SecretStore:
         plaintext: str,
         secret_id: str | None = None,
     ) -> SecretRecord:
-        """Create or update an encrypted secret record.
+        """Create or update an encrypted secret in the caller's transaction.
 
-        Lookup order: if secret_id is provided, fetches by primary key first; then
-        falls back to (scope, secret_key) lookup.  This allows updating an existing
-        secret by ID without knowing its scope/key, or by key without knowing its ID.
-
-        Re-encrypts on every call (new nonce, current active key version).  The hint
-        is updated to reflect the new plaintext value.
-
-        Args:
-            session: Active AsyncSession.
-            scope: Logical scope (e.g. "provider").
-            secret_key: The secret name within the scope.
-            plaintext: The raw secret value to encrypt and store.
-            secret_id: Optional primary key for lookup.  Raises ValueError if the
-                found record's scope/key does not match the provided values.
-
-        Returns:
-            The refreshed SecretRecord after commit.
-
-        Raises:
-            ValueError: If secret_id resolves to a record with mismatched scope/key.
+        The record is flushed so database constraints and generated values are
+        resolved, but the caller retains responsibility for commit or rollback.
         """
         record = None
         if secret_id:
@@ -576,6 +560,70 @@ class SecretStore:
             record.ciphertext = ciphertext
             record.updated_at = utc_now()
         session.add(record)
+        await session.flush()
+        return record
+
+    async def stage_secret_if_absent(
+        self,
+        session,
+        *,
+        scope: str,
+        secret_key: str,
+        plaintext: str,
+    ) -> bool:
+        """Insert an encrypted secret only when (scope, secret_key) has no row.
+
+        Uses a single ``INSERT ... ON CONFLICT DO NOTHING`` so a concurrent
+        winner is never overwritten. Returns True when this call inserted the
+        row. The statement is flushed, never committed; the caller owns commit.
+        """
+        ciphertext, nonce, key_version, algorithm = self.master_protector.encrypt(
+            scope=scope,
+            secret_key=secret_key,
+            plaintext=plaintext,
+        )
+        now = utc_now()
+        result = await session.execute(
+            pg_insert(SecretRecord)
+            .values(
+                id=str(uuid4()),
+                scope=scope,
+                secret_key=secret_key,
+                backend=self.master_protector.backend_name,
+                key_version=key_version,
+                algorithm=algorithm,
+                nonce=nonce,
+                hint=mask_secret_hint(plaintext),
+                ciphertext=ciphertext,
+                created_at=now,
+                updated_at=now,
+            )
+            .on_conflict_do_nothing(constraint="uq_secretrecord_scope_secret_key")
+        )
+        await session.flush()
+        return result.rowcount == 1
+
+    async def upsert_secret(
+        self,
+        session,
+        *,
+        scope: str,
+        secret_key: str,
+        plaintext: str,
+        secret_id: str | None = None,
+    ) -> SecretRecord:
+        """Create or update and commit an encrypted secret record.
+
+        This single-operation API preserves the original committing behavior.
+        Multi-step writers use :meth:`stage_secret` and own the transaction.
+        """
+        record = await self.stage_secret(
+            session,
+            scope=scope,
+            secret_key=secret_key,
+            plaintext=plaintext,
+            secret_id=secret_id,
+        )
         await session.commit()
         await session.refresh(record)
         return record
@@ -607,13 +655,21 @@ class SecretStore:
             return None
         return self._decrypt_record(record)
 
-    async def delete_secret(self, session, *, secret_id: str | None = None, scope: str | None = None, secret_key: str | None = None) -> bool:
-        """Delete a secret by ID or by (scope, secret_key).
+    async def stage_delete_secret(
+        self,
+        session,
+        *,
+        secret_id: str | None = None,
+        scope: str | None = None,
+        secret_key: str | None = None,
+    ) -> bool:
+        """Delete a secret in the caller's transaction.
 
         Lookup: secret_id takes priority; falls back to (scope, secret_key).
+        The delete is flushed but not committed.
 
         Returns:
-            True if the record existed and was deleted; False if not found.
+            True if the record existed and was staged for deletion; False if not found.
         """
         record = None
         if secret_id:
@@ -628,8 +684,23 @@ class SecretStore:
         if record is None:
             return False
         await session.delete(record)
-        await session.commit()
+        await session.flush()
         return True
+
+    async def delete_secret(self, session, *, secret_id: str | None = None, scope: str | None = None, secret_key: str | None = None) -> bool:
+        """Delete and commit a secret by ID or by (scope, secret_key).
+
+        Returns:
+            True if the record existed and was deleted; False if not found.
+        """
+        deleted = await self.stage_delete_secret(
+            session,
+            secret_id=secret_id,
+            scope=scope,
+            secret_key=secret_key,
+        )
+        await session.commit()
+        return deleted
 
     async def list_metadata(self, session, scope: str, *, limit: int | None = None) -> list[dict[str, object]]:
         """List secret metadata (no plaintext) for a given scope.

@@ -142,21 +142,35 @@ async def _resolve_hmac_key(config_provider: LLMConfigProvider) -> str:
     from ...storage.database import async_session_scope
 
     secret_store = config_provider._secret_store
+    # Auto-generate and store (D-04) -- encrypted at rest. The insert is
+    # atomic INSERT ... ON CONFLICT DO NOTHING, so a concurrent first caller
+    # never overwrites the stored winner; the loser rereads and adopts it.
     async with async_session_scope() as session:
         existing = await secret_store.get_secret_by_key(
             session, scope="platform", secret_key="llm_seal_hmac_key",
         )
-        if existing is not None and existing.strip():
-            return existing
-        # Auto-generate and store (D-04) -- encrypted at rest.
-        key = secrets.token_hex(32)
-        await secret_store.upsert_secret(
+    if existing is not None and existing.strip():
+        return existing
+
+    key = secrets.token_hex(32)
+    async with async_session_scope() as session:
+        inserted = await secret_store.stage_secret_if_absent(
             session,
             scope="platform",
             secret_key="llm_seal_hmac_key",
             plaintext=key,
         )
+        await session.commit()
+    if inserted:
         return key
+
+    async with async_session_scope() as session:
+        winner = await secret_store.get_secret_by_key(
+            session, scope="platform", secret_key="llm_seal_hmac_key",
+        )
+    if winner is not None and winner.strip():
+        return winner
+    raise RuntimeError("llm_seal_hmac_key insert conflicted but no winner is readable")
 
 
 async def _resolve_retention_days(config_provider: LLMConfigProvider) -> int:
