@@ -10,8 +10,10 @@ un-isolated fallback -- a fallback would defeat the whole point.
 Policy the service enforces before dispatch:
 
 * ``spec.timeout_s`` is clamped to ``platform.sandbox_max_timeout_s``.
-* ``spec.network`` is forced to ``False`` unless
-  ``platform.sandbox_allow_network`` is enabled at the platform level.
+* ``spec.network`` is rejected with :class:`SandboxPolicyError` unless
+  ``platform.sandbox_allow_network`` is enabled and the backend both supports
+  network access and enforces the requested egress. A refused spec is never
+  silently run offline.
 * When ``spec.vcpu`` / ``spec.mem_mb`` were left at their SandboxSpec
   defaults, the platform defaults from config take precedence so an
   operator can tune every run's ceilings without touching module code.
@@ -41,6 +43,7 @@ from .contracts import (
     CancelCheck,
     SandboxBackend,
     SandboxExecutionError,
+    SandboxPolicyError,
     SandboxResult,
     SandboxSpec,
     SandboxUnavailableError,
@@ -204,6 +207,8 @@ class SandboxService:
                 f"backend (supported: {sorted(self._backends)})."
             )
 
+        normalized = self._apply_policy(spec, cfg, backend)
+
         # The image is a backend-specific contract: the oci backend must get
         # one, and no other backend may silently ignore one.
         if backend.name == OciBackend.name and spec.image is None:
@@ -215,8 +220,6 @@ class SandboxService:
                 f"SandboxSpec.image is only supported by the oci backend; "
                 f"platform.sandbox_backend={cfg.backend!r} would ignore it."
             )
-
-        normalized = self._apply_policy(spec, cfg)
         managed_sys = await self._resolve_managed_system(
             system_name=cfg.system_name,
             system_id=cfg.system_id,
@@ -276,20 +279,38 @@ class SandboxService:
     # Helpers -- kept package-private so tests can call them directly.
     # ------------------------------------------------------------------
 
-    def _apply_policy(self, spec: SandboxSpec, cfg: SandboxConfig) -> SandboxSpec:
-        """Return a copy of ``spec`` with the platform policy applied."""
+    def _apply_policy(
+        self, spec: SandboxSpec, cfg: SandboxConfig, backend: SandboxBackend
+    ) -> SandboxSpec:
+        """Return a copy of ``spec`` with the platform policy applied.
+
+        A networked spec is refused, never clamped to offline: it must be
+        allowed by ``platform.sandbox_allow_network``, the backend must support
+        network access, and the backend must enforce the requested egress.
+        """
+        if spec.network:
+            if not cfg.allow_network:
+                raise SandboxPolicyError(
+                    "networked sandbox run refused: platform.sandbox_allow_network is disabled"
+                )
+            if not backend.supports_network:
+                raise SandboxPolicyError(
+                    f"networked sandbox run refused: backend {backend.name!r} does not support network access"
+                )
+            if not backend.enforces_egress:
+                raise SandboxPolicyError(
+                    f"networked sandbox run refused: backend {backend.name!r} cannot enforce per-run egress"
+                )
         effective_timeout = min(float(spec.timeout_s), float(cfg.max_timeout_s))
         if effective_timeout <= 0.0:
             # A misconfigured max_timeout_s of 0 would otherwise clamp
             # every dispatch to 0s; keep at least 1s so the backend can
             # produce a coherent timeout result.
             effective_timeout = max(1.0, float(cfg.default_timeout_s))
-        effective_network = bool(spec.network) if cfg.allow_network else False
         effective_vcpu = spec.vcpu if spec.vcpu != _SPEC_DEFAULT_VCPU else cfg.default_vcpu
         effective_mem = spec.mem_mb if spec.mem_mb != _SPEC_DEFAULT_MEM_MB else cfg.default_mem_mb
         return spec.model_copy(update={
             "timeout_s": effective_timeout,
-            "network": effective_network,
             "vcpu": max(1, int(effective_vcpu)),
             "mem_mb": max(1, int(effective_mem)),
         })

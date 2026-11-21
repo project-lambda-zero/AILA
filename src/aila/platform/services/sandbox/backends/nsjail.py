@@ -158,6 +158,9 @@ class NsjailBackend:
     """Concrete :class:`SandboxBackend` implementation for nsjail."""
 
     name = "nsjail"
+    supports_network = True
+    # Host-namespace networking cannot enforce a per-run destination allowlist.
+    enforces_egress = False
 
     async def run(
         self,

@@ -141,6 +141,9 @@ class FirecrackerBackend:
     """Concrete :class:`SandboxBackend` implementation for Firecracker."""
 
     name = "firecracker"
+    supports_network = True
+    # Operator-provisioned tap networking has no per-run destination enforcement.
+    enforces_egress = False
 
     async def run(
         self,

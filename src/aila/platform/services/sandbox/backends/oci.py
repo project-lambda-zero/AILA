@@ -150,6 +150,8 @@ class OciBackend:
     """Concrete :class:`SandboxBackend` implementation for docker/podman."""
 
     name = "oci"
+    supports_network = True
+    enforces_egress = True
 
     async def run(
         self,

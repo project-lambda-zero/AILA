@@ -41,6 +41,7 @@ __all__ = [
     "SandboxBackend",
     "SandboxUnavailableError",
     "SandboxExecutionError",
+    "SandboxPolicyError",
     "StreamCallback",
     "CancelCheck",
     "validate_output_glob",
@@ -193,7 +194,10 @@ class SandboxSpec(BaseModel):
     )
     network: bool = Field(
         default=False,
-        description="Grant network access inside the sandbox. Forced False unless the service policy allows it.",
+        description=(
+            "Grant network access inside the sandbox. Rejected with SandboxPolicyError unless the "
+            "service policy allows network and the backend can enforce the requested egress."
+        ),
     )
     egress: SandboxEgressPolicy | None = Field(
         default=None,
@@ -331,9 +335,16 @@ class SandboxBackend(Protocol):
     and MUST return a :class:`SandboxResult` on any normal outcome --
     including a non-zero exit code, a timeout, or an OOM kill. The
     result flags are the caller-facing signal, not exceptions.
+
+    ``supports_network`` declares whether the backend can run a networked spec
+    at all. ``enforces_egress`` declares whether it can confine a networked run
+    to the exact destinations in ``SandboxSpec.egress``. The service refuses a
+    networked spec unless both hold and the platform policy allows network.
     """
 
     name: str
+    supports_network: bool
+    enforces_egress: bool
 
     async def run(
         self,
@@ -365,4 +376,14 @@ class SandboxExecutionError(RuntimeError):
     a guest-side runner that never wrote its result marker. A non-zero
     program exit is NOT an execution error -- it is a normal result and
     surfaces as ``SandboxResult.exit_code != 0``.
+    """
+
+
+class SandboxPolicyError(SandboxExecutionError):
+    """Raised when the platform policy refuses a spec before any dispatch.
+
+    Covers a networked spec while ``platform.sandbox_allow_network`` is off,
+    or on a backend that cannot provide network access or enforce the
+    requested egress. The spec is rejected, never silently rewritten, so the
+    caller sees exactly why the run did not happen.
     """
