@@ -23,22 +23,25 @@ helper runs.
 
 from __future__ import annotations
 
+import secrets
 from typing import Final
 
 __all__ = [
     "BEGIN_FENCE_PREFIX",
-    "END_FENCE",
+    "END_FENCE_PREFIX",
     "sanitize_untrusted",
 ]
 
-# Constant literal tags. The prefix is the invariant substring the
-# escape pass looks for -- the actual opening tag adds a ``source``
-# attribute after the prefix, and the closing tag has no attributes.
+# Invariant tag prefixes. The escape pass looks for these substrings in the payload.
+# The opening tag is ``<untrusted-input source="..." nonce="...">``; the closing tag is
+# ``</untrusted-input nonce="...">``. The nonce is fresh per call, so the only close tag
+# that carries it is the one this wrapper writes.
 BEGIN_FENCE_PREFIX: Final[str] = "<untrusted-input"
-END_FENCE: Final[str] = "</untrusted-input>"
+END_FENCE_PREFIX: Final[str] = "</untrusted-input"
 
 _ESCAPED_BEGIN: Final[str] = "<untrusted_ESCAPED_input"
-_ESCAPED_END: Final[str] = "</untrusted_ESCAPED_input>"
+_ESCAPED_END: Final[str] = "</untrusted_ESCAPED_input"
+_NONCE_BYTES: Final[int] = 16
 
 _SOURCE_MAX_LEN: Final[int] = 120
 _SOURCE_BANNED: Final[tuple[str, ...]] = (
@@ -61,29 +64,26 @@ def _clean_source(source: str) -> str:
 
 
 def _escape_fence_sentinels(payload: str) -> str:
-    """Mangle any fence-sentinel substring found inside ``payload``.
+    """Mangle every fence tag prefix found inside ``payload``, whatever its attributes or nonce.
 
-    Applied in specific-then-general order so a payload containing the
-    close tag stays syntactically valid text after escaping.  The
-    replacement is deterministic -- calling twice produces the same
-    result, and the mangled form has no substring that matches either
-    the begin prefix or the end sentinel, so a downstream re-wrap or
-    idempotency check does not re-mangle.
+    Close prefixes are escaped before open prefixes, so a payload's forged close tag,
+    with or without a guessed nonce, cannot end this wrapper's fence. The mangled
+    form contains neither prefix, so escaping is idempotent.
     """
-    payload = payload.replace(END_FENCE, _ESCAPED_END)
+    payload = payload.replace(END_FENCE_PREFIX, _ESCAPED_END)
     payload = payload.replace(BEGIN_FENCE_PREFIX, _ESCAPED_BEGIN)
     return payload
 
 
 def sanitize_untrusted(text: str, *, source: str) -> str:
-    """Wrap ``text`` in a constant-literal fence marking it as data.
+    """Wrap ``text`` in a per-call nonce fence marking it as data.
 
     The ``source`` label rides inside the opening tag as an attribute
     so the model can distinguish content that flowed from an audit-mcp
     bridge from content that flowed from a persisted fact field. Any
-    occurrence of the fence sentinel already present in ``text`` is
-    mangled before wrapping so third-party bytes cannot break out of
-    the outer fence.
+    fence tag prefix already present in ``text`` is mangled before
+    wrapping, and the closing tag carries a fresh random nonce, so
+    third-party bytes cannot break out of the outer fence.
 
     Content is otherwise preserved verbatim. Callers that also need
     known-pattern stripping (e.g. ``ignore previous instructions``,
@@ -92,8 +92,9 @@ def sanitize_untrusted(text: str, *, source: str) -> str:
     """
     cleaned_source = _clean_source(source)
     escaped_body = _escape_fence_sentinels(str(text))
+    nonce = secrets.token_hex(_NONCE_BYTES)
     return (
-        f'<untrusted-input source="{cleaned_source}">\n'
+        f'{BEGIN_FENCE_PREFIX} source="{cleaned_source}" nonce="{nonce}">\n'
         f"{escaped_body}\n"
-        f"{END_FENCE}"
+        f'{END_FENCE_PREFIX} nonce="{nonce}">'
     )
