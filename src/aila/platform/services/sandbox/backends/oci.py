@@ -214,9 +214,10 @@ class OciBackend:
                     on_stderr=on_stderr,
                     cancel_requested=cancel_requested,
                 )
+                output_cap = min(cfg.output_max_bytes, spec.max_output_bytes or cfg.output_max_bytes)
                 files, files_truncated = await collect_outputs(
                     ssh, host_payload, workspace, spec.output_globs,
-                    per_file_cap=cfg.output_max_bytes,
+                    per_file_cap=output_cap, aggregate_cap=output_cap,
                 )
         result.output_files = files
         if files_truncated:

@@ -23,6 +23,11 @@ def test_formula_prefixes_are_neutralised_and_plain_values_pass_through() -> Non
     assert csv_safe_cell(22) == "22"
 
 
+def test_formula_prefixes_after_spreadsheet_controls_are_neutralised() -> None:
+    for prefix in (" ", "\t", "\r", "\n", " \t\r\n"):
+        assert csv_safe_cell(f"{prefix}=HYPERLINK(\"http://x\")") == f"'{prefix}=HYPERLINK(\"http://x\")"
+
+
 def test_fleet_health_csv_neutralises_formula_cells() -> None:
     rows = [
         ManagedSystemRecord(
@@ -43,10 +48,10 @@ def test_campaign_findings_csv_keeps_formula_guard() -> None:
         "findings": [{
             "id": "f-1", "title": "=1+1", "severity": "high", "status": "open", "poe_level": "1",
             "verification_status": "verified", "verification_note": "-note", "asset_id": "a-1",
-            "fingerprint": "fp", "evidence": [{"artifact_id": "art-1", "quote": "@quote"}],
+            "fingerprint": "fp", "evidence": [{"artifact_id": "art-1", "quote": "\t=HYPERLINK(\"http://x\")"}],
         }],
     }
     parsed = _parse(_csv(data))
     assert parsed[1][1] == "'=1+1"
     assert parsed[1][6] == "'-note"
-    assert parsed[1][10] == "'@quote"
+    assert parsed[1][10] == "'\t=HYPERLINK(\"http://x\")"

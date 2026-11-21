@@ -221,6 +221,15 @@ class SandboxSpec(BaseModel):
         ),
     )
 
+    max_output_bytes: int | None = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Aggregate stdout/stderr/output-file budget requested by the caller. "
+            "The effective backend collection cap is the smaller of this and platform policy."
+        ),
+    )
+
     image: str | None = Field(
         default=None,
         description=(

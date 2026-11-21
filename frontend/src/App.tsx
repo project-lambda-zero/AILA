@@ -20,7 +20,6 @@ import CommandPalette from "./console/CommandPalette";
 import WidgetHost from "./console/widgets/WidgetHost";
 import { ConsoleWindow } from "./console/window";
 import { resolveWizard } from "./console/wizards";
-import { FaultyTerminal } from "./desktop/FaultyTerminal";
 
 // Faithful port of the `AILA Console` design page. Two modes: basic (console
 // tab -- general assistant, rail collapsed) and advanced (workspace tab -- full
@@ -376,7 +375,6 @@ function Console() {
         color: "var(--text-primary)",
       }}
     >
-      <FaultyTerminal opts={{ brightness: 0.55, scanlineIntensity: 0.5, glitchAmount: 1 }} />
       <div
         aria-hidden="true"
         style={{
@@ -579,10 +577,9 @@ function Console() {
           ) : null}
 
           {/* Module page opens as a contained inner window inside the center
-              column -- the menu bar, left rail, and FaultyTerminal backdrop
-              stay visible around it (the mock's embedded look). The page's own
-              root is position:absolute;inset:0 with a transparent background, so
-              the animated terminal shows through its panels. No top nav. */}
+              column -- the menu bar and left rail stay visible around it (the
+              mock's embedded look). The page's own root is position:absolute;
+              inset:0 and paints over the themed surface. No top nav. */}
           {activePage ? renderPage(activePage) : null}
           {minimizedWindows.length > 0 ? (
             <div

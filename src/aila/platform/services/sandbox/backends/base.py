@@ -208,13 +208,14 @@ async def collect_outputs(
     workspace: HostWorkspace,
     globs: list[str],
     per_file_cap: int,
+    aggregate_cap: int | None = None,
 ) -> tuple[dict[str, str], bool]:
-    """Materialise ``globs`` matches back onto the caller as a dict.
+    """Materialise a bounded set of ``globs`` matches as UTF-8 text.
 
-    Returns ``(files, truncated)`` where ``truncated`` is True iff any
-    single collected file was clipped to ``per_file_cap`` bytes. Cap
-    is applied per-file (not aggregate) so a large ``result.json``
-    cannot silently starve smaller siblings.
+    Returns ``(files, truncated)``. Each file is capped independently and
+    the complete collection is capped at ``aggregate_cap`` transferred
+    bytes and 256 files. Collection stops before downloading an entry
+    that cannot fit in the remaining aggregate budget.
     """
     if not globs:
         return {}, False
@@ -229,18 +230,25 @@ async def collect_outputs(
     root = workspace.remote_root
     truncated = False
     files: dict[str, str] = {}
+    remaining = aggregate_cap
+    stop = False
+    max_files = 256
     for pattern in globs:
+        if stop:
+            break
         # The pattern is already restricted to glob syntax, so the unquoted
         # splice below expands only as a filename glob. Matches are printed
         # NUL-delimited (names may contain newlines) and only those whose
         # realpath stays under the workspace are emitted, which also rejects
-        # symlinks that point out of the workspace.
+        # symlinks that point out of the workspace. One extra name reveals
+        # truncation without materialising an unbounded match list.
         cmd = (
-            f"cd {shlex.quote(root)} && root=$(pwd -P) && "
+            f"cd {shlex.quote(root)} && root=$(pwd -P) && n=0 && "
             f"for f in {pattern}; do "
             '[ -f "$f" ] || continue; '
             'real=$(realpath -- "$f") || continue; '
-            'case "$real" in "$root"/*) printf \'%s\\0\' "$f";; esac; '
+            'case "$real" in "$root"/*) n=$((n + 1)); '
+            f'[ "$n" -le {max_files + 1} ] || break; printf \'%s\\0\' "$f";; esac; '
             "done"
         )
         stdout, _stderr, exit_code = await ssh.run_command_full(
@@ -258,8 +266,17 @@ async def collect_outputs(
             if not _is_confined_relative(rel):
                 _log.warning("sandbox output %r rejected: escapes the workspace", rel)
                 continue
-            raw, clipped = await _fetch_output(ssh, host_payload, workspace, rel, per_file_cap)
+            if len(files) >= max_files or remaining is not None and remaining <= 0:
+                truncated = True
+                stop = True
+                break
+            file_cap = per_file_cap
+            if remaining is not None:
+                file_cap = min(file_cap, remaining) if file_cap > 0 else remaining
+            raw, clipped = await _fetch_output(ssh, host_payload, workspace, rel, file_cap)
             truncated = truncated or clipped
+            if remaining is not None:
+                remaining -= len(raw)
             files[rel] = raw.decode("utf-8", errors="replace")
     return files, truncated
 

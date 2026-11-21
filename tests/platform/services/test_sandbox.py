@@ -595,6 +595,30 @@ def test_per_file_cap_transfers_at_most_cap_plus_one_bytes() -> None:
     assert host.downloads[0].startswith(f"{_ROOT}/.collect-")
 
 
+def test_aggregate_cap_stops_before_downloading_the_next_file() -> None:
+    host = _FakeHost(
+        files={f"{_ROOT}/a.txt": b"a" * 6, f"{_ROOT}/b.txt": b"b" * 6},
+        matches={"*": ["a.txt", "b.txt"]},
+    )
+    files, truncated = asyncio.run(
+        collect_outputs(host, object(), _WORKSPACE, ["*"], per_file_cap=6, aggregate_cap=6),
+    )
+    assert files == {"a.txt": "aaaaaa"}
+    assert truncated is True
+    assert len(host.downloads) == 1
+
+
+def test_output_file_count_is_bounded_before_the_257th_download() -> None:
+    names = [f"{index}.txt" for index in range(257)]
+    host = _FakeHost(files={f"{_ROOT}/{name}": b"" for name in names}, matches={"*": names})
+    files, truncated = asyncio.run(
+        collect_outputs(host, object(), _WORKSPACE, ["*"], per_file_cap=0, aggregate_cap=1024),
+    )
+    assert len(files) == 256
+    assert truncated is True
+    assert len(host.downloads) == 256
+
+
 # ---------------------------------------------------------------------------
 # 9. Workspace permissions and nsjail identity
 # ---------------------------------------------------------------------------

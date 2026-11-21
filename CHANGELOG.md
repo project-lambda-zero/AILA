@@ -21,6 +21,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Live campaign setup is now a guided mission, scope, safeguards, and review flow. The campaign launchpad adds loaded-campaign metrics, search, and status filters; the workspace prioritizes live status, approvals, actions, findings, attack-surface coverage, and recent activity while grouping advanced tools under secondary navigation. Finding review now connects filtering, evidence selection, verification, reproduction, and retesting in one workflow.
 - All live actions and harmless connectivity checks use `ghcr.io/project-lambda-zero/aila-pentest@sha256:32beabb84be7c32e65fe523f9538b2ed2fffd0758cf38686b97c55bd6d8b6cde`, one module-owned immutable Kali-based toolchain image. The image extends the maintained `pentest-kit` runtime with pinned BBOT and Schemathesis packages and fixed non-root Nuclei template and Playwright browser paths; action execution performs no installs, template updates, or image pulls.
 - Networked OCI execution requires a per-run egress policy and a dedicated remote bridge with exact destination and port rules. Static OCI network selection was removed; bridge connectivity alone is not scope enforcement.
 - Tool output is sealed as raw evidence before parsing. Candidate scanner results do not become confirmed findings from tool or LLM text alone, and successful action completion is atomic with normalized write-back.
@@ -36,6 +37,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The campaign setup console now submits complete target-specific scope, exclusions, capabilities, credential handles, approval policy, and aggregate budgets while preserving the empty harmless-connectivity workflow and retry idempotency.
 - Initial Nuclei campaigns use the same five explicitly curated safe template defaults as planner follow-ups; direct custom or missing template selection remains rejected.
 - Live ZAP manifests use the supported `-dir /work` option, allowing arbitrary non-root execution without writing to the packaged ZAP directory.
+- Removed the persistent full-screen WebGL terminal backdrop from the sign-in and console shells, eliminating its continuous GPU drawing and full-viewport compositing while preserving the existing theme.
 - Generated TCP-connect manifests contain valid Python loop syntax instead of an invalid semicolon-prefixed compound statement.
 - Nmap parsing accepts only the exact current `nmaprun` DOCTYPE or legacy Nmap 1.04/1.05 public DTD declaration while continuing to reject custom DTDs and entities.
 - Httpx manifests use stable CLI flags supported by the selected older toolchain; file input remains explicit through `-l /work/targets.txt`.
