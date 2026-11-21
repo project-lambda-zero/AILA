@@ -227,6 +227,11 @@ All fields from `PlatformConfigSchema` (registered under namespace `platform`):
 | `AILA_PLATFORM_ARQ_MAX_TRIES` | `3` | int | Max retry attempts for failed jobs |
 | `AILA_PLATFORM_ARQ_KEEP_RESULT_S` | `3600` | int | How long to keep job results in Redis |
 | `AILA_PLATFORM_PROGRESS_STREAM_MAXLEN` | `1000` | int | Max events per Redis progress stream |
+| `AILA_PLATFORM_EVIDENCE_ROOT_DIR` | *(empty; secret-keyring parent `evidence/`)* | str | Ciphertext evidence root directory |
+| `AILA_PLATFORM_EVIDENCE_CHUNK_BYTES` | `262144` | int | Plaintext bytes per AES-GCM evidence frame |
+| `AILA_PLATFORM_EVIDENCE_MAX_ARTIFACT_BYTES` | `268435456` | int | Maximum plaintext bytes in one evidence artifact |
+| `AILA_PLATFORM_SANDBOX_BACKEND` | `none` | str | Sandbox backend: `none`, `nsjail`, `firecracker`, or `oci` |
+| `AILA_PLATFORM_SANDBOX_OCI_BIN` | `docker` | str | Remote Docker or Podman binary for the OCI backend |
 | `AILA_PLATFORM_WORKER_HEALTH_TRACKS` | `default,vr,vulnerability,forensics,malware,pentest,pentest_runtime,forensics_readiness,reporting` | str CSV | ARQ tracks expected to have live worker heartbeats |
 | `AILA_PLATFORM_LLM_PIPELINE_CLASSIFY_DEFAULT` | `true` | bool | LLM pipeline classify stage default-on |
 | `AILA_PLATFORM_LLM_PIPELINE_VALIDATE_DEFAULT` | `true` | bool | LLM pipeline validate stage default-on |

@@ -45,6 +45,7 @@ from __future__ import annotations
 import ast
 import importlib
 import os
+import re
 from pathlib import Path
 
 import pytest
@@ -172,11 +173,9 @@ def test_no_metadata_drift_after_bootstrap() -> None:
 def _iter_migration_table_lifecycle() -> tuple[set[str], set[str]]:
     """Return ``(created, dropped)`` table names across every migration.
 
-    Walks each migration's ``upgrade()`` body and pulls out
-    ``op.create_table("<name>", ...)`` and ``op.drop_table("<name>")``
-    calls. Downgrade bodies are intentionally ignored -- they run only
-    on rollback, and the head schema they invert is already visible via
-    the upgrade path.
+    Walks each migration's ``upgrade()`` body and follows local helpers with
+    constant table arguments. Raw ``DROP TABLE`` statements count as drops.
+    Downgrade bodies are intentionally ignored.
     """
     created: set[str] = set()
     dropped: set[str] = set()
@@ -191,29 +190,78 @@ def _iter_migration_table_lifecycle() -> tuple[set[str], set[str]]:
             # test never masks it by turning it into an unrelated
             # AssertionError.
             continue
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.FunctionDef):
-                continue
-            if node.name != "upgrade":
-                continue
-            for call in ast.walk(node):
+        constants = {
+            target.id: node.value.value
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+            for target in node.targets
+            if isinstance(target, ast.Name)
+        }
+        constants.update({
+            node.target.id: node.value.value
+            for node in tree.body
+            if isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        })
+        functions = {
+            node.name: node for node in tree.body if isinstance(node, ast.FunctionDef)
+        }
+        upgrade = functions.get("upgrade")
+        if upgrade is None:
+            continue
+        visited: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
+
+        def visit(function: ast.FunctionDef, bindings: dict[str, str]) -> None:
+            visit_key = (function.name, tuple(sorted(bindings.items())))
+            if visit_key in visited:
+                return
+            visited.add(visit_key)
+
+            def resolve(node: ast.AST) -> str | None:
+                if isinstance(node, ast.Constant) and isinstance(node.value, str):
+                    return node.value
+                if isinstance(node, ast.Name):
+                    return bindings.get(node.id, constants.get(node.id))
+                return None
+
+            for call in ast.walk(function):
                 if not isinstance(call, ast.Call):
                     continue
                 attr_name = getattr(call.func, "attr", None)
-                if attr_name not in {"create_table", "drop_table"}:
-                    continue
-                if not call.args:
-                    continue
-                first = call.args[0]
-                if not (
-                    isinstance(first, ast.Constant)
-                    and isinstance(first.value, str)
-                ):
-                    continue
-                if attr_name == "create_table":
-                    created.add(first.value)
-                else:
-                    dropped.add(first.value)
+                if attr_name in {"create_table", "drop_table", "rename_table", "execute"}:
+                    if not call.args:
+                        continue
+                    first = resolve(call.args[0])
+                    if first is None:
+                        continue
+                    if attr_name == "execute":
+                        match = re.match(
+                            r'\s*DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?"?([A-Za-z_][A-Za-z0-9_]*)"?',
+                            first,
+                            flags=re.IGNORECASE,
+                        )
+                        if match:
+                            dropped.add(match.group(1))
+                    elif attr_name == "create_table":
+                        created.add(first)
+                    elif attr_name == "rename_table":
+                        dropped.add(first)
+                        if len(call.args) > 1 and (new_name := resolve(call.args[1])) is not None:
+                            created.add(new_name)
+                    else:
+                        dropped.add(first)
+                elif isinstance(call.func, ast.Name) and call.func.id in functions:
+                    helper = functions[call.func.id]
+                    values = [resolve(arg) for arg in call.args]
+                    parameters = [arg.arg for arg in helper.args.args]
+                    if len(values) == len(parameters) and all(value is not None for value in values):
+                        visit(helper, dict(zip(parameters, values, strict=True)))
+
+        visit(upgrade, {})
     return created, dropped
 
 

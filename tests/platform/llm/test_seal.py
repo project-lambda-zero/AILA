@@ -23,7 +23,12 @@ from aila.platform.events.event import PlatformEvent
 from aila.platform.llm.client import LLMResponse
 from aila.platform.llm.config import LLMRouting
 from aila.platform.llm.pipeline import PipelineRunner
-from aila.platform.llm.seal import compute_seal, make_seal_step
+from aila.platform.llm.seal import (
+    _resolve_retention_days,
+    compute_seal,
+    make_seal_step,
+    purge_expired_seals,
+)
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import AuditSealRecord
 from aila.storage.registry import ConfigRegistry
@@ -71,15 +76,18 @@ class FakeSecretStore:
     async def get_secret_by_key(self, session: Any, *, scope: str, secret_key: str) -> str | None:
         return self._secrets.get((scope, secret_key))
 
-    async def upsert_secret(
+    async def stage_secret_if_absent(
         self,
         session: Any,
         *,
         scope: str,
         secret_key: str,
         plaintext: str,
-    ) -> None:
+    ) -> bool:
+        if (scope, secret_key) in self._secrets:
+            return False
         self._secrets[(scope, secret_key)] = plaintext
+        return True
 
 
 class FakeConfigProvider:
@@ -510,7 +518,7 @@ class TestContentStorage:
 
 
 class TestRetentionPruning:
-    """Expired records deleted after each seal write."""
+    """Expired records are deleted by the platform retention sweep."""
 
     @pytest.mark.usefixtures("test_db")
     async def test_pruning_expired_records(
@@ -548,10 +556,11 @@ class TestRetentionPruning:
         }
 
         await step(ctx, sample_messages, routing)
+        retention_days = await _resolve_retention_days(config)
 
         async with async_session_scope() as session:
+            assert await purge_expired_seals(session, retention_days) == 1
             records = (await session.exec(select(AuditSealRecord))).all()
-            # Old record pruned, only the new one remains
             assert len(records) == 1
             assert records[0].seal_hash != "old_hash"
 
@@ -590,8 +599,10 @@ class TestRetentionPruning:
         }
 
         await step(ctx, sample_messages, routing)
+        retention_days = await _resolve_retention_days(config)
 
         async with async_session_scope() as session:
+            assert await purge_expired_seals(session, retention_days) == 1
             records = (await session.exec(select(AuditSealRecord))).all()
             assert len(records) == 1
             assert records[0].seal_hash != "semi_old_hash"
@@ -673,6 +684,41 @@ class TestSealHMACKey:
             None, scope="platform", secret_key="llm_seal_hmac_key",
         ) == known_key
         assert len(seal_id) == 64
+
+    @pytest.mark.usefixtures("test_db")
+    async def test_concurrent_first_caller_adopts_winner_key(self) -> None:
+        """A loser of the first-write race returns the stored winner key, unchanged."""
+        from aila.platform.llm.seal import _resolve_hmac_key
+
+        winner_key = "cd" * 32
+
+        class RacingSecretStore(FakeSecretStore):
+            """First read misses; a winner commits before this caller's insert."""
+
+            def __init__(self) -> None:
+                super().__init__()
+                self._reads = 0
+
+            async def get_secret_by_key(self, session: Any, *, scope: str, secret_key: str) -> str | None:
+                self._reads += 1
+                if self._reads == 1:
+                    return None
+                return self._secrets.get((scope, secret_key))
+
+            async def stage_secret_if_absent(
+                self, session: Any, *, scope: str, secret_key: str, plaintext: str,
+            ) -> bool:
+                # The winner committed first: ON CONFLICT DO NOTHING inserts nothing.
+                self._secrets[(scope, secret_key)] = winner_key
+                return False
+
+        config = FakeConfigProvider()
+        config._secret_store = RacingSecretStore()
+
+        resolved = await _resolve_hmac_key(config)
+
+        assert resolved == winner_key
+        assert config._secret_store._secrets[("platform", "llm_seal_hmac_key")] == winner_key
 
 
 # ---------------------------------------------------------------------------

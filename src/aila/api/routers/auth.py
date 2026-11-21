@@ -37,7 +37,6 @@ from aila.api.constants import (
     AUDIT_ACTION_TOKEN_ISSUE,
     AUDIT_ACTION_TOKEN_REFRESH,
     AUDIT_STAGE_AUTH,
-    AUDIT_STATUS_COMPLETED,
     JWT_TYP_REFRESH,
     ROLE_ADMIN,
     TOKEN_TYPE_BEARER,
@@ -56,6 +55,7 @@ from aila.api.schemas.auth import (
     TokenResponse,
 )
 from aila.platform.contracts import utc_now
+from aila.platform.contracts.audit import AUDIT_STATUS_COMPLETED
 from aila.platform.services.audit import record_audit_event
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import ApiKeyRecord

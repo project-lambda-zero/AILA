@@ -372,6 +372,7 @@ class PlatformModule(ModuleProtocol):
     """
 
     module_id = "platform"
+    worker_tracks = ("default",)
     list_action_id = action_id_for(module_id, "list_integrations")
     add_action_id = action_id_for(module_id, "add_integration")
     delete_action_id = action_id_for(module_id, "delete_integration")

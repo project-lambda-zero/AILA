@@ -29,8 +29,6 @@ import csv
 import io
 import json
 import logging
-import smtplib
-import ssl
 from collections import Counter
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
@@ -41,6 +39,8 @@ from email.mime.text import MIMEText
 
 from sqlmodel import select
 
+from aila.platform.services.csv_safety import csv_safe_cell
+from aila.platform.services.smtp import send_smtp_email
 from aila.platform.tasks.context import TaskContext
 from aila.platform.tasks.template import platform_task
 from aila.storage.database import async_session_scope
@@ -140,9 +140,10 @@ def _build_fleet_health_payload(
     writer = csv.writer(buffer)
     writer.writerow(["name", "host", "username", "port", "role", "distro"])
     for row in rows:
-        writer.writerow(
-            [row.name, row.host, row.username, row.port, row.role or "", row.distro or ""]
-        )
+        writer.writerow([
+            csv_safe_cell(value)
+            for value in (row.name, row.host, row.username, row.port, row.role or "", row.distro or "")
+        ])
     return "\n".join(lines), buffer.getvalue().encode("utf-8")
 
 
@@ -392,7 +393,7 @@ def _send_report_email(
     """Send a report email with the generated payload attached.
 
     Runs synchronously -- always called via asyncio.to_thread().
-    Uses stdlib smtplib; no external dependencies required.
+    The transport is platform.services.smtp.send_smtp_email.
 
     Args:
         smtp_host: SMTP server hostname.
@@ -449,19 +450,15 @@ def _send_report_email(
         )
         msg.attach(csv_attachment)
 
-    context = ssl.create_default_context(cafile=ca_bundle_path or None)
-    if use_implicit_tls:
-        with smtplib.SMTP_SSL(
-            smtp_host, smtp_port, timeout=30, context=context
-        ) as server:
-            server.ehlo()
-            if smtp_username and smtp_password:
-                server.login(smtp_username, smtp_password)
-            server.sendmail(smtp_from, [recipient], msg.as_string())
-    else:
-        with smtplib.SMTP(smtp_host, smtp_port, timeout=30) as server:
-            server.ehlo()
-            server.starttls(context=context)
-            if smtp_username and smtp_password:
-                server.login(smtp_username, smtp_password)
-            server.sendmail(smtp_from, [recipient], msg.as_string())
+    send_smtp_email(
+        msg,
+        host=smtp_host,
+        port=smtp_port,
+        sender=smtp_from,
+        recipients=[recipient],
+        timeout=30,
+        tls_mode="implicit" if use_implicit_tls else "starttls",
+        username=smtp_username,
+        password=smtp_password,
+        ca_bundle_path=ca_bundle_path,
+    )

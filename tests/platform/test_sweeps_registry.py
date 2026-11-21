@@ -88,13 +88,14 @@ def test_all_periodic_sweeps_returns_copy_not_reference() -> None:
     assert "tests.injected" not in snapshot2
 
 
-def test_vr_module_registers_expected_sweep_names() -> None:
-    """The VR module's create_module() registers six sweeps.
+def test_vr_module_registers_expected_sweep_names(test_db: None) -> None:
+    """The VR module's create_module() registers seven sweeps.
 
     Expected set is exactly:
       - vr.stage_tracker
       - vr.branch_reaper
       - vr.masvs_parent_reconciler
+      - vr.investigation_reconciler
       - vr.finalize
       - vr.stall_recovery
       - vr.stuck_healer
@@ -106,6 +107,7 @@ def test_vr_module_registers_expected_sweep_names() -> None:
         "vr.stage_tracker",
         "vr.branch_reaper",
         "vr.masvs_parent_reconciler",
+        "vr.investigation_reconciler",
         "vr.finalize",
         "vr.stall_recovery",
         "vr.stuck_healer",
@@ -139,7 +141,7 @@ def test_vr_module_registers_expected_sweep_names() -> None:
     )
 
 
-def test_vr_module_create_module_is_idempotent() -> None:
+def test_vr_module_create_module_is_idempotent(test_db: None) -> None:
     """Calling create_module() twice in one process doesn't crash.
 
     Phase C added a module-level flag to guard against re-registration
@@ -225,6 +227,8 @@ def test_canonical_sweep_priority_bin_ordering() -> None:
     assert sweeps.SweepPriority.ORPHAN_BRANCH_REAPER < sweeps.SweepPriority.NO_FINDING_SYNTHESIS
     assert sweeps.SweepPriority.NO_FINDING_SYNTHESIS < sweeps.SweepPriority.STUCK_HEALER
     assert sweeps.SweepPriority.STUCK_HEALER < sweeps.SweepPriority.CURSOR_REAPER
+    assert sweeps.SweepPriority.RECONCILE < sweeps.SweepPriority.DELIVERY
+    assert sweeps.SweepPriority.DELIVERY == 900
 
 
 @pytest.mark.asyncio

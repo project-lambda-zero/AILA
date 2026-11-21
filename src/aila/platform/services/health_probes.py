@@ -502,7 +502,14 @@ async def _probe_single_ssh(system: dict[str, Any]) -> SshReachabilityResult:
 
 
 def _parse_worker_health_tracks(raw: object) -> list[str]:
-    """Split the comma-separated ``worker_health_tracks`` value into sorted unique names."""
+    """Split the comma-separated ``worker_health_tracks`` value into sorted unique names.
+
+    ``auto`` resolves to the tracks the discovered modules declare.
+    """
+    if str(raw or "").strip() == "auto":
+        from aila.platform.modules.builtin import declared_worker_tracks
+
+        return list(declared_worker_tracks())
     return sorted({track.strip() for track in str(raw or "").split(",") if track.strip()})
 
 
@@ -521,7 +528,7 @@ async def _worker_health_tracks(config_registry: ConfigRegistry | None) -> list[
 
         raw = os.getenv(
             "AILA_PLATFORM_WORKER_HEALTH_TRACKS",
-            PlatformConfigSchema.model_fields["worker_health_tracks"].default,
+            PlatformConfigSchema().worker_health_tracks,
         )
     return _parse_worker_health_tracks(raw)
 

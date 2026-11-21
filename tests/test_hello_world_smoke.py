@@ -23,8 +23,9 @@ from unittest.mock import MagicMock
 import pytest
 
 from aila.modules.hello_world.module import create_module
+from aila.platform.modules.builtin import build_module_factory
 from aila.platform.modules.protocol import ModuleProtocol
-from aila.platform.modules.standard import build_module_factory, validate_module_layout
+from aila.platform.modules.standard import validate_module_layout
 
 __all__ = ["TestHelloWorldModuleSmoke"]
 

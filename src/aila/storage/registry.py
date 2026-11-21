@@ -555,7 +555,7 @@ class ConfigRegistry:
                 return value
 
         if field_info is not None:
-            default_val = field_info.default
+            default_val = _field_default(field_info)
             # Cache the default too
             async with self._cache_lock:
                 self._cache[cache_key] = _CacheEntry(
@@ -622,7 +622,7 @@ class ConfigRegistry:
                 return value
 
         if field_info is not None:
-            default_val = field_info.default
+            default_val = _field_default(field_info)
             self._cache[cache_key] = _CacheEntry(
                 value=default_val,
                 expires_at=time.monotonic() + self._cache_ttl,
@@ -648,7 +648,7 @@ class ConfigRegistry:
         field_info = self._resolve_field(namespace, key)
         default_value: str | None = None
         if field_info is not None:
-            raw_default = getattr(field_info, "default", None)
+            raw_default = _field_default(field_info)
             if raw_default is not None and raw_default is not PydanticUndefined:
                 default_value = str(raw_default)
 
@@ -904,6 +904,14 @@ class SchemaRegistry:
         already-migrated database -- existing tables are left untouched.
         """
         self.create_all(connection)
+
+
+def _field_default(field_info: Any) -> Any:
+    """Materialize a field default, including Pydantic default factories."""
+    default_factory = getattr(field_info, "default_factory", None)
+    if default_factory is not None:
+        return default_factory()
+    return field_info.default
 
 
 def _cast_value(raw: str, field_info: Any) -> Any:

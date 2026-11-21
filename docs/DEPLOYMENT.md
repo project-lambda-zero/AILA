@@ -215,6 +215,23 @@ export AILA_JSON_LOGS=1
 The full env reference -- including the platform `ConfigRegistry` namespace and the
 VR / audit-mcp dev knobs -- lives in [`docs/ENV_VARS.md`](ENV_VARS.md).
 
+### Optional remote OCI sandbox
+
+The OCI backend executes an immutable caller-supplied image on a remote Linux host through the existing `SandboxService` and SSH transport. The generic backend does not select tool images; the live pentest module owns its fixed runtime reference.
+
+```bash
+export AILA_PLATFORM_SANDBOX_BACKEND=oci
+export AILA_PLATFORM_SANDBOX_SSH_HOST=sandbox.internal
+export AILA_PLATFORM_SANDBOX_SSH_USER=aila-sandbox
+export AILA_PLATFORM_SANDBOX_OCI_BIN=docker
+```
+
+The SSH identity must be unprivileged and allowed to run the selected Docker or Podman binary. Pre-pull the module's approved live `image@sha256:<digest>` on that host; the current pentest reference is `ghcr.io/project-lambda-zero/aila-pentest@sha256:32beabb84be7c32e65fe523f9538b2ed2fffd0758cf38686b97c55bd6d8b6cde`. Execution never pulls an image automatically. Runs use that identity's numeric UID/GID inside the container, an owner-only workspace, a read-only root filesystem, dropped capabilities, no-new-privileges, and explicit CPU, memory, PID, timeout, and output ceilings.
+
+Network-disabled runs use `--network none`. Every networked OCI run requires an exact `SandboxEgressPolicy`; there is no shared unrestricted bridge setting. The remote host must provide Docker or Podman bridge networking, `ip`, `nft`, and a narrowly pre-provisioned passwordless `sudo -n` rule allowing the sandbox identity to install and delete AILA's per-run nftables table. AILA creates one bridge per run, verifies its expected interface, allows only the policy's resolved IP/CIDR and port/protocol destinations, drops other forwarding and bridge-to-host input, and removes the table and bridge afterward. Missing tools, privilege, bridge verification, or firewall installation fails closed. Exact resolved hostname-to-IP mappings also become container `--add-host` entries, so name resolution and firewall identity share the same bindings.
+
+Live pentest actions use one module-curated immutable image and fixed argv; planners cannot supply images, commands, targets, or firewall policy. OCI connectivity is never treated as campaign authorization. There is no local Docker fallback and no Docker socket mount. The runtime force-removes its named container after completion, cancellation, callback failure, or transport failure.
+
 ---
 
 ## 5. Start the FastAPI Server
@@ -271,7 +288,7 @@ python -m aila worker -q pentest
 python -m aila worker -q pentest_runtime
 ```
 
-The Make targets (`make worker`, `make worker-vr`, `make worker-vuln`,
+The Make targets (`make worker`, `make worker-vr`, `make worker-vuln`, and
 `make worker-forensics`) wrap the same calls and also bring
 up the dev infra (`make dev-up`) + run `make db-init` if needed.
 
@@ -281,7 +298,7 @@ Workers process:
 - VR investigations dispatched from the VR module
 - VR investigation PDF, VR MASVS PDF, and vulnerability PDF rendering on the `reporting` queue (the POST submit returns 202 with `task_id`)
 - Analyzer-machine readiness checks and offline tool preparation on the `forensics_readiness` queue (202 with `task_id`)
-- Native pentest campaigns on `pentest`; runtime probes on `pentest_runtime`
+- AI pentest assessments and live campaign admission on `pentest`; assessment runtime and fenced live actions on `pentest_runtime`
 - Cross-cutting platform tasks on the `default` queue (cron automation, report explanations, etc.)
 
 Worker behavior:

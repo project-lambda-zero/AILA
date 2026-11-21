@@ -18,6 +18,7 @@ without opening a real socket.
 """
 from __future__ import annotations
 
+import asyncio
 import inspect
 from unittest.mock import MagicMock, patch
 
@@ -113,16 +114,22 @@ def test_run_command_blocking_installs_reject_policy() -> None:
     assert isinstance(policy, paramiko.RejectPolicy)
 
 
-def test_run_command_full_blocking_installs_reject_policy() -> None:
+async def test_run_command_full_blocking_installs_reject_policy() -> None:
+    loop = asyncio.get_running_loop()
     service = SSHService.__new__(SSHService)
     service.settings = None
     fake = _fake_client()
+    sinks = (
+        ssh_module._StreamSink(loop, None, redact_lines=False),
+        ssh_module._StreamSink(loop, None, redact_lines=True),
+    )
     with patch.object(ssh_module.paramiko, "SSHClient", return_value=fake):
         with patch.object(
-            ssh_module.SSHService, "_exec_command_full", return_value=("ok", "", 0)
+            ssh_module.SSHService, "_exec_command_pump", return_value=("ok", "", 0)
         ):
             service._run_command_full_blocking(
-                _payload(), "echo hi", None, None, {"hostname": "127.0.0.1"}, ssh_module._ChannelCloser(),
+                _payload(), "echo hi", None, None, {"hostname": "127.0.0.1"},
+                ssh_module._ChannelCloser(), sinks, None,
             )
     fake.set_missing_host_key_policy.assert_called_once()
     (policy,), _kw = fake.set_missing_host_key_policy.call_args

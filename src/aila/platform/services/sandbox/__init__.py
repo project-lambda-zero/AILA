@@ -8,7 +8,10 @@ from __future__ import annotations
 
 from .contracts import (
     SandboxBackend,
+    SandboxEgressDestination,
+    SandboxEgressPolicy,
     SandboxExecutionError,
+    SandboxPolicyError,
     SandboxResult,
     SandboxSpec,
     SandboxUnavailableError,
@@ -17,8 +20,11 @@ from .service import SandboxConfig, SandboxProbe, SandboxService
 
 __all__ = [
     "SandboxBackend",
+    "SandboxEgressDestination",
+    "SandboxEgressPolicy",
     "SandboxConfig",
     "SandboxExecutionError",
+    "SandboxPolicyError",
     "SandboxProbe",
     "SandboxResult",
     "SandboxService",

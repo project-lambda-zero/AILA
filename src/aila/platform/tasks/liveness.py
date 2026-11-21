@@ -32,20 +32,28 @@ is gone, the normal GC proceeds.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import logging
+from collections.abc import Collection, Sequence
 from datetime import timedelta
 from typing import Any
 
+from redis.exceptions import RedisError
 from sqlalchemy import text as _sql_text
 
 from aila.platform.contracts import utc_now
+from aila.platform.services.redis_pool import get_redis
 from aila.platform.tasks.constants import (
+    ARQ_IN_PROGRESS_PREFIX,
+    ARQ_JOB_PREFIX,
+    ARQ_RETRY_PREFIX,
     REAPER_HEARTBEAT_THRESHOLD_S,
     REAPER_ZOMBIE_THRESHOLD_S,
 )
 from aila.platform.tasks.models import TaskStatus
 
-__all__ = ["live_investigation_ids", "branch_has_live_task"]
+__all__ = ["arq_active_task_ids", "branch_has_live_task", "live_investigation_ids"]
+
+_LOG = logging.getLogger(__name__)
 
 
 # A ``RUNNING`` TaskRecord counts as live under the SAME two-tier rule
@@ -112,6 +120,34 @@ async def live_investigation_ids(
         await session.exec(_sql_text(sql).bindparams(**binds))
     ).mappings().all()
     return {r["inv"] for r in rows if r["inv"] is not None}
+
+
+async def arq_active_task_ids(task_ids: Collection[str]) -> frozenset[str] | None:
+    """Return the subset of ``task_ids`` ARQ still holds in flight, queued, or retrying.
+
+    One pooled client and one pipeline serve every id: each id checks its
+    in-progress, job, and retry keys. Returns ``None`` when Redis cannot be
+    queried, so callers can treat the answer as unknown rather than dead.
+    """
+    ordered = list(dict.fromkeys(task_ids))
+    if not ordered:
+        return frozenset()
+    try:
+        async with get_redis() as client:
+            pipeline = client.pipeline(transaction=False)
+            for task_id in ordered:
+                pipeline.exists(
+                    f"{ARQ_IN_PROGRESS_PREFIX}{task_id}",
+                    f"{ARQ_JOB_PREFIX}{task_id}",
+                    f"{ARQ_RETRY_PREFIX}{task_id}",
+                )
+            counts = await pipeline.execute()
+    except (OSError, TimeoutError, RuntimeError, RedisError) as exc:
+        _LOG.warning("ARQ liveness probe failed: %s", type(exc).__name__)
+        return None
+    return frozenset(
+        task_id for task_id, count in zip(ordered, counts, strict=True) if int(count) > 0
+    )
 
 
 async def branch_has_live_task(session: Any, branch_id: str) -> bool:
