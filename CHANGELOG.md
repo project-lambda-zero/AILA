@@ -5,6 +5,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.131] - 2026-11-22 -- Campaign relationship graphs and typed drill-down
+
+### Changed
+
+- Campaign exploration, asset, and coverage graphs now use typed node cards, colored relationship labels, a full-graph initial viewport, and interactive filtering, zoom, and pan.
+- Selecting a graph node opens typed evidence, reasoning, persisted metadata, and linked evidence panels. Incoming and outgoing relationships can be clicked to traverse the campaign without reading raw JSON.
+- Coverage graphs now retain asset-parent lineage, showing the complete domain-to-asset-to-capability chain.
+
+### Upgrade notes
+
+- Restart the frontend to load the updated console. This render-only change requires no database migration or worker restart.
+
 ## [0.6.130] - 2026-11-22 -- Evidence-backed agent endpoint tests
 
 ### Added
