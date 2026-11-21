@@ -184,12 +184,10 @@ class PlatformConfigSchema(BaseModel):
     arq_max_tries: int = 3
     arq_keep_result_s: int = 3600
     # Comma-separated ARQ worker tracks that each need a live heartbeat for the
-    # arq_worker health probe to report running. Env: AILA_PLATFORM_WORKER_HEALTH_TRACKS.
-    # Default is the nine tracks the full-stack compose deployment starts.
-    worker_health_tracks: str = (
-        "default,vr,vulnerability,forensics,malware,pentest,pentest_runtime,"
-        "forensics_readiness,reporting"
-    )
+    # arq_worker health probe to report running. "auto" (default) resolves at probe
+    # time to the worker_tracks declared by the discovered modules.
+    # Env: AILA_PLATFORM_WORKER_HEALTH_TRACKS.
+    worker_health_tracks: str = "auto"
     progress_stream_maxlen: int = 1000
 
     # LLM routing global defaults (previously env-only ghost keys -- #45).

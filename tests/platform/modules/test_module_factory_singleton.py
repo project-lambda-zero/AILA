@@ -8,8 +8,8 @@ call returns that same instance.
 """
 from __future__ import annotations
 
+from aila.platform.modules.builtin import build_module_factory
 from aila.platform.modules.protocol import ModuleProtocol
-from aila.platform.modules.standard import build_module_factory
 
 
 def test_factory_returns_same_instance_across_calls() -> None:

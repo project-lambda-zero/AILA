@@ -19,7 +19,7 @@ from .protocol import (
     action_id_for,
 )
 from .registry import ModuleRegistry
-from .standard import build_module_factory, validate_module_layout
+from .standard import validate_module_layout
 
 __all__ = [
     "ModuleCapabilityProfile",
@@ -38,7 +38,6 @@ __all__ = [
     "TaskControlResult",
     "UNROUTABLE_ACTION_ID",
     "action_id_for",
-    "build_module_factory",
     "builtin_module_factories",
     "load_builtin_modules",
     "register_builtin_modules",

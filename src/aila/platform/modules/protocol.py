@@ -77,6 +77,9 @@ class ModuleRouteSpec:
         config_namespace: Config namespace this module owns; surfaced via
             GET/PUT /config. None if the module has no config.
         payload_type: Name of the discriminated-union payload type (optional).
+        idempotency_exempt_post_paths: POST route templates relative to ``prefix``
+            whose responses must never be replayed from the Idempotency-Key cache.
+            ``{name}`` matches exactly one path segment.
     """
 
     prefix: str
@@ -85,6 +88,7 @@ class ModuleRouteSpec:
     config_namespace: str | None = None
     payload_type: str | None = None
     auth_required: bool = True  # When False, skip global require_user_or_api_key dependency
+    idempotency_exempt_post_paths: tuple[str, ...] = field(default_factory=tuple)
 
 
 UNROUTABLE_ACTION_ID: ActionId = action_id_for("platform", "unknown_request")
@@ -285,6 +289,8 @@ class ModuleProtocol(Protocol):
     """
 
     module_id: str
+    worker_tracks: tuple[str, ...] = ()
+    """ARQ tracks owned by this module and expected to have live workers."""
 
     def capability_profiles(self) -> list[ModuleCapabilityProfile]:
         """Return all action capability profiles this module can handle.

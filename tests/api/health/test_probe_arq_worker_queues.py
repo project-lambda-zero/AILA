@@ -14,7 +14,8 @@ import pytest
 import redis.asyncio as aioredis
 
 from aila.platform.config import PlatformConfigSchema
-from aila.platform.services.health_probes import probe_arq_worker
+from aila.platform.modules.builtin import declared_worker_tracks
+from aila.platform.services.health_probes import _parse_worker_health_tracks, probe_arq_worker
 from aila.platform.tasks.constants import ARQ_QUEUE_KEY_TEMPLATE
 
 REDIS_URL = "redis://fake:6379/0"
@@ -162,10 +163,10 @@ async def test_config_value_is_trimmed_and_deduplicated(
     assert details["tracks_live"] == ["malware", "vr"]
 
 
-def test_schema_default_is_the_nine_full_stack_tracks() -> None:
-    default = PlatformConfigSchema.model_fields["worker_health_tracks"].default
-
-    assert sorted(default.split(",")) == sorted(
+@pytest.mark.usefixtures("test_db")
+def test_schema_default_is_auto_and_resolves_to_the_nine_full_stack_tracks() -> None:
+    assert PlatformConfigSchema().worker_health_tracks == "auto"
+    assert _parse_worker_health_tracks("auto") == sorted(
         [
             "default",
             "vr",
@@ -243,6 +244,7 @@ async def test_exact_redis_url_is_opened(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.usefixtures("test_db")
 async def test_no_registry_and_no_env_uses_schema_default_tracks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -250,10 +252,10 @@ async def test_no_registry_and_no_env_uses_schema_default_tracks(
 
     result = await probe_arq_worker(redis_url=REDIS_URL)
 
-    default = PlatformConfigSchema.model_fields["worker_health_tracks"].default
+    expected = list(declared_worker_tracks())
     assert result.status == "offline"
-    assert _details(result)["tracks_total"] == len(default.split(","))
-    assert _details(result)["tracks_missing"] == sorted(default.split(","))
+    assert _details(result)["tracks_total"] == len(expected)
+    assert _details(result)["tracks_missing"] == expected
 
 
 @pytest.mark.asyncio

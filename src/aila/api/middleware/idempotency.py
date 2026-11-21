@@ -17,12 +17,15 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
+from functools import lru_cache
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
 from aila.api.metrics import SILENT_FAILURE_TOTAL
+from aila.platform.modules.builtin import declared_idempotency_exempt_post_paths
 from aila.platform.services.redis_pool import get_redis, pool_available
 
 __all__ = ["IdempotencyMiddleware"]
@@ -42,6 +45,29 @@ def _derive_cache_key(idem_key: str, cred: str | None) -> str:
     return f"{_IDEMPOTENCY_PREFIX}{principal}:{idem_key}"
 
 
+_PARAM_TOKEN = re.compile(r"(\{[^/{}]+\})")
+
+
+def _compile_exempt_template(template: str) -> re.Pattern[str]:
+    """Compile a route template where each ``{name}`` matches exactly one path segment."""
+    regex = "".join(
+        "[^/]+" if _PARAM_TOKEN.fullmatch(token) else re.escape(token)
+        for token in _PARAM_TOKEN.split(template)
+        if token
+    )
+    return re.compile(regex)
+
+
+@lru_cache(maxsize=1)
+def _idempotency_exempt_patterns() -> tuple[re.Pattern[str], ...]:
+    """Patterns for the POST routes that modules declared as idempotency-exempt."""
+    return tuple(_compile_exempt_template(path) for path in declared_idempotency_exempt_post_paths())
+
+
+def _is_idempotency_exempt(path: str) -> bool:
+    return any(pattern.fullmatch(path) for pattern in _idempotency_exempt_patterns())
+
+
 class IdempotencyMiddleware(BaseHTTPMiddleware):
     """Replay cached responses for duplicate POST requests bearing an Idempotency-Key header."""
 
@@ -53,12 +79,9 @@ class IdempotencyMiddleware(BaseHTTPMiddleware):
         if request.method != "POST":
             return await call_next(request)
 
-        # Live campaign creation owns team-scoped fingerprint checks in Postgres. A generic
-        # response cache would hide changed-body conflicts and freeze the initial 202 status.
-        path = request.url.path
-        if path == "/pentest/live/campaigns" or (
-            path.startswith("/pentest/live/templates/") and path.endswith("/campaigns")
-        ):
+        # Routes declaring idempotency_exempt_post_paths own their duplicate handling. A generic
+        # response cache would hide their changed-body conflicts and freeze the initial status.
+        if _is_idempotency_exempt(request.url.path):
             return await call_next(request)
 
         idem_key = request.headers.get("Idempotency-Key")
