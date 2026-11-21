@@ -24,7 +24,6 @@ from aila.api.constants import (
     AUDIT_ACTION_SESSION_CREATE,
     AUDIT_ACTION_SESSION_MESSAGE,
     AUDIT_STAGE_SESSION,
-    AUDIT_STATUS_COMPLETED,
     MEDIA_TYPE_SSE,
 )
 from aila.api.limiter import limiter
@@ -37,6 +36,7 @@ from aila.api.schemas.sessions import (
     SessionResponse,
     SessionSummary,
 )
+from aila.platform.contracts.audit import AUDIT_STATUS_COMPLETED
 from aila.platform.llm.errors import LLMError
 from aila.platform.services.audit import record_audit_event
 from aila.storage.database import async_session_scope

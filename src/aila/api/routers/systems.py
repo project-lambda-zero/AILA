@@ -30,7 +30,6 @@ from aila.api.constants import (
     AUDIT_ACTION_SYSTEM_DELETE,
     AUDIT_ACTION_SYSTEM_UPDATE,
     AUDIT_STAGE_SYSTEM,
-    AUDIT_STATUS_COMPLETED,
     ROLE_OPERATOR,
 )
 from aila.api.limiter import limiter
@@ -48,6 +47,7 @@ from aila.api.schemas.systems import (
     SystemUpdateRequest,
 )
 from aila.platform.contracts import utc_now
+from aila.platform.contracts.audit import AUDIT_STATUS_COMPLETED
 from aila.platform.services.audit import record_audit_event
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import ManagedSystemRecord, SystemPortRecord, WorkflowRunRecord

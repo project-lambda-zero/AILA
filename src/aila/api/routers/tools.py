@@ -17,7 +17,6 @@ from aila.api.auth import AuthContext, require_role, require_user_or_api_key
 from aila.api.constants import (
     AUDIT_ACTION_TOOL_INVOKE,
     AUDIT_STAGE_TOOL,
-    AUDIT_STATUS_COMPLETED,
     ROLE_ADMIN,
     ROLE_OPERATOR,
     TRACK_PLATFORM,
@@ -30,6 +29,7 @@ from aila.api.schemas.tools import (
     ToolInvokeResponse,
     ToolSummaryResponse,
 )
+from aila.platform.contracts.audit import AUDIT_STATUS_COMPLETED
 from aila.platform.runtime.tools import ToolProtocol, ToolRegistry
 from aila.platform.services.audit import record_audit_event
 from aila.storage.database import async_session_scope

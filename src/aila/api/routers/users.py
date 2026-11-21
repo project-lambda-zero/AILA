@@ -47,7 +47,6 @@ from aila.api.auth import (
 )
 from aila.api.constants import (
     AUDIT_STAGE_AUTH,
-    AUDIT_STATUS_COMPLETED,
     JWT_TYP_USER_REFRESH,
     ROLE_ADMIN,
     VALID_ROLES,
@@ -73,6 +72,7 @@ from aila.api.schemas.users import (
 )
 from aila.config import get_settings
 from aila.platform.contracts import utc_now
+from aila.platform.contracts.audit import AUDIT_STATUS_COMPLETED
 from aila.platform.services.audit import record_audit_event
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import RefreshTokenRecord, UserRecord

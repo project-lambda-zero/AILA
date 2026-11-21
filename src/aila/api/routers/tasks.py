@@ -41,7 +41,6 @@ from aila.api.constants import (
     AUDIT_ACTION_TASK_CANCEL,
     AUDIT_ACTION_TASK_RESUME,
     AUDIT_STAGE_TASK,
-    AUDIT_STATUS_COMPLETED,
     MEDIA_TYPE_SSE,
     MODULE_ID_PLATFORM,
     ROLE_ADMIN,
@@ -58,6 +57,7 @@ from aila.api.schemas.tasks import (
 from aila.api.schemas.transitions import TransitionView
 from aila.config import get_settings
 from aila.platform.contracts import JsonObject
+from aila.platform.contracts.audit import AUDIT_STATUS_COMPLETED
 from aila.platform.modules.protocol import TaskControlContext
 from aila.platform.services.audit import record_audit_event
 from aila.platform.services.redis_pool import pool_available
