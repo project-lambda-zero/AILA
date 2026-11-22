@@ -566,8 +566,6 @@ class AgentTurnRunnerBase:
         turn_number: int,
         session: AsyncSession,
         case_state: Any,
-        *,
-        new_case_state: Any = None,
     ) -> None:
         """Append the turn's capped ledger writes inside the post-turn UoW.
 
@@ -626,59 +624,32 @@ class AgentTurnRunnerBase:
                     session=session,
                 )
         else:
-            # Audit & deep analysis phases: auto-promote strong/exact hypotheses
-            # with concrete taint/mechanism to shared ledger discoveries marked
-            # with source="taint_confirmed". This allows downstream gated exploit
-            # states (poc_development, exploit_primitive_composition, filter_bypass)
-            # to activate in discovery-driven graphs without requiring manual
-            # ledger_writes JSON emission.
+            # Audit & deep analysis phases: auto-promote hypotheses carrying
+            # concrete confirmed_by provenance to shared ledger discoveries.
+            # Plausibility or model confidence alone is not confirmation.
             for hyp in decision.hypotheses:
                 hid = (hyp.id or "").strip()
                 if not hid:
                     continue
-                conf = getattr(decision, "confidence", None) or "strong"
-                if conf in ("exact", "strong") or bool(hyp.why_plausible):
-                    discovery_id = await service.append_general(
-                        self.investigation_id,
-                        self.branch_id,
-                        "discovery",
-                        {
-                            "hypothesis_id": hid,
-                            "claim": hyp.claim,
-                            "why_plausible": hyp.why_plausible,
-                            "kill_criterion": hyp.kill_criterion,
-                            "source": "taint_confirmed",
-                            "phase_mission": phase_mission[:64] if phase_mission else "audit",
-                        },
-                        idempotency_key=f"{self.branch_id}:discovery:{hid}",
-                        session=session,
-                    )
-                    # A3 / Contract C2: stamp taint-confirmed provenance on
-                    # the authoritative in-memory hypothesis so this turn's
-                    # single case_state_json write (see fix §103 below)
-                    # carries the confirmed_by marker into the persisted
-                    # branch row. new_case_state is the post-absorb state
-                    # the caller will encode inside this same UoW, so
-                    # mutating its hypotheses list is what makes the
-                    # provenance durable. Only set when confirmed_by is
-                    # currently empty -- a prior agent-supplied cite (a
-                    # concrete file:line) is more informative than the
-                    # discovery id marker and must not be overwritten.
-                    if new_case_state is not None and discovery_id is not None:
-                        target_hyps = getattr(
-                            new_case_state, "hypotheses", None,
-                        ) or []
-                        for target in target_hyps:
-                            if getattr(target, "id", "") != hid:
-                                continue
-                            existing = (
-                                getattr(target, "confirmed_by", "") or ""
-                            ).strip()
-                            if not existing:
-                                target.confirmed_by = (
-                                    f"taint-confirmed discovery {int(discovery_id)}"
-                                )
-                            break
+                confirmed_by = (getattr(hyp, "confirmed_by", "") or "").strip()
+                if not confirmed_by:
+                    continue
+                await service.append_general(
+                    self.investigation_id,
+                    self.branch_id,
+                    "discovery",
+                    {
+                        "hypothesis_id": hid,
+                        "claim": hyp.claim,
+                        "why_plausible": hyp.why_plausible,
+                        "kill_criterion": hyp.kill_criterion,
+                        "confirmed_by": confirmed_by,
+                        "source": "taint_confirmed",
+                        "phase_mission": phase_mission[:64] if phase_mission else "audit",
+                    },
+                    idempotency_key=f"{self.branch_id}:discovery:{hid}",
+                    session=session,
+                )
         writes = decision.ledger_writes[:_MAX_LEDGER_WRITES_PER_TURN]
         if not writes:
             return
@@ -1679,7 +1650,6 @@ class AgentTurnRunnerBase:
 
             await self._post_ledger_writes(
                 decision, persisted_turn, uow.session, case_state,
-                new_case_state=new_case_state,
             )
             await self._post_ledger_approvals(decision, uow.session)
 

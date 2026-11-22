@@ -5,6 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.134] - 2026-11-22 -- Ledger discovery outcomes
+
+### Added
+
+- Every VR ledger discovery now projects to a separate idempotent draft outcome with its vulnerability title, provenance, and explicit unverified or confirmed review state. Existing ledgers reconcile when their outcome list is opened.
+
+### Changed
+
+- Campaign and action traffic-byte budgets now default to zero. The campaign form accepts and submits the zero default.
+
+### Fixed
+
+- Plausible hypotheses no longer receive fabricated taint-confirmed provenance. Only an explicit confirmed-by citation produces a direct-finding draft.
+- Canonical terminal outcomes no longer merge into ledger-projected discovery outcomes.
+
+### Upgrade notes
+
+- Restart the API, frontend, and VR workers. Existing discovery rows are projected on outcome-list reads; no database migration is required.
+
 ## [0.6.133] - 2026-11-22 -- SAST source workbench
 
 ### Added

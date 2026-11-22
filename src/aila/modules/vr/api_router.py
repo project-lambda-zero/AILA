@@ -6830,8 +6830,14 @@ def create_vr_router() -> APIRouter:
                 detail=f"Investigation {investigation_id} not found.",
             )
         from .db_models import VRInvestigationOutcomeRecord
+        from .services.discovery_outcomes import project_discovery_outcomes
 
         async with UnitOfWork() as uow:
+            created = await project_discovery_outcomes(
+                investigation_id, session=uow.session,
+            )
+            if created:
+                await uow.session.commit()
             rows = (await uow.session.exec(
                 select(VRInvestigationOutcomeRecord)
                 .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
