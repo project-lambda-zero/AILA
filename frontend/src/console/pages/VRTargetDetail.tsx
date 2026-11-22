@@ -26,6 +26,7 @@ import type { Investigation } from "../../api/types";
 import { css } from "../css";
 import { StatusBadge } from "./badges";
 import StructuredValue from "./StructuredValue";
+import SastAuditResults from "./SastAuditResults";
 import TargetInvestigations from "./TargetInvestigations";
 
 
@@ -174,6 +175,7 @@ export default function VRTargetDetail({ row, onOpenXray }: VRTargetDetailProps)
 
   const kind = (t.kind ?? "").toLowerCase();
   const isApk = kind === "android_apk";
+  const isSource = kind === "source_repo";
   const failed = (t.analysis_state ?? "").toLowerCase() === "failed";
 
   const [open, setOpen] = useState<Record<string, boolean>>({ status: true });
@@ -187,6 +189,7 @@ export default function VRTargetDetail({ row, onOpenXray }: VRTargetDetailProps)
     void qc.invalidateQueries({ queryKey: ["vr-target-detail", id] });
     void qc.invalidateQueries({ queryKey: ["datapage"] });
     void qc.invalidateQueries({ queryKey: ["target-investigations"] });
+    void qc.invalidateQueries({ queryKey: ["sast-audit"] });
   };
 
   const act = useMutation({
@@ -299,6 +302,17 @@ export default function VRTargetDetail({ row, onOpenXray }: VRTargetDetailProps)
         >
           refresh source
         </button>
+        {isSource ? (
+          <button
+            type="button"
+            disabled={busy}
+            title="Run architecture analysis, all 14 vulnerability skills, then the consolidated report"
+            onClick={() => act.mutate({ path: `${base}/sast-audit`, okText: "SAST prepared audit dispatched: 16 skills" })}
+            style={btnStyle("ghost", busy)}
+          >
+            SAST prepared audit
+          </button>
+        ) : null}
         {isApk ? (
           <>
             <button
@@ -434,6 +448,12 @@ export default function VRTargetDetail({ row, onOpenXray }: VRTargetDetailProps)
       {isApk && apkOverview && Object.keys(apkOverview).length ? (
         <Section sectionKey="apk" title="apk overview" open={open.apk ?? false} onToggle={() => toggle("apk")}>
           <StructuredValue value={apkOverview} />
+        </Section>
+      ) : null}
+
+      {isSource ? (
+        <Section sectionKey="sast" title="SAST prepared audit · 16 skills" open={open.sast ?? false} onToggle={() => toggle("sast")}>
+          <SastAuditResults targetId={id} onOpenXray={onOpenXray} />
         </Section>
       ) : null}
 

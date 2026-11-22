@@ -5,6 +5,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.132] - 2026-11-22 -- Prepared SAST skill workflow
+
+### Added
+
+- Source-repository targets can dispatch a pinned 16-skill SAST audit covering architecture analysis, 14 vulnerability detectors, and a consolidated report.
+- Detector and report stages receive persisted upstream outcomes through VR parent/child investigations, with staged reconciliation and idempotent dispatch.
+- Target details now expose per-skill progress, outcome summaries, and X-Ray drill-down for every prepared SAST investigation.
+
+### Upgrade notes
+
+- Restart the API, frontend, and VR workers. This change uses existing investigation and outcome storage and requires no database migration.
+
 ## [0.6.131] - 2026-11-22 -- Campaign relationship graphs and typed drill-down
 
 ### Changed

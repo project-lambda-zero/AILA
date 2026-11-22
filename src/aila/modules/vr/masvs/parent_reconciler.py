@@ -67,6 +67,7 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
 )
 from aila.modules.vr.db_models.outcome_review import VRInvestigationOutcomeReviewRecord
+from aila.modules.vr.sast.orchestrator import advance_sast_batches
 
 # Phase C moved the implementations of these helpers out of this
 # MASVS-specific module into the canonical
@@ -112,6 +113,7 @@ _TERMINAL_STATUSES: frozenset[str] = frozenset(
 _BATCH_PARENT_KINDS: tuple[str, ...] = (
     InvestigationKind.MASVS_AUDIT.value,
     InvestigationKind.APK_STATIC_AUDIT.value,
+    InvestigationKind.SAST_AUDIT.value,
 )
 
 
@@ -982,6 +984,9 @@ async def sweep_masvs_audit_parents() -> dict[str, int]:
         await _run_sweep_step(
             "synthesize_no_finding_outcomes",
             _synthesize_no_finding_outcomes, uow, default=0,
+        )
+        await _run_sweep_step(
+            "advance_sast_batches", advance_sast_batches, uow, default=0,
         )
         # Candidate parents: kind=masvs_audit, parent_investigation_id
         # IS NULL (true batch root), status in {CREATED, RUNNING}. PAUSED

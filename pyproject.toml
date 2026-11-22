@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aila"
-version = "0.6.131"
+version = "0.6.132"
 description = "Modular AI security platform with pluggable analysis modules."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -168,6 +168,7 @@ where = ["src"]
 "aila.modules.pentest.services" = ["*.mjs"]
 "aila.modules.forensics.workflow.states.collectors" = ["*.tpl"]
 "aila.platform.re_analytics" = ["data/*.txt"]
+"aila.modules.vr.sast" = ["LICENSE", "prompts/*.md", "skills/*/SKILL.md"]
 
 [tool.vulture]
 min_confidence = 80

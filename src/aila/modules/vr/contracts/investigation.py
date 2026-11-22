@@ -53,6 +53,7 @@ class InvestigationKind(StrEnum):
     AUDIT = "audit"
     MASVS_AUDIT = "masvs_audit"
     APK_STATIC_AUDIT = "apk_static_audit"
+    SAST_AUDIT = "sast_audit"
 
 
 class VRInvestigationCreate(BaseModel):

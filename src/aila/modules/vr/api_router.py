@@ -139,6 +139,7 @@ from .db_models import (
     VRInvestigationOutcomeReviewRecord,
     VRInvestigationRecord,
 )
+from .sast.contracts import SastAuditAggregate, SastAuditDispatchResponse
 from .services.outcome_review import compute_quorum
 from .sse_cursor import format_event_id, resolve_stream_cursor
 from .workflow.task import (
@@ -4175,6 +4176,190 @@ def create_vr_router() -> APIRouter:
                 detail=str(exc),
             ) from exc
 
+        return DataEnvelope(data=aggregate)
+
+    # ── SAST prepared-list audits ────────────────────────────────────────
+
+    @router.post(
+        "/targets/{target_id}/sast-audit",
+        response_model=DataEnvelope[SastAuditDispatchResponse],
+        status_code=status.HTTP_201_CREATED,
+    )
+    @limiter.limit("6/minute")
+    async def dispatch_sast_audit(
+        request: Request,
+        target_id: str,
+        response: Response,
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[SastAuditDispatchResponse]:
+        """Create one parent plus all 16 staged SAST skill investigations."""
+        import uuid
+
+        from .db_models import VRTargetRecord
+        from .sast import SAST_CATALOG_VERSION, SAST_SKILLS, SAST_UPSTREAM_COMMIT, SastPhase, SastSeedBuilder
+
+        async with UnitOfWork() as uow:
+            target = (await uow.session.exec(
+                _team_filter(
+                    select(VRTargetRecord).where(VRTargetRecord.id == target_id),
+                    VRTargetRecord, auth,
+                ),
+            )).first()
+            if target is None:
+                raise HTTPException(status_code=404, detail="target not found or not owned by your team")
+            if target.kind != TargetKind.SOURCE_REPO.value:
+                raise HTTPException(status_code=422, detail="SAST prepared audits require a source repository target")
+            if target.analysis_state != AnalysisState.READY.value:
+                raise HTTPException(status_code=409, detail="source target must have completed source indexing before SAST dispatch")
+
+            active_parent = (
+                await uow.session.exec(
+                    select(VRInvestigationRecord)
+                    .where(VRInvestigationRecord.target_id == target_id)
+                    .where(VRInvestigationRecord.kind == InvestigationKind.SAST_AUDIT.value)
+                    .where(VRInvestigationRecord.parent_investigation_id.is_(None))
+                    .where(VRInvestigationRecord.status.in_((
+                        InvestigationStatus.CREATED.value,
+                        InvestigationStatus.RUNNING.value,
+                        InvestigationStatus.PAUSED.value,
+                    )))
+                )
+            ).first()
+            if active_parent is not None:
+                refs = _json.loads(active_parent.secondary_target_refs_json or "{}")
+                if isinstance(refs, dict) and refs.get("sast_catalog_version") == SAST_CATALOG_VERSION:
+                    response.status_code = status.HTTP_200_OK
+                    return DataEnvelope(data=SastAuditDispatchResponse(
+                        parent_investigation_id=active_parent.id,
+                        analysis_investigation_id=str(refs["analysis_investigation_id"]),
+                        report_investigation_id=str(refs["report_investigation_id"]),
+                        total_skills=16,
+                        total_detectors=14,
+                        sast_spec_version=SAST_CATALOG_VERSION,
+                        upstream_commit=SAST_UPSTREAM_COMMIT,
+                        cost_budget_total_usd=active_parent.cost_budget_usd,
+                        child_investigation_ids=list(refs.get("child_investigation_ids", [])),
+                        idempotent_reuse=True,
+                        enqueue_errors={},
+                    ))
+
+            parent_id = str(uuid.uuid4())
+            ids = {skill.id: str(uuid.uuid4()) for skill in SAST_SKILLS}
+            child_budget_usd = 30.0
+            total_budget_usd = child_budget_usd * len(SAST_SKILLS)
+            analysis = next(skill for skill in SAST_SKILLS if skill.phase is SastPhase.ANALYSIS)
+            parent = VRInvestigationRecord(
+                id=parent_id,
+                workspace_id=target.workspace_id,
+                target_id=target.id,
+                title=f"SAST prepared audit · {target.display_name}",
+                kind=InvestigationKind.SAST_AUDIT.value,
+                status=InvestigationStatus.CREATED.value,
+                team_id=target.team_id,
+                max_depth=3,
+                cost_budget_usd=total_budget_usd,
+                initial_question="Architecture analysis, 14 vulnerability detectors, then a consolidated report.",
+                secondary_target_refs_json=_json.dumps({
+                    "sast_catalog_version": SAST_CATALOG_VERSION,
+                    "analysis_investigation_id": ids[analysis.id],
+                    "report_investigation_id": ids["sast-report"],
+                    "child_investigation_ids": list(ids.values()),
+                }),
+            )
+            uow.session.add(parent)
+            for skill in SAST_SKILLS:
+                seed = SastSeedBuilder.build(skill)
+                uow.session.add(VRInvestigationRecord(
+                    id=ids[skill.id],
+                    workspace_id=target.workspace_id,
+                    target_id=target.id,
+                    parent_investigation_id=parent_id,
+                    title=f"{skill.title} · {target.display_name}",
+                    kind=InvestigationKind.AUDIT.value,
+                    status=InvestigationStatus.CREATED.value,
+                    team_id=target.team_id,
+                    max_depth=3,
+                    cost_budget_usd=child_budget_usd,
+                    initial_question=seed,
+                    secondary_target_refs_json=_json.dumps([{
+                        "sast_skill_id": skill.id,
+                        "sast_phase": skill.phase.value,
+                        "sast_catalog_version": SAST_CATALOG_VERSION,
+                    }]),
+                ))
+                await uow.session.flush()
+                uow.session.add(VRInvestigationBranchRecord(
+                    investigation_id=ids[skill.id],
+                    status=BranchStatus.ACTIVE.value,
+                    fork_reason="primary",
+                    persona_voice=PersonaVoice.HALVAR.value,
+                ))
+            await uow.commit()
+
+        enqueue_errors: dict[str, str] = {}
+        try:
+            await get_task_queue("vr", request).submit(
+                track="vr",
+                fn=run_vr_investigate,
+                kwargs={"investigation_id": ids[analysis.id]},
+                user_id=auth.user_id,
+                group_id=auth.role,
+                team_id=auth.team_id,
+            )
+        except (HTTPException, OSError, TimeoutError, RuntimeError, ValueError) as exc:
+            enqueue_errors[ids[analysis.id]] = str(exc)
+        return DataEnvelope(data=SastAuditDispatchResponse(
+            parent_investigation_id=parent_id,
+            analysis_investigation_id=ids[analysis.id],
+            report_investigation_id=ids["sast-report"],
+            total_skills=16,
+            total_detectors=14,
+            sast_spec_version=SAST_CATALOG_VERSION,
+            upstream_commit=SAST_UPSTREAM_COMMIT,
+            cost_budget_total_usd=total_budget_usd,
+            child_investigation_ids=list(ids.values()),
+            idempotent_reuse=False,
+            enqueue_errors=enqueue_errors,
+        ))
+
+    @router.get(
+        "/targets/{target_id}/sast-audit-aggregate",
+        response_model=DataEnvelope[SastAuditAggregate],
+    )
+    @limiter.limit("30/minute")
+    async def get_sast_audit_aggregate(
+        request: Request,
+        target_id: str,
+        audit_id: str = Query(...),
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[SastAuditAggregate]:
+        """Return the selected SAST parent and every skill result."""
+        del request
+        from .db_models import VRTargetRecord
+
+        async with UnitOfWork() as uow:
+            target = (await uow.session.exec(
+                _team_filter(
+                    select(VRTargetRecord).where(VRTargetRecord.id == target_id),
+                    VRTargetRecord, auth,
+                ),
+            )).first()
+            parent = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord).where(VRInvestigationRecord.id == audit_id),
+                    VRInvestigationRecord, auth,
+                ),
+            )).first()
+            if target is None or parent is None or parent.target_id != target_id:
+                raise HTTPException(status_code=404, detail="SAST audit not found for this target and team")
+            if parent.kind != InvestigationKind.SAST_AUDIT.value:
+                raise HTTPException(status_code=409, detail="selected investigation is not a SAST audit parent")
+        from .sast.aggregate import collect_sast_audit
+
+        try:
+            aggregate = await collect_sast_audit(audit_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         return DataEnvelope(data=aggregate)
 
     # ── Investigations (M3.R-1 schema, D-43, D-49/D-50) ───────────────
