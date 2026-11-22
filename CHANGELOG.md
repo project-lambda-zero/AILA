@@ -5,6 +5,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.135] - 2026-11-22 -- Operational campaign views
+
+### Changed
+
+- Campaign lists use compact operational rows instead of KPI cards and narrative metadata. Campaign headings, forms, and operations panels omit decorative and explanatory copy while retaining controls, validation, and security states.
+- Nested campaign and pentest response data render as labeled fields, lists, and scalar values instead of raw JSON blobs.
+
+### Fixed
+
+- Attack-surface graphs support cursor-centered zoom, drag panning, explicit zoom controls, and fit-to-view. Large disconnected graphs use balanced columns, compact nodes, readable labels, and density-aware edge labels.
+
+### Upgrade notes
+
+- Restart the frontend. No database migration is required.
+
 ## [0.6.134] - 2026-11-22 -- Ledger discovery outcomes
 
 ### Added
