@@ -5,6 +5,21 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.136] - 2026-11-22 -- Streaming discovery progress
+
+### Changed
+
+- BBOT discovery now ingests complete JSON records while the action is still running. Newly observed assets can unlock authorized follow-up actions before the discovery process exits.
+- Early planner wakes coalesce through the durable wake flag and dispatch only when action-concurrency capacity is available. Partial output records remain buffered until complete.
+
+### Fixed
+
+- Final BBOT ingestion attaches sealed raw-artifact lineage to matching streaming observations without duplicating them or marking partial output as final.
+
+### Upgrade notes
+
+- Restart campaign and runtime workers. No database migration is required.
+
 ## [0.6.135] - 2026-11-22 -- Operational campaign views
 
 ### Changed
