@@ -5,6 +5,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.137] - 2026-11-23 -- Adaptive pentest research and verification
+
+### Added
+
+- HTTP service and technology fingerprints now include normalized product and version facts. Autonomous campaigns generate bounded, campaign-deduplicated CVE research queries from those facts and retain results as untrusted research context.
+- Autonomous planners can request structured HTTP GET and form-POST probes through a fixed scoped executor. Parser-backed response metadata, content hashes, and literal proof-marker matches feed later planning rounds without exposing response bodies. POST probes retain intrusive approval and budget enforcement.
+
+### Fixed
+
+- BBOT actions no longer succeed on exit code alone when output is malformed, truncated, or contains no discovery observations.
+- Planner rounds with newly fetched research no longer wrap up before the results can be considered.
+
+### Upgrade notes
+
+- Restart campaign and runtime workers. No database migration is required.
+
 ## [0.6.136] - 2026-11-22 -- Streaming discovery progress
 
 ### Changed
