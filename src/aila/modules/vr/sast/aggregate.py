@@ -10,6 +10,9 @@ from aila.modules.vr.db_models import VRInvestigationOutcomeRecord, VRInvestigat
 from aila.modules.vr.sast._refs import skill_id
 from aila.modules.vr.sast.catalog import SAST_CATALOG_VERSION, SAST_SKILLS, SAST_UPSTREAM_COMMIT
 from aila.modules.vr.sast.contracts import SastAuditAggregate, SastSkillResult
+from aila.modules.vr.sast.diagnostics import extract_sast_diagnostics
+from aila.modules.vr.sast.models import SastPhase
+from aila.platform.contracts.outcome_base import active_outcomes
 from aila.platform.uow import UnitOfWork
 
 __all__ = ["collect_sast_audit"]
@@ -49,6 +52,21 @@ async def collect_sast_audit(parent_id: str) -> SastAuditAggregate:
                 select(VRInvestigationOutcomeRecord).where(VRInvestigationOutcomeRecord.id.in_(outcome_ids)),
             )).all()
             outcomes = {outcome.id: outcome for outcome in rows}
+        skills_by_id = {skill.id: skill for skill in SAST_SKILLS}
+        detection_children = [
+            child for child in children
+            if (skill := skills_by_id.get(skill_id(child))) is not None
+            and skill.phase == SastPhase.DETECTION
+        ]
+        detection_outcomes: list[VRInvestigationOutcomeRecord] = []
+        if detection_children:
+            detection_outcomes = list((await uow.session.exec(
+                active_outcomes(VRInvestigationOutcomeRecord).where(
+                    VRInvestigationOutcomeRecord.investigation_id.in_([
+                        child.id for child in detection_children
+                    ]),
+                ),
+            )).all())
 
     results: list[SastSkillResult] = []
     for skill in SAST_SKILLS:
@@ -77,4 +95,8 @@ async def collect_sast_audit(parent_id: str) -> SastAuditAggregate:
         upstream_commit=SAST_UPSTREAM_COMMIT,
         results=results,
         status_counts=status_counts,
+        diagnostics=extract_sast_diagnostics(
+            detection_outcomes,
+            {child.id: skills_by_id[skill_id(child)] for child in detection_children},
+        ),
     )

@@ -6,6 +6,7 @@ import pytest
 from httpx import AsyncClient
 from sqlmodel import select
 
+from aila.api.auth import issue_jwt_token
 from aila.modules.vr.contracts import InvestigationKind, InvestigationStatus
 from aila.modules.vr.db_models import (
     VRInvestigationBranchRecord,
@@ -16,6 +17,7 @@ from aila.modules.vr.db_models import (
 )
 from aila.modules.vr.sast import SAST_DETECTION_SKILLS, SAST_SKILLS, load_sast_skill
 from aila.platform.uow import UnitOfWork
+from aila.storage.db_models import ApiKeyRecord
 
 
 def _auth(token: str) -> dict[str, str]:
@@ -193,3 +195,105 @@ async def test_sast_stage_gates_hand_off_architecture_then_all_detector_results(
     )
     assert aggregate.status_code == 200, aggregate.text
     assert len(aggregate.json()["data"]["results"]) == 16
+
+
+@pytest.mark.asyncio
+async def test_sast_workbench_projects_evidence_and_reads_confined_source(
+    async_client: AsyncClient, admin_token: str, reader_key_record: ApiKeyRecord, test_db: None, tmp_path,
+) -> None:
+    del test_db
+    source = tmp_path / "repo"
+    source.mkdir()
+    (source / "app.py").write_text("def handle(user_id):\n    return query(user_id)\n", encoding="utf-8")
+    (source / ".git").mkdir()
+    (source / ".git" / "config").write_text("secret", encoding="utf-8")
+    target_id = await _source_target("workbench")
+    response = await _dispatch(async_client, admin_token, target_id)
+    assert response.status_code == 201
+    parent_id = response.json()["data"]["parent_investigation_id"]
+
+    async with UnitOfWork() as uow:
+        target = (await uow.session.exec(
+            select(VRTargetRecord).where(VRTargetRecord.id == target_id),
+        )).one()
+        target.mcp_handles_json = json.dumps({
+            "audit_mcp_index_id": "synthetic-index", "mcp_path": str(source),
+        })
+        child = (await uow.session.exec(
+            select(VRInvestigationRecord).where(
+                VRInvestigationRecord.parent_investigation_id == parent_id,
+            ),
+        )).all()
+        sqli = next(row for row in child if "sast-sqli" in row.secondary_target_refs_json)
+        branch = (await uow.session.exec(
+            select(VRInvestigationBranchRecord).where(
+                VRInvestigationBranchRecord.investigation_id == sqli.id,
+            ),
+        )).one()
+        outcome = VRInvestigationOutcomeRecord(
+            investigation_id=sqli.id,
+            branch_id=branch.id,
+            outcome_kind="direct_finding",
+            payload_json=json.dumps({
+                "message": "User id reaches SQL query",
+                "description": "Untrusted input is concatenated into a query.",
+                "severity": "high",
+                "source_ref": "app.py:2",
+                "related_locations": [{"path": "app.py", "line_start": 1}],
+            }),
+            confidence="high",
+            state="dispatched",
+        )
+        uow.session.add(outcome)
+        sqli.primary_outcome_id = outcome.id
+        await uow.commit()
+
+    aggregate = await async_client.get(
+        f"/vr/targets/{target_id}/sast-audit-aggregate",
+        params={"audit_id": parent_id}, headers=_auth(admin_token),
+    )
+    assert aggregate.status_code == 200, aggregate.text
+    diagnostic = aggregate.json()["data"]["diagnostics"][0]
+    assert diagnostic["path"] == "app.py"
+    assert diagnostic["line_start"] == 2
+    assert diagnostic["related_locations"][0]["line_start"] == 1
+
+    files = await async_client.get(
+        f"/vr/targets/{target_id}/sast-audit-files",
+        params={"audit_id": parent_id}, headers=_auth(admin_token),
+    )
+    assert files.status_code == 200, files.text
+    assert files.json()["data"] == {
+        "complete": True,
+        "files": [{"path": "app.py", "language": "python", "diagnostic_count": 1}],
+    }
+    content = await async_client.get(
+        f"/vr/targets/{target_id}/sast-audit-source",
+        params={"audit_id": parent_id, "path": "app.py"}, headers=_auth(admin_token),
+    )
+    assert content.status_code == 200, content.text
+    assert content.json()["data"]["content"].startswith("def handle")
+    traversal = await async_client.get(
+        f"/vr/targets/{target_id}/sast-audit-source",
+        params={"audit_id": parent_id, "path": "../outside.py"}, headers=_auth(admin_token),
+    )
+    assert traversal.status_code == 400
+
+    async with UnitOfWork() as uow:
+        target = (await uow.session.exec(
+            select(VRTargetRecord).where(VRTargetRecord.id == target_id),
+        )).one()
+        target.team_id = "another-team"
+        await uow.commit()
+    async with UnitOfWork() as uow:
+        scoped_key = await uow.session.get(ApiKeyRecord, reader_key_record.id)
+        assert scoped_key is not None
+        scoped_key.team_id = "admin"
+        await uow.commit()
+    reader_key_record.team_id = "admin"
+    scoped_reader_token, _ = issue_jwt_token(reader_key_record)
+    denied = await async_client.get(
+        f"/vr/targets/{target_id}/sast-audit-source",
+        params={"audit_id": parent_id, "path": "app.py"}, headers=_auth(scoped_reader_token),
+    )
+    assert denied.status_code == 404

@@ -5,7 +5,16 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from aila.modules.vr.sast.models import SastPhase
 
-__all__ = ["SastAuditAggregate", "SastAuditDispatchResponse", "SastSkillResult"]
+__all__ = [
+    "SastAuditAggregate",
+    "SastAuditDispatchResponse",
+    "SastDiagnostic",
+    "SastDiagnosticLocation",
+    "SastSkillResult",
+    "SastSourceFile",
+    "SastSourceFileEntry",
+    "SastSourceTree",
+]
 
 
 class SastAuditDispatchResponse(BaseModel):
@@ -37,6 +46,45 @@ class SastSkillResult(BaseModel):
     summary: str | None = None
 
 
+class SastDiagnosticLocation(BaseModel):
+    path: str | None = None
+    line_start: int | None = None
+    line_end: int | None = None
+    column_start: int | None = None
+    column_end: int | None = None
+
+
+class SastDiagnostic(SastDiagnosticLocation):
+    id: str
+    skill_id: str
+    investigation_id: str
+    outcome_id: str
+    message: str
+    description: str = ""
+    severity: str = "unknown"
+    confidence: str | None = None
+    related_locations: list[SastDiagnosticLocation] = Field(default_factory=list)
+
+
+class SastSourceFileEntry(BaseModel):
+    path: str
+    language: str
+    diagnostic_count: int = 0
+
+
+class SastSourceTree(BaseModel):
+    files: list[SastSourceFileEntry]
+    complete: bool
+
+
+class SastSourceFile(BaseModel):
+    path: str
+    content: str
+    language: str
+    total_lines: int
+    truncated: bool
+
+
 class SastAuditAggregate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -47,3 +95,4 @@ class SastAuditAggregate(BaseModel):
     upstream_commit: str
     results: list[SastSkillResult]
     status_counts: dict[str, int]
+    diagnostics: list[SastDiagnostic]

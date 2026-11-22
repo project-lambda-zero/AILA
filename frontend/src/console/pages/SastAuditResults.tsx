@@ -1,16 +1,38 @@
 import { useQuery } from "@tanstack/react-query";
-import type { JSX } from "react";
+import { lazy, Suspense, useState, type JSX } from "react";
 
 import { apiFetch } from "../../api/client";
-import { asRecord, readStr } from "../../api/parse";
+import { asRecord, readNum, readRecordArray, readStr } from "../../api/parse";
 import type { Investigation } from "../../api/types";
 import { css } from "../css";
 import { StatusBadge } from "./badges";
+
+const SastCodeWorkbench = lazy(() => import("./SastCodeWorkbench"));
 
 const tableCss = css("width:100%;border-collapse:collapse;font-size:11px;");
 const cellCss = css("padding:7px;border-bottom:1px solid var(--border-soft);text-align:left;vertical-align:top;");
 const mutedCss = css("color:var(--text-muted);font-size:11px;");
 const linkCss = css("border:0;background:transparent;color:var(--accent);padding:0;cursor:pointer;text-align:left;font:inherit;");
+
+export interface SastDiagnosticLocation {
+  path: string | null;
+  lineStart: number | null;
+  lineEnd: number | null;
+  columnStart: number | null;
+  columnEnd: number | null;
+}
+
+export interface SastDiagnostic extends SastDiagnosticLocation {
+  id: string;
+  skillId: string;
+  investigationId: string;
+  outcomeId: string;
+  message: string;
+  description: string;
+  severity: string;
+  confidence: string | null;
+  relatedLocations: SastDiagnosticLocation[];
+}
 
 interface SastResult {
   skillId: string;
@@ -27,11 +49,49 @@ interface SastAggregate {
   parentStatus: string;
   results: SastResult[];
   statusCounts: Record<string, number>;
+  diagnostics: SastDiagnostic[];
+}
+
+function parseLocation(value: unknown): SastDiagnosticLocation | null {
+  const row = asRecord(value);
+  if (!row) return null;
+  return {
+    path: readStr(row, "path"),
+    lineStart: readNum(row, "line_start"),
+    lineEnd: readNum(row, "line_end"),
+    columnStart: readNum(row, "column_start"),
+    columnEnd: readNum(row, "column_end"),
+  };
+}
+
+function parseDiagnostic(value: unknown): SastDiagnostic | null {
+  const row = asRecord(value);
+  const location = parseLocation(value);
+  const id = row ? readStr(row, "id") : null;
+  const skillId = row ? readStr(row, "skill_id") : null;
+  const investigationId = row ? readStr(row, "investigation_id") : null;
+  const outcomeId = row ? readStr(row, "outcome_id") : null;
+  if (!row || !location || !id || !skillId || !investigationId || !outcomeId) return null;
+  return {
+    ...location,
+    id,
+    skillId,
+    investigationId,
+    outcomeId,
+    message: readStr(row, "message") ?? "Untitled SAST finding",
+    description: readStr(row, "description") ?? "",
+    severity: readStr(row, "severity") ?? "unknown",
+    confidence: readStr(row, "confidence"),
+    relatedLocations: readRecordArray(row, "related_locations").flatMap((item) => {
+      const related = parseLocation(item);
+      return related ? [related] : [];
+    }),
+  };
 }
 
 function parseAggregate(value: unknown): SastAggregate {
   const row = asRecord(value);
-  if (!row) return { parentStatus: "unknown", results: [], statusCounts: {} };
+  if (!row) return { parentStatus: "unknown", results: [], statusCounts: {}, diagnostics: [] };
   const rawResults = Array.isArray(row.results) ? row.results : [];
   const results = rawResults.flatMap((item) => {
     const result = asRecord(item);
@@ -52,13 +112,22 @@ function parseAggregate(value: unknown): SastAggregate {
   });
   const rawCounts = asRecord(row.status_counts) ?? {};
   const statusCounts = Object.fromEntries(Object.entries(rawCounts).map(([key, count]) => [key, typeof count === "number" ? count : 0]));
-  return { parentStatus: readStr(row, "parent_status") ?? "unknown", results, statusCounts };
+  return {
+    parentStatus: readStr(row, "parent_status") ?? "unknown",
+    results,
+    statusCounts,
+    diagnostics: readRecordArray(row, "diagnostics").flatMap((item) => {
+      const diagnostic = parseDiagnostic(item);
+      return diagnostic ? [diagnostic] : [];
+    }),
+  };
 }
 
 export default function SastAuditResults({ targetId, onOpenXray }: {
   targetId: string;
   onOpenXray: (investigation: Investigation) => void;
 }): JSX.Element {
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const auditsQ = useQuery({
     queryKey: ["sast-audit", "parents", targetId],
     queryFn: async () => {
@@ -87,6 +156,7 @@ export default function SastAuditResults({ targetId, onOpenXray }: {
         <StatusBadge value={aggregate.parentStatus} />
         <span>{aggregate.results.length} skills · {aggregate.results.filter((result) => result.phase === "detection").length} detectors</span>
         {Object.entries(aggregate.statusCounts).map(([status, count]) => <span key={status}>{status}: {count}</span>)}
+        <button type="button" style={linkCss} onClick={() => setWorkbenchOpen(true)}>Open code workbench ({aggregate.diagnostics.length} problems)</button>
       </div>
       <div style={css("overflow-x:auto;")}>
         <table style={tableCss} aria-label="SAST prepared skill results">
@@ -103,6 +173,9 @@ export default function SastAuditResults({ targetId, onOpenXray }: {
           </tr>)}</tbody>
         </table>
       </div>
+      {workbenchOpen ? <Suspense fallback={<p style={mutedCss}>Loading code workbench...</p>}>
+        <SastCodeWorkbench targetId={targetId} auditId={auditId} diagnostics={aggregate.diagnostics} onClose={() => setWorkbenchOpen(false)} />
+      </Suspense> : null}
     </div>
   );
 }

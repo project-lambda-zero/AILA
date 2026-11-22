@@ -5,7 +5,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from aila.modules.vr.sast.catalog import SAST_UPSTREAM_COMMIT, SAST_UPSTREAM_URL, load_sast_skill
-from aila.modules.vr.sast.models import SastSkill
+from aila.modules.vr.sast.models import SastPhase, SastSkill
 
 __all__ = ["SastSeedBuilder"]
 
@@ -31,4 +31,14 @@ class SastSeedBuilder:
             upstream_commit=SAST_UPSTREAM_COMMIT,
             skill_body=load_sast_skill(skill),
             stage_context=context,
+            diagnostic_contract=(
+                "\n## Structured diagnostic output\n\n"
+                "For each confirmed finding, include a `diagnostics` list in the persisted "
+                "`direct_finding` outcome payload. Each item has `message`, `description`, "
+                "`severity`, `confidence`, `path`, `line_start`, `line_end`, `column_start`, "
+                "`column_end`, and `related_locations`. Use a repository-relative POSIX path "
+                "and coordinates observed through audit-mcp source reads. Related locations "
+                "use the same coordinate fields for source/sink flow steps. Set unavailable "
+                "coordinates to null; never infer or invent a file, line, or column.\n"
+            ) if skill.phase == SastPhase.DETECTION else "",
         )

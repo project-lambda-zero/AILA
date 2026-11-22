@@ -5,6 +5,18 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.133] - 2026-11-22 -- SAST source workbench
+
+### Added
+
+- Prepared SAST audits now expose a full-screen source workbench with repository navigation, read-only syntax highlighting, inline diagnostic markers, and a Problems panel.
+- Selecting a problem opens its verified file and line, reveals related source and sink locations, and retains skill, investigation, and outcome provenance.
+- Source reads are team-authorized, repository-root confined, and size bounded. Findings without usable locations remain visible without fabricated markers.
+
+### Upgrade notes
+
+- Restart the API and frontend. This change projects existing outcome evidence and repository files and requires no database migration.
+
 ## [0.6.132] - 2026-11-22 -- Prepared SAST skill workflow
 
 ### Added

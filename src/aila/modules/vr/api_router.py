@@ -4362,6 +4362,92 @@ def create_vr_router() -> APIRouter:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return DataEnvelope(data=aggregate)
 
+    from .sast.contracts import SastSourceFile, SastSourceTree
+    from .sast.source import SastSourceService
+
+    async def _sast_source_context(
+        target_id: str, audit_id: str, auth: AuthContext,
+    ) -> tuple[SastAuditAggregate, SastSourceService]:
+        """Authorize target/parent before exposing any repository bytes."""
+        from aila.platform.mcp.factory import make_bridge
+
+        from .db_models import VRTargetRecord
+        from .sast.aggregate import collect_sast_audit
+
+        async with UnitOfWork() as uow:
+            target = (await uow.session.exec(
+                _team_filter(
+                    select(VRTargetRecord).where(VRTargetRecord.id == target_id),
+                    VRTargetRecord, auth,
+                ),
+            )).first()
+            parent = (await uow.session.exec(
+                _team_filter(
+                    select(VRInvestigationRecord).where(VRInvestigationRecord.id == audit_id),
+                    VRInvestigationRecord, auth,
+                ),
+            )).first()
+            if target is None or parent is None or parent.target_id != target_id:
+                raise HTTPException(status_code=404, detail="SAST audit not found for this target and team")
+            if parent.kind != InvestigationKind.SAST_AUDIT.value:
+                raise HTTPException(status_code=409, detail="selected investigation is not a SAST audit parent")
+            try:
+                handles = _json.loads(target.mcp_handles_json or "{}")
+            except (TypeError, ValueError):
+                handles = {}
+            if not isinstance(handles, dict):
+                handles = {}
+            mcp_path = handles.get("mcp_path")
+            index_id = handles.get("audit_mcp_index_id")
+        aggregate = await collect_sast_audit(audit_id)
+        service = SastSourceService(
+            mcp_path=mcp_path if isinstance(mcp_path, str) else None,
+            index_id=index_id if isinstance(index_id, str) else None,
+            bridge=make_bridge("audit_mcp", module_id="vr"),
+        )
+        return aggregate, service
+
+    @router.get(
+        "/targets/{target_id}/sast-audit-files",
+        response_model=DataEnvelope[SastSourceTree],
+    )
+    @limiter.limit("30/minute")
+    async def get_sast_audit_files(
+        request: Request,
+        target_id: str,
+        audit_id: str = Query(...),
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[SastSourceTree]:
+        del request
+        aggregate, service = await _sast_source_context(target_id, audit_id, auth)
+        return DataEnvelope(data=service.list_files(aggregate.diagnostics))
+
+    @router.get(
+        "/targets/{target_id}/sast-audit-source",
+        response_model=DataEnvelope[SastSourceFile],
+    )
+    @limiter.limit("30/minute")
+    async def get_sast_audit_source(
+        request: Request,
+        target_id: str,
+        path: str = Query(...),
+        audit_id: str = Query(...),
+        auth: AuthContext = Depends(require_auth),
+    ) -> DataEnvelope[SastSourceFile]:
+        del request
+        from .sast.source import SourcePathError
+
+        _aggregate, service = await _sast_source_context(target_id, audit_id, auth)
+        try:
+            source = await service.read_file(path)
+        except SourcePathError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(status_code=422, detail="source file could not be read") from exc
+        return DataEnvelope(data=source)
+
     # ── Investigations (M3.R-1 schema, D-43, D-49/D-50) ───────────────
 
     @router.post(

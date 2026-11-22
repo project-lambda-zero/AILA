@@ -7,7 +7,7 @@ Pinned commit: `{upstream_commit}`
 ## VR runtime output binding
 
 Run the upstream skill below against this investigation's indexed source target. The skill body is reproduced verbatim. VR persists your final outcome and evidence instead of creating the upstream `sast/*.md` files. Treat references to those files as the corresponding persisted investigation outcome. Do not claim to have created a filesystem report that you did not create.
-
+{diagnostic_contract}
 ## Stage input
 
 {stage_context}
