@@ -11,8 +11,9 @@ import type { BenchmarkCase, BenchmarkInfo, EvalRun } from "../../../api/admin";
 import type { ModulePageProps } from "../../contract";
 import { css } from "../../css";
 import { toast } from "../../toast";
+import { StructuredData } from "../../StructuredData";
 import { ActButton, actionRow, fieldStyle, formLabel } from "../xray/actions";
-import { AdminWindow, FAINT, Field, KvGrid, MONO, QueryState, Section, SubmitButton, Table, fmtTime } from "./kit";
+import { AdminWindow, FAINT, Field, KvGrid, QueryState, Section, SubmitButton, Table, fmtTime } from "./kit";
 
 interface CaseDraft {
   id: number;
@@ -228,9 +229,7 @@ export default function EvalBenchmarksPage(props: ModulePageProps): JSX.Element 
               <Table rows={runsQ.data ?? []} columns={runColumns} rowKey={(r) => r.id} selectedKey={openRun} onRowClick={(r) => setOpenRun(r.id === openRun ? null : r.id)} />
             ) : null}
             {opened ? (
-              <pre style={css(MONO + "font-size:11px;margin:0;padding:8px;background:var(--surface-sunk);border:1px solid var(--border-soft);white-space:pre-wrap;word-break:break-word;max-height:320px;overflow:auto;")}>
-                {JSON.stringify(opened.report, null, 2)}
-              </pre>
+              <StructuredData label="Evaluation report" value={opened.report} />
             ) : null}
           </>
         )}

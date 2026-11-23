@@ -74,15 +74,12 @@ export function cellText(v: unknown): string {
 /** Turn a reveal action's response payload into ordered [label, value] pairs
  * for the one-shot reveal modal. Named `reveal.fields` win; otherwise every
  * top-level key of the payload object is shown. */
-export function revealEntries(action: PageAction, payload: unknown): [string, string][] {
+export function revealEntries(action: PageAction, payload: unknown): [string, unknown][] {
   const obj = asRecord(payload);
-  if (!obj) return [["result", isScalar(payload) ? String(payload) : JSON.stringify(payload, null, 2)]];
+  if (!obj) return [["result", payload]];
   const want = action.reveal?.fields;
   const keys = want && want.length > 0 ? want : Object.keys(obj);
-  return keys.map((k): [string, string] => {
-    const v = obj[k];
-    return [k, v == null ? "\u2014" : isScalar(v) ? String(v) : JSON.stringify(v)];
-  });
+  return keys.map((k): [string, unknown] => [k, obj[k]]);
 }
 
 /** True when the filter currently holds a narrowing value. */

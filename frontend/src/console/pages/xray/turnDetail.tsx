@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { readNum, readStr } from "../../../api/parse";
 import type { Message } from "../../../api/types";
 import { css } from "../../css";
+import { StructuredData } from "../../StructuredData";
 import { LazyCodeBlock } from "./LazyCode";
 import { parseToolFull, type Payload } from "./parsers";
 import { argRowStyle, codeHeadStyle, codePreStyle, detLabel, detRowStyle, detVal } from "./theme";
@@ -15,7 +16,7 @@ export function turnDetail(m: Message): ReactNode {
   const p: Payload = m.payload ?? {};
   const rows: [string, string][] = [];
   let toolName: string | null = null;
-  let toolArgs: [string, string][] = [];
+  let toolArgs: [string, unknown][] = [];
   let code: { file: string; lang: string; text: string } | null = null;
 
   if (kind === "tool_call") {
@@ -93,7 +94,7 @@ export function turnDetail(m: Message): ReactNode {
       {toolArgs.map(([k, v]) => (
         <div key={k} style={argRowStyle}>
           <span style={css("color:var(--text-muted);font-family:var(--font-mono);")}>{k}</span>
-          <span style={css("color:var(--text-primary);font-family:var(--font-mono);word-break:break-all;")}>{v}</span>
+          <div style={css("color:var(--text-primary);min-width:0;")}><StructuredData label={k} value={v} /></div>
         </div>
       ))}
       {code ? (
