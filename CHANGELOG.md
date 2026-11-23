@@ -5,6 +5,16 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.140] - 2026-11-23 -- Expanded operations text
+
+### Fixed
+
+- Long campaign questions, messages, and operations text now render in full instead of collapsed disclosures that reset when switching tabs.
+
+### Upgrade notes
+
+- Restart the frontend. No database migration is required.
+
 ## [0.6.139] - 2026-11-23 -- Planner response recovery
 
 ### Fixed
