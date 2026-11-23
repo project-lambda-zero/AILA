@@ -5,6 +5,30 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.142] - 2026-11-23 -- Campaign reliability and evidence integrity
+
+### Added
+
+- Agent creation now collects operational context and immediately starts endpoint onboarding in the same flow.
+- Campaign domain and exploration views expose stable cursor pagination.
+- Campaign preflight verifies the configured toolchain image, browser runtime, executables, and shared Nuclei template IDs before planning.
+
+### Changed
+
+- Enabled team traffic rewrites now apply at each action dispatch while campaign scope remains immutable.
+- Streaming previews and incremental parser results remain visible without invalidating planner snapshots.
+- Bounded action output is enforced uniformly, and truncated or malformed evidence fails closed with explicit counters.
+
+### Fixed
+
+- Failed campaigns can resume, transient enqueue failures reconcile their rows, and autonomous intents retry with bounded attempt identities instead of reporting phantom progress.
+- Planner schema rejection no longer crash-loops; budget settlement, lease reaping, credential tenancy, and cancellation fencing preserve their respective invariants.
+- Parser and finding workflows now preserve soft-404 calibration, query-specific identity, conclusive retest semantics, and live exclusion enforcement.
+
+### Upgrade notes
+
+- Restart the frontend, backend, and campaign workers. No database migration is required.
+
 ## [0.6.141] - 2026-11-23 -- Enterprise campaign operations UI
 
 ### Changed

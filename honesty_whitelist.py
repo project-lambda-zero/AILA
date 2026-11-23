@@ -293,6 +293,10 @@ HONESTY_WHITELIST = [
     ("api/routers/topology.py", "broad_exception_catch", "catches everything"),
     ("api/routers/users.py", "broad_exception_catch", "catches everything"),
 
+    # PyRIT converts each arbitrary scanner/plugin failure into that attempt's
+    # structured outcome while independent attempts continue.
+    ("pentest/services/pyrit_child.py", "broad_exception_catch", "catches everything"),
+
     # platform/ -- LLM client, routing/runtime, services, task queue, and
     # workflow engine. These are the platform's outermost frames and
     # supervisors; they MUST keep running across model/provider/runner
@@ -811,6 +815,7 @@ HONESTY_WHITELIST = [
     ("pentest/services/process.py", "except_return_default", "except returns empty default"),
     ("pentest/services/process.py", "asyncio_in_module", "threading belongs"),
     ("pentest/services/pyrit_child.py", "asyncio_in_module", "threading belongs"),
+    ("pentest/services/pyrit_child.py", "noqa_inline", "documented justification"),
 
     # Live campaign fingerprint/canonicalization helpers define stable
     # persistence formats; record loaders centralize populate_existing reads.
