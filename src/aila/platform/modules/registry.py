@@ -5,7 +5,13 @@ from typing import TYPE_CHECKING, Any
 
 from ..config import ApplicationSettings
 from ..runtime.tools import ToolRegistry
-from .protocol import ModuleCapabilityProfile, ModuleContext, ModuleProtocol, ModuleRuntime
+from .protocol import (
+    ModuleCapabilityProfile,
+    ModuleContext,
+    ModuleProtocol,
+    ModuleRuntime,
+    TaskControlPolicy,
+)
 
 if TYPE_CHECKING:
     from ...storage.registry import ConfigRegistry, SchemaRegistry
@@ -94,6 +100,17 @@ class ModuleRegistry:
             available = ", ".join(sorted(self._modules))
             raise KeyError(f"Module {module_id!r} is not registered. Available: {available}.")
         return self._modules[module_id]
+
+    def task_control_policy_for(self, module_id: str) -> TaskControlPolicy | None:
+        """Return the task-control policy for a registered module, or None.
+
+        Unlike ``require``, an unknown module id is not an error: tasks whose
+        track names no registered module keep the platform's default handling.
+        """
+        module = self._modules.get(module_id)
+        if module is None:
+            return None
+        return module.task_control_policy()
 
     def first_with(self, capability: str) -> ModuleProtocol | None:
         """Return the first registered module exposing a callable named ``capability``.

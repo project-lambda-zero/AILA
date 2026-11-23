@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 from aila.platform.agents.turn_runner import AgentTurnRunnerBase
 from aila.platform.contracts.reasoning import (
+    Hypothesis,
     LedgerWrite,
     ReasoningCaseState,
     ReasoningTurnDecision,
@@ -75,6 +76,50 @@ async def test_request_in_recon_is_untouched(test_db) -> None:
         await uow.session.commit()
     rows = await LedgerService().read_general(inv)
     assert rows[0]["kind"] == "request"
+
+
+async def test_audit_hypothesis_requires_real_confirmation(test_db) -> None:
+    del test_db
+    hypothesis = Hypothesis(
+        id="h-unconfirmed",
+        claim="Possible injection",
+        why_plausible="Input reaches a query",
+        kill_criterion="The query uses bound parameters",
+    )
+    new_state = ReasoningCaseState(hypotheses=[hypothesis.model_copy(deep=True)])
+    decision = ReasoningTurnDecision(reasoning="candidate", hypotheses=[hypothesis])
+    me = SimpleNamespace(investigation_id="inv-unconfirmed", branch_id="b-unconfirmed")
+
+    async with UnitOfWork() as uow:
+        await AgentTurnRunnerBase._post_ledger_writes(
+            me, decision, 1, uow.session, _AUDIT,
+        )
+        await uow.session.commit()
+
+    assert await LedgerService().read_general("inv-unconfirmed") == []
+    assert new_state.hypotheses[0].confirmed_by == ""
+
+
+async def test_confirmed_audit_hypothesis_preserves_evidence_citation(test_db) -> None:
+    del test_db
+    hypothesis = Hypothesis(
+        id="h-confirmed",
+        claim="Confirmed injection",
+        confirmed_by="audit_mcp.read_function:src/login.c:42",
+    )
+    decision = ReasoningTurnDecision(reasoning="confirmed", hypotheses=[hypothesis])
+    me = SimpleNamespace(investigation_id="inv-confirmed", branch_id="b-confirmed")
+
+    async with UnitOfWork() as uow:
+        await AgentTurnRunnerBase._post_ledger_writes(
+            me, decision, 1, uow.session, _AUDIT,
+        )
+        await uow.session.commit()
+
+    rows = await LedgerService().read_general("inv-confirmed")
+    assert len(rows) == 1
+    assert rows[0]["payload"]["confirmed_by"] == "audit_mcp.read_function:src/login.c:42"
+    assert rows[0]["payload"]["source"] == "taint_confirmed"
 
 
 async def test_coerced_discovery_activates_audit_condition(test_db) -> None:

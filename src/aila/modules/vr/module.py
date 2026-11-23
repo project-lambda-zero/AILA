@@ -78,6 +78,7 @@ class VRModule(ModuleProtocol):
     """
 
     module_id = MODULE_ID
+    worker_tracks = ("vr", "reporting")
     create_project_action_id = CREATE_PROJECT_ACTION_ID
 
     def reasoning_strategies(self) -> list[ReasoningStrategyDeclaration]:

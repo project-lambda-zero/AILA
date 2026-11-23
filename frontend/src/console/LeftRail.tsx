@@ -52,7 +52,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
   const activeModule = MODULES.find((m) => m.id === moduleId) ?? MODULES[0];
   // Every hook runs unconditionally so hook order is stable across module
   // switches; a per-module `source` selection below picks which one drives
-  // the rail. The vulnerability module has no per-case list endpoint --
+  // the rail. The vulnerability and pentest modules have no per-case list endpoint --
   // it renders an honest empty state instead of borrowing VR data.
   const vrInvestigations = useInvestigations();
   const malwareInvestigations = useMalwareInvestigations();
@@ -63,7 +63,7 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
       ? malwareInvestigations
       : moduleId === "forensics"
         ? forensicsProjects
-        : moduleId === "vulnerability"
+        : moduleId === "vulnerability" || moduleId === "pentest"
           ? { data: [], isLoading: false, isError: false }
           : vrInvestigations;
 
@@ -81,15 +81,17 @@ export default function LeftRail(props: LeftRailProps): ReactElement {
     return selectRailRows(source.data ?? [], pinned, moduleId);
   }, [source.data, pinned, moduleId]);
 
-  // Per-module honest empty-state copy. Vulnerability has no case list; the
-  // scan/findings/systems windows opened from the PAGES section above are the
+  // Per-module honest empty-state copy. Vulnerability and pentest have no case
+  // list; the windows opened from the PAGES section above are the
   // real workflow.
   const emptyLabel =
     moduleId === "vulnerability"
       ? "no advisories -- use the pages above"
-      : moduleId === "forensics"
-        ? "no cases yet"
-        : "no investigations yet";
+      : moduleId === "pentest"
+        ? "no entries -- use the pages above"
+        : moduleId === "forensics"
+          ? "no cases yet"
+          : "no investigations yet";
 
   return (
     <aside

@@ -12,7 +12,7 @@ from datetime import datetime
 
 import pytest
 from pydantic import BaseModel, Field
-from sqlmodel import select
+from sqlmodel import delete, select
 
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import ConfigEntryRecord
@@ -30,6 +30,7 @@ class _ContractSchema(BaseModel):
     legacy_cap: int = Field(default=5, ge=10)
     enabled: bool = True
     label: str = Field(default="ok", max_length=5)
+    labels: list[str] = Field(default_factory=list)
     plain: str = "x"
 
 
@@ -195,3 +196,29 @@ class TestValidRoundtrip:
         actual = await registry.get(NAMESPACE, key)
         assert actual == expected
         assert type(actual) is type(expected)
+
+
+class TestDefaultFactoryFallback:
+    async def test_missing_row_materializes_factory_defaults(
+        self, registry: ConfigRegistry,
+    ) -> None:
+        async with async_session_scope() as session:
+            await session.exec(
+                delete(ConfigEntryRecord).where(
+                    ConfigEntryRecord.namespace == NAMESPACE,
+                    ConfigEntryRecord.key == "labels",
+                )
+            )
+            await session.commit()
+
+        registry._cache.clear()
+        async_default = await registry.get(NAMESPACE, "labels")
+        registry._cache.clear()
+        sync_default = registry.get_sync(NAMESPACE, "labels")
+        resolution = registry.describe_resolution(NAMESPACE, "labels", db_value=None)
+
+        assert async_default == [] and sync_default == []
+        assert async_default is not sync_default
+        assert resolution.default_value == "[]"
+        assert resolution.effective_value == "[]"
+        assert resolution.source == "default"

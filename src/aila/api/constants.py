@@ -23,7 +23,6 @@ __all__ = [
     # Audit events
     "AUDIT_STAGE_AUTH",
     "AUDIT_STAGE_CONFIG",
-    "AUDIT_STAGE_SCAN",
     "AUDIT_STAGE_SESSION",
     "AUDIT_STAGE_SYSTEM",
     "AUDIT_STAGE_TASK",
@@ -44,7 +43,6 @@ __all__ = [
     "AUDIT_ACTION_TASK_RESUME",
     "AUDIT_ACTION_TOOL_INVOKE",
     "AUDIT_ACTION_FINDING_BULK_UPDATE",
-    "AUDIT_STATUS_COMPLETED",
     # Track names
     "TRACK_PLATFORM",
     # Module IDs
@@ -71,7 +69,6 @@ MEDIA_TYPE_SSE: str = "text/event-stream"
 # --- Audit events ----------------------------------------------------------
 AUDIT_STAGE_AUTH: str = "auth"
 AUDIT_STAGE_CONFIG: str = "config"
-AUDIT_STAGE_SCAN: str = "scan"
 AUDIT_STAGE_SESSION: str = "session"
 AUDIT_STAGE_SYSTEM: str = "system"
 AUDIT_STAGE_TASK: str = "task"
@@ -92,7 +89,6 @@ AUDIT_ACTION_TASK_CANCEL: str = "task_cancel"
 AUDIT_ACTION_TASK_RESUME: str = "task_resume"
 AUDIT_ACTION_TOOL_INVOKE: str = "tool_invoke"
 AUDIT_ACTION_FINDING_BULK_UPDATE: str = "finding_bulk_update"
-AUDIT_STATUS_COMPLETED: str = "completed"
 
 # --- Track names -----------------------------------------------------------
 TRACK_PLATFORM: str = "platform"

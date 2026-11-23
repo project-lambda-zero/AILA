@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aila"
-version = "0.6.124"
+version = "0.6.137"
 description = "Modular AI security platform with pluggable analysis modules."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -14,6 +14,7 @@ dependencies = [
   "filelock==4.2.4",  # nine advisories across <= 4.2.0 (one high); first patched 4.2.1
   "fastapi==0.135.3",
   "httpx==0.28.1",
+  "websockets==15.0.1",
   "paramiko==5.0.0",  # CVE-2026-44405 (SHA-1 in rsakey.py): vuln_range <= 4.0.0; 5.0.0 is implicitly unaffected
   "pwdlib[bcrypt]==0.3.0",
   "argon2-cffi==25.1.0",
@@ -163,9 +164,11 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
+"aila.modules.pentest.live.runners" = ["*.cjs"]
 "aila.modules.pentest.services" = ["*.mjs"]
 "aila.modules.forensics.workflow.states.collectors" = ["*.tpl"]
 "aila.platform.re_analytics" = ["data/*.txt"]
+"aila.modules.vr.sast" = ["LICENSE", "prompts/*.md", "skills/*/SKILL.md"]
 
 [tool.vulture]
 min_confidence = 80
@@ -624,7 +627,9 @@ ignore = [
 # scope import would re-enter a half-built services package.
 "src/aila/platform/services/oracle.py" = ["PLC0415"]
 "src/aila/platform/services/reasoning.py" = ["E402"]
-"src/aila/platform/services/redis_pool.py" = ["PLW0603"]
+# redis_pool.py defers ConfigRegistry because storage.registry lazily imports
+# this module; a module-scope import would close that cycle at startup.
+"src/aila/platform/services/redis_pool.py" = ["PLW0603", "PLC0415"]
 "src/aila/platform/services/report.py" = ["PLC0415"]
 # resilience.py: PLC0415 for the deferred metric imports inside record_signal.
 # The counter modules pull prometheus_client + api.metrics; the ResilienceLayer

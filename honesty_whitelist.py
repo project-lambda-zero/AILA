@@ -481,6 +481,11 @@ HONESTY_WHITELIST = [
     # pentest uses the same canonical ConfigRegistry + module_id factory;
     # keeping it named also lets API tests inject a recording queue.
     ("pentest/_task_queue.py", "default_task_queue", "consider inlining"),
+    # Module declaration helpers centralize discovery and aggregation for worker
+    # health and idempotency middleware; duplicating the comprehensions at each
+    # caller would create two copies of the declaration contract.
+    ("platform/modules/builtin.py", "declared_worker_tracks", "consider inlining"),
+    ("platform/modules/builtin.py", "declared_idempotency_exempt_post_paths", "consider inlining"),
     # _template/_task_queue.default_task_queue: same public factory shape
     # as vr / malware / forensics; the scaffold ships it so a copier's
     # ``from aila.modules.<mod>._task_queue import default_task_queue``
@@ -632,6 +637,8 @@ HONESTY_WHITELIST = [
      "promotion_without_gate"),
     ("platform/prompts/seeds.py", "seed_platform_prompts",
      "promotion_without_gate"),
+    ("pentest/services/endpoint_planner.py", "seed_prompt_version",
+     "promotion_without_gate"),
 
     # Category (b): rule 68 content_slice_truncation. These cap the query
     # string written to an AUDIT-LOG detail field (record_audit_event
@@ -686,6 +693,13 @@ HONESTY_WHITELIST = [
     # on every services bundle; VRWorkflowServices.build is that contract's
     # implementation, not a forwarding wrapper.
     ("vr/workflow/services.py", "build", "consider inlining"),
+
+    # Category (g): these constructors centralize scoreability invariants and
+    # sanitized public projections; inlining would duplicate those rules.
+    ("pentest/services/endpoint_onboarding.py", "profile_summary", "consider inlining"),
+    ("pentest/services/endpoint_onboarding.py", "validation_summary", "consider inlining"),
+    ("pentest/services/transports/common.py", "failure", "consider inlining"),
+    ("pentest/services/transports/common.py", "success", "consider inlining"),
 
     # Category: rule 68 content_slice_truncation. RFC #149 auto-patch.
     # These two caps bound LLM-SYNTHESIS PROMPT INPUT, not stored or
@@ -797,6 +811,20 @@ HONESTY_WHITELIST = [
     ("pentest/services/process.py", "except_return_default", "except returns empty default"),
     ("pentest/services/process.py", "asyncio_in_module", "threading belongs"),
     ("pentest/services/pyrit_child.py", "asyncio_in_module", "threading belongs"),
+
+    # Live campaign fingerprint/canonicalization helpers define stable
+    # persistence formats; record loaders centralize populate_existing reads.
+    ("pentest/live/contracts/__init__.py", "canonical_scope_json", "consider inlining"),
+    ("pentest/live/services/campaigns.py", "campaign_fingerprint", "consider inlining"),
+    ("pentest/live/services/campaigns.py", "load_campaign", "consider inlining"),
+    ("pentest/live/services/campaigns.py", "load_action", "consider inlining"),
+    # ModuleProtocol mandates this one-line override. Route and task-control
+    # imports stay deferred to preserve the module-standard import boundary.
+    ("pentest/module.py", "required_tools", "inlining"),
+    ("pentest/module.py", "noqa_inline", "documented justification"),
+    # SSH reader threads capture every BaseException, close the channel, and
+    # re-raise it on the caller thread; this is not a silent broad catch.
+    ("platform/services/ssh.py", "noqa_inline", "documented justification"),
 ]
 
 

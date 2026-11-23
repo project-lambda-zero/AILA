@@ -20,7 +20,6 @@ from aila.api.auth import AuthContext, require_user_or_api_key
 from aila.api.constants import (
     AUDIT_ACTION_CONFIG_UPDATE,
     AUDIT_STAGE_CONFIG,
-    AUDIT_STATUS_COMPLETED,
     ROLE_ADMIN,
 )
 from aila.api.deps import get_config_registry
@@ -32,6 +31,7 @@ from aila.api.schemas.config import (
     ConfigUpdateRequest,
     PlatformSchemaResponse,
 )
+from aila.platform.contracts.audit import AUDIT_STATUS_COMPLETED
 from aila.platform.services.audit import record_audit_event
 from aila.storage.database import async_session_scope
 from aila.storage.db_models import ConfigEntryRecord

@@ -183,6 +183,11 @@ class PlatformConfigSchema(BaseModel):
     arq_job_timeout_s: int = 3600
     arq_max_tries: int = 3
     arq_keep_result_s: int = 3600
+    # Comma-separated ARQ worker tracks that each need a live heartbeat for the
+    # arq_worker health probe to report running. "auto" (default) resolves at probe
+    # time to the worker_tracks declared by the discovered modules.
+    # Env: AILA_PLATFORM_WORKER_HEALTH_TRACKS.
+    worker_health_tracks: str = "auto"
     progress_stream_maxlen: int = 1000
 
     # LLM routing global defaults (previously env-only ghost keys -- #45).
@@ -580,6 +585,10 @@ class PlatformConfigSchema(BaseModel):
     #   Binary names or absolute paths on the sandbox host. Resolved via
     #   ``command -v`` before every run; a missing binary raises
     #   ``SandboxExecutionError`` with an actionable message.
+    # sandbox_oci_bin:
+    #   Container runtime (``docker`` or ``podman``). Networked execution
+    #   additionally requires an exact per-run SandboxEgressPolicy; there
+    #   is no shared unrestricted bridge configuration.
     # sandbox_rootfs_path / _kernel_path:
     #   Required for the Firecracker backend. Point at the ext4 rootfs
     #   image + Firecracker-compatible vmlinux on the sandbox host. The
@@ -649,7 +658,10 @@ class PlatformConfigSchema(BaseModel):
             "fallback by design.\n\n"
             "``none`` -- no backend; every ``run`` raises Unavailable.\n"
             "``nsjail`` -- namespace + seccomp sandbox on the host.\n"
-            "``firecracker`` -- microVM (KVM required); needs rootfs + kernel."
+            "``firecracker`` -- microVM (KVM required); needs rootfs + kernel.\n"
+            "``oci`` -- hardened docker/podman container; every run needs an "
+            "immutable ``name@sha256:<digest>`` image already present on the host "
+            "(aila never pulls)."
         ),
     )
     sandbox_system_id: str = ""
@@ -664,10 +676,21 @@ class PlatformConfigSchema(BaseModel):
     sandbox_mem_mb: int = 512
     sandbox_output_max_bytes: int = 1_048_576
     sandbox_nsjail_bin: str = "nsjail"
+    sandbox_oci_bin: str = "docker"
     sandbox_firecracker_bin: str = "firecracker"
     sandbox_jailer_bin: str = "jailer"
     sandbox_rootfs_path: str = ""
     sandbox_kernel_path: str = ""
+
+    # Encrypted evidence store (platform.evidence_store). Chunks are sealed with
+    # the master key from the secret keyring; only artifact metadata is in the DB.
+    # evidence_root_dir: directory holding ciphertext files. Empty resolves to
+    #   ``<secret_keyring_path parent>/evidence``.
+    # evidence_chunk_bytes: plaintext bytes per AES-GCM frame.
+    # evidence_max_artifact_bytes: hard cap on one appended evidence artifact.
+    evidence_root_dir: str = ""
+    evidence_chunk_bytes: int = 262_144
+    evidence_max_artifact_bytes: int = 268_435_456
 
     # Issue #161 consumer -- ``platform.routing_negative_retune``
     # automation action drains new ``router_negative_example`` rows

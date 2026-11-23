@@ -55,6 +55,8 @@ from typing import Any
 
 import httpx
 
+from aila.platform.http_body import BodyTooLargeError, read_bounded_body
+
 __all__ = [
     "MCP_PROTOCOL_VERSION",
     "McpHttpError",
@@ -163,12 +165,18 @@ class McpHttpSession(McpSession):
         client_name: str = "aila",
         client_version: str = "1.0",
         headers: dict[str, str] | None = None,
+        validate_egress: bool = False,
+        client_factory: Callable[[], httpx.AsyncClient] | None = None,
     ) -> None:
         super().__init__()
         self._base = base_url.rstrip("/")
         self._client_name = client_name
         self._client_version = client_version
         self._extra_headers = dict(headers or {})
+        self._validate_egress = validate_egress
+        if validate_egress and client_factory is None:
+            raise ValueError("Secure MCP sessions require an egress-validating client factory")
+        self._client_factory = client_factory
         self._http: httpx.AsyncClient | None = None
         self._session_id: str | None = None
         self._protocol_version = MCP_PROTOCOL_VERSION
@@ -177,7 +185,7 @@ class McpHttpSession(McpSession):
 
     async def _client(self) -> httpx.AsyncClient:
         if self._http is None or self._http.is_closed:
-            self._http = httpx.AsyncClient()
+            self._http = self._client_factory() if self._client_factory is not None else httpx.AsyncClient()
         return self._http
 
     def _reset_session(self) -> None:
@@ -254,42 +262,63 @@ class McpHttpSession(McpSession):
             "params": params,
         }
         client = await self._client()
-        resp = await client.post(
-            self._endpoint(),
-            json=message,
-            headers=self._request_headers(),
-            timeout=timeout,
-        )
-        if resp.status_code >= 400:
-            raise McpHttpError(
-                f"HTTP {resp.status_code} from {self._endpoint()}: "
-                f"{resp.text[:200]}",
-                status_code=resp.status_code,
+        if self._validate_egress:
+            async with client.stream(
+                "POST", self._endpoint(), json=message, headers=self._request_headers(),
+                timeout=timeout, follow_redirects=False,
+            ) as resp:
+                if resp.status_code >= 400:
+                    message = (
+                        f"HTTP {resp.status_code} from secure MCP endpoint" if self._validate_egress
+                        else f"HTTP {resp.status_code} from {self._endpoint()}"
+                    )
+                    raise McpHttpError(message, status_code=resp.status_code)
+                content_length = resp.headers.get("content-length")
+                if content_length and int(content_length) > 2 * 1024 * 1024:
+                    raise McpHttpError("MCP response exceeds 2 MiB", status_code=resp.status_code)
+                try:
+                    content = await read_bounded_body(resp.aiter_bytes(), max_bytes=2 * 1024 * 1024)
+                except BodyTooLargeError as exc:
+                    raise McpHttpError("MCP response exceeds 2 MiB", status_code=resp.status_code) from exc
+                response_text = bytes(content).decode("utf-8", errors="replace")
+                content_type = resp.headers.get("content-type", "")
+                response_headers = resp.headers
+        else:
+            resp = await client.post(
+                self._endpoint(), json=message, headers=self._request_headers(), timeout=timeout,
             )
-        content_type = resp.headers.get("content-type", "")
+            if resp.status_code >= 400:
+                raise McpHttpError(
+                    f"HTTP {resp.status_code} from {self._endpoint()}", status_code=resp.status_code,
+                )
+            response_text = resp.text
+            content_type = resp.headers.get("content-type", "")
+            response_headers = resp.headers
         if "text/event-stream" in content_type:
-            payload: Any = self._decode_sse(resp.text, request_id)
+            payload: Any = self._decode_sse(response_text, request_id)
         else:
             try:
-                payload = resp.json()
+                payload = json.loads(response_text)
             except ValueError as exc:
-                raise McpHttpError(
-                    f"non-JSON response from {self._endpoint()}: "
-                    f"{resp.text[:200]}",
-                    status_code=resp.status_code,
-                ) from exc
+                message = (
+                    "non-JSON response from secure MCP endpoint" if self._validate_egress
+                    else f"non-JSON response from {self._endpoint()}"
+                )
+                raise McpHttpError(message, status_code=resp.status_code) from exc
         if not isinstance(payload, dict):
-            raise McpHttpError(
-                f"no JSON-RPC response for {method} from {self._endpoint()}",
-                status_code=resp.status_code,
+            message = (
+                f"no JSON-RPC response for {method} from secure MCP endpoint" if self._validate_egress
+                else f"no JSON-RPC response for {method} from {self._endpoint()}"
             )
+            raise McpHttpError(message, status_code=resp.status_code)
         error = payload.get("error")
         if isinstance(error, dict):
-            raise McpHttpError(
-                f"JSON-RPC {error.get('code')}: {error.get('message')}",
-                status_code=resp.status_code,
+            message = (
+                f"JSON-RPC {error.get('code')}" if self._validate_egress
+                else f"JSON-RPC {error.get('code')}: {error.get('message')}"
             )
-        return payload.get("result"), resp.headers
+            raise McpHttpError(message, status_code=resp.status_code)
+        return payload.get("result"), response_headers
 
     @staticmethod
     def _decode_sse(text: str, request_id: str) -> dict[str, Any] | None:

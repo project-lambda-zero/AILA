@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, ClassVar, NamedTuple
 
 from sqlmodel import select as _select
+from sqlmodel.ext.asyncio.session import AsyncSession
 
 from aila.modules.vr._task_queue import default_task_queue
 from aila.modules.vr.agents.claim_verifier import is_negative_finding_claim
@@ -56,6 +57,7 @@ from aila.modules.vr.db_models import (
     VRInvestigationRecord,
     VRTargetRecord,
 )
+from aila.modules.vr.services.discovery_outcomes import project_discovery_outcomes
 from aila.modules.vr.services.distinctness import (
     compute_distinctness_score,
     extract_candidate_text,
@@ -216,6 +218,18 @@ class HonestVulnResearcher(AgentTurnRunnerBase):
         # Rejection each gate returned on the turn it settled (turn, decision).
         # Same-turn re-entry replays it instead of re-deciding.
         self._wave2_rejections: dict[str, tuple[int, ReasoningTurnDecision]] = {}
+
+    async def _post_ledger_writes(
+        self,
+        decision: ReasoningTurnDecision,
+        turn_number: int,
+        session: AsyncSession,
+        case_state: ReasoningCaseState,
+    ) -> None:
+        await super()._post_ledger_writes(
+            decision, turn_number, session, case_state,
+        )
+        await project_discovery_outcomes(self.investigation_id, session=session)
 
     # ---- AgentTurnRunnerBase config + hooks (RFC-03 Phase 7) -----------
     _LOG_LABEL = "vuln_researcher"
@@ -4238,6 +4252,7 @@ async def _upsert_canonical_outcome(
     existing = (await uow.session.exec(
         _select(VRInvestigationOutcomeRecord)
         .where(VRInvestigationOutcomeRecord.investigation_id == investigation_id)
+        .where(VRInvestigationOutcomeRecord.id.not_like("ledger-discovery-%"))
         # fix §169 -- read NEWEST canonical (was OLDEST). After §168 the
         # race that could create two canonicals is gone, but if any
         # legacy duplicate pair exists in older data, merging into the

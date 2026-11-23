@@ -18,7 +18,10 @@ import threading as _threading
 from typing import TYPE_CHECKING
 
 from aila.platform.events import EventEmitter, ThreadSafeEventEmitter
+from aila.platform.events.bus import default_bus
 from aila.platform.llm.client import AilaLLMClient
+from aila.platform.llm.cost import CostTracker
+from aila.platform.llm.run_memory import RunMemory
 from aila.storage.registry import ConfigRegistry
 from aila.storage.secrets import SecretStore
 
@@ -160,6 +163,11 @@ class ServiceFactory:
         return self._secret_store_cache
 
     @property
+    def secret_store(self) -> SecretStore:
+        """Memoized SecretStore shared by every service this factory builds."""
+        return self._get_secret_store()
+
+    @property
     def llm_client(self) -> AilaLLMClient:
         """AilaLLMClient wired through the platform registry and secret store.
 
@@ -170,10 +178,14 @@ class ServiceFactory:
         if self._llm_client_override is not None:
             return self._llm_client_override
         if self._llm_client_cache is None:
-            self._llm_client_cache = AilaLLMClient(
-                registry=self._get_config_registry(),
+            registry = self._get_config_registry()
+            client = AilaLLMClient(
+                registry=registry,
                 secret_store=self._get_secret_store(),
             )
+            client.cost_tracker = CostTracker(run_memory=_platform_run_memory(), registry=registry)
+            client.bus = default_bus()
+            self._llm_client_cache = client
         return self._llm_client_cache
 
     @property
@@ -199,6 +211,27 @@ class ServiceFactory:
     def reasoning_graphs(self) -> ReasoningGraphService:
         """Durable storage/query surface for reasoning graph snapshots."""
         return ReasoningGraphService()
+
+
+_RUN_MEMORY_LOCK = _threading.Lock()
+
+
+def _platform_run_memory() -> RunMemory:
+    """Return the process-wide RunMemory that backs every factory-built client.
+
+    The platform runtime publishes its RunMemory through ``runtime.shared``;
+    a factory built before (or without) the runtime publishes one itself so
+    all clients still share a single per-run token ledger. Imported locally
+    because ``aila.platform.runtime`` imports the service layer at load time.
+    """
+    from aila.platform.runtime.shared import get_shared_run_memory, set_shared_run_memory
+
+    with _RUN_MEMORY_LOCK:
+        run_memory = get_shared_run_memory()
+        if run_memory is None:
+            run_memory = RunMemory()
+            set_shared_run_memory(run_memory)
+        return run_memory
 
 
 # Process-wide default emitter shared by every ServiceFactory that does not

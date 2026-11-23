@@ -53,8 +53,8 @@ COMMAND="${1:-start}"
 : "${BACKEND_PORT:=8000}"
 : "${FRONTEND_PORT:=3000}"
 : "${AUDIT_MCP_PORT:=18822}"
+# Live admission and actions share the unified pentest queue pair.
 : "${WORKERS:=default vr vulnerability forensics malware pentest pentest_runtime forensics_readiness reporting}"
-# Per-queue worker concurrency. The vr queue runs LLM-heavy investigations
 # with multi-minute LLM retries; one worker per queue serializes them
 # behind whichever investigation is mid-call. Default vr=5 so the queue
 # drains in parallel. Override via WORKER_COUNT_<QUEUE> env vars (queue
@@ -63,8 +63,8 @@ COMMAND="${1:-start}"
 : "${WORKER_COUNT_DEFAULT:=1}"
 : "${WORKER_COUNT_VULNERABILITY:=1}"
 : "${WORKER_COUNT_FORENSICS:=1}"
-: "${WORKER_COUNT_PENTEST:=1}"
-: "${WORKER_COUNT_PENTEST_RUNTIME:=1}"
+: "${WORKER_COUNT_PENTEST:=2}"
+: "${WORKER_COUNT_PENTEST_RUNTIME:=2}"
 : "${WORKER_COUNT_FORENSICS_READINESS:=1}"
 : "${WORKER_COUNT_REPORTING:=1}"
 : "${AUDIT_MCP_DIR:=../audit-mcp}"

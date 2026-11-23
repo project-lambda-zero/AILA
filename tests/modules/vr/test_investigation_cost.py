@@ -46,3 +46,52 @@ async def test_compute_live_investigation_cost_zero_when_no_rows(test_db) -> Non
         total = await _compute_live_investigation_cost(uow, "inv-with-no-cost-rows")
 
     assert total == pytest.approx(0.0)
+
+
+@pytest.mark.asyncio
+async def test_sum_run_cost_usd_team_filter_excludes_other_teams(test_db) -> None:
+    from aila.platform.llm.cost_record import LLMCostRecord
+    from aila.platform.services.investigation_cost import sum_run_cost_usd
+    from aila.storage.database import async_session_scope
+
+    run_id = "run-team-scope-001"
+    async with async_session_scope() as session:
+        session.add(LLMCostRecord(
+            run_id=run_id, team_id="team-a", model_id="m", task_type="t", cost_usd=1.0,
+        ))
+        session.add(LLMCostRecord(
+            run_id=run_id, team_id="team-b", model_id="m", task_type="t", cost_usd=5.0,
+        ))
+        await session.commit()
+
+    async with async_session_scope() as session:
+        assert await sum_run_cost_usd(session, run_id=run_id, team_id="team-a") == pytest.approx(1.0)
+        assert await sum_run_cost_usd(session, run_id=run_id) == pytest.approx(6.0)
+
+
+@pytest.mark.asyncio
+async def test_sum_run_cost_usd_propagates_query_errors() -> None:
+    from aila.platform.services.investigation_cost import sum_run_cost_usd
+
+    class _FailingSession:
+        async def exec(self, _stmt):
+            raise RuntimeError("db down")
+
+    with pytest.raises(RuntimeError, match="db down"):
+        await sum_run_cost_usd(_FailingSession(), run_id="run-x")
+
+
+@pytest.mark.asyncio
+async def test_compute_live_investigation_cost_zero_on_handled_db_error() -> None:
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from aila.platform.services.investigation_cost import compute_live_investigation_cost
+
+    class _FailingSession:
+        async def exec(self, _stmt):
+            raise SQLAlchemyError("connection lost")
+
+    class _Uow:
+        session = _FailingSession()
+
+    assert await compute_live_investigation_cost(_Uow(), "inv-handled-error") == pytest.approx(0.0)

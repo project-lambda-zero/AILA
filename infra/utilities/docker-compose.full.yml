@@ -1,46 +1,51 @@
 # AILA full stack -- postgres + redis + API + workers + frontend.
 #
-# This is the "everything in one shot" compose for developers who
-# want to docker-up without managing 7 separate processes. For the
-# minimal infra-only compose (just postgres + redis, run AILA
-# locally), use ``docker-compose.yml`` in this directory.
+# The base file publishes no host ports: put the API and frontend behind
+# a reverse proxy/load balancer. Development adds localhost publications
+# through docker-compose.full.dev.yml.
 #
-# Usage:
-#   cp .env.example .env                          # at repo root
-#   docker compose -f infra/utilities/docker-compose.full.yml up --build
+# Usage (from infra/utilities, after creating the repo-root .env):
+#   # Production-shaped base; no fixed host ports
+#   docker compose --env-file ../../.env -f docker-compose.full.yml up --build
+#   # Development; publishes API/frontend/postgres/redis on localhost ports
+#   docker compose --env-file ../../.env \
+#     -f docker-compose.full.yml -f docker-compose.full.dev.yml up --build
 #
-# After bring-up:
+# After development bring-up:
 #   API:       http://localhost:8000
 #   Frontend:  http://localhost:3000
 #   Postgres:  localhost:5432   (postgres / changeme)
 #   Redis:     localhost:6379
 #
-# Override env per-service via the .env file at repo root. The
-# compose file deliberately does NOT bake credentials -- they come
-# from .env so dev / staging / production use the same shape.
+# --env-file supplies Compose interpolation as well as container settings.
+# The endpoint defaults below preserve in-cluster discovery when unset.
 
 name: aila-full
 
 x-aila-env: &aila-env
-  # Shared env block -- each backend service pulls .env from the
-  # repo root + these overrides for in-cluster service discovery.
-  AILA_PLATFORM_DATABASE_URL: postgresql://postgres:changeme@postgres:5432/aila
-  AILA_PLATFORM_REDIS_URL: redis://redis:6379/0
-  AILA_PLATFORM_BIND_HOST: 0.0.0.0
-  AILA_PLATFORM_BIND_PORT: "8000"
+  AILA_DATABASE_URL: ${AILA_DATABASE_URL:-postgresql+asyncpg://postgres:changeme@postgres:5432/aila}
+  AILA_PLATFORM_REDIS_URL: ${AILA_PLATFORM_REDIS_URL:-redis://redis:6379/0}
+  AILA_API_HOST: 0.0.0.0
+  AILA_API_PORT: "8000"
   AILA_PLATFORM_FRONTEND_URL: http://localhost:3000
+
+x-aila-backend-volumes: &aila-backend-volumes
+  - aila_data:/app/data
+  - aila_reports:/app/reports
+  - aila_backups:/app/backups
 
 services:
   postgres:
     image: pgvector/pgvector:pg16
-    container_name: aila-postgres
     restart: unless-stopped
+    # Same connection ceiling as docker-compose.yml (see the note there).
+    command: ["postgres", "-c", "max_connections=200"]
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: changeme
       POSTGRES_DB: aila
-    ports:
-      - "127.0.0.1:5432:5432"
+    expose:
+      - "5432"
     volumes:
       - aila_postgres_data:/var/lib/postgresql/data
       - ../postgres-init:/docker-entrypoint-initdb.d:ro
@@ -53,11 +58,10 @@ services:
 
   redis:
     image: redis:7-alpine
-    container_name: aila-redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "127.0.0.1:6379:6379"
+    expose:
+      - "6379"
     volumes:
       - aila_redis_data:/data
     healthcheck:
@@ -70,7 +74,6 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: aila-api
     restart: unless-stopped
     env_file:
       - ../../.env
@@ -81,8 +84,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
+    volumes: *aila-backend-volumes
     # The image's default CMD already runs `aila serve` on 0.0.0.0:8000.
 
   # One worker container per queue. Workers share the API image -- the
@@ -93,7 +97,6 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: aila-worker-default
     restart: unless-stopped
     env_file:
       - ../../.env
@@ -104,13 +107,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes: *aila-backend-volumes
     command: ["worker", "-q", "default"]
 
   worker-vr:
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: aila-worker-vr
     restart: unless-stopped
     env_file:
       - ../../.env
@@ -121,13 +124,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes: *aila-backend-volumes
     command: ["worker", "-q", "vr"]
 
   worker-vulnerability:
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: aila-worker-vulnerability
     restart: unless-stopped
     env_file:
       - ../../.env
@@ -138,13 +141,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes: *aila-backend-volumes
     command: ["worker", "-q", "vulnerability"]
 
   worker-forensics:
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: aila-worker-forensics
     restart: unless-stopped
     env_file:
       - ../../.env
@@ -155,13 +158,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes: *aila-backend-volumes
     command: ["worker", "-q", "forensics"]
 
   worker-malware:
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: aila-worker-malware
     restart: unless-stopped
     env_file:
       - ../../.env
@@ -172,13 +175,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes: *aila-backend-volumes
     command: ["worker", "-q", "malware"]
 
   worker-pentest:
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: aila-worker-pentest
     restart: unless-stopped
     env_file:
       - ../../.env
@@ -189,13 +192,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes: *aila-backend-volumes
     command: ["worker", "-q", "pentest"]
 
   worker-pentest-runtime:
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: aila-worker-pentest-runtime
     restart: unless-stopped
     env_file:
       - ../../.env
@@ -206,13 +209,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes: *aila-backend-volumes
     command: ["worker", "-q", "pentest_runtime"]
 
   worker-forensics-readiness:
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: aila-worker-forensics-readiness
     restart: unless-stopped
     env_file:
       - ../../.env
@@ -223,13 +226,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes: *aila-backend-volumes
     command: ["worker", "-q", "forensics_readiness"]
 
   worker-reporting:
     build:
       context: ../..
       dockerfile: Dockerfile
-    container_name: aila-worker-reporting
     restart: unless-stopped
     env_file:
       - ../../.env
@@ -240,11 +243,11 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    volumes: *aila-backend-volumes
     command: ["worker", "-q", "reporting"]
 
   frontend:
     image: node:20-bookworm-slim
-    container_name: aila-frontend
     restart: unless-stopped
     working_dir: /app
     volumes:
@@ -254,8 +257,8 @@ services:
     environment:
       VITE_API_BASE_URL: http://localhost:8000
       COREPACK_ENABLE_DOWNLOAD_PROMPT: "0"
-    ports:
-      - "3000:3000"
+    expose:
+      - "3000"
     # Vite dev server. For production, build a static bundle and
     # serve via nginx/caddy instead -- this compose targets
     # developer-machine iteration.
@@ -271,6 +274,12 @@ services:
       - api
 
 volumes:
+  aila_data:
+    name: aila_data
+  aila_reports:
+    name: aila_reports
+  aila_backups:
+    name: aila_backups
   aila_postgres_data:
     name: aila_postgres_data
   aila_redis_data:

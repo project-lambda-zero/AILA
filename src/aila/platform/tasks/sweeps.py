@@ -97,6 +97,9 @@ class SweepPriority(IntEnum):
        re-enqueue) when the row is dead, so no path can leave an
        investigation RUNNING-with-nothing-enqueued even when every
        earlier sweep's eligibility window missed it.
+    9. :attr:`DELIVERY` -- outbound notification drain and retention.
+       Runs after RECONCILE because it sends to external endpoints and
+       must not delay the recovery passes above it.
 
     :attr:`DEFAULT` (500) is what an unclassified registration lands
     on. It ties numerically with :attr:`STALL_RECOVERY`; the
@@ -113,6 +116,7 @@ class SweepPriority(IntEnum):
     STUCK_HEALER = 600
     CURSOR_REAPER = 700
     RECONCILE = 800
+    DELIVERY = 900
     DEFAULT = 500
 
 

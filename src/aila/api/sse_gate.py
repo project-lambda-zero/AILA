@@ -46,7 +46,7 @@ _RETRY_AFTER_SECONDS: Final[str] = "5"
 
 # Falls back to the schema default when ConfigRegistry read fails so a
 # broken registry never turns every SSE request into a 503.
-SSE_CAP_DEFAULT: Final[int] = PlatformConfigSchema().sse_max_connections
+SSE_CAP_DEFAULT: Final[int] = PlatformConfigSchema.model_fields["sse_max_connections"].default
 
 
 # Module-level ConfigRegistry so successive cap reads share its TTL cache

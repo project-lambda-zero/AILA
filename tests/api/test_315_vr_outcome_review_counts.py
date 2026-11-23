@@ -34,6 +34,7 @@ from aila.modules.vr.db_models import (
     VRTargetRecord,
     VRWorkspaceRecord,
 )
+from aila.platform.services.ledger import LedgerService
 from aila.storage.database import async_session_scope
 
 _LIST_PATH = "/investigations/{investigation_id}/outcomes"
@@ -203,6 +204,28 @@ async def test_vr_outcome_list_empty_investigation_returns_no_outcomes(test_db) 
     items = await _list(inv_id, team_id)
 
     assert items == {}
+
+
+async def test_vr_outcome_list_projects_existing_ledger_discoveries_once(test_db) -> None:
+    team_id, target_id = await _seed_team()
+    inv_id, br = await _seed_investigation(team_id, target_id, active=2)
+    discovery_id = await LedgerService().append_general(
+        inv_id,
+        br[0],
+        "discovery",
+        {"claim": "Unverified ledger candidate", "source": "recon_hypothesis"},
+    )
+
+    first = await _list(inv_id, team_id)
+    second = await _list(inv_id, team_id)
+
+    outcome_id = f"ledger-discovery-{discovery_id}"
+    assert set(first) == {outcome_id}
+    assert set(second) == {outcome_id}
+    assert first[outcome_id].payload["title"] == "Unverified ledger candidate"
+    assert first[outcome_id].payload["review_state"] == "unverified"
+    assert first[outcome_id].outcome_kind == "assessment_report"
+    assert first[outcome_id].state == "draft"
 
 
 async def test_vr_outcome_list_reflects_review_inserted_after_first_read(test_db) -> None:

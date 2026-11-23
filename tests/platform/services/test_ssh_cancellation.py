@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import paramiko
@@ -34,10 +35,12 @@ class _FakeChannel:
         block_until_closed: bool = False,
         exit_status: int = 0,
         close_error: Exception | None = None,
+        stdout_data: bytes = b"",
     ) -> None:
         self._block = block_until_closed
         self._exit_status = exit_status
         self._close_error = close_error
+        self._pending_stdout = stdout_data
         self.closed = threading.Event()
         self.close_calls = 0
         self.read_returned = threading.Event()
@@ -57,6 +60,18 @@ class _FakeChannel:
     def recv_exit_status(self) -> int:
         return self._exit_status
 
+    def recv(self, nbytes: int) -> bytes:
+        if self._block:
+            released = self.closed.wait(timeout=_READ_BOUND_S)
+            self.read_released_by_close = released
+            self.read_returned.set()
+            return b""
+        data, self._pending_stdout = self._pending_stdout, b""
+        return data
+
+    def recv_stderr(self, nbytes: int) -> bytes:
+        return b""
+
     def close(self) -> None:
         self.close_calls += 1
         self.closed.set()
@@ -64,28 +79,21 @@ class _FakeChannel:
             raise self._close_error
 
 
-class _FakeStream:
-    def __init__(self, channel: _FakeChannel, data: bytes, *, blocks_until_closed: bool) -> None:
-        self.channel = channel
-        self._data = data
-        self._blocks = blocks_until_closed
-
-    def read(self) -> bytes:
-        if not self._blocks:
-            return self._data
-        released = self.channel.closed.wait(timeout=_READ_BOUND_S)
-        self.channel.read_released_by_close = released
-        self.channel.read_returned.set()
-        return b""
+def _drain_until_eof(channel: _FakeChannel) -> bytes:
+    """Mirror ``paramiko.ChannelFile.read()``: pull from the channel until EOF."""
+    chunks: list[bytes] = []
+    while chunk := channel.recv(4096):
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
-def _fake_client(channel: _FakeChannel, *, stdout_data: bytes = b"") -> MagicMock:
+def _fake_client(channel: _FakeChannel) -> MagicMock:
     client = MagicMock(spec=paramiko.SSHClient)
     transport = MagicMock()
     transport.is_active.return_value = True
     client.get_transport.return_value = transport
-    stdout = _FakeStream(channel, stdout_data, blocks_until_closed=channel._block)
-    stderr = _FakeStream(channel, b"", blocks_until_closed=False)
+    stdout = SimpleNamespace(channel=channel, read=lambda: _drain_until_eof(channel))
+    stderr = SimpleNamespace(read=lambda: b"")
     client.exec_command.return_value = (MagicMock(), stdout, stderr)
     return client
 
@@ -127,17 +135,16 @@ async def test_cancel_surfaces_timeout_even_when_channel_close_fails() -> None:
 
 
 async def test_completed_command_returns_output_without_closing_channel() -> None:
-    channel = _FakeChannel(exit_status=0)
-    with patch.object(
-        ssh_module.paramiko,
-        "SSHClient",
-        return_value=_fake_client(channel, stdout_data=b"hello\n"),
-    ):
+    channel = _FakeChannel(exit_status=0, stdout_data=b"hello\n")
+    with patch.object(ssh_module.paramiko, "SSHClient", return_value=_fake_client(channel)):
         output = await _service().run_command(_payload(), "echo hello")
+    full_channel = _FakeChannel(exit_status=0, stdout_data=b"hello\n")
+    with patch.object(ssh_module.paramiko, "SSHClient", return_value=_fake_client(full_channel)):
         full = await _service().run_command_full(_payload(), "echo hello")
     assert output == "hello\n"
     assert full == ("hello\n", "", 0)
     assert channel.close_calls == 0
+    assert full_channel.close_calls == 0
 
 
 def test_close_requested_before_register_closes_channel_on_register() -> None:

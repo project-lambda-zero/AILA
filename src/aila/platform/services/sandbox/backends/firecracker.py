@@ -51,9 +51,11 @@ import paramiko
 from ....exceptions import AILATimeoutError, AuthenticationError, UpstreamError, ValidationError
 from ...ssh import SSHService
 from ..contracts import (
+    CancelCheck,
     SandboxExecutionError,
     SandboxResult,
     SandboxSpec,
+    StreamCallback,
 )
 from .base import (
     HostWorkspace,
@@ -139,6 +141,9 @@ class FirecrackerBackend:
     """Concrete :class:`SandboxBackend` implementation for Firecracker."""
 
     name = "firecracker"
+    supports_network = True
+    # Operator-provisioned tap networking has no per-run destination enforcement.
+    enforces_egress = False
 
     async def run(
         self,
@@ -147,7 +152,15 @@ class FirecrackerBackend:
         ssh: SSHService,
         host_payload,
         cfg: Any,
+        on_stdout: StreamCallback | None = None,
+        on_stderr: StreamCallback | None = None,
+        cancel_requested: CancelCheck | None = None,
     ) -> SandboxResult:
+        if on_stdout is not None or on_stderr is not None or cancel_requested is not None:
+            raise SandboxExecutionError(
+                "firecracker backend does not support live output or cancel-requested streaming; "
+                "it reports only /work/result.json"
+            )
         if not cfg.rootfs_path:
             raise SandboxExecutionError(
                 "firecracker backend requires platform.sandbox_rootfs_path "
@@ -172,9 +185,10 @@ class FirecrackerBackend:
             )
             # ``result.json`` is inside the work drive; the boot step
             # mounts + unmounts the drive so we already read it.
+            output_cap = min(cfg.output_max_bytes, spec.max_output_bytes or cfg.output_max_bytes)
             files, files_truncated = await collect_outputs(
                 ssh, host_payload, workspace, spec.output_globs,
-                per_file_cap=cfg.output_max_bytes,
+                per_file_cap=output_cap, aggregate_cap=output_cap,
             )
         result.output_files = files
         if files_truncated:

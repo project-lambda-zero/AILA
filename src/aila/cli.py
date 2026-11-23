@@ -325,7 +325,7 @@ def worker_start(
 
     import arq
 
-    from aila.platform.tasks.worker import WorkerSettings, reaper
+    from aila.platform.tasks.worker import WorkerSettings, reaper, replica_health_check_key
     _resolved_url = redis_url or os.environ.get("AILA_PLATFORM_REDIS_URL") or "redis://127.0.0.1:6379"
     parsed = urlparse(_resolved_url)
     redis_host = parsed.hostname or "127.0.0.1"
@@ -344,7 +344,8 @@ def worker_start(
     # reaper cron satisfying ARQ's "at least one job" requirement.
     class _BoundWorkerSettings(WorkerSettings):
         queue_name = f"arq:queue:{queue}"
-        redis_settings = arq.connections.RedisSettings(host=redis_host, port=redis_port)
+        redis_settings = arq.connections.RedisSettings.from_dsn(_resolved_url)
+        health_check_key = replica_health_check_key(queue_name)
         cron_jobs = [arq.cron(reaper, second=0)]
         job_timeout = get_task_tuning("arq_job_timeout_s", ARQ_JOB_TIMEOUT_S)
         keep_result = get_task_tuning("arq_keep_result_s", ARQ_KEEP_RESULT_S)
@@ -353,7 +354,12 @@ def worker_start(
         # are invisible to it. Without these lines WorkerSettings attributes never
         # reach arq.Worker. Explicitly shadowing them forces them into __dict__.
         functions = WorkerSettings.functions
+        max_jobs = WorkerSettings.max_jobs
+        retry_jobs = WorkerSettings.retry_jobs
+        allow_abort_jobs = WorkerSettings.allow_abort_jobs
+        health_check_interval = WorkerSettings.health_check_interval
         on_startup = WorkerSettings.on_startup
+        on_shutdown = WorkerSettings.on_shutdown
         on_job_start = WorkerSettings.on_job_start
         on_job_end = WorkerSettings.on_job_end
 

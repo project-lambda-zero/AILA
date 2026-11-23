@@ -1,0 +1,681 @@
+"""Bounded subprocess protocol for native framework runners."""
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import ctypes
+import functools
+import json
+import os
+import signal
+import threading
+import time
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+__all__ = [
+    "FrameworkCancelledError",
+    "FrameworkExecutionError",
+    "FrameworkRunResult",
+    "framework_child_environment",
+    "run_framework_process",
+]
+
+_MAX_PROTOCOL_LINE = 1024 * 1024
+_MAX_EVENTS = 10_000
+_COMPLETE_DRAIN_SECONDS = 1.0
+
+_CREATE_NEW_PROCESS_GROUP = 0x00000200
+_CREATE_SUSPENDED = 0x00000004
+_JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000
+_JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION = 1
+_JOB_OBJECT_EXTENDED_LIMIT_INFORMATION = 9
+_PROCESS_SET_QUOTA = 0x0100
+_PROCESS_TERMINATE = 0x0001
+_THREAD_SUSPEND_RESUME = 0x0002
+_TH32CS_SNAPTHREAD = 0x00000004
+_WINDOWS_FAILURE_DWORD = 0xFFFFFFFF
+_INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
+_JOB_TERMINATE_WAIT_SECONDS = 5.0
+
+
+class FrameworkExecutionError(RuntimeError):
+    """A native framework failed without producing a complete result stream."""
+
+
+class FrameworkCancelledError(FrameworkExecutionError):
+    """The operator cancelled the campaign and its complete process tree was reaped."""
+
+
+@dataclass(frozen=True, slots=True)
+class FrameworkRunResult:
+    engine_version: str
+    outcome_count: int
+    summary: dict[str, Any]
+
+
+def framework_child_environment(
+    work_dir: Path, extra_env: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Pass runtime locations only; never inherit provider or target secrets.
+
+    ``extra_env`` is a caller-owned explicit override layer applied last.
+    """
+    allowed = ("PATH", "SYSTEMROOT", "COMSPEC", "PATHEXT", "LD_LIBRARY_PATH")
+    environment = {
+        key: value for key in allowed if (value := os.environ.get(key)) is not None
+    }
+    environment.update({
+        "HOME": str(work_dir),
+        "USERPROFILE": str(work_dir),
+        "APPDATA": str(work_dir),
+        "LOCALAPPDATA": str(work_dir),
+        "XDG_CACHE_HOME": str(work_dir / "cache"),
+        "XDG_CONFIG_HOME": str(work_dir / "config"),
+        "XDG_DATA_HOME": str(work_dir / "data"),
+        "TEMP": str(work_dir),
+        "TMP": str(work_dir),
+        "TMPDIR": str(work_dir),
+        "PYTHONPATH": str(Path(__file__).resolve().parents[3]),
+        "PYTHONIOENCODING": "utf-8",
+        "PYTHONUTF8": "1",
+        "CI": "1",
+        "NO_COLOR": "1",
+    })
+    if extra_env is not None:
+        environment.update(extra_env)
+    return environment
+
+
+def _redact_diagnostic(text: str, config: dict[str, Any], work_dir: Path) -> str:
+    """Remove the broker token and temporary workspace paths before a diagnostic is kept."""
+    secrets = {str(work_dir), work_dir.as_posix()}
+    token = config.get("broker_token")
+    if isinstance(token, str) and token:
+        secrets.add(token)
+    for secret in sorted(secrets, key=len, reverse=True):
+        text = text.replace(secret, "[REDACTED]")
+    return text
+
+
+class _IoCounters(ctypes.Structure):
+    _fields_ = [
+        ("ReadOperationCount", ctypes.c_uint64),
+        ("WriteOperationCount", ctypes.c_uint64),
+        ("OtherOperationCount", ctypes.c_uint64),
+        ("ReadTransferCount", ctypes.c_uint64),
+        ("WriteTransferCount", ctypes.c_uint64),
+        ("OtherTransferCount", ctypes.c_uint64),
+    ]
+
+
+class _BasicLimitInformation(ctypes.Structure):
+    _fields_ = [
+        ("PerProcessUserTimeLimit", ctypes.c_int64),
+        ("PerJobUserTimeLimit", ctypes.c_int64),
+        ("LimitFlags", ctypes.c_uint32),
+        ("MinimumWorkingSetSize", ctypes.c_size_t),
+        ("MaximumWorkingSetSize", ctypes.c_size_t),
+        ("ActiveProcessLimit", ctypes.c_uint32),
+        ("Affinity", ctypes.c_size_t),
+        ("PriorityClass", ctypes.c_uint32),
+        ("SchedulingClass", ctypes.c_uint32),
+    ]
+
+
+class _ExtendedLimitInformation(ctypes.Structure):
+    _fields_ = [
+        ("BasicLimitInformation", _BasicLimitInformation),
+        ("IoInfo", _IoCounters),
+        ("ProcessMemoryLimit", ctypes.c_size_t),
+        ("JobMemoryLimit", ctypes.c_size_t),
+        ("PeakProcessMemoryUsed", ctypes.c_size_t),
+        ("PeakJobMemoryUsed", ctypes.c_size_t),
+    ]
+
+
+class _BasicAccountingInformation(ctypes.Structure):
+    _fields_ = [
+        ("TotalUserTime", ctypes.c_int64),
+        ("TotalKernelTime", ctypes.c_int64),
+        ("ThisPeriodTotalUserTime", ctypes.c_int64),
+        ("ThisPeriodTotalKernelTime", ctypes.c_int64),
+        ("TotalPageFaultCount", ctypes.c_uint32),
+        ("TotalProcesses", ctypes.c_uint32),
+        ("ActiveProcesses", ctypes.c_uint32),
+        ("TotalTerminatedProcesses", ctypes.c_uint32),
+    ]
+
+
+class _ThreadEntry32(ctypes.Structure):
+    _fields_ = [
+        ("dwSize", ctypes.c_uint32),
+        ("cntUsage", ctypes.c_uint32),
+        ("th32ThreadID", ctypes.c_uint32),
+        ("th32OwnerProcessID", ctypes.c_uint32),
+        ("tpBasePri", ctypes.c_long),
+        ("tpDeltaPri", ctypes.c_long),
+        ("dwFlags", ctypes.c_uint32),
+    ]
+
+
+@functools.cache
+def _kernel32() -> Any:
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    signatures = {
+        "CreateJobObjectW": ([ctypes.c_void_p, ctypes.c_void_p], ctypes.c_void_p),
+        "SetInformationJobObject": (
+            [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32],
+            ctypes.c_int,
+        ),
+        "QueryInformationJobObject": (
+            [ctypes.c_void_p, ctypes.c_int, ctypes.c_void_p, ctypes.c_uint32, ctypes.c_void_p],
+            ctypes.c_int,
+        ),
+        "AssignProcessToJobObject": ([ctypes.c_void_p, ctypes.c_void_p], ctypes.c_int),
+        "TerminateJobObject": ([ctypes.c_void_p, ctypes.c_uint32], ctypes.c_int),
+        "OpenProcess": ([ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32], ctypes.c_void_p),
+        "CreateToolhelp32Snapshot": ([ctypes.c_uint32, ctypes.c_uint32], ctypes.c_void_p),
+        "Thread32First": ([ctypes.c_void_p, ctypes.c_void_p], ctypes.c_int),
+        "Thread32Next": ([ctypes.c_void_p, ctypes.c_void_p], ctypes.c_int),
+        "OpenThread": ([ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32], ctypes.c_void_p),
+        "ResumeThread": ([ctypes.c_void_p], ctypes.c_uint32),
+        "CloseHandle": ([ctypes.c_void_p], ctypes.c_int),
+    }
+    for name, (argtypes, restype) in signatures.items():
+        function = getattr(kernel32, name)
+        function.argtypes = argtypes
+        function.restype = restype
+    return kernel32
+
+
+class _WindowsJob:
+    """Kill-on-close job: every descendant dies with the job, even after the leader exits."""
+
+    def __init__(self, handle: int) -> None:
+        self._handle = handle
+
+    @classmethod
+    def create(cls) -> _WindowsJob:
+        kernel32 = _kernel32()
+        handle = kernel32.CreateJobObjectW(None, None)
+        if not handle:
+            raise FrameworkExecutionError("Could not create the framework job object")
+        job = cls(handle)
+        limits = _ExtendedLimitInformation()
+        limits.BasicLimitInformation.LimitFlags = _JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+        configured = kernel32.SetInformationJobObject(
+            handle,
+            _JOB_OBJECT_EXTENDED_LIMIT_INFORMATION,
+            ctypes.addressof(limits),
+            ctypes.sizeof(limits),
+        )
+        if not configured:
+            job.close()
+            raise FrameworkExecutionError("Could not configure the framework job object")
+        return job
+
+    def adopt(self, pid: int) -> None:
+        """Assign a suspended leader to the job, then let it run."""
+        kernel32 = _kernel32()
+        process = kernel32.OpenProcess(_PROCESS_SET_QUOTA | _PROCESS_TERMINATE, False, pid)
+        if not process:
+            raise FrameworkExecutionError("Could not open the framework process for job assignment")
+        try:
+            if not kernel32.AssignProcessToJobObject(self._handle, process):
+                raise FrameworkExecutionError("Could not assign the framework process to its job")
+        finally:
+            kernel32.CloseHandle(process)
+        _resume_suspended_threads(pid)
+
+    async def terminate(self) -> None:
+        """Kill every process in the job and wait until none remain active."""
+        if not self._handle:
+            return
+        _kernel32().TerminateJobObject(self._handle, 1)
+        deadline = time.monotonic() + _JOB_TERMINATE_WAIT_SECONDS
+        while self.active_processes() > 0:
+            if time.monotonic() >= deadline:
+                raise FrameworkExecutionError("Framework process tree did not terminate")
+            await asyncio.sleep(0.02)
+
+    def active_processes(self) -> int:
+        info = _BasicAccountingInformation()
+        queried = _kernel32().QueryInformationJobObject(
+            self._handle,
+            _JOB_OBJECT_BASIC_ACCOUNTING_INFORMATION,
+            ctypes.addressof(info),
+            ctypes.sizeof(info),
+            None,
+        )
+        if not queried:
+            raise FrameworkExecutionError("Could not query the framework job object")
+        return info.ActiveProcesses
+
+    def close(self) -> None:
+        if self._handle:
+            _kernel32().CloseHandle(self._handle)
+            self._handle = 0
+
+
+def _resume_suspended_threads(pid: int) -> None:
+    kernel32 = _kernel32()
+    snapshot = kernel32.CreateToolhelp32Snapshot(_TH32CS_SNAPTHREAD, 0)
+    if not snapshot or snapshot == _INVALID_HANDLE_VALUE:
+        raise FrameworkExecutionError("Could not enumerate framework process threads")
+    try:
+        entry = _ThreadEntry32()
+        entry.dwSize = ctypes.sizeof(entry)
+        more = kernel32.Thread32First(snapshot, ctypes.addressof(entry))
+        resumed = 0
+        while more:
+            if entry.th32OwnerProcessID == pid:
+                thread = kernel32.OpenThread(_THREAD_SUSPEND_RESUME, False, entry.th32ThreadID)
+                if not thread:
+                    raise FrameworkExecutionError("Could not open a framework process thread")
+                try:
+                    if kernel32.ResumeThread(thread) == _WINDOWS_FAILURE_DWORD:
+                        raise FrameworkExecutionError("Could not resume a framework process thread")
+                finally:
+                    kernel32.CloseHandle(thread)
+                resumed += 1
+            more = kernel32.Thread32Next(snapshot, ctypes.addressof(entry))
+    finally:
+        kernel32.CloseHandle(snapshot)
+    if resumed == 0:
+        raise FrameworkExecutionError("Framework process has no threads to resume")
+
+
+async def _terminate_process_tree(
+    process: asyncio.subprocess.Process,
+    job: _WindowsJob | None,
+) -> None:
+    if job is not None:
+        await job.terminate()
+    else:
+        with contextlib.suppress(ProcessLookupError):
+            os.killpg(process.pid, signal.SIGKILL)
+    await process.wait()
+
+
+async def _spawn_framework_process(
+    *,
+    argv: list[str],
+    work_dir: Path,
+    job: _WindowsJob | None,
+    extra_env: Mapping[str, str] | None,
+) -> asyncio.subprocess.Process:
+    """Start the leader; on Windows it stays suspended until it is inside the job."""
+    creationflags = (_CREATE_NEW_PROCESS_GROUP | _CREATE_SUSPENDED) if os.name == "nt" else 0
+    process = await asyncio.create_subprocess_exec(
+        *argv,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd=work_dir,
+        env=framework_child_environment(work_dir, extra_env),
+        creationflags=creationflags,
+        start_new_session=os.name != "nt",
+        limit=_MAX_PROTOCOL_LINE,
+    )
+    if job is not None:
+        try:
+            job.adopt(process.pid)
+        except BaseException:
+            process.kill()
+            await process.wait()
+            raise
+    return process
+
+
+async def _run_framework_process(
+    *,
+    argv: list[str],
+    config: dict[str, Any],
+    work_dir: Path,
+    timeout_seconds: float,
+    on_outcome: Callable[[dict[str, Any]], Awaitable[None]],
+    cancel_requested: Callable[[], Awaitable[bool]] | None,
+    extra_env: Mapping[str, str] | None,
+) -> FrameworkRunResult:
+    """Execute one fixed runner; the job outlives the leader so no descendant survives."""
+    job = _WindowsJob.create() if os.name == "nt" else None
+    try:
+        process = await _spawn_framework_process(
+            argv=argv, work_dir=work_dir, job=job, extra_env=extra_env,
+        )
+        return await _supervise_framework_process(
+            process=process,
+            job=job,
+            config=config,
+            work_dir=work_dir,
+            timeout_seconds=timeout_seconds,
+            on_outcome=on_outcome,
+            cancel_requested=cancel_requested,
+        )
+    finally:
+        if job is not None:
+            job.close()
+
+
+async def _await_cancellation(
+    callback: Callable[[], Awaitable[bool]],
+) -> None:
+    while not await callback():
+        await asyncio.sleep(0.2)
+    raise FrameworkCancelledError("Framework campaign cancelled by operator")
+
+
+async def _supervise_framework_process(
+    *,
+    process: asyncio.subprocess.Process,
+    job: _WindowsJob | None,
+    config: dict[str, Any],
+    work_dir: Path,
+    timeout_seconds: float,
+    on_outcome: Callable[[dict[str, Any]], Awaitable[None]],
+    cancel_requested: Callable[[], Awaitable[bool]] | None,
+) -> FrameworkRunResult:
+    """Stream one runner's protocol events and checkpoint each validated outcome."""
+    stdin = process.stdin
+    stdout = process.stdout
+    stderr = process.stderr
+    if stdin is None or stdout is None or stderr is None:
+        await _terminate_process_tree(process, job)
+        raise FrameworkExecutionError("Framework subprocess pipes were not created")
+    outcome_count = 0
+    complete_version: str | None = None
+    complete_summary: dict[str, Any] = {}
+
+    stderr_tail = bytearray()
+
+    async def drain_stderr() -> None:
+        while chunk := await stderr.read(8192):
+            stderr_tail.extend(chunk)
+            del stderr_tail[:-8192]
+
+    stderr_task = asyncio.create_task(drain_stderr())
+    cancel_task = (
+        asyncio.create_task(_await_cancellation(cancel_requested))
+        if cancel_requested is not None
+        else None
+    )
+    try:
+        stdin.write(json.dumps(config, separators=(",", ":")).encode() + b"\n")
+        await stdin.drain()
+        stdin.close()
+        loop = asyncio.get_running_loop()
+        drain_deadline: float | None = None
+        drained = False
+        async with asyncio.timeout(timeout_seconds):
+            while True:
+                read_task = asyncio.create_task(stdout.readline())
+                pending: set[asyncio.Task[Any]] = {read_task}
+                if cancel_task is not None:
+                    pending.add(cancel_task)
+                remaining = None if drain_deadline is None else max(0.0, drain_deadline - loop.time())
+                done, _ = await asyncio.wait(
+                    pending, timeout=remaining, return_when=asyncio.FIRST_COMPLETED,
+                )
+                if cancel_task is not None and cancel_task in done:
+                    read_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await read_task
+                    await cancel_task
+                    raise FrameworkCancelledError("Framework campaign cancelled by operator")
+                if read_task not in done:
+                    # Only reachable after `complete`: the leader or a descendant still holds stdout.
+                    read_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await read_task
+                    drained = True
+                    break
+                try:
+                    line = read_task.result()
+                except ValueError as exc:
+                    raise FrameworkExecutionError("Framework protocol line exceeded 1 MiB") from exc
+                if not line:
+                    break
+                if len(line) > _MAX_PROTOCOL_LINE:
+                    raise FrameworkExecutionError("Framework protocol line exceeded 1 MiB")
+                try:
+                    event = json.loads(line)
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    raise FrameworkExecutionError("Framework emitted an invalid protocol event") from exc
+                if not isinstance(event, dict):
+                    raise FrameworkExecutionError("Framework protocol event must be an object")
+                event_type = event.get("type")
+                if event_type == "outcome":
+                    outcome = event.get("outcome")
+                    if not isinstance(outcome, dict):
+                        raise FrameworkExecutionError("Framework outcome must be an object")
+                    outcome_count += 1
+                    if outcome_count > _MAX_EVENTS:
+                        raise FrameworkExecutionError("Framework exceeded the result ceiling")
+                    await on_outcome(outcome)
+                elif event_type == "complete":
+                    version = event.get("engine_version")
+                    if not isinstance(version, str) or not version:
+                        raise FrameworkExecutionError("Framework completion lacks a version")
+                    complete_version = version
+                    summary = event.get("summary", {})
+                    if not isinstance(summary, dict):
+                        raise FrameworkExecutionError("Framework summary must be an object")
+                    complete_summary = summary
+                    drain_deadline = loop.time() + _COMPLETE_DRAIN_SECONDS
+                elif event_type == "error":
+                    message = event.get("message")
+                    raw_message = message if isinstance(message, str) else "FrameworkError"
+                    raise FrameworkExecutionError(
+                        _redact_diagnostic(raw_message, config, work_dir)[:4000],
+                    )
+                else:
+                    raise FrameworkExecutionError("Unknown framework protocol event")
+            if drained:
+                # The leader's exit status is trusted only if it was already observed; a leader
+                # still running at drain expiry was force-reaped and has no native status.
+                observed_status = process.returncode
+                await _terminate_process_tree(process, job)
+                return_code = 0 if observed_status is None else observed_status
+            else:
+                return_code = await process.wait()
+                # The leader may have exited while descendants still run; the job reaps them too.
+                await _terminate_process_tree(process, job)
+        if return_code != 0:
+            detail = _redact_diagnostic(
+                stderr_tail.decode("utf-8", errors="replace"), config, work_dir,
+            )[-4000:]
+            suffix = f": {detail}" if detail else ""
+            raise FrameworkExecutionError(
+                f"Framework process exited with code {return_code}{suffix}"
+            )
+        if complete_version is None:
+            raise FrameworkExecutionError("Framework exited without a completion event")
+        return FrameworkRunResult(
+            engine_version=complete_version,
+            outcome_count=outcome_count,
+            summary=complete_summary,
+        )
+    except TimeoutError:
+        await _terminate_process_tree(process, job)
+        raise FrameworkExecutionError("Framework campaign exceeded its wall-clock limit") from None
+    except asyncio.CancelledError:
+        await _terminate_process_tree(process, job)
+        raise
+    except BaseException:
+        await _terminate_process_tree(process, job)
+        raise
+    finally:
+        if cancel_task is not None:
+            cancel_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await cancel_task
+        await stderr_task
+
+
+class _ProactorCancellation:
+    """Caller-to-Proactor cancellation handoff for one execution.
+
+    The caller latches a threading.Event and wakes the private loop with
+    call_soon_threadsafe, so no polling is involved. A request that lands before
+    attach() is applied as soon as the execution task exists, before any process starts.
+    """
+
+    def __init__(self) -> None:
+        self._requested = threading.Event()
+        self._lock = threading.Lock()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._task: asyncio.Task[FrameworkRunResult] | None = None
+
+    def attach(
+        self, loop: asyncio.AbstractEventLoop, task: asyncio.Task[FrameworkRunResult],
+    ) -> None:
+        with self._lock:
+            self._loop = loop
+            self._task = task
+            if self._requested.is_set():
+                task.cancel()
+
+    def request(self) -> None:
+        with self._lock:
+            self._requested.set()
+            if self._loop is not None and self._task is not None:
+                self._loop.call_soon_threadsafe(self._task.cancel)
+
+    def detach(self) -> None:
+        with self._lock:
+            self._loop = None
+            self._task = None
+
+
+def _run_process_on_proactor(
+    *,
+    argv: list[str],
+    config: dict[str, Any],
+    work_dir: Path,
+    timeout_seconds: float,
+    on_outcome: Callable[[dict[str, Any]], Awaitable[None]],
+    cancel_requested: Callable[[], Awaitable[bool]] | None,
+    extra_env: Mapping[str, str] | None,
+    caller_loop: asyncio.AbstractEventLoop,
+    cancellation: _ProactorCancellation,
+) -> FrameworkRunResult:
+    """Own a subprocess-capable loop while durable callbacks stay on the worker loop."""
+    loop = asyncio.ProactorEventLoop()
+    asyncio.set_event_loop(loop)
+
+    async def forward(raw: dict[str, Any]) -> None:
+        async def invoke() -> None:
+            await on_outcome(raw)
+
+        future = asyncio.run_coroutine_threadsafe(invoke(), caller_loop)
+        await asyncio.wrap_future(future)
+
+    forward_cancellation: Callable[[], Awaitable[bool]] | None = None
+    if cancel_requested is not None:
+        async def forward_cancellation_callback() -> bool:
+            async def invoke() -> bool:
+                return await cancel_requested()
+
+            future = asyncio.run_coroutine_threadsafe(invoke(), caller_loop)
+            return await asyncio.wrap_future(future)
+
+        forward_cancellation = forward_cancellation_callback
+
+    try:
+        execution = loop.create_task(_run_framework_process(
+            argv=argv,
+            config=config,
+            work_dir=work_dir,
+            timeout_seconds=timeout_seconds,
+            on_outcome=forward,
+            cancel_requested=forward_cancellation,
+            extra_env=extra_env,
+        ))
+        cancellation.attach(loop, execution)
+        return loop.run_until_complete(execution)
+    finally:
+        cancellation.detach()
+        asyncio.set_event_loop(None)
+        loop.close()
+
+
+async def _wait_for_worker(worker: asyncio.Future[FrameworkRunResult]) -> None:
+    """Wait for Proactor cleanup even if the caller is cancelled again meanwhile."""
+    while not worker.done():
+        with contextlib.suppress(asyncio.CancelledError):
+            await asyncio.wait((worker,))
+    if not worker.cancelled():
+        # The caller is already cancelling, so the worker's own outcome is superseded.
+        worker.exception()
+
+
+async def _run_on_proactor_thread(
+    *,
+    argv: list[str],
+    config: dict[str, Any],
+    work_dir: Path,
+    timeout_seconds: float,
+    on_outcome: Callable[[dict[str, Any]], Awaitable[None]],
+    cancel_requested: Callable[[], Awaitable[bool]] | None,
+    extra_env: Mapping[str, str] | None,
+) -> FrameworkRunResult:
+    """Run on a private Proactor thread; caller cancellation returns only after tree cleanup."""
+    cancellation = _ProactorCancellation()
+    worker = asyncio.ensure_future(asyncio.to_thread(
+        _run_process_on_proactor,
+        argv=argv,
+        config=config,
+        work_dir=work_dir,
+        timeout_seconds=timeout_seconds,
+        on_outcome=on_outcome,
+        cancel_requested=cancel_requested,
+        extra_env=extra_env,
+        caller_loop=asyncio.get_running_loop(),
+        cancellation=cancellation,
+    ))
+    try:
+        # shield keeps the worker running when the caller is cancelled; it is awaited below.
+        return await asyncio.shield(worker)
+    except asyncio.CancelledError:
+        cancellation.request()
+        await _wait_for_worker(worker)
+        raise
+
+
+async def run_framework_process(
+    *,
+    argv: list[str],
+    config: dict[str, Any],
+    work_dir: Path,
+    timeout_seconds: float,
+    on_outcome: Callable[[dict[str, Any]], Awaitable[None]],
+    cancel_requested: Callable[[], Awaitable[bool]] | None = None,
+    extra_env: Mapping[str, str] | None = None,
+) -> FrameworkRunResult:
+    """Execute one fixed runner on a subprocess-capable loop.
+
+    ``extra_env`` is applied on top of the generic child environment; it is the only way
+    provider-specific variables reach a runner.
+    """
+    if os.name == "nt" and not isinstance(asyncio.get_running_loop(), asyncio.ProactorEventLoop):
+        return await _run_on_proactor_thread(
+            argv=argv,
+            config=config,
+            work_dir=work_dir,
+            timeout_seconds=timeout_seconds,
+            on_outcome=on_outcome,
+            cancel_requested=cancel_requested,
+            extra_env=extra_env,
+        )
+    return await _run_framework_process(
+        argv=argv,
+        config=config,
+        work_dir=work_dir,
+        timeout_seconds=timeout_seconds,
+        on_outcome=on_outcome,
+        cancel_requested=cancel_requested,
+        extra_env=extra_env,
+    )

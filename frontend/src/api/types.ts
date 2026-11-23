@@ -149,6 +149,7 @@ export interface VrOutcome {
   investigation_id: string;
   branch_id: string;
   outcome_kind: string;
+  payload: Record<string, unknown>;
   confidence: string;
   evidence_refs: string[];
   accepted_by_operator: boolean;

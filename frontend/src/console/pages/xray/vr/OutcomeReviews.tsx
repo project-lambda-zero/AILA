@@ -23,6 +23,24 @@ function isOutcomeState(s: string): s is OutcomeState {
   return Object.hasOwn(STATE_TONE, s);
 }
 
+function textField(value: unknown): string {
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : "";
+}
+
+function outcomeTitle(outcome: VrOutcome): string {
+  const payload = outcome.payload ?? {};
+  const explicit = textField(payload.title) || textField(payload.claim);
+  if (explicit) return explicit;
+  return textField(payload.answer).split("\n").find((line) => line.trim() !== "")?.trim() ?? "";
+}
+
+function ledgerReviewState(outcome: VrOutcome): string {
+  const payload = outcome.payload ?? {};
+  return payload.ledger_discovery_id === undefined || payload.ledger_discovery_id === null
+    ? ""
+    : textField(payload.review_state);
+}
+
 function OutcomeThread({ invId, outcome, branches }: { invId: string | null; outcome: VrOutcome; branches: readonly Branch[] }): JSX.Element {
   const reviews = useVrOutcomeReviews(invId, outcome.id);
   const create = useCreateVrOutcomeReview(invId);
@@ -65,6 +83,8 @@ export function OutcomeReviews({ invId, branches }: { invId: string | null; bran
       {list.map((o) => {
         const open = openId === o.id;
         const tone = isOutcomeState(o.state) ? STATE_TONE[o.state] : H.lav;
+        const title = outcomeTitle(o);
+        const reviewState = ledgerReviewState(o);
 
         return (
           <div key={o.id} style={css("border:1px solid var(--border-soft);border-radius:3px;")}>
@@ -77,7 +97,8 @@ export function OutcomeReviews({ invId, branches }: { invId: string | null; bran
               <span style={css(`letter-spacing:0.08em;text-transform:uppercase;color:${H.acc};`)}>{o.outcome_kind.replace(/_/g, " ")}</span>
               <span style={css(`letter-spacing:0.08em;text-transform:uppercase;color:${tone};`)}>{o.state}</span>
               <span style={css("color:var(--text-faint);")}>{o.confidence}</span>
-              <span style={css("flex:1;")} />
+              {reviewState ? <span style={css(`color:${reviewState === "confirmed" ? H.mint : H.amber};`)}>{reviewState}</span> : null}
+              {title ? <span title={title} style={css("flex:1;min-width:160px;color:var(--text-primary);overflow-wrap:anywhere;")}>{title}</span> : <span style={css("flex:1;")} />}
               <span style={css("color:var(--text-muted);")}>{`✓${o.approve_count} ✗${o.reject_count} ~${o.request_edit_count} ·${o.abstain_count}${o.quorum_k ? ` / k=${o.quorum_k}` : ""}`}</span>
               <span style={css("color:var(--text-faint);")}>{clockTime(o.created_at)}</span>
             </button>

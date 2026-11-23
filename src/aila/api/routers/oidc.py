@@ -164,24 +164,6 @@ def _secret_key_for_provider(provider_id: str) -> str:
     return f"client_secret_{provider_id}"
 
 
-async def _encrypt_client_secret(provider_id: str, plaintext: str) -> str:
-    """Encrypt and persist a provider's client_secret.
-
-    Returns the SecretRecord id stored on ``OIDCProviderRecord.client_secret_encrypted``.
-    Uses SecretStore.upsert_secret which handles encryption and record lifecycle.
-    """
-    store = SecretStore()
-    secret_key = _secret_key_for_provider(provider_id)
-    async with async_session_scope() as session:
-        record = await store.upsert_secret(
-            session,
-            scope=_OIDC_SECRET_SCOPE,
-            secret_key=secret_key,
-            plaintext=plaintext,
-        )
-        return record.id
-
-
 async def _decrypt_client_secret(provider: OIDCProviderRecord) -> str:
     """Retrieve and decrypt the client_secret for a provider.
 
@@ -841,7 +823,9 @@ async def create_provider(
 
     scopes_json = json.dumps(body.scopes) if body.scopes else '["openid","email","profile"]'
 
-    # Create the record first so we have a stable id for the secret key.
+    # The provider id is generated client-side, so the secret key is known before
+    # the row is written. Row and secret share one transaction: no committed
+    # provider ever references a missing or empty client secret.
     provider = OIDCProviderRecord(
         provider_name=body.provider_name,
         provider_type=body.provider_type,
@@ -849,29 +833,26 @@ async def create_provider(
         tenant_id=body.tenant_id,
         issuer_url=body.issuer_url,
         client_id=body.client_id,
-        client_secret_encrypted="",  # Filled after secret persisted
+        client_secret_encrypted="",  # Set to the SecretRecord id before commit
         scopes_json=scopes_json,
         is_enabled=body.is_enabled,
         default_team_id=body.default_team_id,
         created_at=utc_now(),
     )
 
+    store = SecretStore()
     async with async_session_scope() as session:
+        session.add(provider)
+        secret = await store.stage_secret(
+            session,
+            scope=_OIDC_SECRET_SCOPE,
+            secret_key=_secret_key_for_provider(provider.id),
+            plaintext=body.client_secret,
+        )
+        provider.client_secret_encrypted = secret.id
         session.add(provider)
         await session.commit()
         await session.refresh(provider)
-
-    secret_ref = await _encrypt_client_secret(provider.id, body.client_secret)
-
-    async with async_session_scope() as session:
-        fresh = await session.get(OIDCProviderRecord, provider.id)
-        if fresh is None:
-            raise HTTPException(status_code=500, detail="Provider vanished after create")
-        fresh.client_secret_encrypted = secret_ref
-        session.add(fresh)
-        await session.commit()
-        await session.refresh(fresh)
-        provider = fresh
 
     _invalidate_metadata_cache()
     return DataEnvelope(data=_provider_to_response(provider))
@@ -889,6 +870,7 @@ async def update_provider(
     body: OIDCProviderUpdateRequest,
 ) -> DataEnvelope[OIDCProviderResponse]:
     """Partial update. Only non-None fields are applied."""
+    store = SecretStore()
     async with async_session_scope() as session:
         provider = await session.get(OIDCProviderRecord, provider_id)
         if provider is None:
@@ -912,21 +894,18 @@ async def update_provider(
             provider.is_enabled = body.is_enabled
         if body.default_team_id is not None:
             provider.default_team_id = body.default_team_id
+        if body.client_secret is not None:
+            secret = await store.stage_secret(
+                session,
+                scope=_OIDC_SECRET_SCOPE,
+                secret_key=_secret_key_for_provider(provider_id),
+                plaintext=body.client_secret,
+            )
+            provider.client_secret_encrypted = secret.id
 
         session.add(provider)
         await session.commit()
         await session.refresh(provider)
-
-    if body.client_secret is not None:
-        secret_ref = await _encrypt_client_secret(provider_id, body.client_secret)
-        async with async_session_scope() as session:
-            fresh = await session.get(OIDCProviderRecord, provider_id)
-            if fresh is not None:
-                fresh.client_secret_encrypted = secret_ref
-                session.add(fresh)
-                await session.commit()
-                await session.refresh(fresh)
-                provider = fresh
 
     _invalidate_metadata_cache()
     return DataEnvelope(data=_provider_to_response(provider))

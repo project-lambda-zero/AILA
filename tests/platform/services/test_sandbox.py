@@ -9,18 +9,27 @@ harness on a real sandbox host.
 from __future__ import annotations
 
 import asyncio
+import shlex
 from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 import pytest
 from pydantic import ValidationError as PydanticValidationError
 
+from aila.platform.exceptions import ValidationError as AILAValidationError
 from aila.platform.services.sandbox import (
     SandboxExecutionError,
+    SandboxPolicyError,
     SandboxResult,
     SandboxService,
     SandboxSpec,
     SandboxUnavailableError,
+)
+from aila.platform.services.sandbox.backends.base import (
+    HostWorkspace,
+    collect_outputs,
+    host_workspace,
 )
 from aila.platform.services.sandbox.backends.nsjail import (
     NsjailBackend,
@@ -76,6 +85,8 @@ class _StubBackend:
     """Predictable backend used to assert the service policy pipeline."""
 
     name = "stub"
+    supports_network = True
+    enforces_egress = True
 
     def __init__(self, response: SandboxResult) -> None:
         self.response = response
@@ -122,6 +133,11 @@ def _make_service(cfg: SandboxConfig, backend: _StubBackend, *, ssh: _FakeSSH | 
     async def _load() -> SandboxConfig:
         return cfg
     service._load_config = _load  # type: ignore[attr-defined]
+
+    async def _no_managed_system(**kwargs: Any) -> None:
+        return None
+
+    service._resolve_managed_system = _no_managed_system  # type: ignore[attr-defined]
     return service
 
 
@@ -212,11 +228,40 @@ def test_policy_clamps_timeout_to_max() -> None:
     assert backend.received.timeout_s == pytest.approx(60.0)
 
 
-def test_policy_forces_network_off_when_not_allowed() -> None:
+def test_policy_rejects_networked_spec_when_not_allowed() -> None:
     cfg = _cfg(allow_network=False)
     backend = _StubBackend(response=SandboxResult(backend="stub", exit_code=0))
     service = _make_service(cfg, backend)
-    asyncio.run(service.run(SandboxSpec(argv=["/bin/true"], network=True)))
+    with pytest.raises(SandboxPolicyError, match="sandbox_allow_network is disabled"):
+        asyncio.run(service.run(SandboxSpec(argv=["/bin/true"], network=True)))
+    assert backend.received is None
+
+
+def test_policy_rejects_networked_spec_when_backend_cannot_enforce_egress() -> None:
+    cfg = _cfg(allow_network=True)
+    backend = _StubBackend(response=SandboxResult(backend="stub", exit_code=0))
+    backend.enforces_egress = False
+    service = _make_service(cfg, backend)
+    with pytest.raises(SandboxPolicyError, match="cannot enforce per-run egress"):
+        asyncio.run(service.run(SandboxSpec(argv=["/bin/true"], network=True)))
+    assert backend.received is None
+
+
+def test_policy_rejects_networked_spec_when_backend_lacks_network_support() -> None:
+    cfg = _cfg(allow_network=True)
+    backend = _StubBackend(response=SandboxResult(backend="stub", exit_code=0))
+    backend.supports_network = False
+    service = _make_service(cfg, backend)
+    with pytest.raises(SandboxPolicyError, match="does not support network access"):
+        asyncio.run(service.run(SandboxSpec(argv=["/bin/true"], network=True)))
+    assert backend.received is None
+
+
+def test_policy_accepts_offline_spec_when_network_not_allowed() -> None:
+    cfg = _cfg(allow_network=False)
+    backend = _StubBackend(response=SandboxResult(backend="stub", exit_code=0))
+    service = _make_service(cfg, backend)
+    asyncio.run(service.run(SandboxSpec(argv=["/bin/true"], network=False)))
     assert backend.received is not None
     assert backend.received.network is False
 
@@ -305,6 +350,11 @@ def test_service_rewraps_infra_failure_as_execution_error() -> None:
     async def _load() -> SandboxConfig:
         return cfg
     service._load_config = _load  # type: ignore[attr-defined]
+
+    async def _no_managed_system(**kwargs: Any) -> None:
+        return None
+
+    service._resolve_managed_system = _no_managed_system  # type: ignore[attr-defined]
     with pytest.raises(SandboxExecutionError, match="infra failure"):
         asyncio.run(service.run(SandboxSpec(argv=["/bin/true"])))
 
@@ -426,3 +476,192 @@ def test_nsjail_backend_dispatches_wrapped_command_over_ssh() -> None:
     assert "--bindmount" in nsjail_cmd
     # network=False -> flag absent
     assert "--disable_clone_newnet" not in nsjail_cmd
+
+
+# ---------------------------------------------------------------------------
+# 8. Output collection hardening
+# ---------------------------------------------------------------------------
+
+_ROOT = "/tmp/aila-sandbox/run-test"
+_WORKSPACE = HostWorkspace(remote_root=_ROOT, run_id="test")
+
+
+class _FakeHost:
+    """Scripted host for output collection.
+
+    Answers the enumeration command (``for f in <pattern>``) from ``matches``,
+    the staging command (``head -c N -- <src> > <dst>``) against ``files``,
+    and SFTP ``download_file`` by reading ``files``.
+    """
+
+    def __init__(self, files: dict[str, bytes], matches: dict[str, list[str]]) -> None:
+        self.files = dict(files)
+        self.matches = matches
+        self.commands: list[str] = []
+        self.downloads: list[str] = []
+
+    async def run_command_full(self, integration, command, timeout_seconds=None, pool=None, connect_timeout=15.0):
+        del integration, timeout_seconds, pool, connect_timeout
+        self.commands.append(command)
+        if command.startswith("head "):
+            tokens = shlex.split(command)
+            count, source, staged = int(tokens[2]), tokens[4], tokens[6]
+            self.files[staged] = self.files[source][:count]
+            return "", "", 0
+        if command.startswith("cd "):
+            pattern = command.split("for f in ", 1)[1].split(";", 1)[0]
+            return "".join(name + "\0" for name in self.matches.get(pattern, [])), "", 0
+        return "", "", 0
+
+    async def download_file(self, integration, remote_path, local_path, *, timeout_seconds=None):
+        del integration, timeout_seconds
+        self.downloads.append(remote_path)
+        Path(local_path).write_bytes(self.files[remote_path])
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "$(touch /tmp/pwned)",
+        "`id`",
+        "out;touch /tmp/pwned",
+        "out|tee /tmp/pwned",
+        "out&&touch /tmp/pwned",
+        "$HOME/*",
+        "out/*'x'",
+        "out/* > /tmp/pwned",
+        "{a,b}",
+        "~/out",
+    ],
+)
+def test_output_glob_with_shell_syntax_is_rejected_before_any_command(pattern: str) -> None:
+    host = _FakeHost(files={}, matches={})
+    with pytest.raises(AILAValidationError):
+        asyncio.run(collect_outputs(host, object(), _WORKSPACE, [pattern], per_file_cap=0))
+    assert host.commands == []
+
+
+@pytest.mark.parametrize("pattern", ["/etc/*", "../*", "out/../../*"])
+def test_output_glob_absolute_or_traversal_is_rejected(pattern: str) -> None:
+    host = _FakeHost(files={}, matches={})
+    with pytest.raises(AILAValidationError):
+        asyncio.run(collect_outputs(host, object(), _WORKSPACE, [pattern], per_file_cap=0))
+    assert host.commands == []
+
+
+def test_enumerated_names_escaping_the_workspace_are_never_downloaded() -> None:
+    host = _FakeHost(
+        files={f"{_ROOT}/ok.txt": b"fine", "/etc/passwd": b"root:x:0:0"},
+        matches={"*": ["../../../etc/passwd", "/etc/passwd", "ok.txt"]},
+    )
+    files, truncated = asyncio.run(collect_outputs(host, object(), _WORKSPACE, ["*"], per_file_cap=0))
+    assert files == {"ok.txt": "fine"}
+    assert truncated is False
+    assert host.downloads == [f"{_ROOT}/ok.txt"]
+
+
+def test_legitimate_relative_globs_collect_inside_workspace() -> None:
+    host = _FakeHost(
+        files={
+            f"{_ROOT}/out/a.json": b'{"a": 1}',
+            f"{_ROOT}/out/b.json": b'{"b": 2}',
+            f"{_ROOT}/result.txt": b"done",
+        },
+        matches={
+            "out/*.json": ["out/a.json", "out/b.json"],
+            "result.txt": ["result.txt"],
+        },
+    )
+    files, truncated = asyncio.run(
+        collect_outputs(host, object(), _WORKSPACE, ["out/*.json", "result.txt"], per_file_cap=0),
+    )
+    assert files == {"out/a.json": '{"a": 1}', "out/b.json": '{"b": 2}', "result.txt": "done"}
+    assert truncated is False
+    assert "for f in out/*.json; do" in host.commands[0]
+
+
+def test_per_file_cap_transfers_at_most_cap_plus_one_bytes() -> None:
+    host = _FakeHost(
+        files={f"{_ROOT}/out/big.log": b"x" * 10},
+        matches={"out/big.log": ["out/big.log"]},
+    )
+    files, truncated = asyncio.run(
+        collect_outputs(host, object(), _WORKSPACE, ["out/big.log"], per_file_cap=4),
+    )
+    assert files == {"out/big.log": "xxxx"}
+    assert truncated is True
+    assert any(command.startswith("head -c 5 -- ") for command in host.commands)
+    assert len(host.downloads) == 1
+    assert host.downloads[0].startswith(f"{_ROOT}/.collect-")
+
+
+def test_aggregate_cap_stops_before_downloading_the_next_file() -> None:
+    host = _FakeHost(
+        files={f"{_ROOT}/a.txt": b"a" * 6, f"{_ROOT}/b.txt": b"b" * 6},
+        matches={"*": ["a.txt", "b.txt"]},
+    )
+    files, truncated = asyncio.run(
+        collect_outputs(host, object(), _WORKSPACE, ["*"], per_file_cap=6, aggregate_cap=6),
+    )
+    assert files == {"a.txt": "aaaaaa"}
+    assert truncated is True
+    assert len(host.downloads) == 1
+
+
+def test_output_file_count_is_bounded_before_the_257th_download() -> None:
+    names = [f"{index}.txt" for index in range(257)]
+    host = _FakeHost(files={f"{_ROOT}/{name}": b"" for name in names}, matches={"*": names})
+    files, truncated = asyncio.run(
+        collect_outputs(host, object(), _WORKSPACE, ["*"], per_file_cap=0, aggregate_cap=1024),
+    )
+    assert len(files) == 256
+    assert truncated is True
+    assert len(host.downloads) == 256
+
+
+# ---------------------------------------------------------------------------
+# 9. Workspace permissions and nsjail identity
+# ---------------------------------------------------------------------------
+
+
+def test_host_workspace_run_dir_is_created_owner_only() -> None:
+    host = _FakeSSH()
+
+    async def scenario() -> str:
+        async with host_workspace(host, object()) as workspace:
+            return workspace.remote_root
+
+    root = asyncio.run(scenario())
+    commands = [command for command, _ in host.commands]
+    assert commands[0] == f"mkdir -p /tmp/aila-sandbox && mkdir -m 700 {root}"
+    assert commands[-1] == f"rm -rf -- {root}"
+
+
+def test_nsjail_argv_runs_payload_as_unprivileged_user() -> None:
+    spec = SandboxSpec(argv=["/bin/echo", "hi"], timeout_s=10.0, network=False)
+    argv = build_nsjail_argv(spec, nsjail_bin="nsjail", workspace_remote_root="/tmp/x")
+    separator = argv.index("--")
+    assert argv[argv.index("--user") + 1] == "65534"
+    assert argv[argv.index("--group") + 1] == "65534"
+    assert argv.index("--user") < separator
+    assert argv.index("--group") < separator
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "$(touch /tmp/pwned)",
+        "out;touch /tmp/pwned",
+        "out/* > /tmp/pwned",
+        "{a,b}",
+        "~/out",
+    ],
+)
+def test_sandbox_spec_rejects_shell_syntax_output_globs_at_construction(pattern: str) -> None:
+    with pytest.raises(PydanticValidationError):
+        SandboxSpec(argv=["/bin/echo"], output_globs=[pattern])
+
+
+def test_sandbox_spec_accepts_legitimate_output_globs() -> None:
+    spec = SandboxSpec(argv=["/bin/echo"], output_globs=["out/*.json", "result.txt", "logs/?.txt"])
+    assert spec.output_globs == ["out/*.json", "result.txt", "logs/?.txt"]

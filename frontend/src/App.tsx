@@ -20,7 +20,6 @@ import CommandPalette from "./console/CommandPalette";
 import WidgetHost from "./console/widgets/WidgetHost";
 import { ConsoleWindow } from "./console/window";
 import { resolveWizard } from "./console/wizards";
-import { FaultyTerminal } from "./desktop/FaultyTerminal";
 
 // Faithful port of the `AILA Console` design page. Two modes: basic (console
 // tab -- general assistant, rail collapsed) and advanced (workspace tab -- full
@@ -245,8 +244,10 @@ function Console() {
 
   // LeftRail's "+" is module-aware: for vulnerability it raises the
   // platform-owned admin systems registry (there is no duplicate
-  // IntakeWizard variant for that module). Every other module opens its
-  // IntakeWizard as an overlay window.
+  // IntakeWizard variant for that module); pentest raises its assessments
+  // page, where target and assessment creation live, because IntakeWizard has
+  // no pentest variant and would fall through to the VR wizard. Every other
+  // module opens its IntakeWizard as an overlay window.
   const requestIntake = (opts?: { moduleId?: string; targetId?: string }): void => {
     const effectiveModule = opts?.moduleId ?? moduleId;
     const targetId = opts?.targetId ?? null;
@@ -255,6 +256,10 @@ function Console() {
       // req 11): the vulnerability module's "+" jumps to the admin systems
       // page, where "+ register system" inside opens the create form.
       openNamedPage("admin", "systems", "admin \u00b7 systems");
+      return;
+    }
+    if (effectiveModule === "pentest") {
+      openNamedPage("pentest", "assessments", "assessments");
       return;
     }
     openIntakeWindow(effectiveModule, targetId);
@@ -370,7 +375,6 @@ function Console() {
         color: "var(--text-primary)",
       }}
     >
-      <FaultyTerminal opts={{ brightness: 0.55, scanlineIntensity: 0.5, glitchAmount: 1 }} />
       <div
         aria-hidden="true"
         style={{
@@ -573,10 +577,9 @@ function Console() {
           ) : null}
 
           {/* Module page opens as a contained inner window inside the center
-              column -- the menu bar, left rail, and FaultyTerminal backdrop
-              stay visible around it (the mock's embedded look). The page's own
-              root is position:absolute;inset:0 with a transparent background, so
-              the animated terminal shows through its panels. No top nav. */}
+              column -- the menu bar and left rail stay visible around it (the
+              mock's embedded look). The page's own root is position:absolute;
+              inset:0 and paints over the themed surface. No top nav. */}
           {activePage ? renderPage(activePage) : null}
           {minimizedWindows.length > 0 ? (
             <div

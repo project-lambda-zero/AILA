@@ -9,6 +9,7 @@ from __future__ import annotations
 import ssl
 from unittest.mock import MagicMock
 
+from aila.platform.services import smtp as smtp_module
 from aila.platform.tasks import report_tasks
 
 
@@ -17,7 +18,7 @@ def test_send_report_email_uses_verifying_tls(monkeypatch) -> None:
     smtp_cm = MagicMock()
     smtp_cm.__enter__.return_value = server
     smtp_cm.__exit__.return_value = False
-    monkeypatch.setattr(report_tasks.smtplib, "SMTP", MagicMock(return_value=smtp_cm))
+    monkeypatch.setattr(smtp_module.smtplib, "SMTP", MagicMock(return_value=smtp_cm))
 
     report_tasks._send_report_email(
         smtp_host="smtp.example.com",
@@ -47,9 +48,9 @@ def test_send_report_email_implicit_tls_uses_smtps(monkeypatch) -> None:
     smtps_cm.__enter__.return_value = server
     smtps_cm.__exit__.return_value = False
     smtp_ssl = MagicMock(return_value=smtps_cm)
-    monkeypatch.setattr(report_tasks.smtplib, "SMTP_SSL", smtp_ssl)
+    monkeypatch.setattr(smtp_module.smtplib, "SMTP_SSL", smtp_ssl)
     monkeypatch.setattr(
-        report_tasks.smtplib,
+        smtp_module.smtplib,
         "SMTP",
         MagicMock(side_effect=AssertionError("plaintext SMTP used in implicit-TLS mode")),
     )
@@ -84,7 +85,7 @@ def test_send_report_email_uses_admin_ca_bundle(monkeypatch) -> None:
     smtp_cm = MagicMock()
     smtp_cm.__enter__.return_value = server
     smtp_cm.__exit__.return_value = False
-    monkeypatch.setattr(report_tasks.smtplib, "SMTP", MagicMock(return_value=smtp_cm))
+    monkeypatch.setattr(smtp_module.smtplib, "SMTP", MagicMock(return_value=smtp_cm))
 
     captured: dict[str, object] = {}
     real_ctx = ssl.create_default_context()
@@ -93,7 +94,7 @@ def test_send_report_email_uses_admin_ca_bundle(monkeypatch) -> None:
         captured["cafile"] = kwargs.get("cafile")
         return real_ctx
 
-    monkeypatch.setattr(report_tasks.ssl, "create_default_context", _fake_ctx)
+    monkeypatch.setattr(smtp_module.ssl, "create_default_context", _fake_ctx)
 
     report_tasks._send_report_email(
         smtp_host="smtp.example.com",

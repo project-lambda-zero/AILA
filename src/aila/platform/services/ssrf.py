@@ -21,11 +21,14 @@ from urllib.parse import urlparse
 
 import httpx
 
+from .dns import resolve_system_addresses
+
 __all__ = [
     "SSRFBlockedError",
     "SSRFValidatingAsyncTransport",
     "SSRFValidatingTransport",
     "check_url",
+    "check_url_async",
     "endpoint_of",
 ]
 
@@ -108,6 +111,55 @@ def check_url(
     this runs on every redirect hop, a redirect to any OTHER host:port is
     still refused -- only the exact trusted endpoint passes.
     """
+    target = _parse_target(url, allow_endpoints)
+    if target is None:
+        return
+    hostname, literal = target
+    if literal is not None:
+        _check_addresses(hostname, [literal])
+        return
+    try:
+        resolved = socket.getaddrinfo(hostname, None)
+    except socket.gaierror as exc:
+        raise SSRFBlockedError(f"egress blocked: DNS lookup failed for {hostname}") from exc
+    _check_addresses(hostname, [ipaddress.ip_address(info[4][0]) for info in resolved])
+
+
+async def check_url_async(
+    url: str,
+    *,
+    allow_endpoints: frozenset[tuple[str, int]] = frozenset(),
+) -> None:
+    """Async twin of :func:`check_url` that resolves hostnames without blocking.
+
+    Policy is identical; only the DNS step differs. Hostnames resolve through
+    :func:`resolve_system_addresses`, so the event loop is never blocked on
+    ``getaddrinfo``.
+    """
+    target = _parse_target(url, allow_endpoints)
+    if target is None:
+        return
+    hostname, literal = target
+    if literal is not None:
+        _check_addresses(hostname, [literal])
+        return
+    try:
+        resolved = await resolve_system_addresses(hostname)
+    except socket.gaierror as exc:
+        raise SSRFBlockedError(f"egress blocked: DNS lookup failed for {hostname}") from exc
+    _check_addresses(hostname, [ipaddress.ip_address(addr) for addr in resolved])
+
+
+def _parse_target(
+    url: str,
+    allow_endpoints: frozenset[tuple[str, int]],
+) -> tuple[str, ipaddress.IPv4Address | ipaddress.IPv6Address | None] | None:
+    """Apply the scheme, hostname, port checks; return ``(host, literal_ip)``.
+
+    Returns ``None`` when the host:port is an explicitly trusted endpoint, which
+    bypasses the port allow-list and the address block-list. ``literal_ip`` is
+    set when the host is an IP literal (no DNS needed); otherwise ``None``.
+    """
     parsed = urlparse(url)
     scheme = (parsed.scheme or "").lower()
     if scheme not in _ALLOWED_SCHEMES:
@@ -117,23 +169,23 @@ def check_url(
         raise SSRFBlockedError("egress blocked: URL has no hostname")
     port = parsed.port or (443 if scheme == "https" else 80)
     if (hostname, port) in allow_endpoints:
-        return
+        return None
     if port not in _ALLOWED_PORTS:
         raise SSRFBlockedError(f"egress blocked: port {port} is not allowed")
     try:
-        candidates = [ipaddress.ip_address(hostname)]
+        return hostname, ipaddress.ip_address(hostname)
     except ValueError:
-        try:
-            resolved = socket.getaddrinfo(hostname, None)
-        except socket.gaierror as exc:
-            raise SSRFBlockedError(
-                f"egress blocked: DNS lookup failed for {hostname}"
-            ) from exc
-        candidates = [ipaddress.ip_address(info[4][0]) for info in resolved]
-        if not candidates:
-            raise SSRFBlockedError(f"egress blocked: no addresses for {hostname}")
-    # Refuse if ANY resolved answer is blocked -- defeats split-horizon DNS.
-    for cand in candidates:
+        return hostname, None
+
+
+def _check_addresses(
+    hostname: str,
+    addresses: list[ipaddress.IPv4Address | ipaddress.IPv6Address],
+) -> None:
+    """Refuse when no address is returned or ANY address is blocked (split-horizon DNS)."""
+    if not addresses:
+        raise SSRFBlockedError(f"egress blocked: no addresses for {hostname}")
+    for cand in addresses:
         net = _blocked_ip(cand)
         if net is not None:
             raise SSRFBlockedError(
@@ -170,9 +222,9 @@ class SSRFValidatingTransport(httpx.BaseTransport):
 class SSRFValidatingAsyncTransport(httpx.AsyncBaseTransport):
     """Async counterpart of :class:`SSRFValidatingTransport`.
 
-    ``check_url`` performs a blocking DNS lookup; that is acceptable for the
-    low-frequency health-probe path that uses this transport. Wrap the real
-    async transport so each hop is validated before its socket is opened.
+    Each hop is validated with :func:`check_url_async`, so DNS resolution runs
+    off the event loop. Wrap the real async transport so each hop is validated
+    before its socket is opened.
     """
 
     def __init__(
@@ -184,7 +236,7 @@ class SSRFValidatingAsyncTransport(httpx.AsyncBaseTransport):
         self._allow_endpoints = allow_endpoints
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        check_url(str(request.url), allow_endpoints=self._allow_endpoints)
+        await check_url_async(str(request.url), allow_endpoints=self._allow_endpoints)
         return await self._inner.handle_async_request(request)
 
     async def aclose(self) -> None:
