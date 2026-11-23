@@ -5,6 +5,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.141] - 2026-11-23 -- Enterprise campaign operations UI
+
+### Changed
+
+- Campaign record grids now use a shared AG Grid surface with solid headers, row controls, resizing, sorting, and accessible labels.
+- Collaboration now uses one chronological Agent/Operator chat thread with inline replies and a compact composer; worker memory remains in its dedicated tab.
+- Action arguments render as a command line, with stdout and stderr shown as separate terminal streams.
+- Agent Pentest resolved configuration is available as a download instead of an inline structured dump.
+
+### Added
+
+- Campaign rows now provide Open, Details, Edit, and Delete actions, including a compact information card and confirmed soft deletion that retains audit and evidence history.
+
+### Upgrade notes
+
+- Run `make migrate`, restart the frontend, and restart backend workers. Migration 172 adds campaign soft-deletion state.
+
 ## [0.6.140] - 2026-11-23 -- Expanded operations text
 
 ### Fixed
