@@ -15,10 +15,12 @@
 import type { CSSProperties, JSX } from "react";
 
 import { css } from "../css";
+import { StructuredData } from "../StructuredData";
 
 export interface ChatMessage {
   role: string;
   content: string;
+  structured?: unknown;
 }
 
 /** Roles rendered with a stronger label colour; anything else falls back to
@@ -63,13 +65,8 @@ export function parseChatMessages(value: unknown): ChatMessage[] | null {
     } else if (content === null || content === undefined) {
       text = "";
     } else {
-      // Structured tool payload: shortest honest single-line label is the
-      // compact JSON of the object.
-      try {
-        text = JSON.stringify(content);
-      } catch {
-        text = String(content);
-      }
+      messages.push({ role, content: "", structured: content });
+      continue;
     }
     messages.push({ role, content: text });
   }
@@ -125,7 +122,7 @@ export function LlmChatTranscript({ value }: { value: unknown }): JSX.Element {
           return (
             <div key={i} style={bubbleStyle}>
               <div style={labelStyle}>{m.role}</div>
-              <div style={bubbleBody}>{m.content === "" ? "\u2014" : m.content}</div>
+              {"structured" in m ? <StructuredData label={`${m.role} content`} value={m.structured} /> : <div style={bubbleBody}>{m.content === "" ? "\u2014" : m.content}</div>}
             </div>
           );
         })}
@@ -135,28 +132,11 @@ export function LlmChatTranscript({ value }: { value: unknown }): JSX.Element {
   if (value === null || value === undefined) {
     return <span style={css("color:var(--text-faint);")}>{"\u2014"}</span>;
   }
-  // Not a chat transcript: pretty-print JSON when we can, plain text
-  // otherwise. This is the honest fallback -- a structured response gets an
-  // indented view instead of a fabricated role/content split.
-  let display: string;
-  if (typeof value === "string") {
-    const parsed = tryJson(value);
-    if (parsed !== null && typeof parsed === "object") {
-      try {
-        display = JSON.stringify(parsed, null, 2);
-      } catch {
-        display = value;
-      }
-    } else {
-      display = value;
-    }
-  } else {
-    try {
-      display = JSON.stringify(value, null, 2);
-    } catch {
-      display = String(value);
-    }
+  const parsed = typeof value === "string" ? tryJson(value) : value;
+  if (parsed !== null && typeof parsed === "object") {
+    return <StructuredData label="LLM content" value={parsed} />;
   }
+  const display = typeof value === "string" ? value : String(value);
   if (display.trim() === "") {
     return <span style={css("color:var(--text-faint);")}>{"\u2014"}</span>;
   }

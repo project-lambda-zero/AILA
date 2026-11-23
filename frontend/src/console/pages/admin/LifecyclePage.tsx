@@ -17,11 +17,12 @@ import {
   useVersionMetrics,
 } from "../../../api/admin";
 import type { LifecycleAction, LifecycleTransition, VersionMetricsRow } from "../../../api/admin";
+import { StructuredData } from "../../StructuredData";
 import type { ModulePageProps } from "../../contract";
 import { css } from "../../css";
 import { toast } from "../../toast";
 import { ActButton, ConfirmButton, actionRow, fieldStyle, formLabel } from "../xray/actions";
-import { AdminWindow, FAINT, Field, KvGrid, MONO, QueryState, Section, SubmitButton, Table, fmtTime } from "./kit";
+import { AdminWindow, FAINT, Field, KvGrid, QueryState, Section, SubmitButton, Table, fmtTime } from "./kit";
 
 export default function LifecyclePage(props: ModulePageProps): JSX.Element {
   const keysQ = usePromptKeys();
@@ -231,9 +232,7 @@ export default function LifecyclePage(props: ModulePageProps): JSX.Element {
                       ["recorded", fmtTime(shadowQ.data.created_at)],
                     ]}
                   />
-                  <pre style={css(MONO + "font-size:11px;margin:0;padding:8px;background:var(--surface-sunk);border:1px solid var(--border-soft);white-space:pre-wrap;word-break:break-word;max-height:240px;overflow:auto;")}>
-                    {JSON.stringify(shadowQ.data.diff_summary, null, 2)}
-                  </pre>
+                  <StructuredData label="Shadow diff" value={shadowQ.data.diff_summary} />
                 </>
               ) : null}
             </Section>

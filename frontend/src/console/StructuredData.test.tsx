@@ -14,6 +14,8 @@ describe("StructuredData", () => {
     }} />);
 
     expect(screen.getByLabelText("Execution details")).toBeTruthy();
+    expect(screen.getByRole("table", { name: "Execution details evidence" })).toBeTruthy();
+    expect(screen.getByRole("columnheader", { name: "id" })).toBeTruthy();
     expect(screen.getByText("max requests")).toBeTruthy();
     expect(screen.getByText("10")).toBeTruthy();
     expect(screen.getByText("Yes")).toBeTruthy();

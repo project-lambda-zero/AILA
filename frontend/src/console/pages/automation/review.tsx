@@ -1,11 +1,10 @@
 /** Step 5 (review) and the post-create confirmation panel for the automation
  * wizard. */
 
-import type { ChangeEvent, JSX } from "react";
+import type { ChangeEvent, JSX, ReactNode } from "react";
 
 import type { AutomationActionInfo, AutomationSchedule } from "../../../api/automation";
 import { css } from "../../css";
-import { helpText } from "../../wizards";
 import { formatFireTime, humanizeCron } from "../cronPreview";
 
 /** Step 5: the review grid the operator confirms before submit. */
@@ -24,16 +23,13 @@ export function ScheduleReview({
   targetName: string;
   cronExpr: string;
   cronRuns: Date[];
-  kwargsPreview: string;
+  kwargsPreview: ReactNode;
   enabled: boolean;
   onToggleEnabled: (enabled: boolean) => void;
 }): JSX.Element {
   const humanCron = cronExpr ? humanizeCron(cronExpr) : "\u2014";
   return (
     <div style={css("display:flex;flex-direction:column;gap:12px;")}>
-      <p style={helpText}>
-        {"review the schedule below; step 5 submits `POST /automation/schedules`. the server re-validates action_id, cron_expression, and target ownership."}
-      </p>
       <div
         style={css(
           "padding:10px 12px;border:1px solid var(--border-soft);border-radius:2px;background:var(--surface-sunk);display:grid;grid-template-columns:130px 1fr;gap:6px 12px;font-size:11.5px;",
@@ -62,13 +58,7 @@ export function ScheduleReview({
             : <span style={css("color:var(--status-warn);")}>{"no fire time in the next 370 days"}</span>}
         </span>
         <span style={css("color:var(--text-faint);")}>arguments</span>
-        <pre
-          style={css(
-            "margin:0;color:var(--text-primary);font-family:var(--font-mono);font-size:11px;white-space:pre-wrap;word-break:break-word;",
-          )}
-        >
-          {kwargsPreview}
-        </pre>
+        <div style={css("min-width:0;color:var(--text-primary);")}>{kwargsPreview}</div>
         <span style={css("color:var(--text-faint);")}>enabled</span>
         <label style={css("display:flex;align-items:center;gap:7px;font-size:11px;color:var(--text-muted);cursor:pointer;")}>
           <input

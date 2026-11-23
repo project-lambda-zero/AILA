@@ -55,15 +55,13 @@ export function parseTool(payload: Payload, argKeys: readonly string[]): { tool:
 
 // Full tool-call parse -- tool name plus its args object -- for the expanded
 // turn detail. The `command` payload field is a JSON string {tool, args}.
-export function parseToolFull(payload: Payload): { tool: string | null; args: [string, string][] } {
+export function parseToolFull(payload: Payload): { tool: string | null; args: [string, unknown][] } {
   const cmd = readStr(payload, "command");
   if (!cmd) return { tool: null, args: [] };
   try {
     const rec = asRecord(JSON.parse(cmd)) ?? {};
     const argsRec = asRecord(rec.args) ?? {};
-    const args = Object.entries(argsRec).map(
-      ([k, v]): [string, string] => [k, typeof v === "string" ? v : JSON.stringify(v)],
-    );
+    const args = Object.entries(argsRec);
     return { tool: readStr(rec, "tool"), args };
   } catch {
     return { tool: null, args: [] };
@@ -74,7 +72,7 @@ export function parseToolFull(payload: Payload): { tool: string | null; args: [s
 // the call's reasoning, expected observation and attached script ("" when absent).
 export interface ToolCallView {
   readonly tool: string | null;
-  readonly args: readonly [string, string][];
+  readonly args: readonly [string, unknown][];
   readonly reasoning: string;
   readonly expects: string;
   readonly script: string;

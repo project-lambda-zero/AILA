@@ -5,6 +5,32 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.139] - 2026-11-23 -- Planner response recovery
+
+### Fixed
+
+- Invalid structured planner responses, including unsupported asset-registration action names, now fail over to the next configured model route instead of aborting the round before any intent can be admitted.
+- Planner guidance now states that parser output owns asset creation and no planner action registers assets.
+
+### Upgrade notes
+
+- Restart campaign workers. No database migration is required.
+
+## [0.6.138] - 2026-11-23 -- Dense campaign operations
+
+### Changed
+
+- Campaign and Agent Endpoint Test views use compact status-first tables for metadata, findings, attempts, turns, and operations. Redesigned panels omit narrative filler and render nested values as labeled fields instead of raw JSON.
+- Campaign relationship graphs use React Flow controls and bounded layouts for large node sets.
+
+### Fixed
+
+- Campaign graphs retain a visible fixed-height canvas and support filtering and node inspection with 91 or more nodes.
+
+### Upgrade notes
+
+- Restart the frontend. No database migration is required.
+
 ## [0.6.137] - 2026-11-23 -- Adaptive pentest research and verification
 
 ### Added

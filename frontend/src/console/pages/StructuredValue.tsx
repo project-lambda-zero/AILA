@@ -16,6 +16,7 @@ import type { JSX } from "react";
 
 import { asRecord } from "../../api/parse";
 import { css } from "../css";
+import { StructuredData } from "../StructuredData";
 
 const MAX_DEPTH = 4;
 const MAX_TABLE_COLUMNS = 8;
@@ -96,29 +97,20 @@ export function StructuredValue({
   }
 
   if (typeof value === "string") {
-    // Multiline, JSON-ish, or very long strings get a scrollable mono block;
-    // everything else stays inline. Pure prose and ISO-8601 dates render as-is.
     const head = value.trimStart();
-    const looksLikeCode =
-      value.length > CODE_LOOK_MAX ||
-      value.indexOf("\n") !== -1 ||
-      head.startsWith("{") ||
-      head.startsWith("[");
-    if (looksLikeCode) return <pre style={monoBlock}>{value}</pre>;
+    if (head.startsWith("{") || head.startsWith("[")) {
+      try {
+        return <StructuredData value={JSON.parse(value)} label="Structured value" />;
+      } catch {
+        return <pre style={monoBlock}>{value}</pre>;
+      }
+    }
+    if (value.length > CODE_LOOK_MAX || value.indexOf("\n") !== -1) return <pre style={monoBlock}>{value}</pre>;
     return <span>{value}</span>;
   }
 
   if (depth >= MAX_DEPTH) {
-    // Depth cap: fall back to a scrollable pretty-print so a runaway payload
-    // can never blow up the layout. Cycles are rare in JSON-shaped values;
-    // if `JSON.stringify` throws, `String()` is honest fallback.
-    let text: string;
-    try {
-      text = JSON.stringify(value, null, 2);
-    } catch {
-      text = String(value);
-    }
-    return <pre style={monoBlock}>{text}</pre>;
+    return <span style={emDash}>—</span>;
   }
 
   if (Array.isArray(value)) {
@@ -143,22 +135,7 @@ export function StructuredValue({
       else nonObject += 1;
     }
     if (rows.length === 0) {
-      // Mixed array with no object rows and no all-primitive path taken:
-      // stringify each item into a chip. Not a rendered "raw JSON blob" --
-      // just a per-item label since a compact table has no columns to project.
-      return (
-        <span style={chipRow}>
-          {value.map((x, i) => {
-            let label: string;
-            try {
-              label = JSON.stringify(x);
-            } catch {
-              label = String(x);
-            }
-            return <span key={i} style={chip}>{label}</span>;
-          })}
-        </span>
-      );
+      return <StructuredData value={value} label="Structured list" depth={depth + 1} />;
     }
     const cols = unionKeys(rows);
     const shown = rows.slice(0, MAX_TABLE_ROWS);
