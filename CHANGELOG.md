@@ -5,6 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.143] - 2026-11-24 -- Pentest workflow compilation and execution reliability
+
+### Added
+- Campaign preflight supports strict, capability-degraded, and explicitly disabled modes, with persisted unavailable action kinds and operator-visible warnings.
+- Planner context includes bounded per-kind observation digests, observation-backed finding proposals, and persistent rejection/warning events.
+- The pinned Nuclei corpus supports bounded template selection with an integrity-checked non-intrusive subset, and campaign policy controls ZAP phase durations.
+
+### Changed
+- Sandbox defaults provide manifest-driven process limits, writable HOME/XDG paths, and backend-owned proxy semantics without weakening target-only egress.
+- Katana timeouts follow request policy, raw HTTP traffic is measured and aborted at budget ceilings, and the toolchain image pins the real bbot wheel.
+
+### Fixed
+- Asset and finding cursors use their persisted timestamps and reject malformed cursors with 422 responses.
+- URL-seeded discovery, per-intent input validation, structured HTTP network errors, operator-answer wakes, findings reconciliation, and close taxonomy no longer lose or misclassify work.
+- ZAP tolerates target spider errors, accepts warning exits only with valid sealed reports, and ingests parseable partial reports without hiding timeouts.
+
+### Upgrade notes
+- Run `make migrate`, rebuild the pinned pentest toolchain image, and restart backend and pentest workers. Migration 173 records unavailable action kinds. Existing action manifest digests remain valid.
+
 ## [0.6.142] - 2026-11-23 -- Campaign reliability and evidence integrity
 
 ### Added

@@ -434,6 +434,34 @@ class TestSubmit:
             record = s.exec(select(TaskRecord).where(TaskRecord.id == handle.task_id)).first()
             assert record.status == TaskStatus.QUEUED
 
+    async def test_terminal_predecessor_does_not_swallow_identical_enqueue(self, test_db) -> None:
+        from aila.platform.tasks import TaskQueue, TaskRecord, TaskStatus
+
+        fn, _mod = _make_module_fn(
+            "aila.modules.vulnerability.tasks.terminal_dedup_mod", "terminal_fn",
+        )
+
+        tq = TaskQueue(
+            config_registry=MockRegistry(redis_url="redis://127.0.0.1:6379/0"),
+            module_id="vulnerability",
+        )
+        _install_fake_broker(tq, ok=True)
+        first = await tq.submit(track="vuln", fn=fn, kwargs={"target": "10.0.0.9"})
+
+        with session_scope() as s:
+            record = s.exec(select(TaskRecord).where(TaskRecord.id == first.task_id)).first()
+            record.status = TaskStatus.DONE
+            s.add(record)
+            s.commit()
+
+        # The terminal predecessor is no longer an active dedup candidate.
+        second = await tq.submit(track="vuln", fn=fn, kwargs={"target": "10.0.0.9"})
+        assert second.task_id != first.task_id
+
+        # While the new row is still queued, an identical enqueue dedups to it.
+        third = await tq.submit(track="vuln", fn=fn, kwargs={"target": "10.0.0.9"})
+        assert third.task_id == second.task_id
+
     async def test_submit_raises_on_cross_module_fn(self, test_db) -> None:
         from aila.platform.tasks import TaskQueue
 

@@ -231,7 +231,8 @@ All fields from `PlatformConfigSchema` (registered under namespace `platform`):
 | `AILA_PLATFORM_EVIDENCE_CHUNK_BYTES` | `262144` | int | Plaintext bytes per AES-GCM evidence frame |
 | `AILA_PLATFORM_EVIDENCE_MAX_ARTIFACT_BYTES` | `268435456` | int | Maximum plaintext bytes in one evidence artifact |
 | `AILA_PLATFORM_SANDBOX_BACKEND` | `none` | str | Sandbox backend: `none`, `nsjail`, `firecracker`, or `oci` |
-| `AILA_PLATFORM_SANDBOX_OCI_BIN` | `docker` | str | Remote Docker or Podman binary for the OCI backend |
+| `AILA_PLATFORM_SANDBOX_OCI_BIN` | `docker` | str | Remote Docker or Podman binary for the OCI backend. Every OCI run sets `HOME` and `XDG_CACHE_HOME`/`XDG_CONFIG_HOME`/`XDG_DATA_HOME` under the workdir, blanks `HTTP_PROXY`/`HTTPS_PROXY`/`ALL_PROXY` (and lowercase forms), and sets `NO_PROXY=*`; callers cannot set proxy variables or point `HOME`/`XDG_*` outside the workdir |
+| `AILA_PLATFORM_SANDBOX_PIDS_LIMIT` | `4096` | int | Default `--pids-limit` for sandbox runs whose spec leaves pids at 4096; clamped to a hard ceiling of 8192 |
 | `AILA_PLATFORM_WORKER_HEALTH_TRACKS` | `default,vr,vulnerability,forensics,malware,pentest,pentest_runtime,forensics_readiness,reporting` | str CSV | ARQ tracks expected to have live worker heartbeats |
 | `AILA_PLATFORM_LLM_PIPELINE_CLASSIFY_DEFAULT` | `true` | bool | LLM pipeline classify stage default-on |
 | `AILA_PLATFORM_LLM_PIPELINE_VALIDATE_DEFAULT` | `true` | bool | LLM pipeline validate stage default-on |

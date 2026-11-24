@@ -62,7 +62,6 @@ _TIMEOUT_EXIT = 124
 _KILL_AFTER = "5s"
 # SSH idle-timeout margin on top of the wall-clock limit, matching nsjail.
 _SSH_IDLE_MARGIN_S = 30.0
-_PIDS_LIMIT = 128
 
 _TRANSPORT_ERRORS: tuple[type[BaseException], ...] = (
     paramiko.SSHException,
@@ -78,16 +77,65 @@ _TRANSPORT_ERRORS: tuple[type[BaseException], ...] = (
 # equals signs) would reshape the ``--mount`` option string.
 _MOUNT_PATH_RE = re.compile(r"[A-Za-z0-9._/-]+")
 _ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+# Home and XDG base directories, each relative to the workdir. The root
+# filesystem is read-only, so these must point into the writable workspace
+# bind mount; a caller may override them only with a path under the workdir.
+_WORKDIR_ENV_SUFFIXES: dict[str, str] = {
+    "HOME": "",
+    "XDG_CACHE_HOME": "/.cache",
+    "XDG_CONFIG_HOME": "/.config",
+    "XDG_DATA_HOME": "/.local/share",
+}
+# Proxy variables are blanked on every run so an image-baked proxy cannot
+# route around the per-run egress policy. Callers may not set them.
+_PROXY_ENV_NAMES: tuple[str, ...] = (
+    "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy",
+)
+_NO_PROXY_ENV: dict[str, str] = {"NO_PROXY": "*", "no_proxy": "*"}
+
+
+def _is_reserved_proxy_name(name: str) -> bool:
+    lowered = name.lower()
+    return lowered == "no_proxy" or lowered.endswith("_proxy")
+
+
+def _confined_to_workdir(value: str, workdir: str) -> bool:
+    if not _MOUNT_PATH_RE.fullmatch(value) or ".." in value.split("/"):
+        return False
+    return value == workdir or value.startswith(f"{workdir}/")
+
+
 def _check_guest_layout(spec: SandboxSpec) -> None:
-    """Reject workdir and env values that would corrupt the runtime argv."""
+    """Reject workdir and env values that would corrupt the runtime argv or escape the workspace."""
     if spec.workdir == "/" or not _MOUNT_PATH_RE.fullmatch(spec.workdir):
         raise SandboxExecutionError(
             f"oci sandbox workdir {spec.workdir!r} must be an absolute path of letters, digits, "
             "'.', '_', '-' and '/' (not '/' itself)."
         )
-    for name in spec.env:
+    for name, value in spec.env.items():
         if not _ENV_NAME_RE.fullmatch(name):
             raise SandboxExecutionError(f"oci sandbox env name {name!r} is not a valid variable name.")
+        if _is_reserved_proxy_name(name):
+            raise SandboxExecutionError(
+                f"oci sandbox env {name!r} is reserved: the backend sets the guest proxy policy."
+            )
+        if name in _WORKDIR_ENV_SUFFIXES and not _confined_to_workdir(value, spec.workdir):
+            raise SandboxExecutionError(
+                f"oci sandbox env {name!r}={value!r} must be a path under workdir {spec.workdir!r}."
+            )
+
+
+def _guest_env(spec: SandboxSpec) -> dict[str, str]:
+    """Return the full guest environment: writable home/XDG, blanked proxies, caller env.
+
+    Assumes ``_check_guest_layout`` has already validated ``spec.env``.
+    """
+    env = {name: f"{spec.workdir}{suffix}" for name, suffix in _WORKDIR_ENV_SUFFIXES.items()}
+    env.update(spec.env)
+    env.update({name: "" for name in _PROXY_ENV_NAMES})
+    env.update(_NO_PROXY_ENV)
+    return env
 
 
 def build_oci_run_argv(
@@ -123,7 +171,7 @@ def build_oci_run_argv(
         "--read-only",
         "--cap-drop", "ALL",
         "--security-opt", "no-new-privileges",
-        "--pids-limit", str(_PIDS_LIMIT),
+        "--pids-limit", str(int(spec.pids_limit)),
         "--memory", memory,
         "--cpus", str(int(spec.vcpu)),
         "--tmpfs", f"/tmp:rw,noexec,nosuid,size={memory}",
@@ -139,7 +187,7 @@ def build_oci_run_argv(
                 argv.extend(["--add-host", f"{destination.host}:{destination.address}"])
     if spec.stdin is not None:
         argv.append("--interactive")
-    for name, value in sorted(spec.env.items()):
+    for name, value in sorted(_guest_env(spec).items()):
         argv.extend(["-e", f"{name}={value}"])
     argv.append(image)
     argv.extend(spec.argv)

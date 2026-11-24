@@ -299,6 +299,33 @@ def test_policy_honours_explicit_non_default_vcpu_and_mem() -> None:
     assert backend.received.mem_mb == 768
 
 
+def test_policy_applies_platform_pids_default_when_spec_default() -> None:
+    cfg = _cfg(default_pids_limit=2048)
+    backend = _StubBackend(response=SandboxResult(backend="stub", exit_code=0))
+    service = _make_service(cfg, backend)
+    asyncio.run(service.run(SandboxSpec(argv=["/bin/true"])))
+    assert backend.received is not None
+    assert backend.received.pids_limit == 2048
+
+
+def test_policy_honours_explicit_non_default_pids_limit() -> None:
+    cfg = _cfg(default_pids_limit=2048)
+    backend = _StubBackend(response=SandboxResult(backend="stub", exit_code=0))
+    service = _make_service(cfg, backend)
+    asyncio.run(service.run(SandboxSpec(argv=["/bin/true"], pids_limit=1024)))
+    assert backend.received is not None
+    assert backend.received.pids_limit == 1024
+
+
+def test_policy_clamps_platform_pids_default_to_ceiling() -> None:
+    cfg = _cfg(default_pids_limit=20000)
+    backend = _StubBackend(response=SandboxResult(backend="stub", exit_code=0))
+    service = _make_service(cfg, backend)
+    asyncio.run(service.run(SandboxSpec(argv=["/bin/true"])))
+    assert backend.received is not None
+    assert backend.received.pids_limit == 8192
+
+
 # ---------------------------------------------------------------------------
 # 4. Output cap -- stdout > cap sets truncated=True
 # ---------------------------------------------------------------------------
