@@ -574,10 +574,11 @@ class PlatformConfigSchema(BaseModel):
     # sandbox_allow_network:
     #   Master switch. When False the service forces every ``spec.network``
     #   to False regardless of the caller's request.
-    # sandbox_vcpu / _mem_mb:
+    # sandbox_vcpu / _mem_mb / _pids_limit:
     #   Per-run defaults when the caller left them at the SandboxSpec
-    #   defaults (1 vCPU, 512 MiB). Callers that pass explicit non-default
-    #   values are honoured up to the policy ceiling the backend enforces.
+    #   defaults (1 vCPU, 512 MiB, 4096 pids). Callers that pass explicit
+    #   non-default values are honoured up to the policy ceiling the backend
+    #   enforces. The pids ceiling is 8192 for both config and callers.
     # sandbox_output_max_bytes:
     #   Byte cap applied to stdout, stderr, and every collected output
     #   file. Hitting the cap sets ``SandboxResult.truncated = True``.
@@ -674,6 +675,12 @@ class PlatformConfigSchema(BaseModel):
     sandbox_allow_network: bool = False
     sandbox_vcpu: int = 1
     sandbox_mem_mb: int = 512
+    sandbox_pids_limit: int = Field(
+        default=4096,
+        ge=1,
+        le=8192,
+        description="Default --pids-limit for OCI sandbox runs whose spec leaves pids at the 4096 default.",
+    )
     sandbox_output_max_bytes: int = 1_048_576
     sandbox_nsjail_bin: str = "nsjail"
     sandbox_oci_bin: str = "docker"

@@ -208,6 +208,12 @@ class SandboxSpec(BaseModel):
     )
     vcpu: int = Field(default=1, ge=1, description="Virtual CPUs assigned to the sandbox (Firecracker only).")
     mem_mb: int = Field(default=512, ge=1, description="Memory ceiling in MiB.")
+    pids_limit: int = Field(
+        default=4096,
+        ge=1,
+        le=8192,
+        description="Maximum number of container processes and threads.",
+    )
     shm_mb: int = Field(default=0, ge=0, le=512, description="Private /dev/shm size in MiB; zero uses the runtime default.")
     workdir: str = Field(
         default="/work",

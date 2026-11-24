@@ -60,6 +60,8 @@ _log = logging.getLogger(__name__)
 # the policy cap.
 _SPEC_DEFAULT_VCPU = 1
 _SPEC_DEFAULT_MEM_MB = 512
+_SPEC_DEFAULT_PIDS_LIMIT = 4096
+_MAX_PIDS_LIMIT = 8192
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +92,7 @@ class SandboxConfig:
     system_name: str = ""
     system_id: int | None = None
     oci_bin: str = "docker"
+    default_pids_limit: int = _SPEC_DEFAULT_PIDS_LIMIT
 
 
 @dataclass(frozen=True, slots=True)
@@ -309,10 +312,14 @@ class SandboxService:
             effective_timeout = max(1.0, float(cfg.default_timeout_s))
         effective_vcpu = spec.vcpu if spec.vcpu != _SPEC_DEFAULT_VCPU else cfg.default_vcpu
         effective_mem = spec.mem_mb if spec.mem_mb != _SPEC_DEFAULT_MEM_MB else cfg.default_mem_mb
+        effective_pids = (
+            spec.pids_limit if spec.pids_limit != _SPEC_DEFAULT_PIDS_LIMIT else cfg.default_pids_limit
+        )
         return spec.model_copy(update={
             "timeout_s": effective_timeout,
             "vcpu": max(1, int(effective_vcpu)),
             "mem_mb": max(1, int(effective_mem)),
+            "pids_limit": min(max(1, int(effective_pids)), _MAX_PIDS_LIMIT),
         })
 
     async def _resolve_managed_system(
@@ -716,6 +723,11 @@ class SandboxService:
         except (TypeError, ValueError):
             default_mem_mb = 512
         try:
+            default_pids_limit = int(await _get("sandbox_pids_limit", _SPEC_DEFAULT_PIDS_LIMIT))
+        except (TypeError, ValueError):
+            default_pids_limit = _SPEC_DEFAULT_PIDS_LIMIT
+        default_pids_limit = min(max(1, default_pids_limit), _MAX_PIDS_LIMIT)
+        try:
             output_max_bytes = int(await _get("sandbox_output_max_bytes", 1_048_576))
         except (TypeError, ValueError):
             output_max_bytes = 1_048_576
@@ -751,6 +763,7 @@ class SandboxService:
             allow_network=allow_network,
             default_vcpu=default_vcpu,
             default_mem_mb=default_mem_mb,
+            default_pids_limit=default_pids_limit,
             output_max_bytes=output_max_bytes,
             nsjail_bin=nsjail_bin,
             firecracker_bin=firecracker_bin,
