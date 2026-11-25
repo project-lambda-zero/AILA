@@ -175,12 +175,12 @@ class SandboxSpec(BaseModel):
         default=None,
         description="Optional UTF-8 text to feed the program on stdin.",
     )
-    input_files: dict[str, str] = Field(
+    input_files: dict[str, str | bytes] = Field(
         default_factory=dict,
         description=(
-            "Relative-path -> UTF-8 content. Each entry is written into the "
-            "sandbox workdir before the program runs. Paths must be relative "
-            "and free of '..' segments."
+            "Relative-path -> UTF-8 text or raw binary content. Each entry is "
+            "written into the sandbox workdir before the program runs. Paths "
+            "must be relative and free of '..' segments."
         ),
     )
     env: dict[str, str] = Field(

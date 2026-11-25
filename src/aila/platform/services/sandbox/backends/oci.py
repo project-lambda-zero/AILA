@@ -50,7 +50,13 @@ from .base import (
     probe_binary,
     stage_inputs,
 )
-from .oci_egress import scoped_oci_egress
+from .oci_egress import scoped_conntrack_collector, scoped_oci_egress
+from .oci_flow import (
+    ConntrackFlowLedger,
+    OciFlowTelemetry,
+    OciTelemetryMode,
+    conntrack_mark_for_run,
+)
 
 __all__ = ["OciBackend", "build_oci_run_argv"]
 
@@ -201,6 +207,9 @@ class OciBackend:
     supports_network = True
     enforces_egress = True
 
+    def __init__(self, *, flow_telemetry: OciFlowTelemetry | None = None) -> None:
+        self._flow_telemetry = flow_telemetry
+
     async def run(
         self,
         spec: SandboxSpec,
@@ -224,14 +233,26 @@ class OciBackend:
 
         runtime = await probe_binary(ssh, host_payload, cfg.oci_bin)
         timeout_bin = await probe_binary(ssh, host_payload, "timeout")
+        telemetry = self._flow_telemetry
+        telemetry_on = telemetry is not None and telemetry.mode is not OciTelemetryMode.OFF
         egress_tools: dict[str, str] = {}
         if spec.network:
             for binary in ("nft", "sudo", "ip"):
                 egress_tools[binary] = await probe_binary(ssh, host_payload, binary)
+        if spec.network and telemetry_on:
+            egress_tools["conntrack"] = await probe_binary(ssh, host_payload, "conntrack")
         uid, gid = await _resolve_identity(ssh, host_payload)
         await _require_local_image(ssh, host_payload, runtime, spec.image)
 
         async with host_workspace(ssh, host_payload) as workspace:
+            run_id = workspace.run_id
+            ledger: ConntrackFlowLedger | None = None
+            conntrack_mark: int | None = None
+            if spec.network and telemetry is not None and telemetry_on:
+                conntrack_mark = conntrack_mark_for_run(run_id)
+                ledger = ConntrackFlowLedger(
+                    telemetry, sandbox_run_id=run_id, conntrack_mark=conntrack_mark
+                )
             if spec.network:
                 if spec.egress is None:
                     raise SandboxExecutionError("networked OCI execution requires an exact egress policy")
@@ -242,31 +263,54 @@ class OciBackend:
                     nft=egress_tools["nft"],
                     sudo=egress_tools["sudo"],
                     ip=egress_tools["ip"],
-                    run_id=workspace.run_id,
+                    run_id=run_id,
                     policy=spec.egress,
+                    conntrack_mark=conntrack_mark,
                 )
             else:
                 egress_context = nullcontext("none")
-            async with egress_context as network_mode:
-                await stage_inputs(ssh, host_payload, workspace, spec.input_files)
-                result = await self._run_in_workspace(
-                    spec, ssh, host_payload, cfg,
-                    runtime=runtime,
-                    timeout_bin=timeout_bin,
-                    image=spec.image,
-                    uid=uid,
-                    gid=gid,
-                    network_mode=network_mode,
-                    workspace=workspace,
-                    on_stdout=on_stdout,
-                    on_stderr=on_stderr,
-                    cancel_requested=cancel_requested,
-                )
-                output_cap = min(cfg.output_max_bytes, spec.max_output_bytes or cfg.output_max_bytes)
-                files, files_truncated = await collect_outputs(
-                    ssh, host_payload, workspace, spec.output_globs,
-                    per_file_cap=output_cap, aggregate_cap=output_cap,
-                )
+            try:
+                async with egress_context as network_mode:
+                    collector_context = (
+                        scoped_conntrack_collector(
+                            ssh,
+                            host_payload,
+                            sudo=egress_tools["sudo"],
+                            conntrack=egress_tools["conntrack"],
+                            ledger=ledger,
+                            run_id=run_id,
+                            conntrack_mark=conntrack_mark,
+                            enforce=telemetry.mode is OciTelemetryMode.ENFORCE,
+                            timeout_seconds=spec.timeout_s,
+                        )
+                        if ledger is not None and telemetry is not None
+                        else nullcontext()
+                    )
+                    async with collector_context:
+                        if ledger is not None:
+                            await ledger.start()
+                        await stage_inputs(ssh, host_payload, workspace, spec.input_files)
+                        result = await self._run_in_workspace(
+                            spec, ssh, host_payload, cfg,
+                            runtime=runtime,
+                            timeout_bin=timeout_bin,
+                            image=spec.image,
+                            uid=uid,
+                            gid=gid,
+                            network_mode=network_mode,
+                            workspace=workspace,
+                            on_stdout=on_stdout,
+                            on_stderr=on_stderr,
+                            cancel_requested=cancel_requested,
+                        )
+                        output_cap = min(cfg.output_max_bytes, spec.max_output_bytes or cfg.output_max_bytes)
+                        files, files_truncated = await collect_outputs(
+                            ssh, host_payload, workspace, spec.output_globs,
+                            per_file_cap=output_cap, aggregate_cap=output_cap,
+                        )
+            finally:
+                if ledger is not None:
+                    await ledger.finish()
         result.output_files = files
         if files_truncated:
             result.truncated = True

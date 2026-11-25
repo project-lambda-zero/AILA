@@ -23,7 +23,7 @@ import logging
 import math
 import os
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass as _dc_dataclass
 from typing import Annotated, Any, Protocol
@@ -471,10 +471,87 @@ class ConfigRegistry:
             return None
         return _ResolvedField(annotation=best.value_type, default=best.default)
 
+    def _canonical_key(self, namespace: str, key: str) -> str:
+        """Map an exact alias key to its canonical field key.
+
+        Aliases are declared per schema in ``__config_aliases__`` (alias key ->
+        canonical field key). Lookup is exact-match only: no prefix or fuzzy
+        matching. Keys without an alias pass through unchanged. Every read,
+        write, env-name derivation and DB row uses the canonical key, so an alias
+        is a synonym and never a second stored value.
+        """
+        schema = self._schemas.get(namespace)
+        if schema is None:
+            return key
+        aliases: Mapping[str, str] = getattr(schema, "__config_aliases__", {})
+        return aliases.get(key, key)
+
+    def _dependencies(self, namespace: str, key: str) -> tuple[str, ...]:
+        """Other canonical fields a schema needs to validate ``key`` (may be empty).
+
+        Declared per schema in ``__config_dependencies__`` (field -> fields its
+        cross-field rules read). Schemas without the attribute have no dependencies.
+        """
+        schema = self._schemas.get(namespace)
+        if schema is None:
+            return ()
+        dependencies: Mapping[str, tuple[str, ...]] = getattr(
+            schema, "__config_dependencies__", {}
+        )
+        return tuple(dependencies.get(key, ()))
+
+    async def _validate_with_dependencies(
+        self,
+        namespace: str,
+        key: str,
+        cast_new: Any,
+        dependencies: tuple[str, ...],
+        schema: type[BaseModel],
+    ) -> None:
+        """Run the schema's cross-field rules for a single-key write.
+
+        Reads only the declared dependencies (env > cache > DB > default via
+        :meth:`get`), overlays the candidate, and validates a model built from
+        those values. Fields outside the dependency closure take schema defaults,
+        which is sound because the declared closure is exactly what the
+        cross-field rules read. Nothing is written if validation fails.
+        """
+        merged: dict[str, Any] = {dep: await self.get(namespace, dep) for dep in dependencies}
+        merged[key] = cast_new
+        try:
+            schema.model_validate(merged)
+        except ValidationError as exc:
+            constraint = exc.errors()[0]["msg"]
+            raise ValueError(f"Invalid value for {namespace}.{key}: {constraint}") from None
+
     async def register(self, namespace: str, schema_class: type[BaseModel]) -> None:
         """Register a Pydantic schema for namespace. Persists defaults to DB on
         first registration -- existing DB rows are left unchanged (user overrides
         survive re-registration)."""
+        aliases: Mapping[str, str] = getattr(schema_class, "__config_aliases__", {})
+        for alias, canonical in aliases.items():
+            if alias in schema_class.model_fields:
+                raise ValueError(
+                    f"Alias '{alias}' in namespace '{namespace}' shadows a canonical field."
+                )
+            if canonical not in schema_class.model_fields:
+                raise ValueError(
+                    f"Alias '{alias}' in namespace '{namespace}' targets unknown field '{canonical}'."
+                )
+        dependencies: Mapping[str, tuple[str, ...]] = getattr(
+            schema_class, "__config_dependencies__", {}
+        )
+        for field_name, deps in dependencies.items():
+            if field_name not in schema_class.model_fields:
+                raise ValueError(
+                    f"Dependency map in namespace '{namespace}' names unknown field '{field_name}'."
+                )
+            for dep in deps:
+                if dep == field_name or dep not in schema_class.model_fields:
+                    raise ValueError(
+                        f"Dependency '{dep}' of '{field_name}' in namespace '{namespace}' "
+                        "must be a different declared field."
+                    )
         self._schemas[namespace] = schema_class
         defaults = schema_class()
         async with async_session_scope() as session:
@@ -510,6 +587,7 @@ class ConfigRegistry:
         happens BEFORE the cache read; a fresher version drops the entry
         (treated as a cache miss) forcing a DB refetch.
         """
+        key = self._canonical_key(namespace, key)
         if env_name is None:
             env_name = f"AILA_{namespace.upper()}_{key.upper()}"
         env_val = os.environ.get(env_name)
@@ -583,6 +661,7 @@ class ConfigRegistry:
         cannot be acquired from a sync context, so it is intentionally not used
         here.
         """
+        key = self._canonical_key(namespace, key)
         env_name = f"AILA_{namespace.upper()}_{key.upper()}"
         env_val = os.environ.get(env_name)
 
@@ -642,6 +721,7 @@ class ConfigRegistry:
         is no row). Response builders use this to surface WHICH source is live
         alongside the stored fallback -- the transparency that ``get`` hides.
         """
+        key = self._canonical_key(namespace, key)
         env_key = f"AILA_{namespace.upper()}_{key.upper()}"
         env_value = os.environ.get(env_key)
 
@@ -698,6 +778,7 @@ class ConfigRegistry:
         For security-relevant keys (D-11), emits a config_security_change
         PlatformEvent with old and new values after a successful write (D-12).
         """
+        key = self._canonical_key(namespace, key)
         schema = self._schemas.get(namespace)
         if schema is None:
             raise ValueError(f"No schema registered for namespace '{namespace}'.")
@@ -709,6 +790,11 @@ class ConfigRegistry:
         # the unchanged-value short-circuit and before any DB access, so an
         # invalid value can never be accepted by matching the stored value.
         cast_new = _validate_field_value(namespace, key, field_info, value)
+        dependencies = self._dependencies(namespace, key)
+        if dependencies:
+            await self._validate_with_dependencies(
+                namespace, key, cast_new, dependencies, schema
+            )
 
         # Capture old value BEFORE write for audit (D-12: read old before write)
         old_value = await self.get(namespace, key)

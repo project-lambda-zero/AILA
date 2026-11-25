@@ -165,9 +165,12 @@ async def stage_inputs(
     ssh: SSHService,
     host_payload,
     workspace: HostWorkspace,
-    files: dict[str, str],
+    files: dict[str, str | bytes],
 ) -> None:
     """Upload ``files`` into ``workspace.remote_root``.
+
+    ``str`` values are staged as their UTF-8 encoding; ``bytes`` values are
+    staged verbatim.
 
     Each key is a workdir-relative path (already validated by
     :class:`SandboxSpec`). Parent directories are created with a single
@@ -190,8 +193,11 @@ async def stage_inputs(
         # heredoc-piping over SSH: heredocs mangle binary content
         # and inflate the command line beyond argv limits for large
         # inputs. The local tempfile is deleted on function exit.
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as fh:
-            fh.write(content)
+        # Binary mode: no newline translation, and bytes are written unchanged.
+        # ``str`` values are encoded as UTF-8 explicitly.
+        payload = content.encode("utf-8") if isinstance(content, str) else content
+        with tempfile.NamedTemporaryFile("wb", delete=False) as fh:
+            fh.write(payload)
             local_path = fh.name
         try:
             await ssh.upload_file(host_payload, local_path, remote_target)

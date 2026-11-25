@@ -5,6 +5,25 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.144] - 2026-11-25 -- Adaptive dynamic pentest and evidence expansion
+
+### Added
+- Expanded the central live-action catalog to 41 typed kinds with immutable manifests, structured parsers, observations, and durable action, asset, finding, and artifact lineage.
+- Added adaptive target-health and pressure controls, bounded subscans, operator visibility, effectiveness reporting, ARTEX shell guards, scope versions, durable todos, evidence indexing, and a campaign resource workspace.
+- Added reviewed wordlist tiers, network attribution, SIEM export, native credential/TLS integrations, raw-result evidence indexing, and self-hosted Interactsh allocation, polling, and sealed evidence.
+- Added reproducible Juice Shop, WebGoat, and crAPI labs with loopback-only publication, disposable-lab authorization, bounded evidence, and deterministic teardown.
+
+### Changed
+- The published live toolchain is now a native ARM64 Kali image with content-pinned tools, Java 21, .NET 8, Python 3.12, and Playwright 1.59.1. The non-root read-only image passed all 42 runtime smoke checks and all three application-lab validations.
+- Existing persisted action-manifest hashes remain valid; additive manifest fields remain omitted when absent.
+
+### Fixed
+- Turbo Intruder BURP2 now executes the real single-packet HTTP/2 transport, records two-response loopback evidence without blocking shutdown, and preserves honest inconclusive results for responses that cannot satisfy a business-state oracle.
+- Lab probes disable ANSI status decoration, use explicit target ports, and separate the internal scanner network from the loopback-publication network. crAPI MongoDB uses a bounded WiredTiger cache and a verified 512 MiB memory limit.
+
+### Upgrade notes
+- Run `make migrate`, restart the frontend, backend, and pentest workers, and pre-pull `ghcr.io/project-lambda-zero/aila-pentest@sha256:af654f2b355aa5edf5c2236f87c954ca224603daa29641df6884212c4247b2c0`. Migration 174 adds the dynamic-pentest persistence contracts. The new image supplies linux/arm64 only; AMD64 execution is not included in this release.
+
 ## [0.6.143] - 2026-11-24 -- Pentest workflow compilation and execution reliability
 
 ### Added
