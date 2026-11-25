@@ -5,6 +5,121 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.144] - 2026-11-25 -- Adaptive dynamic pentest and evidence expansion
+
+### Added
+- Expanded the central live-action catalog to 41 typed kinds with immutable manifests, structured parsers, observations, and durable action, asset, finding, and artifact lineage.
+- Added adaptive target-health and pressure controls, bounded subscans, operator visibility, effectiveness reporting, ARTEX shell guards, scope versions, durable todos, evidence indexing, and a campaign resource workspace.
+- Added reviewed wordlist tiers, network attribution, SIEM export, native credential/TLS integrations, raw-result evidence indexing, and self-hosted Interactsh allocation, polling, and sealed evidence.
+- Added reproducible Juice Shop, WebGoat, and crAPI labs with loopback-only publication, disposable-lab authorization, bounded evidence, and deterministic teardown.
+
+### Changed
+- The published live toolchain is now a native ARM64 Kali image with content-pinned tools, Java 21, .NET 8, Python 3.12, and Playwright 1.59.1. The non-root read-only image passed all 42 runtime smoke checks and all three application-lab validations.
+- Existing persisted action-manifest hashes remain valid; additive manifest fields remain omitted when absent.
+
+### Fixed
+- Turbo Intruder BURP2 now executes the real single-packet HTTP/2 transport, records two-response loopback evidence without blocking shutdown, and preserves honest inconclusive results for responses that cannot satisfy a business-state oracle.
+- Lab probes disable ANSI status decoration, use explicit target ports, and separate the internal scanner network from the loopback-publication network. crAPI MongoDB uses a bounded WiredTiger cache and a verified 512 MiB memory limit.
+
+### Upgrade notes
+- Run `make migrate`, restart the frontend, backend, and pentest workers, and pre-pull `ghcr.io/project-lambda-zero/aila-pentest@sha256:af654f2b355aa5edf5c2236f87c954ca224603daa29641df6884212c4247b2c0`. Migration 174 adds the dynamic-pentest persistence contracts. The new image supplies linux/arm64 only; AMD64 execution is not included in this release.
+
+## [0.6.143] - 2026-11-24 -- Pentest workflow compilation and execution reliability
+
+### Added
+- Campaign preflight supports strict, capability-degraded, and explicitly disabled modes, with persisted unavailable action kinds and operator-visible warnings.
+- Planner context includes bounded per-kind observation digests, observation-backed finding proposals, and persistent rejection/warning events.
+- The pinned Nuclei corpus supports bounded template selection with an integrity-checked non-intrusive subset, and campaign policy controls ZAP phase durations.
+
+### Changed
+- Sandbox defaults provide manifest-driven process limits, writable HOME/XDG paths, and backend-owned proxy semantics without weakening target-only egress.
+- Katana timeouts follow request policy, raw HTTP traffic is measured and aborted at budget ceilings, and the toolchain image pins the real bbot wheel.
+
+### Fixed
+- Asset and finding cursors use their persisted timestamps and reject malformed cursors with 422 responses.
+- URL-seeded discovery, per-intent input validation, structured HTTP network errors, operator-answer wakes, findings reconciliation, and close taxonomy no longer lose or misclassify work.
+- ZAP tolerates target spider errors, accepts warning exits only with valid sealed reports, and ingests parseable partial reports without hiding timeouts.
+
+### Upgrade notes
+- Run `make migrate`, rebuild the pinned pentest toolchain image, and restart backend and pentest workers. Migration 173 records unavailable action kinds. Existing action manifest digests remain valid.
+
+## [0.6.142] - 2026-11-23 -- Campaign reliability and evidence integrity
+
+### Added
+
+- Agent creation now collects operational context and immediately starts endpoint onboarding in the same flow.
+- Campaign domain and exploration views expose stable cursor pagination.
+- Campaign preflight verifies the configured toolchain image, browser runtime, executables, and shared Nuclei template IDs before planning.
+
+### Changed
+
+- Enabled team traffic rewrites now apply at each action dispatch while campaign scope remains immutable.
+- Streaming previews and incremental parser results remain visible without invalidating planner snapshots.
+- Bounded action output is enforced uniformly, and truncated or malformed evidence fails closed with explicit counters.
+
+### Fixed
+
+- Failed campaigns can resume, transient enqueue failures reconcile their rows, and autonomous intents retry with bounded attempt identities instead of reporting phantom progress.
+- Planner schema rejection no longer crash-loops; budget settlement, lease reaping, credential tenancy, and cancellation fencing preserve their respective invariants.
+- Parser and finding workflows now preserve soft-404 calibration, query-specific identity, conclusive retest semantics, and live exclusion enforcement.
+
+### Upgrade notes
+
+- Restart the frontend, backend, and campaign workers. No database migration is required.
+
+## [0.6.141] - 2026-11-23 -- Enterprise campaign operations UI
+
+### Changed
+
+- Campaign record grids now use a shared AG Grid surface with solid headers, row controls, resizing, sorting, and accessible labels.
+- Collaboration now uses one chronological Agent/Operator chat thread with inline replies and a compact composer; worker memory remains in its dedicated tab.
+- Action arguments render as a command line, with stdout and stderr shown as separate terminal streams.
+- Agent Pentest resolved configuration is available as a download instead of an inline structured dump.
+
+### Added
+
+- Campaign rows now provide Open, Details, Edit, and Delete actions, including a compact information card and confirmed soft deletion that retains audit and evidence history.
+
+### Upgrade notes
+
+- Run `make migrate`, restart the frontend, and restart backend workers. Migration 172 adds campaign soft-deletion state.
+
+## [0.6.140] - 2026-11-23 -- Expanded operations text
+
+### Fixed
+
+- Long campaign questions, messages, and operations text now render in full instead of collapsed disclosures that reset when switching tabs.
+
+### Upgrade notes
+
+- Restart the frontend. No database migration is required.
+
+## [0.6.139] - 2026-11-23 -- Planner response recovery
+
+### Fixed
+
+- Invalid structured planner responses, including unsupported asset-registration action names, now fail over to the next configured model route instead of aborting the round before any intent can be admitted.
+- Planner guidance now states that parser output owns asset creation and no planner action registers assets.
+
+### Upgrade notes
+
+- Restart campaign workers. No database migration is required.
+
+## [0.6.138] - 2026-11-23 -- Dense campaign operations
+
+### Changed
+
+- Campaign and Agent Endpoint Test views use compact status-first tables for metadata, findings, attempts, turns, and operations. Redesigned panels omit narrative filler and render nested values as labeled fields instead of raw JSON.
+- Campaign relationship graphs use React Flow controls and bounded layouts for large node sets.
+
+### Fixed
+
+- Campaign graphs retain a visible fixed-height canvas and support filtering and node inspection with 91 or more nodes.
+
+### Upgrade notes
+
+- Restart the frontend. No database migration is required.
+
 ## [0.6.137] - 2026-11-23 -- Adaptive pentest research and verification
 
 ### Added

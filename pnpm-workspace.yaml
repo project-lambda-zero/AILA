@@ -34,6 +34,9 @@ catalogs:
     "@tanstack/react-query": 5.101.0
 
   ui:
+    ag-grid-community: 36.3.0
+    ag-grid-react: 36.3.0
+    "@xyflow/react": 13.0.2
     "@monaco-editor/react": 4.7.0
     monaco-editor: 0.55.1
     zustand: 5.0.14

@@ -50,7 +50,13 @@ from .base import (
     probe_binary,
     stage_inputs,
 )
-from .oci_egress import scoped_oci_egress
+from .oci_egress import scoped_conntrack_collector, scoped_oci_egress
+from .oci_flow import (
+    ConntrackFlowLedger,
+    OciFlowTelemetry,
+    OciTelemetryMode,
+    conntrack_mark_for_run,
+)
 
 __all__ = ["OciBackend", "build_oci_run_argv"]
 
@@ -62,7 +68,6 @@ _TIMEOUT_EXIT = 124
 _KILL_AFTER = "5s"
 # SSH idle-timeout margin on top of the wall-clock limit, matching nsjail.
 _SSH_IDLE_MARGIN_S = 30.0
-_PIDS_LIMIT = 128
 
 _TRANSPORT_ERRORS: tuple[type[BaseException], ...] = (
     paramiko.SSHException,
@@ -78,16 +83,65 @@ _TRANSPORT_ERRORS: tuple[type[BaseException], ...] = (
 # equals signs) would reshape the ``--mount`` option string.
 _MOUNT_PATH_RE = re.compile(r"[A-Za-z0-9._/-]+")
 _ENV_NAME_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+
+# Home and XDG base directories, each relative to the workdir. The root
+# filesystem is read-only, so these must point into the writable workspace
+# bind mount; a caller may override them only with a path under the workdir.
+_WORKDIR_ENV_SUFFIXES: dict[str, str] = {
+    "HOME": "",
+    "XDG_CACHE_HOME": "/.cache",
+    "XDG_CONFIG_HOME": "/.config",
+    "XDG_DATA_HOME": "/.local/share",
+}
+# Proxy variables are blanked on every run so an image-baked proxy cannot
+# route around the per-run egress policy. Callers may not set them.
+_PROXY_ENV_NAMES: tuple[str, ...] = (
+    "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy",
+)
+_NO_PROXY_ENV: dict[str, str] = {"NO_PROXY": "*", "no_proxy": "*"}
+
+
+def _is_reserved_proxy_name(name: str) -> bool:
+    lowered = name.lower()
+    return lowered == "no_proxy" or lowered.endswith("_proxy")
+
+
+def _confined_to_workdir(value: str, workdir: str) -> bool:
+    if not _MOUNT_PATH_RE.fullmatch(value) or ".." in value.split("/"):
+        return False
+    return value == workdir or value.startswith(f"{workdir}/")
+
+
 def _check_guest_layout(spec: SandboxSpec) -> None:
-    """Reject workdir and env values that would corrupt the runtime argv."""
+    """Reject workdir and env values that would corrupt the runtime argv or escape the workspace."""
     if spec.workdir == "/" or not _MOUNT_PATH_RE.fullmatch(spec.workdir):
         raise SandboxExecutionError(
             f"oci sandbox workdir {spec.workdir!r} must be an absolute path of letters, digits, "
             "'.', '_', '-' and '/' (not '/' itself)."
         )
-    for name in spec.env:
+    for name, value in spec.env.items():
         if not _ENV_NAME_RE.fullmatch(name):
             raise SandboxExecutionError(f"oci sandbox env name {name!r} is not a valid variable name.")
+        if _is_reserved_proxy_name(name):
+            raise SandboxExecutionError(
+                f"oci sandbox env {name!r} is reserved: the backend sets the guest proxy policy."
+            )
+        if name in _WORKDIR_ENV_SUFFIXES and not _confined_to_workdir(value, spec.workdir):
+            raise SandboxExecutionError(
+                f"oci sandbox env {name!r}={value!r} must be a path under workdir {spec.workdir!r}."
+            )
+
+
+def _guest_env(spec: SandboxSpec) -> dict[str, str]:
+    """Return the full guest environment: writable home/XDG, blanked proxies, caller env.
+
+    Assumes ``_check_guest_layout`` has already validated ``spec.env``.
+    """
+    env = {name: f"{spec.workdir}{suffix}" for name, suffix in _WORKDIR_ENV_SUFFIXES.items()}
+    env.update(spec.env)
+    env.update({name: "" for name in _PROXY_ENV_NAMES})
+    env.update(_NO_PROXY_ENV)
+    return env
 
 
 def build_oci_run_argv(
@@ -123,7 +177,7 @@ def build_oci_run_argv(
         "--read-only",
         "--cap-drop", "ALL",
         "--security-opt", "no-new-privileges",
-        "--pids-limit", str(_PIDS_LIMIT),
+        "--pids-limit", str(int(spec.pids_limit)),
         "--memory", memory,
         "--cpus", str(int(spec.vcpu)),
         "--tmpfs", f"/tmp:rw,noexec,nosuid,size={memory}",
@@ -139,7 +193,7 @@ def build_oci_run_argv(
                 argv.extend(["--add-host", f"{destination.host}:{destination.address}"])
     if spec.stdin is not None:
         argv.append("--interactive")
-    for name, value in sorted(spec.env.items()):
+    for name, value in sorted(_guest_env(spec).items()):
         argv.extend(["-e", f"{name}={value}"])
     argv.append(image)
     argv.extend(spec.argv)
@@ -152,6 +206,9 @@ class OciBackend:
     name = "oci"
     supports_network = True
     enforces_egress = True
+
+    def __init__(self, *, flow_telemetry: OciFlowTelemetry | None = None) -> None:
+        self._flow_telemetry = flow_telemetry
 
     async def run(
         self,
@@ -176,14 +233,26 @@ class OciBackend:
 
         runtime = await probe_binary(ssh, host_payload, cfg.oci_bin)
         timeout_bin = await probe_binary(ssh, host_payload, "timeout")
+        telemetry = self._flow_telemetry
+        telemetry_on = telemetry is not None and telemetry.mode is not OciTelemetryMode.OFF
         egress_tools: dict[str, str] = {}
         if spec.network:
             for binary in ("nft", "sudo", "ip"):
                 egress_tools[binary] = await probe_binary(ssh, host_payload, binary)
+        if spec.network and telemetry_on:
+            egress_tools["conntrack"] = await probe_binary(ssh, host_payload, "conntrack")
         uid, gid = await _resolve_identity(ssh, host_payload)
         await _require_local_image(ssh, host_payload, runtime, spec.image)
 
         async with host_workspace(ssh, host_payload) as workspace:
+            run_id = workspace.run_id
+            ledger: ConntrackFlowLedger | None = None
+            conntrack_mark: int | None = None
+            if spec.network and telemetry is not None and telemetry_on:
+                conntrack_mark = conntrack_mark_for_run(run_id)
+                ledger = ConntrackFlowLedger(
+                    telemetry, sandbox_run_id=run_id, conntrack_mark=conntrack_mark
+                )
             if spec.network:
                 if spec.egress is None:
                     raise SandboxExecutionError("networked OCI execution requires an exact egress policy")
@@ -194,31 +263,54 @@ class OciBackend:
                     nft=egress_tools["nft"],
                     sudo=egress_tools["sudo"],
                     ip=egress_tools["ip"],
-                    run_id=workspace.run_id,
+                    run_id=run_id,
                     policy=spec.egress,
+                    conntrack_mark=conntrack_mark,
                 )
             else:
                 egress_context = nullcontext("none")
-            async with egress_context as network_mode:
-                await stage_inputs(ssh, host_payload, workspace, spec.input_files)
-                result = await self._run_in_workspace(
-                    spec, ssh, host_payload, cfg,
-                    runtime=runtime,
-                    timeout_bin=timeout_bin,
-                    image=spec.image,
-                    uid=uid,
-                    gid=gid,
-                    network_mode=network_mode,
-                    workspace=workspace,
-                    on_stdout=on_stdout,
-                    on_stderr=on_stderr,
-                    cancel_requested=cancel_requested,
-                )
-                output_cap = min(cfg.output_max_bytes, spec.max_output_bytes or cfg.output_max_bytes)
-                files, files_truncated = await collect_outputs(
-                    ssh, host_payload, workspace, spec.output_globs,
-                    per_file_cap=output_cap, aggregate_cap=output_cap,
-                )
+            try:
+                async with egress_context as network_mode:
+                    collector_context = (
+                        scoped_conntrack_collector(
+                            ssh,
+                            host_payload,
+                            sudo=egress_tools["sudo"],
+                            conntrack=egress_tools["conntrack"],
+                            ledger=ledger,
+                            run_id=run_id,
+                            conntrack_mark=conntrack_mark,
+                            enforce=telemetry.mode is OciTelemetryMode.ENFORCE,
+                            timeout_seconds=spec.timeout_s,
+                        )
+                        if ledger is not None and telemetry is not None
+                        else nullcontext()
+                    )
+                    async with collector_context:
+                        if ledger is not None:
+                            await ledger.start()
+                        await stage_inputs(ssh, host_payload, workspace, spec.input_files)
+                        result = await self._run_in_workspace(
+                            spec, ssh, host_payload, cfg,
+                            runtime=runtime,
+                            timeout_bin=timeout_bin,
+                            image=spec.image,
+                            uid=uid,
+                            gid=gid,
+                            network_mode=network_mode,
+                            workspace=workspace,
+                            on_stdout=on_stdout,
+                            on_stderr=on_stderr,
+                            cancel_requested=cancel_requested,
+                        )
+                        output_cap = min(cfg.output_max_bytes, spec.max_output_bytes or cfg.output_max_bytes)
+                        files, files_truncated = await collect_outputs(
+                            ssh, host_payload, workspace, spec.output_globs,
+                            per_file_cap=output_cap, aggregate_cap=output_cap,
+                        )
+            finally:
+                if ledger is not None:
+                    await ledger.finish()
         result.output_files = files
         if files_truncated:
             result.truncated = True

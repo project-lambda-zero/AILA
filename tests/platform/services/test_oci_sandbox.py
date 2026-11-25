@@ -305,7 +305,7 @@ def test_hardening_flags_present() -> None:
     assert "--read-only" in argv
     assert _flag_value(argv, "--cap-drop") == "ALL"
     assert _flag_value(argv, "--security-opt") == "no-new-privileges"
-    assert _flag_value(argv, "--pids-limit") == "128"
+    assert _flag_value(argv, "--pids-limit") == "4096"
     assert _flag_value(argv, "--user") == "1000:1000"
     assert _flag_value(argv, "--memory") == "512m"
     assert _flag_value(argv, "--tmpfs").startswith("/tmp:rw,noexec,nosuid,size=512m")
@@ -400,6 +400,62 @@ def test_unsafe_workdir_refused_before_ssh(workdir: str) -> None:
     with pytest.raises(SandboxExecutionError):
         _backend_run(_spec(workdir=workdir), ssh)
     assert ssh.commands == []
+
+
+def test_pids_limit_default_and_explicit_reach_argv() -> None:
+    assert _flag_value(_argv(_spec()), "--pids-limit") == "4096"
+    assert _flag_value(_argv(_spec(pids_limit=8192)), "--pids-limit") == "8192"
+
+
+def test_pids_limit_above_ceiling_rejected_by_spec() -> None:
+    with pytest.raises(PydanticValidationError):
+        _spec(pids_limit=8193)
+
+
+def test_guest_home_and_xdg_default_under_workdir() -> None:
+    ssh = _OciSSH()
+    _backend_run(_spec(workdir="/work"), ssh)
+    tokens = shlex.split(_run_command(ssh))
+    for entry in (
+        "HOME=/work",
+        "XDG_CACHE_HOME=/work/.cache",
+        "XDG_CONFIG_HOME=/work/.config",
+        "XDG_DATA_HOME=/work/.local/share",
+    ):
+        assert entry in tokens
+
+
+@pytest.mark.parametrize(
+    "env",
+    [{"HOME": "/etc"}, {"XDG_CACHE_HOME": "/tmp/x"}, {"HOME": "/work/../etc"}, {"XDG_DATA_HOME": "/work2"}],
+)
+def test_guest_home_outside_workdir_refused_before_ssh(env: dict[str, str]) -> None:
+    ssh = _OciSSH()
+    with pytest.raises(SandboxExecutionError, match="must be a path under workdir"):
+        _backend_run(_spec(workdir="/work", env=env), ssh)
+    assert ssh.commands == []
+
+
+@pytest.mark.parametrize("name", ["HTTP_PROXY", "https_proxy", "ALL_PROXY", "no_proxy"])
+def test_caller_proxy_env_refused_before_ssh(name: str) -> None:
+    ssh = _OciSSH()
+    with pytest.raises(SandboxExecutionError, match="reserved"):
+        _backend_run(_spec(env={name: "http://10.0.0.5:3128"}), ssh)
+    assert ssh.commands == []
+
+
+@pytest.mark.parametrize("network", [False, True])
+def test_guest_proxy_blanked_and_no_proxy_wildcard(network: bool) -> None:
+    ssh = _OciSSH()
+    overrides: dict[str, Any] = {"network": True, "egress": _egress()} if network else {"network": False}
+    _backend_run(_spec(**overrides), ssh)
+    tokens = shlex.split(_run_command(ssh))
+    for name in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"):
+        assert f"{name}=" in tokens
+    assert "NO_PROXY=*" in tokens
+    assert "no_proxy=*" in tokens
+    if network:
+        assert _flag_value(tokens, "--network").startswith("aila-egress-")
 
 
 # ---------------------------------------------------------------------------

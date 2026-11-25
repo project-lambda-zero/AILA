@@ -637,7 +637,7 @@ async def upsert_review(
         outcome = (await uow.session.exec(
             _select(outcome_model).where(
                 outcome_model.id == outcome_id,
-            ),
+            ).with_for_update(),
         )).first()
         if outcome is None:
             raise ValueError(f"outcome {outcome_id} not found")
@@ -762,7 +762,7 @@ async def evaluate_quorum(
         reviews = (await uow.session.exec(
             _select(outcome_review_model).where(
                 outcome_review_model.outcome_id == outcome_id,
-            ),
+            ).with_for_update(),
         )).all()
         approve_count = sum(1 for r in reviews if r.vote == VOTE_APPROVE)
         reject_count = sum(1 for r in reviews if r.vote == VOTE_REJECT)
@@ -789,7 +789,7 @@ async def evaluate_quorum(
             _select(branch_model).where(
                 branch_model.investigation_id == investigation_id,
                 branch_model.id != proposing_branch_id,
-            ),
+            ).with_for_update(),
         )).all()
         non_proposing_count = len(siblings)
         quorum_k = compute_quorum(non_proposing_count)

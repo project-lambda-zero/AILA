@@ -33,6 +33,7 @@ import { useSystems } from "../../api/systems";
 import type { EntityBindingProps, WindowChromeProps } from "../contract";
 import { css } from "../css";
 import { ConsoleWindow } from "../window";
+import { StructuredData } from "../StructuredData";
 import {
   apiErrMessage,
   fieldCol,
@@ -270,9 +271,7 @@ export default function AutomationWizard(props: WindowChromeProps & EntityBindin
     <KeyvalEditor rows={kvRows} onChange={setKvRows} />
   );
 
-  const kwargsPreview = Object.keys(kwargsForSubmit).length > 0
-    ? JSON.stringify(kwargsForSubmit, null, 2)
-    : "(none)";
+  const kwargsPreview = <StructuredData label="Scheduled arguments" value={kwargsForSubmit} />;
 
   const step5 = (
     <ScheduleReview

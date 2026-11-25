@@ -175,12 +175,12 @@ class SandboxSpec(BaseModel):
         default=None,
         description="Optional UTF-8 text to feed the program on stdin.",
     )
-    input_files: dict[str, str] = Field(
+    input_files: dict[str, str | bytes] = Field(
         default_factory=dict,
         description=(
-            "Relative-path -> UTF-8 content. Each entry is written into the "
-            "sandbox workdir before the program runs. Paths must be relative "
-            "and free of '..' segments."
+            "Relative-path -> UTF-8 text or raw binary content. Each entry is "
+            "written into the sandbox workdir before the program runs. Paths "
+            "must be relative and free of '..' segments."
         ),
     )
     env: dict[str, str] = Field(
@@ -208,6 +208,12 @@ class SandboxSpec(BaseModel):
     )
     vcpu: int = Field(default=1, ge=1, description="Virtual CPUs assigned to the sandbox (Firecracker only).")
     mem_mb: int = Field(default=512, ge=1, description="Memory ceiling in MiB.")
+    pids_limit: int = Field(
+        default=4096,
+        ge=1,
+        le=8192,
+        description="Maximum number of container processes and threads.",
+    )
     shm_mb: int = Field(default=0, ge=0, le=512, description="Private /dev/shm size in MiB; zero uses the runtime default.")
     workdir: str = Field(
         default="/work",

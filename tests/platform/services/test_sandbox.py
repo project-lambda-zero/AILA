@@ -12,6 +12,7 @@ import asyncio
 import shlex
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -30,6 +31,7 @@ from aila.platform.services.sandbox.backends.base import (
     HostWorkspace,
     collect_outputs,
     host_workspace,
+    stage_inputs,
 )
 from aila.platform.services.sandbox.backends.nsjail import (
     NsjailBackend,
@@ -79,6 +81,18 @@ class _FakeSSH:
 
     async def download_file(self, integration, remote_path, local_path, *, timeout_seconds=None):
         del integration, remote_path, local_path, timeout_seconds
+
+
+class _UploadRecordingSSH(_FakeSSH):
+    """Records the local tempfile bytes at upload time (the tempfile is unlinked after)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.uploads: dict[str, bytes] = {}
+
+    async def upload_file(self, integration, local_path, remote_path, *, timeout_seconds=None):
+        del integration, timeout_seconds
+        self.uploads[remote_path] = Path(local_path).read_bytes()
 
 
 class _StubBackend:
@@ -297,6 +311,33 @@ def test_policy_honours_explicit_non_default_vcpu_and_mem() -> None:
     assert backend.received is not None
     assert backend.received.vcpu == 2
     assert backend.received.mem_mb == 768
+
+
+def test_policy_applies_platform_pids_default_when_spec_default() -> None:
+    cfg = _cfg(default_pids_limit=2048)
+    backend = _StubBackend(response=SandboxResult(backend="stub", exit_code=0))
+    service = _make_service(cfg, backend)
+    asyncio.run(service.run(SandboxSpec(argv=["/bin/true"])))
+    assert backend.received is not None
+    assert backend.received.pids_limit == 2048
+
+
+def test_policy_honours_explicit_non_default_pids_limit() -> None:
+    cfg = _cfg(default_pids_limit=2048)
+    backend = _StubBackend(response=SandboxResult(backend="stub", exit_code=0))
+    service = _make_service(cfg, backend)
+    asyncio.run(service.run(SandboxSpec(argv=["/bin/true"], pids_limit=1024)))
+    assert backend.received is not None
+    assert backend.received.pids_limit == 1024
+
+
+def test_policy_clamps_platform_pids_default_to_ceiling() -> None:
+    cfg = _cfg(default_pids_limit=20000)
+    backend = _StubBackend(response=SandboxResult(backend="stub", exit_code=0))
+    service = _make_service(cfg, backend)
+    asyncio.run(service.run(SandboxSpec(argv=["/bin/true"])))
+    assert backend.received is not None
+    assert backend.received.pids_limit == 8192
 
 
 # ---------------------------------------------------------------------------
@@ -620,6 +661,61 @@ def test_output_file_count_is_bounded_before_the_257th_download() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Staged input byte fidelity
+# ---------------------------------------------------------------------------
+
+_STAGE_WORKSPACE = HostWorkspace(remote_root="/tmp/aila-sandbox/run-stage", run_id="stage")
+
+
+def _stage(files: dict[str, str | bytes]) -> _UploadRecordingSSH:
+    ssh = _UploadRecordingSSH()
+    asyncio.run(stage_inputs(ssh, object(), _STAGE_WORKSPACE, files))
+    return ssh
+
+
+def test_stage_inputs_writes_binary_payloads_verbatim() -> None:
+    payloads = {
+        "non_utf8.bin": b"\xff\xfe\x80\x00\xc3(",
+        "crlf.txt": b"alpha\r\nbeta\r\n",
+        "nul.bin": b"a\x00b\x00",
+        "empty.txt": b"",
+        "whitespace.txt": b" \t\r\n\x0b\x0c ",
+    }
+    ssh = _stage(payloads)
+    assert ssh.uploads == {
+        f"{_STAGE_WORKSPACE.remote_root}/{name}": data for name, data in payloads.items()
+    }
+
+
+def test_stage_inputs_encodes_str_as_utf8_without_newline_translation() -> None:
+    text = "héllo\r\nwörld\n\r\n✓"
+    ssh = _stage({"words.txt": text})
+    assert ssh.uploads == {f"{_STAGE_WORKSPACE.remote_root}/words.txt": text.encode("utf-8")}
+
+
+def test_stage_inputs_keeps_empty_str_and_mixed_values_exact() -> None:
+    ssh = _stage({"empty.txt": "", "mixed.txt": "line\nraw\xff".encode() + b"\n"})
+    assert ssh.uploads == {
+        f"{_STAGE_WORKSPACE.remote_root}/empty.txt": b"",
+        f"{_STAGE_WORKSPACE.remote_root}/mixed.txt": b"line\nraw\xc3\xbf\n",
+    }
+
+
+def test_stage_inputs_removes_local_tempfile_after_upload() -> None:
+    seen: list[str] = []
+
+    class _PathRecordingSSH(_UploadRecordingSSH):
+        async def upload_file(self, integration, local_path, remote_path, *, timeout_seconds=None):
+            seen.append(local_path)
+            await super().upload_file(integration, local_path, remote_path, timeout_seconds=timeout_seconds)
+
+    ssh = _PathRecordingSSH()
+    asyncio.run(stage_inputs(ssh, object(), _STAGE_WORKSPACE, {"a.bin": b"\x00"}))
+    assert len(seen) == 1
+    assert not Path(seen[0]).exists()
+
+
+# ---------------------------------------------------------------------------
 # 9. Workspace permissions and nsjail identity
 # ---------------------------------------------------------------------------
 
@@ -665,3 +761,103 @@ def test_sandbox_spec_rejects_shell_syntax_output_globs_at_construction(pattern:
 def test_sandbox_spec_accepts_legitimate_output_globs() -> None:
     spec = SandboxSpec(argv=["/bin/echo"], output_globs=["out/*.json", "result.txt", "logs/?.txt"])
     assert spec.output_globs == ["out/*.json", "result.txt", "logs/?.txt"]
+
+
+# ---------------------------------------------------------------------------
+# 10. SSH identity: no root default
+# ---------------------------------------------------------------------------
+
+
+def _managed_record(**overrides: Any) -> SimpleNamespace:
+    """Stand-in for ManagedSystemRecord carrying every field _build_host_payload reads."""
+    fields: dict[str, Any] = {
+        "id": 1,
+        "name": "fleet-sandbox",
+        "host": "sandbox.internal",
+        "username": "sandbox",
+        "port": 22,
+        "distro": "debian",
+        "description": "fleet sandbox",
+        "private_key_path": None,
+        "private_key_secret_id": None,
+        "private_key_passphrase_secret_id": None,
+        "password_secret_id": None,
+        "known_hosts_path": None,
+        "host_key_fingerprint": None,
+    }
+    fields.update(overrides)
+    return SimpleNamespace(**fields)
+
+
+def test_configured_non_root_user_is_used_for_host_payload() -> None:
+    cfg = _cfg(ssh_user="sandbox")
+    service = _make_service(cfg, _StubBackend(response=SandboxResult(backend="stub", exit_code=0)))
+    payload = service._build_host_payload(cfg)
+    assert payload.username == "sandbox"
+    assert payload.host == "sandbox.internal"
+
+
+@pytest.mark.parametrize("unsafe_user", ["", "   ", "root"])
+def test_unset_or_root_ssh_user_is_rejected_instead_of_defaulting_to_root(unsafe_user: str) -> None:
+    cfg = _cfg(ssh_user=unsafe_user)
+    service = _make_service(cfg, _StubBackend(response=SandboxResult(backend="stub", exit_code=0)))
+    with pytest.raises(SandboxUnavailableError, match="non-root"):
+        service._build_host_payload(cfg)
+
+
+def test_unsafe_ssh_user_fails_run_before_any_backend_dispatch() -> None:
+    cfg = _cfg(ssh_user="")
+    backend = _StubBackend(response=SandboxResult(backend="stub", exit_code=0))
+    ssh = _FakeSSH()
+    service = _make_service(cfg, backend, ssh=ssh)
+    with pytest.raises(SandboxUnavailableError, match="non-root"):
+        asyncio.run(service.run(SandboxSpec(argv=["/bin/true"])))
+    assert backend.received is None
+    assert ssh.commands == []
+
+
+def test_probe_reports_unsafe_ssh_user_without_ssh_round_trip() -> None:
+    cfg = _cfg(ssh_user="root")
+    ssh = _FakeSSH()
+    service = _make_service(cfg, _StubBackend(response=SandboxResult(backend="stub", exit_code=0)), ssh=ssh)
+    probe = asyncio.run(service.probe())
+    assert probe.ok is False
+    assert "non-root" in probe.detail
+    assert ssh.commands == []
+
+
+def test_managed_system_blank_or_root_username_is_rejected() -> None:
+    cfg = _cfg(ssh_user="")
+    service = _make_service(cfg, _StubBackend(response=SandboxResult(backend="stub", exit_code=0)))
+    for username in ("", "root"):
+        with pytest.raises(SandboxUnavailableError, match="non-root"):
+            service._build_host_payload(cfg, _managed_record(username=username))
+
+
+def test_managed_system_root_username_overrides_configured_non_root_user() -> None:
+    cfg = _cfg(ssh_user="sandbox")
+    service = _make_service(cfg, _StubBackend(response=SandboxResult(backend="stub", exit_code=0)))
+    with pytest.raises(SandboxUnavailableError, match="non-root"):
+        service._build_host_payload(cfg, _managed_record(username="root"))
+
+
+def test_managed_system_non_root_username_is_used_for_host_payload() -> None:
+    cfg = _cfg(ssh_user="")
+    service = _make_service(cfg, _StubBackend(response=SandboxResult(backend="stub", exit_code=0)))
+    payload = service._build_host_payload(cfg, _managed_record(username="fleet-sandbox"))
+    assert payload.username == "fleet-sandbox"
+    assert payload.host == "sandbox.internal"
+
+
+def test_managed_system_without_username_leaves_config_ssh_user_empty() -> None:
+    service = SandboxService.__new__(SandboxService)
+    service._registry = _FakeRegistry(  # type: ignore[attr-defined]
+        {"sandbox_backend": "nsjail", "sandbox_ssh_host": "", "sandbox_ssh_user": ""},
+    )
+
+    async def _managed(**kwargs: Any) -> SimpleNamespace:
+        return _managed_record(username="")
+
+    service._resolve_managed_system = _managed  # type: ignore[attr-defined]
+    cfg = asyncio.run(service._load_config())
+    assert cfg.ssh_user == ""

@@ -19,6 +19,7 @@ Backend contract:
 """
 from __future__ import annotations
 
+import asyncio
 import posixpath
 import shlex
 import time
@@ -256,6 +257,12 @@ class NsjailBackend:
                 stdout, stderr, exit_code = await ssh.run_command_full(
                     host_payload, wrapped, timeout_seconds=ssh_idle_timeout,
                 )
+        except asyncio.CancelledError:
+            if cancel_command is not None:
+                await asyncio.shield(ssh.run_command_full(
+                    host_payload, cancel_command, timeout_seconds=10.0,
+                ))
+            raise
         except CommandCancelledError as exc:
             raise SandboxExecutionError(f"nsjail run {workspace.run_id} cancelled") from exc
         except (

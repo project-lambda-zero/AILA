@@ -293,6 +293,10 @@ HONESTY_WHITELIST = [
     ("api/routers/topology.py", "broad_exception_catch", "catches everything"),
     ("api/routers/users.py", "broad_exception_catch", "catches everything"),
 
+    # PyRIT converts each arbitrary scanner/plugin failure into that attempt's
+    # structured outcome while independent attempts continue.
+    ("pentest/services/pyrit_child.py", "broad_exception_catch", "catches everything"),
+
     # platform/ -- LLM client, routing/runtime, services, task queue, and
     # workflow engine. These are the platform's outermost frames and
     # supervisors; they MUST keep running across model/provider/runner
@@ -811,6 +815,7 @@ HONESTY_WHITELIST = [
     ("pentest/services/process.py", "except_return_default", "except returns empty default"),
     ("pentest/services/process.py", "asyncio_in_module", "threading belongs"),
     ("pentest/services/pyrit_child.py", "asyncio_in_module", "threading belongs"),
+    ("pentest/services/pyrit_child.py", "noqa_inline", "documented justification"),
 
     # Live campaign fingerprint/canonicalization helpers define stable
     # persistence formats; record loaders centralize populate_existing reads.
@@ -822,6 +827,107 @@ HONESTY_WHITELIST = [
     # imports stay deferred to preserve the module-standard import boundary.
     ("pentest/module.py", "required_tools", "inlining"),
     ("pentest/module.py", "noqa_inline", "documented justification"),
+    # Issue #568 live services use async_session_scope for FastAPI session
+    # dependencies and cross-campaign sweep/mutation transactions. These are the
+    # same documented SDA-05 carve-outs as the existing stall-recovery services.
+    ("pentest/live/api_router.py", "module_imports_session_scope", "async_session_scope"),
+    ("pentest/live/services/campaign_guard.py", "module_imports_session_scope", "async_session_scope"),
+    ("pentest/live/services/effectiveness_runtime.py", "module_imports_session_scope", "async_session_scope"),
+    ("pentest/live/services/health_runtime.py", "module_imports_session_scope", "async_session_scope"),
+    ("pentest/live/services/oci_attribution.py", "module_imports_session_scope", "async_session_scope"),
+    ("pentest/live/services/planner.py", "module_imports_session_scope", "async_session_scope"),
+    ("pentest/live/services/scope_runtime.py", "module_imports_session_scope", "async_session_scope"),
+    ("pentest/live/services/todo_runtime.py", "module_imports_session_scope", "async_session_scope"),
+    ("pentest/live/services/oob_runtime.py", "module_imports_session_scope", "async_session_scope"),
+    ("pentest/live/services/oob_runtime.py", "oast_session_view", "consider inlining"),
+    ("pentest/live/workflow/deps.py", "module_imports_session_scope", "async_session_scope"),
+
+    # Pydantic validators and named immutable constructors are public contract
+    # methods. Serialization facades own their representation at one boundary;
+    # inlining them would duplicate persistence and API formats across callers.
+    ("pentest/live/contracts/__init__.py", "staged_path_relative", "consider inlining"),
+    ("pentest/live/contracts/wordlists.py", "encode_raw_base64", "consider inlining"),
+    ("pentest/live/contracts/wordlists.py", "sha256_valid", "consider inlining"),
+    ("pentest/live/contracts/wordlists.py", "metadata_valid", "consider inlining"),
+    ("pentest/live/contracts/wordlists.py", "hashes_valid", "consider inlining"),
+    ("pentest/live/contracts/wordlists.py", "hash_valid", "consider inlining"),
+    ("pentest/live/contracts/wordlists.py", "created_aware", "consider inlining"),
+    ("pentest/live/contracts/wordlists.py", "pack_hash_valid", "consider inlining"),
+    ("pentest/live/services/action_options.py", "bindings_json", "consider inlining"),
+    ("pentest/live/services/attribution.py", "correlate", "consider inlining"),
+    ("pentest/live/services/attribution.py", "format_json", "consider inlining"),
+    ("pentest/live/services/attribution.py", "health", "consider inlining"),
+    ("pentest/live/services/authorization_matrix.py", "valid_operation_id", "consider inlining"),
+    ("pentest/live/services/authorization_matrix.py", "normalize_url", "consider inlining"),
+    ("pentest/live/services/authorization_matrix.py", "valid_handle", "consider inlining"),
+    ("pentest/live/services/authorization_matrix.py", "valid_lineage_id", "consider inlining"),
+    ("pentest/live/services/authorization_matrix.py", "valid_request_lineage_id", "consider inlining"),
+    ("pentest/live/services/authorization_matrix.py", "valid_cleanup_key", "consider inlining"),
+    ("pentest/live/services/authorization_matrix.py", "result", "consider inlining"),
+    ("pentest/live/services/effectiveness.py", "as_dict", "consider inlining"),
+    ("pentest/live/services/effectiveness.py", "canonical_json", "consider inlining"),
+    ("pentest/live/services/http_protocol_parsers.py", "result", "consider inlining"),
+    ("pentest/live/services/oci_attribution.py", "connection_flow_event", "consider inlining"),
+    ("pentest/live/services/oob_toolchain.py", "aware_timestamps", "consider inlining"),
+    ("pentest/live/services/oob_toolchain.py", "dump_oob_poll_result", "consider inlining"),
+    ("pentest/live/services/oob_toolchain.py", "load_oob_poll_result", "consider inlining"),
+    ("pentest/live/services/parsers.py", "collector", "consider inlining"),
+    ("pentest/live/services/restler_toolchain.py", "endpoint_safe", "consider inlining"),
+    ("pentest/live/services/scope_runtime.py", "drain_wakeups", "consider inlining"),
+    ("pentest/live/services/scope_versions.py", "history", "consider inlining"),
+    ("pentest/live/services/target_health.py", "as_dict", "consider inlining"),
+    ("pentest/live/services/target_health.py", "canonical_json", "consider inlining"),
+    ("pentest/live/services/target_health.py", "initial", "consider inlining"),
+    ("pentest/live/services/todos.py", "snapshot", "consider inlining"),
+    ("pentest/live/services/todos.py", "get", "consider inlining"),
+    ("pentest/live/services/toolchain.py", "schema_path_safe", "consider inlining"),
+    ("pentest/live/services/toolchain.py", "credential_handle_format", "consider inlining"),
+    ("pentest/live/services/toolchain.py", "handle_format", "consider inlining"),
+    ("pentest/live/services/websocket_security.py", "flow", "consider inlining"),
+    ("pentest/live/services/websocket_security.py", "result", "consider inlining"),
+    ("platform/services/plaintext_evidence.py", "open", "consider inlining"),
+
+    # Runtime type guards protect Python callers and persisted/untrusted values;
+    # annotations alone do not validate runtime input. Cursor, limit, media-type,
+    # identifier, and snapshot guards are intentional boundary validation.
+    ("pentest/live/services/attribution_store.py", "_limit", "already annotated"),
+    ("pentest/live/services/attribution_store.py", "_decode_cursor", "already annotated"),
+    ("pentest/live/services/evidence_index.py", "_normalize_media_type", "already annotated"),
+    ("pentest/live/services/evidence_index.py", "_bounded_limit", "already annotated"),
+    ("pentest/live/services/evidence_index.py", "_positive_bound", "already annotated"),
+    ("pentest/live/services/evidence_index.py", "search_plaintext", "already annotated"),
+    ("pentest/live/services/evidence_index.py", "_link_text", "already annotated"),
+    ("pentest/live/services/global_assets.py", "_identifier", "already annotated"),
+    ("pentest/live/services/global_assets.py", "search_assets", "already annotated"),
+    ("pentest/live/services/oob_toolchain.py", "_normalize_domain", "already annotated"),
+    ("pentest/live/services/oob_toolchain.py", "_normalize_server_url", "already annotated"),
+    ("pentest/live/services/provider_parsers.py", "parse_uncover_output", "already annotated"),
+    ("pentest/live/services/todos.py", "_input_key", "already annotated"),
+    ("pentest/live/services/todos.py", "add_step", "already annotated"),
+    ("platform/services/plaintext_evidence.py", "__init__", "already annotated"),
+    ("platform/services/plaintext_evidence.py", "put", "already annotated"),
+    ("platform/services/plaintext_evidence.py", "_path_for_digest", "already annotated"),
+    ("platform/services/plaintext_evidence.py", "_normalize_media_type", "already annotated"),
+
+    # Optional-value parsers reject malformed provider rows with None. Their
+    # callers acknowledge skipped/malformed rows; no infrastructure exception or
+    # tool failure is swallowed. OOB timestamps likewise become explicit errors.
+    ("pentest/live/services/artifact_parsers.py", "except_return_default", "except returns empty default"),
+    ("pentest/live/services/oob_parsers.py", "except_return_default", "except returns empty default"),
+    ("pentest/live/services/provider_parsers.py", "except_return_default", "except returns empty default"),
+
+    # Fixed transport/guard interfaces require these parameters even when one
+    # implementation does not consume them. SSLyze attempt parsing is one tagged
+    # union mapping, not action dispatch. Todo validation branches report distinct
+    # state/dependency errors and are clearer with the explicit nested guard.
+    ("pentest/live/services/campaign_guard.py", "wait_for_decision", "request"),
+    ("pentest/live/services/guard_repository.py", "wait_for_decision", "request"),
+    ("pentest/live/services/guard_repository.py", "evaluate", "request"),
+    ("pentest/live/services/guard_repository.py", "evaluate", "rule"),
+    ("pentest/live/services/oob_toolchain.py", "_send", "manifest"),
+    ("pentest/live/services/api_protocol_parsers.py", "_sslyze_attempt", "action-dispatch branches"),
+    ("pentest/live/services/todos.py", "nested_if_collapsible", "nested if"),
+
     # SSH reader threads capture every BaseException, close the channel, and
     # re-raise it on the caller thread; this is not a silent broad catch.
     ("platform/services/ssh.py", "noqa_inline", "documented justification"),

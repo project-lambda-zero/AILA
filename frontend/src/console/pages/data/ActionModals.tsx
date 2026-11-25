@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { ChangeEvent, JSX } from "react";
 
 import { css } from "../../css";
+import { StructuredData } from "../../StructuredData";
 import { revealEntries } from "./rows";
 import {
   ACTION_INPUT,
@@ -132,10 +133,10 @@ export function ActionModals(props: ActionModalsProps): JSX.Element {
                   {k}
                 </span>
                 <div style={css("display:flex;align-items:flex-start;gap:6px;")}>
-                  <code style={css("flex:1;min-width:0;word-break:break-all;background:var(--surface-sunk);border:1px solid var(--border);border-radius:2px;padding:7px 8px;font-family:var(--font-mono);font-size:11px;color:var(--text-primary);")}>
-                    {v}
-                  </code>
-                  <button type="button" onClick={() => copyReveal(v)} style={actionGhostBtn}>
+                  <div style={css("flex:1;min-width:0;word-break:break-word;background:var(--surface-sunk);border:1px solid var(--border);border-radius:2px;padding:7px 8px;font-size:11px;color:var(--text-primary);")}>
+                    <StructuredData label={k} value={v} />
+                  </div>
+                  <button type="button" onClick={() => copyReveal(typeof v === "string" ? v : JSON.stringify(v) ?? "")} style={actionGhostBtn}>
                     {copied ? "copied" : "copy"}
                   </button>
                 </div>

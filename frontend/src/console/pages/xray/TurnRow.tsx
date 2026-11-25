@@ -4,6 +4,7 @@ import type { Dispatch, JSX, ReactNode, SetStateAction } from "react";
 import { readStr } from "../../../api/parse";
 import type { Message } from "../../../api/types";
 import { css } from "../../css";
+import { StructuredData } from "../../StructuredData";
 import { LazyCodeBlock } from "./LazyCode";
 import { Section } from "./Section";
 import { clockTime, toolCallView, turnProse, turnType } from "./parsers";
@@ -116,7 +117,7 @@ export const TurnRow = memo(function TurnRow({
                     {view.args.map(([k, v]) => (
                       <div key={k} style={argRowStyle}>
                         <span style={css("color:var(--text-muted);font-family:var(--font-mono);")}>{k}</span>
-                        <span style={css("color:var(--text-primary);font-family:var(--font-mono);word-break:break-all;")}>{v}</span>
+                        <div style={css("color:var(--text-primary);min-width:0;")}><StructuredData label={k} value={v} /></div>
                       </div>
                     ))}
                   </div>

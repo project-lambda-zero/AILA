@@ -99,6 +99,7 @@ class SandboxExecRequest(BaseModel):
     network: bool = False
     vcpu: int = Field(default=1, ge=1)
     mem_mb: int = Field(default=512, ge=1)
+    pids_limit: int = Field(default=4096, ge=1, le=8192)
     workdir: str = "/work"
     output_globs: list[str] = Field(default_factory=list)
 
@@ -293,6 +294,7 @@ async def exec_sandbox(
         network=body.network,
         vcpu=body.vcpu,
         mem_mb=body.mem_mb,
+        pids_limit=body.pids_limit,
         workdir=body.workdir,
         output_globs=list(body.output_globs),
     )

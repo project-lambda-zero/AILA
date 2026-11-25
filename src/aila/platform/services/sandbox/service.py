@@ -39,6 +39,7 @@ from ...contracts.platform import SSHIntegrationInput
 from ...exceptions import AILATimeoutError, AuthenticationError, UpstreamError, ValidationError
 from ..ssh import SSHService
 from .backends import FirecrackerBackend, NsjailBackend, OciBackend
+from .backends.oci_flow import OciFlowTelemetry
 from .contracts import (
     CancelCheck,
     SandboxBackend,
@@ -60,6 +61,8 @@ _log = logging.getLogger(__name__)
 # the policy cap.
 _SPEC_DEFAULT_VCPU = 1
 _SPEC_DEFAULT_MEM_MB = 512
+_SPEC_DEFAULT_PIDS_LIMIT = 4096
+_MAX_PIDS_LIMIT = 8192
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,6 +93,7 @@ class SandboxConfig:
     system_name: str = ""
     system_id: int | None = None
     oci_bin: str = "docker"
+    default_pids_limit: int = _SPEC_DEFAULT_PIDS_LIMIT
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,16 +134,19 @@ class SandboxService:
         ssh_service: SSHService | None = None,
         config_registry: ConfigRegistry | None = None,
         backends: dict[str, SandboxBackend] | None = None,
+        oci_flow_telemetry: OciFlowTelemetry | None = None,
     ) -> None:
         self._settings = settings
         self._ssh = ssh_service or SSHService(settings)
         self._registry = config_registry or ConfigRegistry()
         # Tests may inject a fake backend map; production uses the real
-        # nsjail, firecracker, and oci backends.
+        # nsjail, firecracker, and oci backends. ``oci_flow_telemetry`` is
+        # the per-run flow sink the caller builds for a leased action; None
+        # keeps OCI network runs telemetry-off.
         self._backends: dict[str, SandboxBackend] = backends or {
             NsjailBackend.name: NsjailBackend(),
             FirecrackerBackend.name: FirecrackerBackend(),
-            OciBackend.name: OciBackend(),
+            OciBackend.name: OciBackend(flow_telemetry=oci_flow_telemetry),
         }
 
     async def run_streaming(
@@ -309,10 +316,14 @@ class SandboxService:
             effective_timeout = max(1.0, float(cfg.default_timeout_s))
         effective_vcpu = spec.vcpu if spec.vcpu != _SPEC_DEFAULT_VCPU else cfg.default_vcpu
         effective_mem = spec.mem_mb if spec.mem_mb != _SPEC_DEFAULT_MEM_MB else cfg.default_mem_mb
+        effective_pids = (
+            spec.pids_limit if spec.pids_limit != _SPEC_DEFAULT_PIDS_LIMIT else cfg.default_pids_limit
+        )
         return spec.model_copy(update={
             "timeout_s": effective_timeout,
             "vcpu": max(1, int(effective_vcpu)),
             "mem_mb": max(1, int(effective_mem)),
+            "pids_limit": min(max(1, int(effective_pids)), _MAX_PIDS_LIMIT),
         })
 
     async def _resolve_managed_system(
@@ -367,12 +378,22 @@ class SandboxService:
         (:class:`ManagedSystemRecord`) is resolved, its stored credentials,
         private key secret, and known host keys are passed directly so
         operators configure SSH authentication once in the fleet registry.
+        Every SSH backend requires an explicitly configured non-root user.
         """
+        configured_user = (managed_sys.username if managed_sys is not None else None) or cfg.ssh_user
+        username = str(configured_user or "").strip()
+        if not username or username == "root":
+            raise SandboxUnavailableError(
+                "platform sandbox SSH user is not safely configured; set "
+                "platform.sandbox_ssh_user or the selected managed system "
+                "username to a non-root account."
+            )
+
         if managed_sys is not None:
             return SSHIntegrationInput(
                 name=managed_sys.name or "sandbox-host",
                 host=managed_sys.host,
-                username=managed_sys.username or cfg.ssh_user or "root",
+                username=username,
                 port=managed_sys.port or cfg.ssh_port or 22,
                 distro=managed_sys.distro or "linux",
                 description=managed_sys.description or "Platform managed sandbox host.",
@@ -386,7 +407,7 @@ class SandboxService:
         return SSHIntegrationInput(
             name="sandbox-host",
             host=cfg.ssh_host,
-            username=cfg.ssh_user or "root",
+            username=username,
             port=cfg.ssh_port,
             distro="linux",
             description="Platform sandbox host (issue #147).",
@@ -448,7 +469,16 @@ class SandboxService:
             system_id=cfg.system_id,
             host=cfg.ssh_host,
         )
-        payload = self._build_host_payload(cfg, managed_sys)
+        try:
+            payload = self._build_host_payload(cfg, managed_sys)
+        except SandboxUnavailableError as exc:
+            return SandboxProbe(
+                ok=False,
+                detail=str(exc),
+                duration_ms=0,
+                tool_installed=False,
+                tool_missing=False,
+            )
         start = time.monotonic()
         try:
             # 1. Test basic reachability
@@ -548,7 +578,15 @@ class SandboxService:
             system_id=cfg.system_id,
             host=cfg.ssh_host,
         )
-        payload = self._build_host_payload(cfg, managed_sys)
+        try:
+            payload = self._build_host_payload(cfg, managed_sys)
+        except SandboxUnavailableError as exc:
+            return SandboxBootstrapResult(
+                ok=False,
+                detail=str(exc),
+                output="",
+                duration_ms=0,
+            )
         start = time.monotonic()
 
         # Privilege detection preamble
@@ -716,6 +754,11 @@ class SandboxService:
         except (TypeError, ValueError):
             default_mem_mb = 512
         try:
+            default_pids_limit = int(await _get("sandbox_pids_limit", _SPEC_DEFAULT_PIDS_LIMIT))
+        except (TypeError, ValueError):
+            default_pids_limit = _SPEC_DEFAULT_PIDS_LIMIT
+        default_pids_limit = min(max(1, default_pids_limit), _MAX_PIDS_LIMIT)
+        try:
             output_max_bytes = int(await _get("sandbox_output_max_bytes", 1_048_576))
         except (TypeError, ValueError):
             output_max_bytes = 1_048_576
@@ -736,7 +779,7 @@ class SandboxService:
             )
             if managed_sys is not None:
                 ssh_host = managed_sys.host or ssh_host
-                ssh_user = managed_sys.username or ssh_user or "root"
+                ssh_user = managed_sys.username or ssh_user
                 ssh_port = managed_sys.port or ssh_port or 22
                 system_name = managed_sys.name or system_name
                 system_id = managed_sys.id or system_id
@@ -751,6 +794,7 @@ class SandboxService:
             allow_network=allow_network,
             default_vcpu=default_vcpu,
             default_mem_mb=default_mem_mb,
+            default_pids_limit=default_pids_limit,
             output_max_bytes=output_max_bytes,
             nsjail_bin=nsjail_bin,
             firecracker_bin=firecracker_bin,
