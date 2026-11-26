@@ -49,6 +49,8 @@ AILA/
 │   ├── api/                      # FastAPI app, routers/, auth, middleware, schemas
 │   ├── storage/                  # SQLModel models, Alembic migrations, config registry
 │   └── alembic/                  # migration versions
+├── external/
+│   └── icuhub/                   # git submodule: ICUHUB integration hub (optional, see "ICUHUB" section)
 ├── tests/                        # pytest suite (test_e2e*.py require live infrastructure)
 └── docs/                         # canonical specs (MODULE_STANDARD, GOLDEN_RULES, etc.)
 ```
@@ -247,6 +249,22 @@ Entry numbers are stable identifiers cited from source comments and migrations; 
 23. **`rea` + `reverser_belt` replace ida-headless (no RE port to configure)** -- Binary reverse engineering no longer uses the ida-headless HTTP server (archived; its old port 18821 is unused). Two stdio MCP children are spawned per AILA process (`SERVER_SPECS` in `aila/platform/mcp/server_specs.py`): `rea` (npm `rea-agents`, Ghidra provider; default argv `rea mcp`, override `REA_MCP_COMMAND`) and `reverser_belt` (package `reverser_belt_mcp`, default argv `python -m reverser_belt_mcp.server` in the current interpreter at `server_specs.py:142`, override `REVERSER_BELT_MCP_COMMAND`; `stdio_command` in `aila/platform/mcp/factory.py:114` shlex-splits the override, so use forward slashes on Windows). `reverser_belt` is a separate repo (`ida-headless-mcp-exp`) that must be importable in the AILA interpreter (`pip install -e <checkout>`; `start.sh:75-79`); it owns the scanner surface REA lacks (capa, crypto, API-hash, emulation, taint, SMT proofs, patching, YARA). The in-platform `re_analytics` package was deleted; do not reference it or the `re_analytics` server id. `start.sh` exports `REA_MCP_COMMAND`, `GHIDRA_INSTALL_DIR`, `JAVA_HOME`, and `REA_ANALYSIS_PROVIDER=ghidra`. Setting `REA_MCP_URL` / `REVERSER_BELT_MCP_URL` (or the `rea_mcp_url` / `reverser_belt_mcp_url` config keys) to an http(s) URL targets a remote instance instead. Modules address a binary by the server-injected absolute `target_path`; `ReaMiddleware` opens it for `rea`, and `ReverserBeltMiddleware` (`aila/platform/mcp/middleware/reverser_belt.py`) opens it once per path and rewrites each call to carry the resulting `binary_id`. The agent never passes a path or id. Tool executors allow `rea` and `reverser_belt` for binary targets (`modules/vr/agents/tool_executor.py:125-129`, `modules/malware/agents/tool_executor.py:618-620`). The only fixed MCP ports are `audit_mcp` 18822 and `android_mcp` 18823 (`server_specs.py:64-79`).
 
 24. **Operator Resume/Retrigger writing `analysis_state="pending"` directly** -- The handlers in `api_router.py` rewrite the row's overall state column but DO NOT touch the per-stage state in `analysis_stages_json`. Next worker run hits `StageAlreadyDoneError`, logs "already ingested -- skip", and returns. Without an explicit `load_target_stages` -> `save_target_stages` re-roll on that skip path, the row sits at `pending` forever even though every applicable stage is DONE. The malware module's skip path does the re-roll; copy that pattern when adding new resume-style handlers.
+
+## ICUHUB (optional integration hub)
+
+ICUHUB is a standalone integration service (repo `project-lambda-zero/icuhub`, AGPL-3.0), included as the git submodule `external/icuhub`. It owns vendor connectors (SCM, CI/CD, scanners, SIEM, SOAR, EDR, WAF, DLP, CSPM/CNAPP, Kubernetes/OpenShift, ticketing, threat intel), the credential broker, external action policy and approvals, external-call audit, and OCSF/SARIF normalization. Plan and contract: `docs/rfc/RFC-296-icuhub-integration.md`; ICUHUB's own BRD/HLD/COMMATRIX: `external/icuhub/docs/`.
+
+Rules:
+
+1. **Optional.** AILA installs, tests, and runs without the submodule and without a running ICUHUB. `git submodule update --init external/icuhub` is only needed to read or work on ICUHUB.
+2. **Configured iff `platform.icuhub_url` is set** (ConfigRegistry, env `ICUHUB_URL`). No separate enabled flag. Unset means: no `icuhub` MCP server registered, no ICUHUB tools listed, no event subscriber, and features that need an integration record `icuhub_not_configured`.
+3. **No direct vendor calls for integrated vendors.** New enterprise tool integrations go into ICUHUB, never into `src/aila/`. No fallback from ICUHUB to a direct vendor client. The public advisory feeds in `modules/vulnerability/providers/` are domain data sources and stay in AILA (explicit allowlist in the RFC-296 boundary audit).
+4. **Never import ICUHUB source paths** (`external/icuhub/...`) from `src/aila/`. Consume ICUHUB only over its contract (REST `/v1`, MCP `/mcp`, `icuhub.*` events) and its published packages (`icuhub-schemas`, `icuhub-sdk`) once released.
+5. **Agents use MCP, deterministic steps use REST.** Agent tools arrive as `icuhub` server tools named `<connection_slug>.<operation>`. Workflow steps that must not be prompt-steered (for example opening the VR fix change request) call REST with an `Idempotency-Key`.
+6. **Correlation.** Every ICUHUB call carries `X-Correlation-Id` = investigation id (branch/turn in MCP `_meta`) so ICUHUB audit joins AILA's tool-call ledger.
+7. **`pending_approval` is a normal result**, not an error. AILA never auto-approves ICUHUB actions.
+8. **OCSF/SARIF standardization is mandatory.** Do not define a competing OCSF model in AILA; use `icuhub-schemas` when published.
+9. Bumping the submodule pin is a normal AILA change (CHANGELOG note, consumer tests once they exist).
 
 ## Verification Checklist
 
