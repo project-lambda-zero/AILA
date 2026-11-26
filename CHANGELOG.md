@@ -5,6 +5,22 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.146] - 2026-11-26 -- Reviewed wordlist defaults for pentest actions
+
+### Added
+- Added an offline reviewed wordlist catalog with immutable upstream commits, source and derivative hashes, semantic-lane validation, license texts, attribution, and deterministic pack provenance.
+- ffuf content discovery now places fixed target paths before the pinned SecLists common-path pack, with exact deduplication and request-aware execution deadlines.
+- Clairvoyance now defaults to frequency-ranked Escape query-field and argument names after target-observed names. Offline JWT-HACK scans extend their native secret baseline with an explicitly reviewed Wallarm default-secret allowlist.
+
+### Changed
+- Arjun retains its curated native small list, WCVS retains its exact native defaults, and DNSRecon remains zone/NSEC-driven. Unranked first-N subsets, oversized unions, generic payload corpora, and runtime wordlist downloads are not autonomous defaults.
+
+### Fixed
+- Central JWT-HACK dispatch now uses the same secret-toolchain option and builder implementations, allowing validated dictionary profiles to reach the offline action.
+
+### Upgrade notes
+- No database migration is required. Rebuild the backend and pentest images so the packaged wordlist resources and action builders are present, then restart the backend and pentest workers.
+
 ## [0.6.145] - 2026-11-26 -- Durable pentest semantic context and safe retrieval
 
 ### Added
