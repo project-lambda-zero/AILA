@@ -428,7 +428,9 @@ class AgentTurnRunnerBase:
         provider = KnowledgeRetrievalProvider()
         try:
             sections = await provider.fetch(request)
-        except (SQLAlchemyError, OSError, RuntimeError, ValueError, TypeError) as exc:
+        except (
+            SQLAlchemyError, ImportError, OSError, RuntimeError, ValueError, TypeError,
+        ) as exc:
             _log.debug(
                 "%s: rfc24 retrieved-tier fetch failed inv=%s branch=%s "
                 "(%s: %s); assembling prompt without RETRIEVED tier",

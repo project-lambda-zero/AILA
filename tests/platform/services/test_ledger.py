@@ -111,3 +111,74 @@ async def test_confirmed_only_filters_unbacked_discoveries(test_db) -> None:
     ids = [r["id"] for r in confirmed]
     assert d1 in ids
     assert d2 not in ids
+
+
+async def test_default_read_stays_oldest_first(test_db) -> None:
+    del test_db
+    svc = LedgerService()
+    inv = "inv-default-order"
+    d1 = await svc.append_general(inv, "b1", "discovery", {"n": 1})
+    n1 = await svc.append_general(inv, "b1", "note", {"n": 2})
+    d2 = await svc.append_general(inv, "b1", "discovery", {"n": 3})
+    assert [r["id"] for r in await svc.read_general(inv)] == [d1, n1, d2]
+    assert [
+        r["id"] for r in await svc.read_general(inv, newest_first=False)
+    ] == [d1, n1, d2]
+    # Default limit keeps the oldest rows, as before.
+    assert [r["id"] for r in await svc.read_general(inv, limit=2)] == [d1, n1]
+
+
+async def test_newest_first_limit_selects_latest_matching_kinds(test_db) -> None:
+    del test_db
+    svc = LedgerService()
+    inv = "inv-newest-kinds"
+    d1 = await svc.append_general(inv, "b1", "discovery", {"n": 1})
+    await svc.append_general(inv, "b1", "note", {"n": 2})
+    d2 = await svc.append_general(inv, "b1", "discovery", {"n": 3})
+    await svc.append_general(inv, "b1", "note", {"n": 4})
+    d3 = await svc.append_general(inv, "b1", "discovery", {"n": 5})
+    newest_disc = await svc.read_general(
+        inv, kinds=["discovery"], limit=2, newest_first=True,
+    )
+    assert [r["id"] for r in newest_disc] == [d3, d2]
+    assert d1 not in [r["id"] for r in newest_disc]
+    # Without a kind filter the newest rows of any kind are returned.
+    decision = await svc.append_general(inv, "b2", "decision", {"approved": False})
+    newest_any = await svc.read_general(inv, limit=2, newest_first=True)
+    assert [r["id"] for r in newest_any] == [decision, d3]
+
+
+async def test_confirmed_only_newest_first_keeps_approvals_outside_window(
+    test_db,
+) -> None:
+    del test_db
+    svc = LedgerService()
+    inv = "inv-confirmed-newest"
+    d1 = await svc.append_general(inv, "b1", "discovery", {"packed": True})
+    await svc.append_general(inv, "b3", "decision", {"approved": True, "target": d1})
+    # Filler rows push the approval outside any newest-N window of raw rows.
+    await svc.append_general(inv, "b1", "note", {"n": 1})
+    await svc.append_general(inv, "b1", "note", {"n": 2})
+    confirmed = await svc.read_general(
+        inv, kinds=["discovery"], confirmed_only=True, limit=1, newest_first=True,
+    )
+    assert [r["id"] for r in confirmed] == [d1]
+
+
+async def test_confirmed_only_newest_first_orders_confirmed_descending(
+    test_db,
+) -> None:
+    del test_db
+    svc = LedgerService()
+    inv = "inv-confirmed-desc"
+    d1 = await svc.append_general(inv, "b1", "discovery", {"n": 1})
+    await svc.append_general(inv, "b3", "decision", {"approved": True, "target": d1})
+    d2 = await svc.append_general(inv, "b2", "discovery", {"n": 2})
+    d3 = await svc.append_general(inv, "b2", "discovery", {"n": 3})
+    await svc.append_general(inv, "b3", "decision", {"approved": True, "target": d2})
+    confirmed = await svc.read_general(
+        inv, kinds=["discovery"], confirmed_only=True, limit=2, newest_first=True,
+    )
+    # d3 is unconfirmed and skipped; the newest confirmed rows come first.
+    assert [r["id"] for r in confirmed] == [d2, d1]
+    assert d3 not in [r["id"] for r in confirmed]

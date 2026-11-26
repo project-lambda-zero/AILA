@@ -245,18 +245,35 @@ class LedgerService:
         kinds: list[str] | None = None,
         confirmed_only: bool = False,
         limit: int = 200,
+        newest_first: bool = False,
         session: AsyncSession | None = None,
     ) -> list[dict[str, Any]]:
-        """Read the ledger oldest-first.
+        """Read the ledger oldest-first by default, or newest-first on request.
 
         ``kinds`` filters by entry kind. ``confirmed_only`` drops discovery
         entries that no approving decision references (used by a
         confirmed-trust phase condition); non-discovery entries pass through.
+        Without ``confirmed_only``, newest-first reads filter kinds and limit
+        in SQL. Confirmed reads deliberately retain the full-row path because
+        approval decisions may fall outside the newest ``limit`` rows; their
+        limit is applied only after confirmation is resolved.
         """
         async with _session_or_new(session) as (sess, _owns):
             stmt = select(InvestigationLedgerRecord).where(
                 InvestigationLedgerRecord.investigation_id == investigation_id,
-            ).order_by(InvestigationLedgerRecord.id)
+            )
+            if newest_first and not confirmed_only:
+                if kinds is not None:
+                    stmt = stmt.where(InvestigationLedgerRecord.kind.in_(kinds))
+                stmt = stmt.order_by(
+                    InvestigationLedgerRecord.id.desc(),
+                ).limit(limit)
+                rows = list((await sess.exec(stmt)).all())
+                return [_to_dict(r) for r in rows]
+            stmt = stmt.order_by(
+                InvestigationLedgerRecord.id.desc()
+                if newest_first else InvestigationLedgerRecord.id,
+            )
             rows = list((await sess.exec(stmt)).all())
         if confirmed_only:
             confirmed = _confirmed_discovery_ids(rows)

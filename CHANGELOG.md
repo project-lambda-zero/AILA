@@ -5,6 +5,24 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ---
 
+## [0.6.145] - 2026-11-26 -- Durable pentest semantic context and safe retrieval
+
+### Added
+- Added campaign-scoped semantic indexing for normalized observations, worker traces, and operator notes with bounded catch-up, stable deduplication, and metadata-only raw-lineage refreshes.
+- Added pivot-aware planner retrieval and exact side-question retrieval, with source identifiers that preserve direct access to complete durable traces.
+- Added token-aware tiered prompt fitting and explicit live output-token limits for planner, retest, and side-question calls.
+
+### Changed
+- Semantic catch-up uses independent platform transactions and sanitized knowledge content, keeping provider and indexing failures isolated from campaign evidence.
+- Newest-first web-search and ledger reads now retain recent evidence within explicit page and token bounds. Exact-manifest retest analysis remains isolated from semantic history.
+
+### Fixed
+- Retrieved knowledge no longer falls back to unsanitized content, oversized hits no longer starve later fitting hits, and missing embedding dependencies no longer abort agent turns.
+- Directly loaded skills are classified as recent context rather than semantic retrieval results.
+
+### Upgrade notes
+- No database migration is required. Restart the backend and pentest workers. Semantic reads honor `platform.context_retrieved_enabled`, whose default remains false.
+
 ## [0.6.144] - 2026-11-25 -- Adaptive dynamic pentest and evidence expansion
 
 ### Added
